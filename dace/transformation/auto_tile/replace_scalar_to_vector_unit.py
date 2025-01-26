@@ -27,6 +27,7 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
         default={"add": "Add()"},
     )
     mmu_size = Property(dtype=int, default=32)
+    vector_unit_size = Property(dtype=int, default=32)
 
     def __init__(self):
         super().__init__()
@@ -55,15 +56,6 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
                 if mult_add_assign_pattern:
                     found_mult_add_assign_patterns.add(nodetuple)
 
-                """
-                # Assign patterna fter mult_add_assign as assign is part of it
-                assign_pattern, nodetuple = self.is_add_assign_pattern(sdfg, state, n)
-
-                if assign_pattern:
-                    print("Found assign pattern starting from,", n, nodetuple)
-
-                """
-
         for nodetuple in found_mult_add_assign_patterns:
             n = nodetuple[0]
             entry = state.entry_node(n)
@@ -71,55 +63,185 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
 
             if len(entry.map.params) == 1 and len(outer_entry.map.params) == 2:
                 # Remove inner map and replace the nodes with a GEMM tasklet
-                _exit = state.exit_node(entry)
-                gemm_nodes = state.all_nodes_between(entry, _exit)
-
-                for nd in gemm_nodes:
-                    if nd == entry or nd == _exit:
-                        continue
-                    state.remove_node(nd)
-
-                tasklet = dace.nodes.Tasklet(
-                    "GEMM",
-                    set(
-                        [
-                            out_conn.replace("OUT_", "_in_")
-                            for out_conn in entry.out_connectors
-                        ]
-                    ),
-                    set(
-                        [
-                            in_conn.replace("IN_", "_out_")
-                            for in_conn in _exit.in_connectors
-                        ]
-                    ),
-                    "",
-                )
-                for ie in state.in_edges(entry):
-                    u, uc, v, vc, memlet = ie
-                    state.add_edge(
-                        v,
-                        vc.replace("IN_", "OUT_"),
-                        tasklet,
-                        vc.replace("IN_", "_in_"),
-                        copy.deepcopy(memlet),
-                    )
-                for oe in state.out_edges(_exit):
-                    u, uc, v, vc, memlet = oe
-                    state.add_edge(
-                        tasklet,
-                        uc.replace("OUT_", "_out_"),
-                        u,
-                        uc.replace("OUT_", "IN_"),
-                        copy.deepcopy(memlet),
-                    )
-                self.increase_step_size(entry, self.mmu_size)
-                self.increase_step_size(outer_entry, self.mmu_size)
+                self.add_gemm_tasklet_rm_scalar_unit_nodes(state, entry, nodetuple)
+                self.increase_map_step_size(entry, self.mmu_size)
+                self.increase_map_step_size(outer_entry, self.mmu_size)
                 params_to_update = set(entry.map.params).union(outer_entry.map.params)
                 params_to_update = [dace.symbol(p) for p in params_to_update]
-                self.increase_memlet_range(state, entry, params_to_update)
+                # self.increase_memlet_range(state, entry, params_to_update, factor=self.mmu_size)
 
-    def increase_memlet_range(self, state: dace.SDFGState, entry, params_to_update):
+        nodes_to_check = state.all_nodes_between(dev_entry, dev_exit)
+        found_assign_patterns = set()
+        for n in nodes_to_check:
+            if isinstance(n, dace.nodes.Tasklet):
+                # Assign pattern after mult_add_assign as assign is part of it
+                assign_pattern, nodetuple = self.is_add_assign_pattern(sdfg, state, n)
+
+                if assign_pattern:
+                    found_assign_patterns.add(nodetuple)
+
+        entry_nodes = set()
+        for n, v, dst_tasklet in found_assign_patterns:
+            scope_node = state.scope_dict()[n]
+            if scope_node is not None and scope_node in entry_nodes:
+                raise Exception(
+                    "Multiple add-assign patterns in the same first-level scope is not supported currently"
+                )
+
+        for nodetuple in found_assign_patterns:
+            map_entry = state.scope_dict()[nodetuple[0]]
+            vars_used_in_contig_access_dict = self.find_variables_used_in_contig_access(
+                sdfg, state, map_entry, nodetuple
+            )
+            vars_used_in_contig_access = set(
+                [k for k, v in vars_used_in_contig_access_dict.items() if v]
+            )
+            if len(vars_used_in_contig_access) > 1:
+                raise Exception(
+                    "Multiple variables used in contiguous access is not supported currently"
+                )
+            elif len(vars_used_in_contig_access) == 0:
+                raise Exception(
+                    "No variable used in contiguous access is not supported currently"
+                )
+
+            # Update the map range
+            self.add_non_scalar_unit_tasklet_rm_scalar_unit_nodes(
+                state, map_entry, nodetuple, "Add"
+            )
+            self.increase_map_step_size(
+                map_entry, self.vector_unit_size, params=vars_used_in_contig_access
+            )
+            # self.increase_memlet_range(state, map_entry, vars_used_in_contig_access, factor=self.vector_unit_size)
+
+    def find_variables_used_in_contig_access(
+        self, sdfg: SDFG, state: dace.SDFGState, map_entry, nodetuple
+    ):
+        n, v, dst_tasklet = nodetuple
+        print(state.scope_dict())
+        scope_node = state.scope_dict()[n]
+        assert scope_node == map_entry
+
+        # Find all variables used in the access nodes
+        params = [dace.symbol(param) for param in map_entry.map.params]
+
+        map_exit = state.exit_node(map_entry)
+        edges = state.all_edges(*state.all_nodes_between(map_entry, map_exit))
+
+        used_in_contig_dimensions = {k: False for k in params}
+
+        for edge in edges:
+            _, _, _, _, memlet = edge
+            if memlet.data is not None and memlet.subset is not None:
+                # Get array
+                # If a variable from param is used in an expression
+                # at the dimension where stride is == 1, then
+                # we have a variable used in contiguous access
+                arr = sdfg.arrays[memlet.data]
+                strides = arr.strides
+
+                for stride, r in zip(strides, memlet.subset):
+                    if stride != 1:
+                        continue
+
+                    for sub_expr in r:
+                        for param in params:
+                            if param in sub_expr.free_symbols:
+                                used_in_contig_dimensions[param] = True
+
+        print(used_in_contig_dimensions)
+        return used_in_contig_dimensions
+
+    def add_gemm_tasklet_rm_scalar_unit_nodes(self, state, map_entry, nodetuple):
+        self.add_non_scalar_unit_tasklet_rm_scalar_unit_nodes(
+            state, map_entry, nodetuple, "GEMM"
+        )
+
+    def add_non_scalar_unit_tasklet_rm_scalar_unit_nodes(
+        self, state, map_entry, nodetuple, tasklet_type
+    ):
+        map_exit = state.exit_node(map_entry)
+        scalar_unit_nodes = state.all_nodes_between(map_entry, map_exit)
+
+        # Already asserted that only one pattern is within a scope
+        # Move all out edges of the map entry to the new tasklet, all in edges of map exit
+        # need to come from taskelt
+        # The range of the memlet will be scaled later
+
+        # Collect inputs and outputs
+        ins = set()
+        outs = set()
+        conn_map = dict()
+        for oe in state.out_edges(map_entry):
+            vc = oe.dst_conn
+            v = oe.dst
+            if isinstance(v, dace.nodes.Tasklet):
+                if v == nodetuple[0]:
+                    conn_id = len(ins)+1
+                    ins.add(f"_in{conn_id}")
+                    conn_map[(v,vc)] = f"_in{conn_id}"
+                elif v == nodetuple[2]:
+                    ins.add("_in_acc")
+                    conn_map[(v,vc)] = "_in_acc"
+                else:
+                    raise Exception("uwu1")
+        for ie in state.in_edges(map_exit):
+            uc = ie.src_conn
+            u = ie.src
+            if isinstance(u, dace.nodes.Tasklet):
+                if u == nodetuple[-1]:
+                    conn_id = len(outs)+1
+                    outs.add(f"_out{conn_id}")
+                    conn_map[(u,uc)] = f"_out{conn_id}"
+                else:
+                    raise Exception("uwu2")
+        print(ins, outs, conn_map)
+
+        tasklet = dace.nodes.Tasklet(
+            str(tasklet_type),
+            ins,
+            outs,
+            "",
+        )
+        for ic in ins:
+            tasklet.add_in_connector(ic)
+        for oc in outs:
+            tasklet.add_out_connector(oc)
+
+        for oe in state.out_edges(map_entry):
+            u, uc, v, vc, memlet = oe
+            if isinstance(v, dace.nodes.Tasklet):
+                state.add_edge(
+                    u,
+                    uc,
+                    tasklet,
+                    conn_map[(v,vc)],
+                    copy.deepcopy(memlet),
+                )
+        for ie in state.in_edges(map_exit):
+            u, uc, v, vc, memlet = ie
+            if isinstance(u, dace.nodes.Tasklet):
+                state.add_edge(
+                    tasklet,
+                    conn_map[(u,uc)],
+                    v,
+                    vc,
+                    copy.deepcopy(memlet),
+                )
+
+        for nd in scalar_unit_nodes:
+            if (
+                nd == map_entry
+                or nd == map_exit
+                or nd not in nodetuple
+                or nd == tasklet
+            ):
+                continue
+            state.remove_node(nd)
+
+    def increase_memlet_range(
+        self, state: dace.SDFGState, entry, params_to_update, factor
+    ):
         edges = state.all_edges(*state.all_nodes_between(entry, state.exit_node(entry)))
         for e in edges:
             _, _, _, _, memlet = e
@@ -129,22 +251,30 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
                     _r = copy.deepcopy(r)
                     beg, end, step = _r
                     for p in params_to_update:
-                        beg = beg.subs(p, p * self.mmu_size)
-                        end = end.subs(p, p * self.mmu_size)
-                        step = step.subs(p, p * self.mmu_size)
+                        beg = beg.subs(p, p * factor)
+                        end = end.subs(p, p * factor)
+                        step = step.subs(p, p * factor)
                     _r = (beg, end, step)
                     new_subsets.append(_r)
                 _subset = dace.subsets.Range(new_subsets)
                 memlet.subset = _subset
 
-    def increase_step_size(self, entry, step_size):
+    def increase_map_step_size(self, map_entry, step_size, params=None):
         # Increase the step size of the map
-        _map = entry.map
+        _map = map_entry.map
         new_ranges = []
-        for r in _map.range:
-            beg, end, step = r
-            step *= step_size
-            new_ranges.append((beg, end, step))
+        for param, r in zip(_map.params, _map.range):
+            if params is None:
+                beg, end, step = r
+                step *= step_size
+                new_ranges.append((beg, end, step))
+            else:
+                if dace.symbol(param) in params:
+                    beg, end, step = r
+                    step *= step_size
+                    new_ranges.append((beg, end, step))
+                else:
+                    new_ranges.append(r)
         _map.range = dace.subsets.Range(new_ranges)
 
     def extract_operators_from_code(self, codelist):
@@ -159,6 +289,7 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
                     else:
                         operators[op_type] = 1
             return operators
+        return dict()
 
     def check_is_assignment(self, codelist):
         for code in codelist:
@@ -248,18 +379,25 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
                         dst_tasklet = vv
                     else:
                         return False, ()
+                    add_assign_pattern, node_tuple = self.is_add_assign_pattern(
+                        sdfg, state, dst_tasklet
+                    )
+                    if add_assign_pattern:
+                        return True, (n, v, *node_tuple)
+                    else:
+                        return False, ()
                 else:
                     if not isinstance(v, dace.nodes.Tasklet):
                         return False, ()
                     else:
                         dst_tasklet = v
-                add_assign_pattern, node_tuple = self.is_add_assign_pattern(
-                    sdfg, state, dst_tasklet
-                )
-                if add_assign_pattern:
-                    return True, (n, *node_tuple)
-                else:
-                    return False, ()
+                        add_assign_pattern, node_tuple = self.is_add_assign_pattern(
+                            sdfg, state, dst_tasklet
+                        )
+                        if add_assign_pattern:
+                            return True, (n, None, *node_tuple)
+                        else:
+                            return False, ()
         return False, ()
 
     @staticmethod
