@@ -587,6 +587,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         first_data = ("",components)
                         data_path = [in_edge.data.data,first_data]
                 else:
+                    if isinstance(nsdfg.arrays[arg],ArrayView) and nsdfg.arrays[arg].shape[0]==1 and len(nsdfg.arrays[arg].shape)==1 and isinstance(nsdfg.arrays[in_edge.data.data],Scalar):
+                        must_remove_zero_index= True
                     first_data = in_edge.data.data
                     data_path = [first_data]
                 

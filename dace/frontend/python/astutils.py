@@ -567,6 +567,12 @@ class ASTFindReplaceComplex(ast.NodeTransformer):
             return self.generic_visit(node)
         elif node.value.id in self.repldict:
             val = self.repldict[node.value.id]
+            if isinstance(val, str):
+                #This is a corner case where the data path is just a scalar, so we don't need to replace indices
+                new_node = ast.copy_location(ast.parse(val), node)
+                print(ast.unparse(new_node))
+                self.replace_count += 1
+                return new_node
             if len(val)<2:
                 raise ValueError("The value of the key in the dictionary should be a list of length 2")
             current_val=0
