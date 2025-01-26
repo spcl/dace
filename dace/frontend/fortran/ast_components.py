@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING, Dict
+from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING, Dict, Tuple
 
 import fparser
 import networkx as nx
@@ -8,6 +8,7 @@ from fparser.two import Fortran2008 as f08
 from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Prefix, Intrinsic_Type_Spec, \
     Assignment_Stmt, Logical_Literal_Constant, Real_Literal_Constant, Signed_Real_Literal_Constant, \
     Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant, Function_Reference
+from fparser.two.utils import Base
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import Name_Node, Program_Node, Decl_Stmt_Node, Var_Decl_Node
@@ -91,17 +92,14 @@ def get_children(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, T
     return children_of_type
 
 
-def get_line(node: FASTNode):
+def get_line(node: Base) -> Tuple[int, int]:
     line = None
-    if node.item is not None and hasattr(node.item, "span"):
+    if node.item:
         line = node.item.span
-    else:
-        tmp = node
-        while tmp.parent is not None:
-            tmp = tmp.parent
-            if tmp.item is not None and hasattr(tmp.item, "span"):
-                line = tmp.item.span
-                break
+    if not line and node.parent:
+        line = get_line(node.parent)
+    if not line:
+        line = (0, 0)
     return line
 
 
