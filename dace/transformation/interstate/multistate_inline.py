@@ -548,6 +548,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             not_a_struct = True
             in_edge = input_memlets[arg]
             if in_edge.data.data in nsdfg.symbols:
+                for edge in nsdfg.all_interstate_edges():
+                    edge.data.replace(arg, in_edge.data.data)        
+                for cfr in nsdfg.all_control_flow_regions():
+                    cfr.replace_meta_accesses({ arg: in_edge.data.data })
                 continue
             if not isinstance(nsdfg.arrays[in_edge.data.data], View):
                 if isinstance(nsdfg.arrays[in_edge.data.data], Array):
