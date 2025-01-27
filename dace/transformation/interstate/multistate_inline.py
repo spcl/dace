@@ -321,7 +321,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             new_name = find_new_name(outp, used_symbol_names)
             used_symbol_names.add(new_name)
             replacements[outp] = new_name
-
+        
         replace_datadesc_names(nsdfg, replacements)
 
 
@@ -422,7 +422,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 outer_desc.transient = (viewed_node != outer_nodes[-1])
                 if viewed_node.data in nsdfg.arrays:
                     del nsdfg.arrays[viewed_node.data]
-                nsdfg.add_datadesc(viewed_node.data, outer_desc)
+                if viewed_node.data not in nsdfg.symbols:
+                    nsdfg.add_datadesc(viewed_node.data, outer_desc)
+                else:
+                    nsdfg_node.symbol_mapping[viewed_node.data] = viewed_node.data
 
             # Provide full desc as argument
             outer_node = outer_nodes[-1]
@@ -531,6 +534,15 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Control-flow: Replace old arguments by the true data
         # Hint: Old arguments are now views and cannot be used here
+
+        # args_used_in_shapes=    set()
+        # for arr in nsdfg.arrays:
+        #     for dim in nsdfg.arrays[arr].shape:
+        #         if not isinstance(dim, int):
+        #             args_used_in_shapes |= dim.free_symbols
+        # #args_used_in_shapes &= input_memlets.keys()
+        # for arg in args_used_in_shapes:
+        #      in_edge = input_memlets[arg]        
 
         # Find arguments to be replaced
         args_used_in_assignments = set()

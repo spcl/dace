@@ -1996,6 +1996,13 @@ class IfConditionExtractor(NodeTransformer):
         for child in node.execution:
 
             if isinstance(child, ast_internal_classes.If_Stmt_Node):
+                if isinstance(child.cond, ast_internal_classes.BinOp_Node):
+                    if child.cond.op == "==" and isinstance(child.cond.rval, ast_internal_classes.Int_Literal_Node):
+                       if isinstance(child.cond.lval, ast_internal_classes.Name_Node):
+                           if child.cond.lval.name=="jb_var_1001":
+                               newbody.append(child)
+                               continue 
+                    
                 old_cond = child.cond
                 newbody.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[

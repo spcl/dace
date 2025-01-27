@@ -724,35 +724,68 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         :param cfg: The control flow region into which the node should be translated
         """
-        name = f"Conditional_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
 
-        prev_block = None if cfg not in self.last_sdfg_states else self.last_sdfg_states[cfg]
-        is_start = prev_block is None
+        #Try to create a list of nested if-elses towards generating a case statement
 
-        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders, self.placeholders_offsets,
-                                              self.replace_names).write_code(node.cond)
+        node_cond=node.cond
+        node_body=node.body
+        node_body_else=node.body_else
 
-        cond_block = ConditionalBlock(name)
-        cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
-        if not is_start:
-            cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
-        self.last_sdfg_states[cfg] = cond_block
+        body_list=[node_cond]
+        cond_list=[node_body]
+        #Very specific hack
+        case_processing_ready=True
+        if isinstance(node.cond,ast_internal_classes.BinOp_Node):
+            if isinstance(node.cond.lval,ast_internal_classes.Name_Node):
+                if node.cond.lval.name.startswith("_for_it"):
+                    case_processing_ready=False
+        while not case_processing_ready:
+            case_processing_ready=True
+            if node_body_else is not None:
+                if isinstance(node_body_else, ast_internal_classes.Execution_Part_Node):
+                    if len(node_body_else.execution)==1:
+                        if isinstance(node_body_else.execution[0], ast_internal_classes.If_Stmt_Node):
+                            if isinstance(node_body_else.execution[0].cond, ast_internal_classes.BinOp_Node):
+                                if isinstance(node_body_else.execution[0].cond.lval, ast_internal_classes.Name_Node):
+                                    if node_body_else.execution[0].cond.lval.name.startswith("_for_it"):
+                                        case_processing_ready=False
+                                        body_list.append(node_body_else.execution[0].body)
+                                        cond_list.append(node_body_else.execution[0].cond)
+                                        node_body_else=node_body_else.execution[0].body_else
+        if len(body_list)>1:
+            print("Case making here!")
 
-        if_body = ControlFlowRegion(cond_block.label + '_if_body')
-        cond_block.add_branch(CodeBlock(condition), if_body)
-        self.translate(node.body, sdfg, if_body)
-        if len(if_body.nodes()) == 0:
-            # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take care of
-            # the rest.
-            if_body.add_state('noop', is_start_block=True)
+        else:    
 
-        if len(node.body_else.execution) > 0:
-            else_body = ControlFlowRegion(cond_block.label + '_else_body')
-            cond_block.add_branch(None, else_body)
-            self.translate(node.body_else, sdfg, else_body)
+            name = f"Conditional_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
 
-            if len(else_body.nodes()) == 0:
-                else_body.add_state('noop', is_start_block=True)
+            prev_block = None if cfg not in self.last_sdfg_states else self.last_sdfg_states[cfg]
+            is_start = prev_block is None
+
+            condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders, self.placeholders_offsets,
+                                                self.replace_names).write_code(node.cond)
+
+            cond_block = ConditionalBlock(name)
+            cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
+            if not is_start:
+                cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
+            self.last_sdfg_states[cfg] = cond_block
+
+            if_body = ControlFlowRegion(cond_block.label + '_if_body')
+            cond_block.add_branch(CodeBlock(condition), if_body)
+            self.translate(node.body, sdfg, if_body)
+            if len(if_body.nodes()) == 0:
+                # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take care of
+                # the rest.
+                if_body.add_state('noop', is_start_block=True)
+
+            if len(node.body_else.execution) > 0:
+                else_body = ControlFlowRegion(cond_block.label + '_else_body')
+                cond_block.add_branch(None, else_body)
+                self.translate(node.body_else, sdfg, else_body)
+
+                if len(else_body.nodes()) == 0:
+                    else_body.add_state('noop', is_start_block=True)
 
 
     def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):

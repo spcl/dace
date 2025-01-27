@@ -184,6 +184,12 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
     """ Reduced form of replace which only replaces data descriptor names. """
     # Replace in descriptor repository
     for aname, aval in list(sdfg.arrays.items()):
+        # for s in aval.shape:
+        #     if not isinstance(s, int):
+        #         free_symbols = s.free_symbols
+        #         for i in free_symbols:
+        #             if str(i) in repl:
+        #                 s = s.subs(i, symbolic.pystr_to_symbolic(repl[str(i)]))
         if aname in repl:
             del sdfg.arrays[aname]
             sdfg.arrays[repl[aname]] = aval
