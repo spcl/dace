@@ -2090,21 +2090,25 @@ def get_control_flow_block_dominators(sdfg: SDFG,
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
         
-        def _get_parent(n, d):
-            if n.parent_graph not in d and n.parent_graph.parent_graph is not sdfg:
+        def _get_parent_dom(n):
+            if n.parent_graph not in idom and n.parent_graph.parent_graph is not sdfg:
                 if isinstance(n.parent_graph.parent_graph, ConditionalBlock):
-                    return n.parent_graph.parent_graph
+                    p = n.parent_graph.parent_graph
+                    c = True
+                    return p, c
                 warnings.warn(f"Could not find immediate dominator for {n}")
-            return n.parent_graph
+            p = n.parent_graph
+            c = p is not sdfg and n is p.start_block
+            return p, c
         
         for k, _ in idom.items():
-            k_parent = _get_parent(k, idom)
-            if k_parent is not sdfg and k is k_parent.start_block:
+            k_parent, cond = _get_parent_dom(k)
+            if cond:
                 next_dom = idom[k_parent]
-                next_dom_parent = _get_parent(next_dom, idom)
-                while next_dom_parent is not sdfg and next_dom is next_dom_parent.start_block:
+                next_dom_parent, cond = _get_parent_dom(next_dom)
+                while cond:
                     next_dom = idom[next_dom_parent]
-                    next_dom_parent = _get_parent(next_dom, idom)
+                    next_dom_parent, cond = _get_parent_dom(next_dom)
                 idom[k] = next_dom
         changed = True
         while changed:
@@ -2154,14 +2158,26 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
+
+        def _get_parent_postdom(n):
+            if n.parent_graph not in idom and n.parent_graph.parent_graph is not sdfg:
+                if isinstance(n.parent_graph.parent_graph, ConditionalBlock):
+                    p = n.parent_graph.parent_graph
+                    c = True
+                    return p, c
+                warnings.warn(f"Could not find immediate dominator for {n}")
+            p = n.parent_graph
+            c = p is not sdfg and n is sinks_per_cfg[p]
+            return p, c
+        
         for k, _ in ipostdom.items():
-            k_parent = _get_parent(k, ipostdom)
-            if k_parent is not sdfg and k is sinks_per_cfg[k_parent]:
+            k_parent, cond = _get_parent_postdom(k)
+            if cond:
                 next_pdom = ipostdom[k_parent]
-                next_pdom_parent = _get_parent(next_pdom, ipostdom)
-                while next_pdom_parent is not sdfg and next_pdom is sinks_per_cfg[next_pdom_parent]:
+                next_pdom_parent, cond = _get_parent_postdom(next_pdom)
+                while cond:
                     next_pdom = ipostdom[next_pdom_parent]
-                    next_pdom_parent = _get_parent(next_pdom, ipostdom)
+                    next_pdom_parent, cond = _get_parent_postdom(next_pdom)
                 ipostdom[k] = next_pdom
         changed = True
         while changed:
@@ -2180,3 +2196,20 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         if all_postdom is not None:
             all_postdom.update(cfg_analysis.all_dominators(sdfg, ipostdom))
+
+
+def add_cfg_dominator_states(sdfg: SDFG):
+    """
+    Adds extraneous empty SDFGStates to the SDFG to facilitate finding proper (post)dominators for (de)allocating
+    shared transients. Specifically, it adds an empty SDFGState before every un-nested CFG and an empty SDFGState after
+    every un-nested sink CFG.
+
+    :param sdfg: The SDFG to add extraneous states to.
+    :note: Operates in-place on the graph.
+    """
+
+    for node in sdfg.nodes():
+        if isinstance(node, ControlFlowBlock):
+            sdfg.add_state_before(node, 'idom_' + node.label)
+            if sdfg.out_degree(node) == 0:
+                sdfg.add_state_after(node, 'ipostdom_' + node.label)
