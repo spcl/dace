@@ -141,35 +141,24 @@ def test_fortran_frontend_size_arbitrary():
 
 
 def test_fortran_frontend_present():
-    test_string = """
-                    PROGRAM intrinsic_basic_present
-                    implicit none
-                    integer, dimension(4) :: res
-                    integer, dimension(4) :: res2
-                    integer :: a
-                    CALL intrinsic_basic_present_test_function(res, res2, a)
-                    end
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(res, res2, a)
+  integer, dimension(4) :: res
+  integer, dimension(4) :: res2
+  integer :: a
+  call tf2(res, a=a)
+  call tf2(res2)
 
-                    SUBROUTINE intrinsic_basic_present_test_function(res, res2, a)
-                    integer, dimension(4) :: res
-                    integer, dimension(4) :: res2
-                    integer :: a
+contains
 
-                    CALL tf2(res, a=a)
-                    CALL tf2(res2)
-
-                    END SUBROUTINE intrinsic_basic_present_test_function
-
-                    SUBROUTINE tf2(res, a)
-                    integer, dimension(4) :: res
-                    integer, optional :: a
-
-                    res(1) = PRESENT(a)
-
-                    END SUBROUTINE tf2
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_present_test", True)
+  subroutine tf2(res, a)
+    integer, dimension(4) :: res
+    integer, optional :: a
+    res(1) = present(a)
+  end subroutine tf2
+end subroutine
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
 

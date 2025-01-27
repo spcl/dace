@@ -1785,6 +1785,10 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             if not args:
                 # If we do not have supplied arguments anymore, the remaining arguments must be optional
                 assert atype.optional
+                # The absense should be noted even if it is a writable argument.
+                if aspec not in fnargs_optional_presence:
+                    fnargs_optional_presence[aspec] = set()
+                fnargs_optional_presence[aspec].add(False)
                 continue
             kwargs_zone = isinstance(args[0], Actual_Arg_Spec)  # Whether we are in keyword args territory.
             if kwargs_zone:
@@ -1847,7 +1851,8 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             replace_node(pcall, numpy_type_to_literal(np.bool_(presence)))
 
     for aspec, vals in fnargs_possible_values.items():
-        if aspec in fnargs_undecidables or len(vals) > 1:
+        if (aspec in fnargs_undecidables or len(vals) > 1 or
+                (aspec in fnargs_optional_presence and False in fnargs_optional_presence[aspec])):
             # There are multiple possiblities for the argument: either some undecidables or multiple literals.
             continue
         fixed_val, = vals

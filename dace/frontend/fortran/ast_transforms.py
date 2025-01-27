@@ -4,6 +4,7 @@ import copy
 import re
 import warnings
 from collections import namedtuple
+from itertools import chain
 from typing import Dict, List, Optional, Tuple, Set, Union, Type
 
 import sympy as sp
@@ -1425,64 +1426,35 @@ class SignToIf(NodeTransformer):
             return self.generic_visit(node)
 
 
-def optionalArgsHandleFunction(func):
-    func.optional_args = []
-    if func.specification_part is None:
+def optionalArgsHandleFunction(fn: ast_internal_classes.Subroutine_Subprogram_Node):
+    # TODO: Determine the arguments' optionality during construction and keep updated.
+    fn.optional_args = []
+    if fn.specification_part is None:
         return 0
-    for spec in func.specification_part.specifications:
+    for spec in fn.specification_part.specifications:
         for var in spec.vardecl:
-            if hasattr(var, "optional") and var.optional:
-                func.optional_args.append((var.name, var.type))
+            if var.optional:
+                fn.optional_args.append((var.name, var.type))
 
-    vardecls = []
-    new_args = []
-    for i in func.args:
-        new_args.append(i)
-    for arg in func.args:
+    vardecls, new_args = [], []
+    args_names = {a.name for a in fn.args}
+    optional_args_names = {a[0] for a in fn.optional_args}
+    for arg in fn.args:
+        if arg.name not in optional_args_names:
+            continue
+        name = f"__f2dace_OPTIONAL_{arg.name}"
+        if name in args_names:
+            continue
+        var = ast_internal_classes.Var_Decl_Node(
+            name=name, type='LOGICAL', alloc=False, sizes=None, offsets=None, kind=None, optional=False, init=None,
+            line_number=fn.line_number, parent=fn)
+        new_args.append(ast_internal_classes.Name_Node(name=name, line_number=fn.line_number, parent=fn))
+        vardecls.append(var)
 
-        found = False
-        for opt_arg in func.optional_args:
-            if opt_arg[0] == arg.name:
-                found = True
-                break
-
-        if found:
-
-            name = f'__f2dace_OPTIONAL_{arg.name}'
-            already_there = False
-            for i in func.args:
-                if hasattr(i, "name") and i.name == name:
-                    already_there = True
-                    break
-            if not already_there:
-                var = ast_internal_classes.Var_Decl_Node(name=name,
-                                                         type='LOGICAL',
-                                                         alloc=False,
-                                                         sizes=None,
-                                                         offsets=None,
-                                                         kind=None,
-                                                         optional=False,
-                                                         init=None,
-                                                         line_number=func.line_number)
-                new_args.append(ast_internal_classes.Name_Node(name=name))
-                vardecls.append(var)
-
-    if len(new_args) > len(func.args):
-        func.args.clear()
-        func.args = new_args
-
-    if len(vardecls) > 0:
-        specifiers = []
-        for i in func.specification_part.specifications:
-            specifiers.append(i)
-        specifiers.append(
-            ast_internal_classes.Decl_Stmt_Node(
-                vardecl=vardecls,
-                line_number=func.line_number
-            )
-        )
-        func.specification_part.specifications.clear()
-        func.specification_part.specifications = specifiers
+    if vardecls:
+        fn.args.extend(new_args)
+        fn.specification_part.specifications.append(
+            ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=fn.line_number, parent=fn))
 
     return len(new_args)
 
@@ -1491,56 +1463,47 @@ class OptionalArgsTransformer(NodeTransformer):
     def __init__(self, funcs_with_opt_args):
         self.funcs_with_opt_args = funcs_with_opt_args
 
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-
-        if node.name.name not in self.funcs_with_opt_args:
-            return node
+    def visit_Call_Expr_Node(self, call: ast_internal_classes.Call_Expr_Node):
+        fn_def = self.funcs_with_opt_args.get(call.name.name)
+        if not fn_def:
+            return self.generic_visit(call)
+        assert fn_def.optional_args
 
         # Basic assumption for positioanl arguments
         # Optional arguments follow the mandatory ones
         # We use that to determine which optional arguments are missing
-        func_decl = self.funcs_with_opt_args[node.name.name]
-        optional_args = len(func_decl.optional_args)
-        if optional_args == 0:
-            return node
-
-        should_be_args = len(func_decl.args)
+        optional_args = len(fn_def.optional_args)
+        should_be_args = len(fn_def.args)
         mandatory_args = should_be_args - optional_args * 2
-
-        present_args = len(node.args)
+        present_args = len(call.args)
 
         # Remove the deduplicated variable entries acting as flags for optional args
         missing_args_count = should_be_args - present_args
-        present_optional_args = present_args - mandatory_args
-        new_args = [None] * should_be_args
-        print("Func len args: ", len(func_decl.args))
-        print("Func: ", func_decl.name.name, "Mandatory: ", mandatory_args, "Optional: ", optional_args, "Present: ",
-              present_args, "Missing: ", missing_args_count, "Present Optional: ", present_optional_args)
-        print("List: ", node.name.name, len(new_args), mandatory_args)
-
         if missing_args_count == 0:
-            return node
+            return self.generic_visit(call)
 
+        new_args: List[Optional[ast_internal_classes.FNode]] = [None] * should_be_args
+        # The mandatory arguments should be left as is.
         for i in range(mandatory_args):
-            new_args[i] = node.args[i]
-        for i in range(mandatory_args, len(node.args)):
-            if len(node.args) > i:
-                current_arg = node.args[i]
-                if not isinstance(current_arg, ast_internal_classes.Actual_Arg_Spec_Node):
-                    new_args[i] = current_arg
-                else:
-                    name = current_arg.arg_name
-                    index = 0
-                    for j in func_decl.optional_args:
-                        if j[0] == name.name:
-                            break
-                        index = index + 1
-                    new_args[mandatory_args + index] = current_arg.arg
+            new_args[i] = call.args[i]
+
+        optional_args_names = [a[0] for a in fn_def.optional_args]
+        for i in range(mandatory_args, len(call.args)):
+            current_arg = call.args[i]
+            if isinstance(current_arg, ast_internal_classes.Actual_Arg_Spec_Node):
+                # TODO: We are moving keyworded arguments into their new positions as positional arguments. But what
+                #  about the arguments that are not present in the call statement at all?
+                name = current_arg.arg_name
+                new_pos = mandatory_args + optional_args_names.index(name.name)
+                new_args[new_pos] = current_arg.arg
+            else:
+                # Positional arguments are left as is.
+                new_args[i] = current_arg
 
         for i in range(mandatory_args, mandatory_args + optional_args):
             relative_position = i - mandatory_args
             if new_args[i] is None:
-                dtype = func_decl.optional_args[relative_position][1]
+                dtype = fn_def.optional_args[relative_position][1]
                 if dtype == 'INTEGER':
                     new_args[i] = ast_internal_classes.Int_Literal_Node(value='0')
                 elif dtype == 'LOGICAL':
@@ -1555,36 +1518,28 @@ class OptionalArgsTransformer(NodeTransformer):
             else:
                 new_args[i + optional_args] = ast_internal_classes.Bool_Literal_Node(value='1')
 
-        node.args = new_args
-        return node
+        call.args = new_args
+        return self.generic_visit(call)
 
 
-def optionalArgsExpander(node=ast_internal_classes.Program_Node):
+def optionalArgsExpander(program: ast_internal_classes.Program_Node):
     """
     Adds to each optional arg a logical value specifying its status.
     Eliminates function statements from the AST
-    :param node: The AST to be transformed
+    :param program: The AST to be transformed
     :return: The transformed AST
     :note Should only be used on the program node
     """
-
     modified_functions = {}
+    for fn in mywalk(program, ast_internal_classes.Subroutine_Subprogram_Node):
+        if optionalArgsHandleFunction(fn):
+            modified_functions[fn.name.name] = fn
 
-    for func in node.subroutine_definitions:
-        if optionalArgsHandleFunction(func):
-            modified_functions[func.name.name] = func
-    for mod in node.modules:
-        for func in mod.subroutine_definitions:
-            if optionalArgsHandleFunction(func):
-                modified_functions[func.name.name] = func
-
-    node = OptionalArgsTransformer(modified_functions).visit(node)
-
-    return node
+    return OptionalArgsTransformer(modified_functions).visit(program)
 
 
 class AllocatableReplacerTransformer(NodeTransformer):
-    def __init__(self, program=ast_internal_classes.Program_Node):
+    def __init__(self, program: ast_internal_classes.Program_Node):
         ParentScopeAssigner().visit(program)
 
         # TODO: This assumes globally unique function names. We can make it more general by keeping track of the
@@ -1595,7 +1550,6 @@ class AllocatableReplacerTransformer(NodeTransformer):
         # For a nesting of execution parts (rare, but in case it happens), after visiting each direct child of it,
         # `self.execution_preludes[-1]` will contain all the temporary variable assignments necessary for that node.
         self.execution_preludes: List[List[ast_internal_classes.BinOp_Node]] = []
-
 
     @staticmethod
     def _allocated_flag(var: ast_internal_classes.Var_Decl_Node) -> str:
@@ -1645,7 +1599,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
                     continue
                 alloc_flag = self._allocated_flag(fvdecl)
                 decl = ast_internal_classes.Var_Decl_Node(
-                    name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('False'),
+                    name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('0'),
                     line_number=fn.line_number, parent=fn.parent)
                 fn.specification_part.specifications.append(ast_internal_classes.Decl_Stmt_Node(vardecl=[decl]))
         # Then, for each argument in order, we will add the extra argument in order. Note that we may not have updated
@@ -1672,7 +1626,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
             #  e.g., setting the sizes, offsets, and the actual memory allocation itself.
             asgn = ast_internal_classes.BinOp_Node(
                 lval=ast_internal_classes.Name_Node(name=self._allocated_flag(avdecl)), op='=',
-                rval=ast_internal_classes.Bool_Literal_Node(value='True'),
+                rval=ast_internal_classes.Bool_Literal_Node(value='1'),
                 line_number=alloc.line_number, parent=alloc.parent)
             self.execution_preludes[-1].append(asgn)
 
@@ -1686,7 +1640,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
             #  e.g., the actual memory deallocation itself.
             asgn = ast_internal_classes.BinOp_Node(
                 lval=ast_internal_classes.Name_Node(name=self._allocated_flag(dvdecl)), op='=',
-                rval=ast_internal_classes.Bool_Literal_Node(value='False'),
+                rval=ast_internal_classes.Bool_Literal_Node(value='0'),
                 line_number=dealloc.line_number, parent=dealloc.parent)
             self.execution_preludes[-1].append(asgn)
 

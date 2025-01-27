@@ -364,8 +364,9 @@ class TaskletWriter:
         return "".join(map(str, node.value))
 
     def boollit2string(self, node: ast_internal_classes.Bool_Literal_Node):
-
-        return str(node.value)
+        assert node.value in {'0', '1'},\
+            f"`{node.value}` is not a valid respresentation: use `0` for falsey values, and `1` for truthy values."
+        return node.value
 
     def unop2string(self, node: ast_internal_classes.UnOp_Node):
         op = node.op
