@@ -340,7 +340,10 @@ class FindExclusiveData(ppl.Pass):
     For each SDFG find all data descriptors that are referenced in exactly one location.
 
     This means that for every data descriptor there exists exactly one AccessNode that
-    refers to that data. In addition the data is also not read on an interstate edge.
+    refers to that data. In addition to this the following rules applies as well:
+    - If the data is also read on an inter state edge it will not be classified as exclusive.
+    - If there is no reference to a data descriptor, i.e. it exists inside `SDFG.arrays`
+        but there is no AccessNode, then it is _not_ classified as exclusive.
     """
 
     CATEGORY: str = 'Analysis'
@@ -381,9 +384,7 @@ class FindExclusiveData(ppl.Pass):
                 data_name: str = dnode.data
                 if data_name in exclusive_data:
                     exclusive_data.discard(data_name)  # Classified too early; Undo
-                elif data_name in previously_seen:
-                    pass
-                else:
+                elif data_name not in previously_seen:
                     exclusive_data.add(data_name)  # Never seen; Assume it is exclusive.
                 previously_seen.add(data_name)
 
