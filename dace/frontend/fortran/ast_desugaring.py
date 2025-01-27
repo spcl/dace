@@ -159,7 +159,7 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
         return search_scope_spec(scope)
     elif isinstance(par, Actual_Arg_Spec):
         kw, _ = par.children
-        if kw == node:
+        if kw.string == node.string:
             # We're describing a keyword, which is not really an identifiable object.
             return None
     if isinstance(scope, Stmt_Function_Stmt):
@@ -229,7 +229,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
     elif isinstance(par, Actual_Arg_Spec):
         # Keywords cannot be aliased.
         kw, _ = par.children
-        if kw == node:
+        if kw.string == node.string:
             return None
     return scope_spec + (name,)
 
@@ -887,7 +887,7 @@ def set_children(par: Base, children: Iterable[Base]):
 def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
     # A lot of hacky stuff to make sure that the new nodes are not just the same objects over and over.
     par = node.parent
-    only_child = bool([c for c in par.children if c == node])
+    only_child = bool([c for c in par.children if c is node])
     repls = []
     for c in par.children:
         if c != node:
@@ -903,7 +903,7 @@ def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
         if cntexpr:
             loopvar, looprange = cntexpr
             for i in range(len(looprange)):
-                if looprange[i] == node:
+                if looprange[i] is node:
                     looprange[i] = subst
                     subst.parent = par
     set_children(par, repls)
@@ -3189,5 +3189,91 @@ end function {fn}
         ret_decl = alias_map[scope_spec + (fn.string,)]
         remove_self(ret_decl)
         remove_self(sf)
+
+    return ast
+
+
+def deconstuct_goto_statements(ast: Program) -> Program:
+    # TODO: Support `Compound_Goto_Stmt`.
+    for node in walk(ast, Base):
+        # Move any label on a non-continue statement onto one (except for format statement which require one).
+        if not isinstance(node, (Continue_Stmt, Format_Stmt)) and node.item and node.item.label is not None:
+            cont = Continue_Stmt("CONTINUE")
+            cont.item = node.item
+            node.item = None
+            replace_node(node, (cont, node))
+
+    labels: Dict[str, Base] = {}
+    for node in walk(ast, Base):
+        if node.item and node.item.label is not None and isinstance(node, Continue_Stmt):
+            labels[str(node.item.label)] = node
+
+    # TODO: We have a very limited supported pattern of GOTO here, and possibly need to expand.
+    # Assumptions: Each GOTO goes only forward. The target's parent is same as either the parent or the grandparent of
+    # the GOTO. If the GOTO and its target have different parents, then the GOTO's parent is a if-construct.
+
+    COUNTER = 0
+    for goto in walk(ast, Goto_Stmt):
+        target, = goto.children
+        target = target.string
+        target = labels[target]
+        if goto.parent == target.parent:
+            raise NotImplementedError
+
+        ifc = goto.parent
+        assert isinstance(ifc, (If_Stmt, If_Construct)), \
+            f"Everything but conditionals are unsupported for goto's parent; got: {ifc}"
+        assert ifc.parent is target.parent
+        ifc_pos, target_pos = None, None
+        for pos, c in enumerate(ifc.parent.children):
+            if c is ifc:
+                ifc_pos = pos
+            elif c is target:
+                target_pos = pos
+        assert target_pos > ifc_pos, f"Only forward-facing GOTOs are supported"
+
+        ex = goto.parent
+        while not isinstance(ex, Execution_Part):
+            ex = ex.parent
+        spec = atmost_one(children_of_type(ex.parent, Specification_Part))
+        assert spec
+
+        if isinstance(ifc, (If_Stmt, If_Construct)):
+            goto_var, COUNTER = f"goto_{COUNTER}", COUNTER+1
+            append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var} = .false."))
+            asgn = Assignment_Stmt(f"{goto_var} = .true.")
+            replace_node(goto, asgn)
+        else:
+            raise NotImplementedError
+
+        for else_op in ifc.parent.children[ifc_pos+1 : target_pos]:
+            if isinstance(else_op, Continue_Stmt):
+                # Continue statements are no-op, but they may have label attached, so we leave them be.
+                continue
+            if isinstance(else_op, If_Stmt):
+                # We merge the condition with existing if.
+                cond, op = else_op.children
+                nu_cond = Expr(f".not.({goto_var}) .and. {cond}")
+                replace_node(cond, nu_cond)
+            elif isinstance(else_op, If_Construct):
+                # We merge the condition with existing if.
+                for c in else_op.children:
+                    if isinstance(c, If_Then_Stmt):
+                        cond, = c.children
+                        nu_cond = Expr(f".not.({goto_var}) .and. {cond}")
+                        replace_node(cond, nu_cond)
+                    elif isinstance(c, Else_If_Stmt):
+                        cond, _ = c.children
+                        nu_cond = Expr(f".not.({goto_var}) .and. {cond}")
+                        replace_node(cond, nu_cond)
+                    elif isinstance(c, Else_Stmt):
+                        nu_else = Else_If_Stmt(f"else if (.not.({goto_var})) then")
+                        replace_node(c, nu_else)
+                    else:
+                        continue
+            else:
+                nu_if = If_Stmt(f"if (.not.({goto_var})) call x")
+                replace_node(else_op, nu_if)
+                replace_node(singular(nm for nm in walk(nu_if, Call_Stmt)), else_op)
 
     return ast

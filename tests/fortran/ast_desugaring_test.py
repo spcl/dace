@@ -10,7 +10,7 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
-    deconstruct_statement_functions
+    deconstruct_statement_functions, deconstuct_goto_statements
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -2185,6 +2185,71 @@ SUBROUTINE main(d)
     DOUBLE PRECISION, INTENT(IN) :: ralsdcp(2)
     foeldcp = foedelta(ptare, rtt) * ralvdcp(1) + (1.0 - foedelta(ptare, rtt)) * ralsdcp(1)
   END FUNCTION foeldcp
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_goto_statements():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d)
+  implicit none
+  real, intent(inout) :: d
+  integer :: i
+
+  ! forward-only gotos
+  i = 0
+  if (i > 5) go to 10000  ! not taken
+  i = 7
+  if (i > 5) goto 10001  ! taken
+  i = 1
+  if (i > 5) then
+    goto 10002
+    i = 9
+  else if (i > 6) then
+    i = 10
+  else
+    i = 11
+  end if
+10001 i = 6
+10000 continue
+  i = 2
+10002 continue
+  d = 7.1*i
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = deconstuct_goto_statements(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main(d)
+  IMPLICIT NONE
+  REAL, INTENT(INOUT) :: d
+  INTEGER :: i
+  LOGICAL :: goto_0 = .FALSE.
+  LOGICAL :: goto_1 = .FALSE.
+  LOGICAL :: goto_2 = .FALSE.
+  i = 0
+  IF (i > 5) goto_0 = .TRUE.
+  IF (.NOT. (goto_0)) i = 7
+  IF (.NOT. (goto_0) .AND. i > 5) goto_1 = .TRUE.
+  IF (.NOT. (goto_1) .AND. .NOT. (goto_0)) i = 1
+  IF (.NOT. (goto_1) .AND. .NOT. (goto_0) .AND. i > 5) THEN
+    goto_2 = .TRUE.
+    i = 9
+  ELSE IF (.NOT. (goto_1) .AND. .NOT. (goto_0) .AND. i > 6) THEN
+    i = 10
+  ELSE IF (.NOT. (goto_1) .AND. .NOT. (goto_0)) THEN
+    i = 11
+  END IF
+10001 CONTINUE
+  IF (.NOT. (goto_2) .AND. .NOT. (goto_0)) i = 6
+10000 CONTINUE
+  IF (.NOT. (goto_2)) i = 2
+10002 CONTINUE
+  d = 7.1 * i
 END SUBROUTINE main
 """.strip()
     assert got == want
