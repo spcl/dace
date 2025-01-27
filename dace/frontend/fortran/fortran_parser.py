@@ -35,7 +35,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
     create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
-    assign_globally_unique_variable_names
+    assign_globally_unique_variable_names, deconstuct_goto_statements
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -2700,6 +2700,10 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast = deconstruct_statement_functions(ast)
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
+    ast = correct_for_function_calls(ast)
+
+    print("FParser Op: Removing GOTO statements...")
+    ast = deconstuct_goto_statements(ast)
     ast = correct_for_function_calls(ast)
 
     print("FParser Op: Inject configs & prune...")

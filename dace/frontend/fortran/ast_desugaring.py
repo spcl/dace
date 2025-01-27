@@ -3191,3 +3191,89 @@ end function {fn}
         remove_self(sf)
 
     return ast
+
+
+def deconstuct_goto_statements(ast: Program) -> Program:
+    # TODO: Support `Compound_Goto_Stmt`.
+    for node in walk(ast, Base):
+        # Move any label on a non-continue statment onto one.
+        if not isinstance(node, Continue_Stmt) and node.item and node.item.label is not None:
+            cont_stmt = Continue_Stmt(get_reader(f"{node.item.label} CONTINUE"))
+            node.item.label = None
+            replace_node(node, (cont_stmt, node))
+
+    labels: Dict[str, Base] = {}
+    for node in walk(ast, Base):
+        if node.item and node.item.label is not None:
+            assert isinstance(node, Continue_Stmt), f"Only labels on continue statements are supported; got {node}"
+            labels[str(node.item.label)] = node
+
+    # TODO: We have a very limited supported pattern of GOTO here, and possibly need to expand.
+    # Assumptions: Each GOTO goes only forward. The target's parent is same as either the parent or the grandparent of
+    # the GOTO. If the GOTO and its target have different parents, then the GOTO's parent is a if-construct.
+
+    COUNTER = 0
+    for goto in walk(ast, Goto_Stmt):
+        target, = goto.children
+        target = target.string
+        target = labels[target]
+        if goto.parent == target.parent:
+            raise NotImplementedError
+
+        ifc = goto.parent
+        assert isinstance(ifc, (If_Stmt, If_Construct)), \
+            f"Everything but conditionals are unsupported for goto's parent; got: {ifc}"
+        assert ifc.parent is target.parent
+        ifc_pos, target_pos = None, None
+        for pos, c in enumerate(ifc.parent.children):
+            if c is ifc:
+                ifc_pos = pos
+            elif c is target:
+                target_pos = pos
+        assert target_pos > ifc_pos, f"Only forward-facing GOTOs are supported"
+
+        ex = goto.parent
+        while not isinstance(ex, Execution_Part):
+            ex = ex.parent
+        spec = atmost_one(children_of_type(ex.parent, Specification_Part))
+        assert spec
+
+        if isinstance(ifc, (If_Stmt, If_Construct)):
+            goto_var, COUNTER = f"not_goto_{COUNTER}", COUNTER+1
+            append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var} = .false."))
+            asgn = Assignment_Stmt(f"{goto_var} = .true.")
+            replace_node(goto, asgn)
+        else:
+            raise NotImplementedError
+
+        for else_op in ifc.parent.children[ifc_pos+1 : target_pos]:
+            if isinstance(else_op, Continue_Stmt):
+                # Continue statements are no-op, but they may have label attached, so we leave them be.
+                continue
+            if isinstance(else_op, If_Stmt):
+                # We merge the condition with existing if.
+                cond, op = else_op.children
+                nu_cond = Expr(f".not.({goto_var}) .and. {cond}")
+                replace_node(cond, nu_cond)
+            elif isinstance(else_op, If_Construct):
+                # We merge the condition with existing if.
+                for c in else_op.children:
+                    if isinstance(c, If_Then_Stmt):
+                        cond, = c.children
+                        nu_cond = Expr(f".not.({goto_var}) .and. {cond}")
+                        replace_node(cond, nu_cond)
+                    elif isinstance(c, Else_If_Stmt):
+                        cond, _ = c.children
+                        nu_cond = Expr(f".not.({goto_var}) .and. {cond}")
+                        replace_node(cond, nu_cond)
+                    elif isinstance(c, Else_Stmt):
+                        nu_else = Else_If_Stmt(f"else if (.not.({goto_var})) then")
+                        replace_node(c, nu_else)
+                    else:
+                        continue
+            else:
+                nu_if = If_Stmt(f"if (.not.({goto_var})) call x")
+                replace_node(else_op, nu_if)
+                replace_node(singular(nm for nm in walk(nu_if, Call_Stmt)), else_op)
+
+    return ast
