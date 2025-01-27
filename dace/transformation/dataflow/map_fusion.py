@@ -14,14 +14,15 @@ from dace.transformation import helpers
 class MapFusion(transformation.SingleStateTransformation):
     """Implements the MapFusion transformation.
 
+    From a high level perspective it will remove the MapExit node of the first and the MapEntry node of
+    the second Map. It will then rewire and modify the Memlets such that the data flow bypasses the
+    intermediate node. For this a new intermediate node will be created, which is much smaller because
+    it has no longer to store the whole output of the first map, but only the data that is produced by
+    a single iteration of the first map. The transformation will then remove the old intermediate.
+    Thus by merging the two Maps together the transformation will reduce the memory footprint. It is
+    important that it is not always possible to fully remove the intermediate node. For example the
+    data might be used somewhere else. In this case the intermediate will become an output of the Map.
 
-    From a high level perspective it will remove the MapExit node for the first and the MapEntry node of
-    the second Map. Then it will rewire and modify the Memlets to bypass the intermediate node and instead
-    go through a new intermediate node. This new intermediate node is much smaller because it has no longer
-    to absorb the whole output of the first map, but only the data that is produced by a single iteration
-    of the first map. It is important to note that it is not always possible to fully remove the intermediate
-    node, for example it is used somewhere else, see `is_shared_data()`. Thus by merging the two Maps together
-    the transformation will reduce the memory footprint because the intermediate nodes can be removed.
     An example would be the following:
     ```python
     for i in range(N):
@@ -46,12 +47,21 @@ class MapFusion(transformation.SingleStateTransformation):
         is needed by a single iteration of the second Map is produced by a single iteration of
         the first Map, see `partition_first_outputs()`.
 
-    By default `strict_dataflow` is enabled. In this mode the transformation is
-    more conservative. The main difference is, that it will not adjust the
-    subsets of the intermediate, i.e. turning an array with shape `(1, 1, 1, 1)`
-    into a scalar.
-    Furthermore, shared intermediates, see `partition_first_outputs()` will only
-    be created if the data is not referred downstream in the dataflow.
+    By default `strict_dataflow` is enabled. In this mode the transformation is more conservative.
+    The main difference is, that it will not adjust the subsets of the intermediate, i.e. turning
+    an array with shape `(1, 1, 1, 1)` into a scalar. Furthermore, shared intermediates, see
+    `partition_first_outputs()` will only be created if the data is not referred downstream in
+    the dataflow.
+
+    In order to determine if an intermediate can be removed or has to be kept, it is in general
+    necessary to scan the whole SDFG, which is the default behaviour. There are two ways to
+    speed this up. The first way is to set `assume_always_shared` to `True`. In this case the
+    transformation will not perform the scan, but assume that the data is shared, i.e. used
+    somewhere else.
+    The second way is to use the transformation inside a pipeline and to run the `FindExclusiveData`
+    analysis pass. If the result of this pass is present the transformation will use its result
+    to determine if an intermediate can be removed or not. Note that `assume_always_shared`
+    takes precedence.
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
@@ -59,12 +69,6 @@ class MapFusion(transformation.SingleStateTransformation):
     :param assume_always_shared: Assume that all intermediates are shared.
 
     :note: This transformation modifies more nodes than it matches.
-    :note: An instance of MapFusion can be reused multiple times, with one exception.
-            Because the test if an intermediate can be removed or not is very expensive,
-            the transformation computes this information once in the beginning and then
-            caches it. However, the transformation lacks the means to detect if this data
-            has become out of data. Thus if new AccessNodes are added the cache is outdated
-            and the transformation should no longer be used.
     :note: If `assume_always_shared` is `True` then the transformation will assume that
             all intermediates are shared. This avoids the problems mentioned above with
             the cache at the expense of the creation of dead dataflow.
@@ -98,11 +102,6 @@ class MapFusion(transformation.SingleStateTransformation):
         desc="If `True` then all intermediates will be classified as shared.",
     )
 
-    # Maps SDFGs to the set of data that can not be removed,
-    #  because they transmit data _between states_, such data will be made 'shared'.
-    #  This variable acts as a cache, and is managed by 'is_shared_data()'.
-    _shared_data: Dict[SDFG, Set[str]]
-
 
     def __init__(
         self,
@@ -118,7 +117,6 @@ class MapFusion(transformation.SingleStateTransformation):
             self.only_inner_maps = only_inner_maps
         if strict_dataflow is not None:
             self.strict_dataflow = strict_dataflow
-        self._shared_data = {}
 
 
     @classmethod
@@ -517,7 +515,7 @@ class MapFusion(transformation.SingleStateTransformation):
             #  node can be removed (`\mathbb{E}`) or has to be restored (`\mathbb{S}`).
             #  Note that "removed" here means that it is reconstructed by a new
             #  output of the second map.
-            if self.is_shared_data(intermediate_node, sdfg):
+            if self.is_shared_data(data=intermediate_node, state=state, sdfg=sdfg):
                 # The intermediate data is used somewhere else, either in this or another state.
                 # NOTE: If the intermediate is shared, then we will turn it into a
                 #   sink node attached to the combined map exit. Technically this
@@ -1365,111 +1363,102 @@ class MapFusion(transformation.SingleStateTransformation):
     def is_shared_data(
         self,
         data: nodes.AccessNode,
+        state: dace.SDFGState,
         sdfg: dace.SDFG,
     ) -> bool:
-        """Tests if `data` is shared data, an can not be removed from the SDFG.
+        """Tests if `data` is shared data, i.e. it can not be removed from the SDFG.
 
-        Interstate data is used to transmit data, this includes:
-        * The data is referred in multiple states.
-        * The data is referred to multiple times in the same state, either the state
-            has multiple access nodes for that data or an access node has an
-            out degree larger than one.
-        * The data is read inside interstate edges.
+        Depending on the situation, the function will not perform a scan of the whole SDFG:
+        1) If `assume_always_shared` was set to `True`, the function will return `True` unconditionally.
+        2) If `data` is non transient then the function will return `True`, as non transient data
+            must be reconstructed always.
+        3) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
+            it is classified as shared.
+        2) If `FindExclusiveData` is in the pipeline it will be used and no scan will be performed.
+        3) The function will perform a scan.
 
-        This definition is stricter than the one employed by `SDFG.shared_transients()`,
-        as it also includes usage within a state.
+        :param data: The transient that should be checked.
+        :param state: The state in which the fusion is performed.
+        :param sdfg: The SDFG in which we want to perform the fusing.
 
-        :param transient: The transient that should be checked.
-        :param sdfg: The SDFG containing the array.
-
-        :note: The function computes the this set once for every SDFG and then caches it.
-            There is no mechanism to detect if the cache must be evicted. However,
-            as long as no additional data is added to the SDFG, there is no problem.
-        :note: If `assume_always_shared` was set, then the function will always return `True`.
         """
-        # This is the only point where we check for `assume_always_shared`.
+        # `assume_always_shared` takes precedence.
         if self.assume_always_shared:
             return True
 
-        # Check if the SDFG is known, if not scan it and compute the set.
-        if sdfg not in self._shared_data:
-            self._compute_shared_data_in(sdfg)
-        return data.data in self._shared_data[sdfg]
+        # If `data` is non transient then return `True` as the intermediate can not be removed.
+        if not data.desc(sdfg).transient:
+            return True
+
+        # This means the data is consumed by multiple Maps, through the same AccessNode, in this state
+        #  Note currently multiple incoming edges are not handled, but in the spirit of this function
+        #  we consider such AccessNodes as shared, because we can not remove the intermediate.
+        if state.out_degree(data) > 1:
+            return True
+        if state.in_degree(data) > 1:
+            return True
+
+        # If the `FindExclusiveData` pass is present in the pipeline then we will use
+        #  it. Note that the pass computes the data that can be removed, so we have to
+        #  check if it is not inside.
+        if self._pipeline_results and 'FindExclusiveData' in self._pipeline_results:
+            exclusive_data: Dict[SDFG, Set[str]] = self._pipeline_results["FindExclusiveData"]
+            return data.data not in exclusive_data[sdfg]
+
+        # We have to perform the full scan of the SDFG.
+        return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
 
 
-    def _compute_shared_data_in(
+    def _scan_sdfg_if_data_is_shared(
         self,
+        data: nodes.AccessNode,
+        state: dace.SDFGState,
         sdfg: dace.SDFG,
     ) -> None:
-        """Updates the internal set of shared data/interstate data of `self` for `sdfg`.
+        """Scans `sdfg` to determine if `data` is shared.
 
-        See the documentation for `self.is_shared_data()` for a description.
+        Essentially, this function determine, if the intermediate AccessNode `data` is
+        can be removed or if it has to be restored as output of the Map.
+        A data descriptor is classified as shared if any of the following is true:
+        - `data` is non transient data.
+        - `data` has at most one incoming and/or outgoing edge.
+        - There are other AccessNodes beside `data` that refer to the same data.
+        - The data is accessed on an interstate edge.
 
+        This function should not be called directly. Instead it is called indirectly
+        by `is_shared_data()` if there is no short cut.
+
+        :param data: The AccessNode that should checked if it is shared.
         :param sdfg: The SDFG for which the set of shared data should be computed.
         """
-        # Shared data of this SDFG.
-        shared_data: Set[str] = set()
+        if not data.desc(sdfg).transient:
+            return True
 
-        # All global data can not be removed, so it must always be shared.
-        for data_name, data_desc in sdfg.arrays.items():
-            if not data_desc.transient:
-                shared_data.add(data_name)
-            elif isinstance(data_desc, dace.data.Scalar):
-                shared_data.add(data_name)
+        # See description in `is_shared_data()` for more.
+        if state.out_degree(data) > 1:
+            return True
+        if state.in_degree(data) > 1:
+            return True
 
-        # We go through all states and classify the nodes/data:
-        #   - Data is referred to in different states.
-        #   - The access node is a view (both have to survive).
-        #   - Transient sink or source node.
-        #   - The access node has output degree larger than 1 (input degrees larger
-        #       than one, will always be partitioned as shared anyway).
-        prevously_seen_data: Set[str] = set()
+        data_name: str = data.data
         for state in sdfg.states():
-            for access_node in state.data_nodes():
+            for dnode in state.data_nodes():
+                if dnode is data:
+                    # We have found the `data` AccessNode, which we must ignore.
+                    continue
+                if dnode.data == data_name:
+                    # We found a different AccessNode that refers to the same data
+                    #  as `data`. Thus `data` is shared.
+                    return True
 
-                if access_node.data in shared_data:
-                    # The data was already classified to be shared data
-                    pass
+            # Test if the data is referenced in the interstate edges, that leave this state.
+            for edge in sdfg.out_edges(state):
+                if data_name in edge.data.free_symbols:
+                    # The data is used in the inter state edges. So it is shared.
+                    return True
 
-                elif access_node.data in prevously_seen_data:
-                    # We have seen this data before, either in this state or in
-                    #  a previous one, but we did not classifies it as shared back then
-                    shared_data.add(access_node.data)
-
-                if state.in_degree(access_node) == 0:
-                    # (Transient) sink nodes are used in other states, or simplify
-                    #  will get rid of them.
-                    shared_data.add(access_node.data)
-
-                elif state.out_degree(access_node) != 1:  # state.out_degree() == 0 or state.out_degree() > 1
-                    # The access node is either a source node (it is shared in another
-                    #  state) or the node has a degree larger than one, so it is used
-                    #  in this state somewhere else.
-                    shared_data.add(access_node.data)
-
-                elif self.is_view(node=access_node, sdfg=sdfg):
-                    # To ensure that the write to the view happens, both have to be shared.
-                    viewed_data: str = self.track_view(view=access_node, state=state, sdfg=sdfg).data
-                    shared_data.update([access_node.data, viewed_data])
-                    prevously_seen_data.update([access_node.data, viewed_data])
-
-                else:
-                    # The node was not classified as shared data, so we record that
-                    #  we saw it. Note that a node that was immediately classified
-                    #  as shared node will never be added to this set, but a data
-                    #  that was found twice will be inside this list.
-                    prevously_seen_data.add(access_node.data)
-
-        # Now we collect all symbols that are read in interstate edges.
-        #  Because, they might refer to data inside states and must be kept alive.
-        interstate_read_symbols: Set[str] = set()
-        for edge in sdfg.edges():
-            interstate_read_symbols.update(edge.data.read_symbols())
-        data_read_in_interstate_edges = interstate_read_symbols.intersection(prevously_seen_data)
-
-        # Compute the final set of shared data and update the internal cache.
-        shared_data.update(data_read_in_interstate_edges)
-        self._shared_data[sdfg] = shared_data
+        # The `data` is not used anywhere else, thus `data` is not shared.
+        return False
 
 
     def find_parameter_remapping(self, first_map: nodes.Map, second_map: nodes.Map) -> Optional[Dict[str, str]]:
