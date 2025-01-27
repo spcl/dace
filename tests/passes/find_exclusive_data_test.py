@@ -201,10 +201,11 @@ def test_access_only_on_interstate_edge():
     sdfg = _make_access_only_on_interstate_edge_sdfg()
     assert len(sdfg.arrays) == 5
 
-    # `e` is part of the exclusive set, because it is only accessed on an interstate edge.
-    expected_exclusive_set = sdfg.arrays.keys()
+    # `e` is only accessed on the interstate edge. So it is technically an exclusive
+    #  data. But by definition we handle this case as non exclusive.
+    expected_exclusive_set = {aname for aname in sdfg.arrays.keys() if aname != 'e'}
     exclusive_set = perform_scan(sdfg)
-    assert len(exclusive_set[sdfg]) == 5
+    assert len(exclusive_set[sdfg]) == 4
     assert exclusive_set[sdfg] == expected_exclusive_set
 
 
@@ -247,8 +248,7 @@ def test_additional_access_on_interstate_edge():
     sdfg = _make_additional_access_on_interstate_edge_sdfg()
     assert len(sdfg.arrays) == 6
 
-    # In this test `e` is not part of the exclusive set as it was in `test_access_only_on_interstate_edge`.
-    #  The reason is because now there exists an AccessNode for `e`.
+    # As in `test_access_only_on_interstate_edge` `e` is not part of the exclusive set.
     expected_exclusive_set = {aname for aname in sdfg.arrays.keys() if aname != 'e'}
     exclusive_set = perform_scan(sdfg)
     assert len(exclusive_set[sdfg]) == 5

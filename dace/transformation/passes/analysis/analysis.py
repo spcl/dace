@@ -341,7 +341,7 @@ class FindExclusiveData(ppl.Pass):
 
     This means that for every data descriptor there exists exactly one AccessNode that
     refers to that data. In addition to this the following rules applies as well:
-    - If the data is also read on an inter state edge it will not be classified as exclusive.
+    - If the data is read by at least one interstate edge it will not be classified as exclusive.
     - If there is no reference to a data descriptor, i.e. it exists inside `SDFG.arrays`
         but there is no AccessNode, then it is _not_ classified as exclusive.
     """
@@ -391,10 +391,11 @@ class FindExclusiveData(ppl.Pass):
         # Compute the set of all data that is accessed, i.e. read, by the edges.
         interstate_read_symbols: Set[str] = set()
         for edge in sdfg.edges():
-            interstate_read_symbols.update(edge.data.read_symbols())
+            interstate_read_symbols.update(edge.data.free_symbols)
 
-        # Data can only be exclusive, if it is also _not_ accessed on an interstate edge.
-        return exclusive_data.symmetric_difference(interstate_read_symbols)
+        # Enforces the first rule, "if data is accessed by an interstate edge it will
+        #  not be classified as exclusive".
+        return exclusive_data.difference(interstate_read_symbols)
 
 
 @properties.make_properties
