@@ -1,7 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
-import pytest
 
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
