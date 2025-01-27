@@ -2223,32 +2223,31 @@ end subroutine main
     ast = deconstuct_goto_statements(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 SUBROUTINE main(d)
   IMPLICIT NONE
   REAL, INTENT(INOUT) :: d
   INTEGER :: i
-  LOGICAL :: not_goto_0 = .FALSE.
-  LOGICAL :: not_goto_1 = .FALSE.
-  LOGICAL :: not_goto_2 = .FALSE.
+  LOGICAL :: goto_0 = .FALSE.
+  LOGICAL :: goto_1 = .FALSE.
+  LOGICAL :: goto_2 = .FALSE.
   i = 0
-  IF (i > 5) not_goto_0 = .TRUE.
-  IF (.NOT. (not_goto_0)) i = 7
-  IF (.NOT. (not_goto_0) .AND. i > 5) not_goto_1 = .TRUE.
-  IF (.NOT. (not_goto_1) .AND. .NOT. (not_goto_0)) i = 1
-  IF (.NOT. (not_goto_1) .AND. .NOT. (not_goto_0) .AND. i > 5) THEN
-    not_goto_2 = .TRUE.
+  IF (i > 5) goto_0 = .TRUE.
+  IF (.NOT. (goto_0)) i = 7
+  IF (.NOT. (goto_0) .AND. i > 5) goto_1 = .TRUE.
+  IF (.NOT. (goto_1) .AND. .NOT. (goto_0)) i = 1
+  IF (.NOT. (goto_1) .AND. .NOT. (goto_0) .AND. i > 5) THEN
+    goto_2 = .TRUE.
     i = 9
-  ELSE IF (.NOT. (not_goto_1) .AND. .NOT. (not_goto_0) .AND. i > 6) THEN
+  ELSE IF (.NOT. (goto_1) .AND. .NOT. (goto_0) .AND. i > 6) THEN
     i = 10
-  ELSE IF (.NOT. (not_goto_1) .AND. .NOT. (not_goto_0)) THEN
+  ELSE IF (.NOT. (goto_1) .AND. .NOT. (goto_0)) THEN
     i = 11
   END IF
 10001 CONTINUE
-  IF (.NOT. (not_goto_2) .AND. .NOT. (not_goto_0)) i = 6
+  IF (.NOT. (goto_2) .AND. .NOT. (goto_0)) i = 6
 10000 CONTINUE
-  IF (.NOT. (not_goto_2)) i = 2
+  IF (.NOT. (goto_2)) i = 2
 10002 CONTINUE
   d = 7.1 * i
 END SUBROUTINE main

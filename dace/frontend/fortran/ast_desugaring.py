@@ -3196,17 +3196,16 @@ end function {fn}
 def deconstuct_goto_statements(ast: Program) -> Program:
     # TODO: Support `Compound_Goto_Stmt`.
     for node in walk(ast, Base):
-        # Move any label on a non-continue statment onto one.
-        if not isinstance(node, Continue_Stmt) and node.item and node.item.label is not None:
+        # Move any label on a non-continue statement onto one (except for format statement which require one).
+        if not isinstance(node, (Continue_Stmt, Format_Stmt)) and node.item and node.item.label is not None:
             cont = Continue_Stmt("CONTINUE")
-            cont.item.label = node.item.label
-            node.item.label = None
+            cont.item = node.item
+            node.item = None
             replace_node(node, (cont, node))
 
     labels: Dict[str, Base] = {}
     for node in walk(ast, Base):
-        if node.item and node.item.label is not None:
-            assert isinstance(node, Continue_Stmt), f"Only labels on continue statements are supported; got {node}"
+        if node.item and node.item.label is not None and isinstance(node, Continue_Stmt):
             labels[str(node.item.label)] = node
 
     # TODO: We have a very limited supported pattern of GOTO here, and possibly need to expand.
@@ -3240,7 +3239,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         assert spec
 
         if isinstance(ifc, (If_Stmt, If_Construct)):
-            goto_var, COUNTER = f"not_goto_{COUNTER}", COUNTER+1
+            goto_var, COUNTER = f"goto_{COUNTER}", COUNTER+1
             append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var} = .false."))
             asgn = Assignment_Stmt(f"{goto_var} = .true.")
             replace_node(goto, asgn)
