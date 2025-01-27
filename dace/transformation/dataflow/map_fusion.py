@@ -206,6 +206,7 @@ class MapFusion(transformation.SingleStateTransformation):
         _, exclusive_outputs, shared_outputs = output_partition
         if not (exclusive_outputs or shared_outputs):
             return False
+
         return True
 
 
@@ -1451,11 +1452,11 @@ class MapFusion(transformation.SingleStateTransformation):
                     #  as `data`. Thus `data` is shared.
                     return True
 
-            # Test if the data is referenced in the interstate edges, that leave this state.
-            for edge in sdfg.out_edges(state):
-                if data_name in edge.data.free_symbols:
-                    # The data is used in the inter state edges. So it is shared.
-                    return True
+        # Test if the data is referenced in the interstate edges.
+        for edge in sdfg.edges():
+            if data_name in edge.data.free_symbols:
+                # The data is used in the inter state edges. So it is shared.
+                return True
 
         # The `data` is not used anywhere else, thus `data` is not shared.
         return False
