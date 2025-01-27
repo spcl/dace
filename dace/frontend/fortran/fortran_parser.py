@@ -2489,13 +2489,15 @@ class AST_translator:
                         if not found:
                             raise ValueError(f"Temporary symbol not found for {s.name}")        
                 else:
-                    self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=s.name
-                    i=i.subs(s,sym.symbol("sym_"+s.name))
+                    
+                    
                     if sdfg.symbols.get(s.name) is not None:
-                        
-                        new_sdfg.add_symbol("sym_"+s.name, sdfg.symbols[s.name].dtype)
+                        self.temporary_sym_dict[new_sdfg.name][s.name]=s.name
+                        new_sdfg.add_symbol(s.name, sdfg.symbols[s.name].dtype)
                     elif sdfg.arrays.get(s.name) is not None:
                         new_sdfg.add_symbol("sym_"+s.name, sdfg.arrays[s.name].dtype)
+                        self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=s.name
+                        i=i.subs(s,sym.symbol("sym_"+s.name))
                     else:
                         print(f"Symbol {s.name} not found in arrays")     
                         raise ValueError(f"Symbol {s.name} not found in arrays")
