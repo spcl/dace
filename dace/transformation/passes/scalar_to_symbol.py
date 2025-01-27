@@ -343,10 +343,21 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         arrname, tasklet_slice = astutils.subscript_to_ast_slice(node)
         arrname = arrname if arrname in self.arrays else None
         if len(tasklet_slice) < len(memlet_subset):
+            new_tasklet_slice = [(None, None, None)] * len(memlet_subset)
             # Unsqueeze all index dimensions from orig_subset into tasklet_subset
-            for i, (start, end, _) in reversed(list(enumerate(memlet_subset.ndrange()))):
-                if start == end:
-                    tasklet_slice.insert(i, (None, None, None))
+            j = 0
+            for i, (start, end, _) in enumerate(memlet_subset.ndrange()):
+                if start != end:
+                    new_tasklet_slice[i] = tasklet_slice[j]
+                    j += 1
+
+            # Sanity check
+            if j != len(tasklet_slice):
+                raise IndexError(f'Only {j} out of {len(tasklet_slice)} indices were provided in subset expression '
+                                 f'"{astutils.unparse(node)}", found during composing with memlet of subset '
+                                 f'"{memlet_subset}".')
+            tasklet_slice = new_tasklet_slice
+
         tasklet_subset = subsets.Range(astutils.astrange_to_symrange(tasklet_slice, self.arrays, arrname))
         return memlet_subset.compose(tasklet_subset)
 
@@ -576,7 +587,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
 
                         # Descend recursively to remove scalar
                         remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
-                        for ise in dst.sdfg.edges():
+                        for ise in dst.sdfg.all_interstate_edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
                             for aname, aval in ise.data.assignments.items():
@@ -584,6 +595,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                                 vast = astutils.RemoveSubscripts({tmp_symname}).visit(vast)
                                 ise.data.assignments[aname] = astutils.unparse(vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
+                        promo = TaskletPromoterDict({e.dst_conn: tmp_symname})
+                        for reg in dst.sdfg.all_control_flow_regions():
+                            meta_codes = reg.get_meta_codeblocks()
+                            for cd in meta_codes:
+                                for stmt in cd.code:
+                                    promo.visit(stmt)
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
