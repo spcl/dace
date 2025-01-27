@@ -159,7 +159,7 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
         return search_scope_spec(scope)
     elif isinstance(par, Actual_Arg_Spec):
         kw, _ = par.children
-        if kw == node:
+        if kw.string == node.string:
             # We're describing a keyword, which is not really an identifiable object.
             return None
     if isinstance(scope, Stmt_Function_Stmt):
@@ -229,7 +229,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
     elif isinstance(par, Actual_Arg_Spec):
         # Keywords cannot be aliased.
         kw, _ = par.children
-        if kw == node:
+        if kw.string == node.string:
             return None
     return scope_spec + (name,)
 
@@ -887,7 +887,7 @@ def set_children(par: Base, children: Iterable[Base]):
 def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
     # A lot of hacky stuff to make sure that the new nodes are not just the same objects over and over.
     par = node.parent
-    only_child = bool([c for c in par.children if c == node])
+    only_child = bool([c for c in par.children if c is node])
     repls = []
     for c in par.children:
         if c != node:
@@ -903,7 +903,7 @@ def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
         if cntexpr:
             loopvar, looprange = cntexpr
             for i in range(len(looprange)):
-                if looprange[i] == node:
+                if looprange[i] is node:
                     looprange[i] = subst
                     subst.parent = par
     set_children(par, repls)
