@@ -51,20 +51,22 @@ class FNode(object):
 
         clsname = type(self).__name__.removesuffix('_Node')
         objname = self.name if hasattr(self, 'name') else '?'
-        fieldstrs = {f: _fieldstr(getattr(self, f)) for f in self._fields if hasattr(self, f)}
+        objtype = f"/{self.type}" if hasattr(self, 'type') else ''
+        fieldstrs = {f: _fieldstr(getattr(self, f)) for f in self._fields
+                     if hasattr(self, f) and f not in {'name', 'type'}}
         fieldstrs = [f"{k}:{_indent(v)}" for k, v in fieldstrs.items()]
         if fieldstrs:
             fieldstrs = '\n'.join(fieldstrs)
-            return f"{clsname} '{objname}':\n{_indent(fieldstrs)}"
+            return f"{clsname} '{objname}{objtype}':\n{_indent(fieldstrs)}"
         else:
-            return f"{clsname} '{objname}'"
+            return f"{clsname} '{objname}{objtype}'"
 
 
 class Program_Node(FNode):
     def __init__(self,
                  main_program: 'Main_Program_Node',
-                 function_definitions: List,
-                 subroutine_definitions: List,
+                 function_definitions: List['Function_Subprogram_Node'],
+                 subroutine_definitions: List['Subroutine_Subprogram_Node'],
                  modules: List,
                  module_declarations: Dict,
                  placeholders: Optional[List] = None,
@@ -564,6 +566,8 @@ class Double_Literal_Node(Literal):
 
 class Bool_Literal_Node(Literal):
     def __init__(self, value: str, type='LOGICAL', **kwargs):
+        assert value in {'0', '1'},\
+            f"`{value}` is not a valid respresentation: use `0` for falsey values, and `1` for truthy values."
         super().__init__(value, type, **kwargs)
 
 
