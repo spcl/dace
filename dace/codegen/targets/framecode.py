@@ -808,12 +808,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     first_cfg = first_state_instance.parent_graph
                     last_cfg = last_state_instance.parent_graph
                     different_cfgs = first_cfg != last_cfg
-                    if different_cfgs:
-                        start = sdfg.start_block
-                        # if isinstance(start, ControlFlowBlock):
-                        #     start = start.nodes()[0]
-                        self.to_allocate[curscope].append((sdfg, start, nodes.AccessNode(name), True, True, True))
-                    elif any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst, _ in instances):
+                    if (different_cfgs or
+                            any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst, _ in instances)):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
@@ -824,19 +820,21 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.to_allocate[curscope].append(
                             (sdfg, first_state_instance, first_node_instance, True, False, False))
 
-                    if not different_cfgs:
-                        curscope = first_state_instance
-                        self.to_allocate[curscope].append(
-                            (sdfg, first_state_instance, first_node_instance, False, True, False))
-                        curscope = last_state_instance
+                    # if not different_cfgs:
+                    curscope = first_state_instance
+                    # if isinstance(first_state_instance, ControlFlowRegion):
+                    #     first_state_instance = first_state_instance.nodes()[0]
+                    self.to_allocate[curscope].append(
+                        (sdfg, first_state_instance, first_node_instance, False, True, False))
+                    curscope = last_state_instance
                     
-                        # if different_cfgs and isinstance(last_state_instance, ControlFlowRegion):
-                        #     last_state_instance = last_state_instance.nodes()[-1]
-                        #     self.to_allocate[sdfg].append(
-                        #         (sdfg, last_state_instance, last_node_instance, False, False, True))
-                        # else:
-                        self.to_allocate[curscope].append(
-                            (sdfg, last_state_instance, last_node_instance, False, False, True))
+                    # if different_cfgs and isinstance(last_state_instance, ControlFlowRegion):
+                    #     last_state_instance = last_state_instance.nodes()[-1]
+                    #     self.to_allocate[sdfg].append(
+                    #         (sdfg, last_state_instance, last_node_instance, False, False, True))
+                    # else:
+                    self.to_allocate[curscope].append(
+                        (sdfg, last_state_instance, last_node_instance, False, False, True))
                 else:
                     curscope = first_state_instance
                     self.to_allocate[curscope].append(
@@ -1096,12 +1094,16 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
         if idom[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
         start_state = idom[start_state]
+    while isinstance(start_state, ControlFlowRegion):
+        start_state = start_state.parent_graph
 
     end_state = states[-1]
     while any(end_state not in allpostdoms[n] for n in states):
         if ipostdom[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
         end_state = ipostdom[end_state]
+    while isinstance(end_state, ControlFlowRegion):
+        end_state = end_state.parent_graph
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError
