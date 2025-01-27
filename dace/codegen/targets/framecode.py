@@ -578,6 +578,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
+            utils.add_cfg_dominator_states(sdfg)
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
 
@@ -1094,16 +1095,18 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
         if idom[start_state] is start_state:
             raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
         start_state = idom[start_state]
-    while isinstance(start_state, ControlFlowRegion):
-        start_state = start_state.parent_graph
+    # while isinstance(start_state, ControlFlowRegion):
+    #     start_state = start_state.parent_graph
+    assert not isinstance(start_state, ControlFlowRegion)
 
     end_state = states[-1]
     while any(end_state not in allpostdoms[n] for n in states):
         if ipostdom[end_state] is end_state:
             raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
         end_state = ipostdom[end_state]
-    while isinstance(end_state, ControlFlowRegion):
-        end_state = end_state.parent_graph
+    # while isinstance(end_state, ControlFlowRegion):
+    #     end_state = end_state.parent_graph
+    assert not isinstance(end_state, ControlFlowRegion)
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError
