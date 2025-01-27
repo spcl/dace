@@ -1238,8 +1238,8 @@ class AST_translator:
         missing_symbols = [s for s in all_symbols if s not in sym_dict]
         for i in missing_symbols:
             if i in sdfg.arrays:
-                sym_dict[i] = i
-                print("Force adding symbol to nested sdfg: ", i)
+                #sym_dict[i] = i
+                print("This is missing on the nested sdfg bbut not force adding symbol to nested sdfg: ", i)
             else:
                 print("Symbol not found in sdfg arrays: ", i)
         memlet_skip = []
@@ -1505,7 +1505,7 @@ class AST_translator:
             FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
             #new_sdfg.validate()
             # tmp_sdfg=copy.deepcopy(new_sdfg)
-            new_sdfg.simplify()
+            new_sdfg.simplify(verbose=True)
             #new_sdfg.validate()
             #sdfg.validate()
 
@@ -2489,7 +2489,16 @@ class AST_translator:
                         if not found:
                             raise ValueError(f"Temporary symbol not found for {s.name}")        
                 else:
-                    print(f"Symbol {s.name} not found in arrays")     
+                    self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=s.name
+                    i=i.subs(s,sym.symbol("sym_"+s.name))
+                    if sdfg.symbols.get(s.name) is not None:
+                        
+                        new_sdfg.add_symbol("sym_"+s.name, sdfg.symbols[s.name].dtype)
+                    elif sdfg.arrays.get(s.name) is not None:
+                        new_sdfg.add_symbol("sym_"+s.name, sdfg.arrays[s.name].dtype)
+                    else:
+                        print(f"Symbol {s.name} not found in arrays")     
+                        raise ValueError(f"Symbol {s.name} not found in arrays")
                         
             sizes= list(sizes)
             sizes[idx]=i
