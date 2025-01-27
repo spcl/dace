@@ -352,13 +352,13 @@ class FindExclusiveData(ppl.Pass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.AccessNodes & ppl.Modifies.States
 
-    def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFG, Dict[str, Set[SDFGState]]]:
+    def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFG, Set[str]]:
         """
         :return: A dictionary mapping SDFGs to a `set` of strings containing the name
             of the data descriptors that are exclusively used.
         """
         # pschaad: Should we index on cfg or the SDFG itself.
-        exclusive_data: Dict[SDFG, Dict[str, Set[SDFGState]]] = {}
+        exclusive_data: Dict[SDFG, Set[str]] = {}
         for nsdfg in sdfg.all_sdfgs_recursive():
             exclusive_data[nsdfg] = self._find_exclusive_data_in_sdfg(nsdfg)
         return exclusive_data
