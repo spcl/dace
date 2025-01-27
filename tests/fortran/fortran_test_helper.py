@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection
 
 from fparser.two.Fortran2003 import Name
+from typing_extensions import Self
 
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection
 from dace.frontend.fortran.ast_internal_classes import Name_Node
@@ -37,7 +38,7 @@ class SourceCodeBuilder:
     """
     sources: Dict[str, str] = field(default_factory=dict)
 
-    def add_file(self, content: str, name: Optional[str] = None):
+    def add_file(self, content: str, name: Optional[str] = None) -> Self:
         """Add source file contents in the order you'd pass them to `gfortran`."""
         if not name:
             name = SourceCodeBuilder._identify_name(content)
@@ -46,8 +47,8 @@ class SourceCodeBuilder:
         self.sources[key] = content
         return self
 
-    def check_with_gfortran(self):
-        """Assert that it all compiles with `gfortran -Wall -c`."""
+    def check_with_gfortran(self) -> Self:
+        """Assert that it all compiles with `gfortran`."""
         with TemporaryDirectory() as td:
             # Create temporary Fortran source-file structure.
             for fname, content in self.sources.items():
@@ -62,6 +63,27 @@ class SourceCodeBuilder:
                 return self
             except subprocess.CalledProcessError as e:
                 print("Fortran compilation failed!")
+                print(e.stderr.decode())
+                raise e
+
+    def run_with_gfortran(self) -> str:
+        """Assert that it all compiles with `gfortran`."""
+        with TemporaryDirectory() as td:
+            # Create temporary Fortran source-file structure.
+            for fname, content in self.sources.items():
+                with open(path.join(td, fname), 'w') as f:
+                    f.write(content)
+            # Run `gfortran -Wall` to verify that it compiles.
+            # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
+            cmd = ['gfortran', '-Wall', '-fPIC', *self.sources.keys()]
+
+            try:
+                subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
+                result = subprocess.run(path.join(td, 'a.out'), cwd=td, capture_output=True)
+                result.check_returncode()
+                return result.stdout.decode()
+            except subprocess.CalledProcessError as e:
+                print("Fortran running failed!")
                 print(e.stderr.decode())
                 raise e
 
