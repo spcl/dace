@@ -3198,9 +3198,10 @@ def deconstuct_goto_statements(ast: Program) -> Program:
     for node in walk(ast, Base):
         # Move any label on a non-continue statment onto one.
         if not isinstance(node, Continue_Stmt) and node.item and node.item.label is not None:
-            cont_stmt = Continue_Stmt(get_reader(f"{node.item.label} CONTINUE"))
+            cont = Continue_Stmt("CONTINUE")
+            cont.item.label = node.item.label
             node.item.label = None
-            replace_node(node, (cont_stmt, node))
+            replace_node(node, (cont, node))
 
     labels: Dict[str, Base] = {}
     for node in walk(ast, Base):
