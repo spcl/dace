@@ -350,7 +350,23 @@ class Generic_Binding_Node(FNode):
 
 
 class Specification_Part_Node(FNode):
-    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls', 'enums',)
+    def __init__(self,
+                 specifications: List[FNode],
+                 symbols: List[FNode],
+                 interface_blocks: List[FNode],
+                 typedecls: List[FNode],
+                 enums: List[FNode],
+                 uses: List[FNode],
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.specifications = specifications
+        self.symbols = symbols
+        self.interface_blocks = interface_blocks
+        self.typedecls = typedecls
+        self.enums = enums
+        self.uses = uses
+
+    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls', 'enums', 'uses')
 
 
 class Stop_Stmt_Node(FNode):
@@ -362,6 +378,10 @@ class Error_Stmt_Node(FNode):
 
 
 class Execution_Part_Node(FNode):
+    def __init__(self, execution: List[FNode], **kwargs):
+        super().__init__(**kwargs)
+        self.execution = execution
+
     _fields = ('execution',)
 
 
@@ -680,12 +700,14 @@ class Map_Stmt_Node(For_Stmt_Node):
 
 
 class If_Stmt_Node(FNode):
+    def __init__(self, cond:FNode, body:Optional[FNode] = None, body_else:Optional[FNode] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.cond = cond
+        self.body = body
+        self.body_else = body_else
+
     _attributes = ()
-    _fields = (
-        'cond',
-        'body',
-        'body_else',
-    )
+    _fields = ('cond', 'body', 'body_else')
 
 
 class Defer_Shape_Node(FNode):

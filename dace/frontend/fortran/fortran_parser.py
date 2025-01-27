@@ -2751,7 +2751,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     #program = ast_transforms.StructConstructorToFunctionCall(
     #    ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     #program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
-    program = ast_transforms.IfConditionExtractor().visit(program)
+    program = ast_transforms.IfConditionExtractor(program).visit(program)
     program = ast_transforms.CallExtractor(program).visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
