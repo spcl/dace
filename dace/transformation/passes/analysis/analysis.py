@@ -335,6 +335,71 @@ class FindAccessStates(ppl.Pass):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
+class FindExclusiveData(ppl.Pass):
+    """
+    For each SDFG find all data descriptors that are referenced in exactly one location.
+
+    This means that for every data descriptor there exists exactly one AccessNode that
+    refers to that data. In addition to this the following rules applies as well:
+    - If the data is read by at least one interstate edge it will not be classified as exclusive.
+    - If there is no reference to a data descriptor, i.e. it exists inside `SDFG.arrays`
+        but there is no AccessNode, then it is _not_ classified as exclusive.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.States
+
+    def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFG, Set[str]]:
+        """
+        :return: A dictionary mapping SDFGs to a `set` of strings containing the name
+            of the data descriptors that are exclusively used.
+        """
+        # pschaad: Should we index on cfg or the SDFG itself.
+        exclusive_data: Dict[SDFG, Set[str]] = {}
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            exclusive_data[nsdfg] = self._find_exclusive_data_in_sdfg(nsdfg)
+        return exclusive_data
+
+    def _find_exclusive_data_in_sdfg(self, sdfg: SDFG) -> Set[str]:
+        """Scans an SDFG and computes the exclusive data for that SDFG.
+
+        This function only scans `sdfg` and does not go into nested ones.
+
+        :return: The set of data descriptors that have exclusive access.
+        """
+        # Data descriptor that are classified, up to now, as exclusive.
+        #  We add and data that we do not know to it the first time we seen it
+        #  and might remove it if we found another reference.
+        exclusive_data: Set[str] = set()
+        previously_seen: Set[str] = set()
+
+        for state in sdfg.states():
+            for dnode in state.data_nodes():
+                data_name: str = dnode.data
+                if data_name in exclusive_data:
+                    exclusive_data.discard(data_name)  # Classified too early; Undo
+                elif data_name not in previously_seen:
+                    exclusive_data.add(data_name)  # Never seen; Assume it is exclusive.
+                previously_seen.add(data_name)
+
+        # Compute the set of all data that is accessed, i.e. read, by the edges.
+        interstate_read_symbols: Set[str] = set()
+        for edge in sdfg.edges():
+            interstate_read_symbols.update(edge.data.free_symbols)
+
+        # Enforces the first rule, "if data is accessed by an interstate edge it will
+        #  not be classified as exclusive".
+        return exclusive_data.difference(interstate_read_symbols)
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
 class FindAccessNodes(ppl.Pass):
     """
     For each data descriptor, creates a dictionary mapping states to all read and write access nodes with the given
