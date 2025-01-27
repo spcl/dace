@@ -65,8 +65,8 @@ class FNode(object):
 class Program_Node(FNode):
     def __init__(self,
                  main_program: 'Main_Program_Node',
-                 function_definitions: List,
-                 subroutine_definitions: List,
+                 function_definitions: List['Function_Subprogram_Node'],
+                 subroutine_definitions: List['Subroutine_Subprogram_Node'],
                  modules: List,
                  module_declarations: Dict,
                  placeholders: Optional[List] = None,

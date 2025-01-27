@@ -1559,32 +1559,24 @@ class OptionalArgsTransformer(NodeTransformer):
         return node
 
 
-def optionalArgsExpander(node=ast_internal_classes.Program_Node):
+def optionalArgsExpander(program: ast_internal_classes.Program_Node):
     """
     Adds to each optional arg a logical value specifying its status.
     Eliminates function statements from the AST
-    :param node: The AST to be transformed
+    :param program: The AST to be transformed
     :return: The transformed AST
     :note Should only be used on the program node
     """
-
     modified_functions = {}
+    for fn in mywalk(program, ast_internal_classes.Subroutine_Subprogram_Node):
+        if optionalArgsHandleFunction(fn):
+            modified_functions[fn.name.name] = fn
 
-    for func in node.subroutine_definitions:
-        if optionalArgsHandleFunction(func):
-            modified_functions[func.name.name] = func
-    for mod in node.modules:
-        for func in mod.subroutine_definitions:
-            if optionalArgsHandleFunction(func):
-                modified_functions[func.name.name] = func
-
-    node = OptionalArgsTransformer(modified_functions).visit(node)
-
-    return node
+    return OptionalArgsTransformer(modified_functions).visit(program)
 
 
 class AllocatableReplacerTransformer(NodeTransformer):
-    def __init__(self, program=ast_internal_classes.Program_Node):
+    def __init__(self, program: ast_internal_classes.Program_Node):
         ParentScopeAssigner().visit(program)
 
         # TODO: This assumes globally unique function names. We can make it more general by keeping track of the
