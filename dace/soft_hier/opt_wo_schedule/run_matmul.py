@@ -3,6 +3,10 @@ import typing
 import os
 import numpy as np
 import argparse
+from dace.transformation.dataflow import DoubleBuffering
+
+hbm_node_addr_space = 0x04000000
+hbm_node_addr_base  = 0xc0000000
 
 def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
     """
@@ -42,7 +46,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
 
     # 64-byte alignment
     alignment = 64
-    current_address = 0xc0000000  # Default starting address for auto-addressing
+    current_address = hbm_node_addr_base  # Default starting address for auto-addressing
 
     # Step 1: Create "array.c"
     array_c_content = ['#include <stdint.h>']
@@ -81,7 +85,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
 
     # Step 2: Create "link.ld"
     link_ld_content = ["SECTIONS {"]
-    current_address = 0xc0000000  # Reset for linker script auto-addressing
+    current_address = hbm_node_addr_base  # Reset for linker script auto-addressing
 
     for idx, (array, start_addr) in enumerate(zip(np_arrays, start_addresses)):
         section_name = section_names[idx]
@@ -111,6 +115,106 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
     os.remove("array.o")
 
 
+def make_preload_elf_hbm_interleaved(output_file_path, np_arrays, split_schemes, placement_schemes, hardware_block_sizes, start_addresses=None, args_only=True):
+    """
+    Split np arrays into tiles and blocks and then use make_preload_elf to generate an ELF file preloading numpy arrays.
+
+    """
+    # Split the numpy arrays
+    total_channels = 8
+    current_start_address = 64
+    start_addr_in_each_channel = []
+    args = []  
+    for i in range(total_channels):
+        start_addr_in_each_channel.append(current_start_address)
+
+
+    
+    if args_only:
+        for array, split_scheme, placement_scheme, hardware_block_size in zip(np_arrays, split_schemes, placement_schemes, hardware_block_sizes):
+            start_channel = placement_scheme[0]
+            end_channel = placement_scheme[1]
+            stride = placement_scheme[2]
+            num_channels = (end_channel - start_channel + 1) // stride
+            array_size = array.nbytes
+            array_size_per_channel = array_size // num_channels
+            array_start_addr_in_channel = start_addr_in_each_channel[start_channel]
+            args.append(array_start_addr_in_channel)
+            for i in range(num_channels):
+                channel_idx = start_channel + i * stride
+                if start_addr_in_each_channel[channel_idx] != array_start_addr_in_channel:
+                    raise ValueError(f"invalid placement scheme: {placement_scheme}")
+                start_addr_in_each_channel[channel_idx] += array_size_per_channel
+
+    for arg in args:
+        print(f"arg: {hex(arg)}")
+
+      
+    split_arrays = []
+    split_arrays.append(args)
+    split_arrays_start_addresses = []
+    split_arrays_start_addresses.append(hbm_node_addr_base) # for store args
+
+    if not args_only:
+        current_start_address = 64
+        for array, split_scheme, placement_scheme, hardware_block_size in zip(np_arrays, split_schemes, placement_schemes, hardware_block_sizes):
+            args.append(current_start_address)
+            # print(f"hardware_block_size: {hardware_block_size[0]}x{hardware_block_size[1]}")
+
+            if not args_only:
+                block_height = hardware_block_size[0]
+                block_length = hardware_block_size[1]
+                block_size = block_height * block_length * np.dtype(array.dtype).itemsize
+                # print(f"block_size: {block_size}")
+                channel_start = placement_scheme[0]
+                # print(f"channel_start: {channel_start}")
+                channel_end = placement_scheme[1]
+                # print(f"channel_end: {channel_end}")
+                channel_stride = placement_scheme[2]
+                # print(f"channel_stride: {channel_stride}")
+                num_channels = (channel_end - channel_start + 1) // channel_stride
+                array_shape = array.shape
+                # print(f"array_shape: {array_shape}")
+                tile_height = array_shape[0] // split_scheme[0]
+                # print(f"tile_height: {tile_height}")
+                tile_length = array_shape[1] // split_scheme[1]
+                # print(f"tile_length: {tile_length}")
+                tile_size = tile_length * tile_height * np.dtype(array.dtype).itemsize
+                # print(f"tile_size: {tile_size}")
+                for i in range(split_scheme[0]):
+                    for j in range(split_scheme[1]):
+                        tile_idx = i * split_scheme[1] + j
+                        # print(f"tile_idx: {tile_idx}")
+                        channel_offset = tile_idx % num_channels
+                        # print(f"channel_offset: {channel_offset}")
+                        channel_idx = channel_start + channel_offset * channel_stride
+                        # print(f"channel_idx: {channel_idx}")
+                        tile = array[i*tile_height:(i+1)*tile_height, j*tile_length:(j+1)*tile_length]
+                        for bi in range(0, tile_height, block_height):
+                            for bj in range(0, tile_length, block_length):
+                                # print(f"bi: {bi}, bj: {bj}")
+                                block = tile[bi:bi+block_height, bj:bj+block_length] 
+                                split_arrays.append(block)
+                                bi_index = bi // block_height
+                                bj_index = bj // block_length
+                                block_address = hbm_node_addr_base + current_start_address + channel_idx * hbm_node_addr_space + (tile_idx // num_channels) * tile_size + (bi_index * tile_length // block_length + bj_index) * block_size
+                                # print(f"block_address: {hex(block_address)}")
+                                split_arrays_start_addresses.append(block_address)
+            current_start_address += array.nbytes // num_channels
+
+
+    args.append(K)
+    args.append(M)
+    args.append(N)
+    # args to np arrays
+    args = np.array(args, dtype=np.uint32)  
+
+    # replace the args in split_arrays with new args
+    split_arrays[0] = args
+
+    make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses)
+
+    return args
 
 M = dace.symbol("M")
 N = dace.symbol("N")
@@ -123,10 +227,13 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      device_schedule: dace.dtypes.ScheduleType,
                      thread_group_schedule: dace.dtypes.ScheduleType,
                      thread_group_dims: typing.Tuple,
+                     hbm_split_scheme: typing.List[typing.Tuple[int, int]],
+                     hbm_placement_scheme: typing.List[typing.Tuple[int, int]],
                      input_float,
                      output_float,
                      coarsening_factor,
-                     mmad_tasklet_str: str):
+                     mmad_tasklet_str: str,
+                     is_hbm_interleaved: bool = False):
     sdfg = dace.SDFG("GEMM")
     tM, tN, tK = hardware_matmul_mnk
     tM *= coarsening_factor
@@ -139,8 +246,15 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
 
     arrs = dict()
     for arr_name, shape, ftype in [("A", (M, K), input_float), ("B", (K, N), input_float), ("C", (M, N), output_float)]:
-        arrn, arr = sdfg.add_array(name=arr_name, shape=shape, dtype=ftype, storage=global_storage, transient=False)
-        arrs[arrn] = arr
+        if arr_name == "A":
+            arrn, arr = sdfg.add_array(name=arr_name, shape=shape, dtype=ftype, storage=global_storage, transient=False, is_hbm_interleaved=is_hbm_interleaved, hbm_split_scheme=hbm_split_scheme[0], hbm_placement_scheme=hbm_placement_scheme[0])
+            arrs[arrn] = arr
+        if arr_name == "B":
+            arrn, arr = sdfg.add_array(name=arr_name, shape=shape, dtype=ftype, storage=global_storage, transient=False, is_hbm_interleaved=is_hbm_interleaved, hbm_split_scheme=hbm_split_scheme[1], hbm_placement_scheme=hbm_placement_scheme[1])
+            arrs[arrn] = arr
+        if arr_name == "C":
+            arrn, arr = sdfg.add_array(name=arr_name, shape=shape, dtype=ftype, storage=global_storage, transient=False, is_hbm_interleaved=is_hbm_interleaved, hbm_split_scheme=hbm_split_scheme[2], hbm_placement_scheme=hbm_placement_scheme[2])
+            arrs[arrn] = arr
     arrn, arr = sdfg.add_array(name="accumulator", shape=(coarsening_factor*coarsening_factor, tM//coarsening_factor, tN//coarsening_factor), dtype=ftype, storage=local_storage, transient=True)
     arrs[arrn] = arr
 
@@ -298,24 +412,38 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
     state.add_edge(accumulator_an3, None, thread_coarsened_map_exit, "IN_C", dace.memlet.Memlet(f"C[{access_str}]"))
     thread_coarsened_map_exit.add_in_connector("IN_C")
 
-    # DoubleBuffering.apply_to(sdfg, map_entry=block_tiled_map_entry, transient=local_access_nodes["local_A"])
+    DoubleBuffering.apply_to(sdfg, map_entry=block_tiled_map_entry, transient=local_access_nodes["local_A"])
     return sdfg
-
 
 if __name__ == "__main__":
     # create input arguments
     parser = argparse.ArgumentParser(description="Run matrix multiplication with specified dimensions.")
-    parser.add_argument("--K", type=int, default=1024, help="Dimension K")
-    parser.add_argument("--M", type=int, default=1024, help="Dimension M")
-    parser.add_argument("--N", type=int, default=1024, help="Dimension N")
-    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(128, 128, 128), help="Hardware matmul dimensions (M, N, K)")
+    parser.add_argument("--K", type=int, default=512, help="Dimension K")
+    parser.add_argument("--M", type=int, default=512, help="Dimension M")
+    parser.add_argument("--N", type=int, default=512, help="Dimension N")
+    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(64, 64, 64), help="Hardware matmul dimensions (M, N, K)")
     parser.add_argument("--thread_group_dims", type=int, nargs=2, default=(4, 4), help="Thread group dimensions (gM, gN)")
+    parser.add_argument("--hbm_split_scheme_A", type=int, nargs=2, default=(8, 8), help="HBM split scheme A")
+    parser.add_argument("--hbm_split_scheme_B", type=int, nargs=2, default=(8, 8), help="HBM split scheme B")
+    parser.add_argument("--hbm_split_scheme_C", type=int, nargs=2, default=(8, 8), help="HBM split scheme C")
+    parser.add_argument("--hbm_placement_scheme_A", type=int, nargs=3, default=(0, 1, 1), help="HBM placement scheme A")
+    parser.add_argument("--hbm_placement_scheme_B", type=int, nargs=3, default=(0, 1, 1), help="HBM placement scheme B")
+    parser.add_argument("--hbm_placement_scheme_C", type=int, nargs=3, default=(0, 1, 1), help="HBM placement scheme C")
 
     args = parser.parse_args()
 
     hardware_matmul_mnk = tuple(args.hardware_matmul_mnk)
+    tm = hardware_matmul_mnk[0]
+    tn = hardware_matmul_mnk[1]
+    tk = hardware_matmul_mnk[2]
     thread_group_dims = tuple(args.thread_group_dims)
-
+    split_scheme_A = tuple(args.hbm_split_scheme_A)
+    split_scheme_B = tuple(args.hbm_split_scheme_B)
+    split_scheme_C = tuple(args.hbm_split_scheme_C)
+    placement_scheme_A = tuple(args.hbm_placement_scheme_A)
+    placement_scheme_B = tuple(args.hbm_placement_scheme_B)
+    placement_scheme_C = tuple(args.hbm_placement_scheme_C)
+    
 
     sdfg = _my_gen_matmul_sdfg(hardware_matmul_mnk=hardware_matmul_mnk,
                             global_storage=dace.dtypes.StorageType.SoftHier_HBM,
@@ -323,48 +451,27 @@ if __name__ == "__main__":
                             device_schedule=dace.dtypes.ScheduleType.SoftHier_Device,
                             thread_group_schedule=dace.dtypes.ScheduleType.SoftHier_Cluster,
                             thread_group_dims=thread_group_dims,
+                            hbm_split_scheme=[split_scheme_A, split_scheme_B, split_scheme_C],
+                            hbm_placement_scheme=[placement_scheme_A, placement_scheme_B, placement_scheme_C],
+                            is_hbm_interleaved=True,
                             input_float=dace.float16,
                             output_float=dace.float16,
                             coarsening_factor=1,
                             mmad_tasklet_str="flex_redmule_trigger(_in_local_a, _in_local_b, _in_accumulator, REDMULE_NONE_16);")
-    sdfg.save("my_gemm.sdfgz")
+    # sdfg.save("my_gemm.sdfgz")
     sdfg.validate()
-    start_address = 0x00000000
-    
+
     K = args.K
     M = args.M
     N = args.N
-    
 
     A_host = np.ones((M, K), dtype=np.float16)
     B_host = np.ones((K, N), dtype=np.float16)
-    # random add some zeros to A and B
-    # for i in range(M):
-    #     for j in range(K):
-    #         if np.random.rand() < 0.5:
-    #             A_host[i, j] += 1
-    # for i in range(K):
-    #     for j in range(N):
-    #         if np.random.rand() < 0.5:
-    #             B_host[i, j] = 1
-
-    # for i in range(M):
-    #     for j in range(K):
-    #         if np.random.rand() < 0.1:
-    #             A_host[i, j] += 4
-    # for i in range(K):
-    #     for j in range(N):
-    #         if np.random.rand() < 0.1:
-    #             B_host[i, j] += 4
     C_host = np.zeros((M, N), dtype=np.float16)
 
-    A_address = 64 + start_address
-    B_address = 64 + A_host.nbytes + start_address
-    C_address = 64 + A_host.nbytes + B_host.nbytes + start_address
-    # create a uint32 np array to store the addresses
-    args = np.array([A_address, B_address, C_address, K, M, N], dtype=np.uint32)
-    # print args in hex
 
     # make_preload_elf("/usr/scratch/badile111/dace4softhier/gvsoc/output.elf", [args, A_host, B_host, C_host])
-    make_preload_elf("/usr/scratch/badile111/dace4softhier/gvsoc/output.elf", [args])
+    args = make_preload_elf_hbm_interleaved("./output.elf", [A_host, B_host, C_host], [split_scheme_A, split_scheme_B, split_scheme_C], [placement_scheme_A, placement_scheme_B, placement_scheme_C], [(tm, tk), (tk, tn), (tm, tn)], start_addresses=[])
+
     sdfg(A=A_host, B=B_host, C=C_host, M=M, N=N, K=K)
+    # sdfg.compile()

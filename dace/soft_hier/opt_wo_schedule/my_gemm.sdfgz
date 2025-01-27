@@ -18,7 +18,7 @@
           "is_hbm_interleaved": true,
           "hbm_split_scheme": [
             "4",
-            "2"
+            "8"
           ],
           "hbm_placement_scheme": [
             "0",
@@ -49,11 +49,11 @@
           "is_hbm_interleaved": true,
           "hbm_split_scheme": [
             "2",
-            "4"
+            "2"
           ],
           "hbm_placement_scheme": [
-            "4",
-            "7",
+            "0",
+            "3",
             "1"
           ],
           "dtype": "float16",
@@ -79,8 +79,8 @@
           ],
           "is_hbm_interleaved": true,
           "hbm_split_scheme": [
-            "4",
-            "4"
+            "2",
+            "2"
           ],
           "hbm_placement_scheme": [
             "0",
@@ -100,11 +100,11 @@
         "type": "Array",
         "attributes": {
           "strides": [
-            "4096",
-            "32",
+            "1024",
+            "16",
             "1"
           ],
-          "total_size": "4096",
+          "total_size": "1024",
           "offset": [
             "0",
             "0",
@@ -114,8 +114,8 @@
           "dtype": "float16",
           "shape": [
             "1",
-            "128",
-            "32"
+            "64",
+            "16"
           ],
           "transient": true,
           "storage": "SoftHier_TCDM",
@@ -166,7 +166,7 @@
               "is_hbm_interleaved": true,
               "hbm_split_scheme": [
                 "4",
-                "2"
+                "8"
               ],
               "hbm_placement_scheme": [
                 "0",
@@ -197,11 +197,11 @@
               "is_hbm_interleaved": true,
               "hbm_split_scheme": [
                 "2",
-                "4"
+                "2"
               ],
               "hbm_placement_scheme": [
-                "4",
-                "7",
+                "0",
+                "3",
                 "1"
               ],
               "dtype": "float16",
@@ -227,8 +227,8 @@
               ],
               "is_hbm_interleaved": true,
               "hbm_split_scheme": [
-                "4",
-                "4"
+                "2",
+                "2"
               ],
               "hbm_placement_scheme": [
                 "0",
@@ -248,11 +248,11 @@
             "type": "Array",
             "attributes": {
               "strides": [
-                "4096",
-                "32",
+                "1024",
+                "16",
                 "1"
               ],
-              "total_size": "4096",
+              "total_size": "1024",
               "offset": [
                 "0",
                 "0",
@@ -262,8 +262,8 @@
               "dtype": "float16",
               "shape": [
                 "1",
-                "128",
-                "32"
+                "64",
+                "16"
               ],
               "transient": true,
               "storage": "SoftHier_TCDM",
@@ -271,29 +271,6 @@
             }
           },
           "local_A": {
-            "type": "Array",
-            "attributes": {
-              "strides": [
-                "64",
-                "1"
-              ],
-              "total_size": "8192",
-              "offset": [
-                "0",
-                "0"
-              ],
-              "optional": false,
-              "dtype": "float16",
-              "shape": [
-                "128",
-                "64"
-              ],
-              "transient": true,
-              "storage": "SoftHier_TCDM",
-              "debuginfo": null
-            }
-          },
-          "local_B": {
             "type": "Array",
             "attributes": {
               "strides": [
@@ -310,6 +287,29 @@
               "shape": [
                 "64",
                 "32"
+              ],
+              "transient": true,
+              "storage": "SoftHier_TCDM",
+              "debuginfo": null
+            }
+          },
+          "local_B": {
+            "type": "Array",
+            "attributes": {
+              "strides": [
+                "16",
+                "1"
+              ],
+              "total_size": "512",
+              "offset": [
+                "0",
+                "0"
+              ],
+              "optional": false,
+              "dtype": "float16",
+              "shape": [
+                "32",
+                "16"
               ],
               "transient": true,
               "storage": "SoftHier_TCDM",
@@ -348,7 +348,7 @@
           "end_column": 0,
           "filename": null
         },
-        "guid": "93853362-060b-4974-b3b2-f984fd1796b0"
+        "guid": "2ef85ba9-825b-413c-b6ca-9ccb2c668ef3"
       },
       "nodes": [
         {
@@ -387,7 +387,7 @@
           "nodes": [
             {
               "type": "MapEntry",
-              "label": "gemm_entry[i=0:M:512, j=0:N:128]",
+              "label": "gemm_entry[i=0:M:256, j=0:N:64]",
               "attributes": {
                 "label": "gemm_entry",
                 "params": [
@@ -400,13 +400,13 @@
                     {
                       "start": "0",
                       "end": "M - 1",
-                      "step": "512",
+                      "step": "256",
                       "tile": "1"
                     },
                     {
                       "start": "0",
                       "end": "N - 1",
-                      "step": "128",
+                      "step": "64",
                       "tile": "1"
                     }
                   ]
@@ -418,7 +418,7 @@
                   "end_line": 48,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "in_connectors": {
                   "IN_A": null,
@@ -428,7 +428,7 @@
                   "OUT_A": null,
                   "OUT_B": null
                 },
-                "guid": "7bf526d9-7bfd-497f-ab0f-3ee42c0b3d05"
+                "guid": "8b67494e-9477-4ddf-87ff-4a67eb5bac00"
               },
               "id": 0,
               "scope_entry": null,
@@ -436,7 +436,7 @@
             },
             {
               "type": "MapExit",
-              "label": "gemm_entry[i=0:M:512, j=0:N:128]",
+              "label": "gemm_entry[i=0:M:256, j=0:N:64]",
               "attributes": {
                 "in_connectors": {
                   "IN_C": null
@@ -444,7 +444,7 @@
                 "out_connectors": {
                   "OUT_C": null
                 },
-                "guid": "b9e46929-5b37-4cb7-bd0f-d28b56adce1a"
+                "guid": "f4e6ed4d-86c0-4df0-8785-cd210b42ecb1"
               },
               "id": 1,
               "scope_entry": "0",
@@ -460,10 +460,10 @@
                   "end_line": 58,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "data": "A",
-                "guid": "b7afce82-33f4-4819-88a3-605c4f39e071"
+                "guid": "34aac07f-1363-4b72-8e37-8e23412d931a"
               },
               "id": 2,
               "scope_entry": null,
@@ -479,10 +479,10 @@
                   "end_line": 58,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "data": "B",
-                "guid": "096680a6-12d3-42a8-b6e5-1c04b6747819"
+                "guid": "8c52f0e3-f0ed-4173-b67c-f6e7205bd61b"
               },
               "id": 3,
               "scope_entry": null,
@@ -498,10 +498,10 @@
                   "end_line": 65,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "data": "C",
-                "guid": "deafe325-0308-444c-8776-5dc315ae5d9e"
+                "guid": "5432c445-5eed-44cb-bb83-4c73ca5b461e"
               },
               "id": 4,
               "scope_entry": null,
@@ -540,7 +540,7 @@
                   "end_line": 68,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "in_connectors": {
                   "IN_A": null,
@@ -550,7 +550,7 @@
                   "OUT_A": null,
                   "OUT_B": null
                 },
-                "guid": "02c6df5d-bcb9-45f8-9d05-155908fea18c"
+                "guid": "215647a4-ef26-4a2f-9676-c82f7ae721a0"
               },
               "id": 5,
               "scope_entry": "0",
@@ -566,7 +566,7 @@
                 "out_connectors": {
                   "OUT_C": null
                 },
-                "guid": "e82906a6-b107-445b-821b-8216f889476b"
+                "guid": "21ee8e16-3d97-42be-b3be-b1691b150b05"
               },
               "id": 6,
               "scope_entry": "5",
@@ -574,7 +574,7 @@
             },
             {
               "type": "MapEntry",
-              "label": "thread_coarsened[ci=0:128:128, cj=0:32:32]",
+              "label": "thread_coarsened[ci=0:64:64, cj=0:16:16]",
               "attributes": {
                 "label": "thread_coarsened",
                 "params": [
@@ -586,14 +586,14 @@
                   "ranges": [
                     {
                       "start": "0",
-                      "end": "127",
-                      "step": "128",
+                      "end": "63",
+                      "step": "64",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
-                      "step": "32",
+                      "end": "15",
+                      "step": "16",
                       "tile": "1"
                     }
                   ]
@@ -605,7 +605,7 @@
                   "end_line": 92,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "in_connectors": {
                   "IN_A": null,
@@ -615,7 +615,7 @@
                   "OUT_A": null,
                   "OUT_B": null
                 },
-                "guid": "230c21ae-888a-4623-8b0a-ed3b91594423"
+                "guid": "cdfcc23f-897b-43c3-87ce-b98361095a3c"
               },
               "id": 7,
               "scope_entry": "5",
@@ -623,7 +623,7 @@
             },
             {
               "type": "MapExit",
-              "label": "thread_coarsened[ci=0:128:128, cj=0:32:32]",
+              "label": "thread_coarsened[ci=0:64:64, cj=0:16:16]",
               "attributes": {
                 "in_connectors": {
                   "IN_C": null
@@ -631,7 +631,7 @@
                 "out_connectors": {
                   "OUT_C": null
                 },
-                "guid": "67d398d9-7f87-4e90-b02b-06e904de343f"
+                "guid": "018c4116-b97a-424b-9e4b-7319fc9462e7"
               },
               "id": 8,
               "scope_entry": "7",
@@ -639,7 +639,7 @@
             },
             {
               "type": "MapEntry",
-              "label": "block_tiled[bK=0:K:64]",
+              "label": "block_tiled[bK=0:K:32]",
               "attributes": {
                 "label": "block_tiled",
                 "params": [
@@ -651,7 +651,7 @@
                     {
                       "start": "0",
                       "end": "K - 1",
-                      "step": "64",
+                      "step": "32",
                       "tile": "1"
                     }
                   ]
@@ -663,7 +663,7 @@
                   "end_line": 116,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "in_connectors": {
                   "IN_A": null,
@@ -675,7 +675,7 @@
                   "OUT_B": null,
                   "OUT_accumulator": null
                 },
-                "guid": "04cdade7-c005-46bb-9ef5-700c51922725"
+                "guid": "5d9595f6-2681-4b59-b5e5-b2527b40d5a2"
               },
               "id": 9,
               "scope_entry": "7",
@@ -683,7 +683,7 @@
             },
             {
               "type": "MapExit",
-              "label": "block_tiled[bK=0:K:64]",
+              "label": "block_tiled[bK=0:K:32]",
               "attributes": {
                 "in_connectors": {
                   "IN_accumulator": null
@@ -691,7 +691,7 @@
                 "out_connectors": {
                   "OUT_accumulator": null
                 },
-                "guid": "9d3e5c26-10e7-4a49-8bd6-1d66eb361807"
+                "guid": "020f7495-0a91-4018-a92a-d9660f628232"
               },
               "id": 10,
               "scope_entry": "9",
@@ -708,10 +708,10 @@
                   "end_line": 122,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "data": "accumulator",
-                "guid": "3920bac2-1cdb-4fac-8191-a127eb928b5c"
+                "guid": "2a2685b7-f2d6-408e-adf4-4fba295938b6"
               },
               "id": 11,
               "scope_entry": "7",
@@ -727,10 +727,10 @@
                   "end_line": 148,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "data": "local_A",
-                "guid": "61ddf4ba-1dbc-4e78-9e9a-1da4eb5e4b12"
+                "guid": "5fd5bb0e-87e8-46b1-984c-0490d5eae1dc"
               },
               "id": 12,
               "scope_entry": "9",
@@ -746,10 +746,10 @@
                   "end_line": 148,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "data": "local_B",
-                "guid": "a0d5b12e-07e2-4516-943b-626409fe0a87"
+                "guid": "8ca0266c-83e9-441b-901a-80ff20d2f344"
               },
               "id": 13,
               "scope_entry": "9",
@@ -769,7 +769,7 @@
                   "end_line": 159,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "label": "mmad_redmule",
                 "in_connectors": {
@@ -780,7 +780,7 @@
                 "out_connectors": {
                   "_out_accumulator": null
                 },
-                "guid": "08256f14-8b38-4fdb-8648-125e923c25b6"
+                "guid": "1f81c8b8-9b95-4ad6-a4de-6d7b55a41a90"
               },
               "id": 14,
               "scope_entry": "9",
@@ -796,10 +796,10 @@
                   "end_line": 188,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/tmp/ipykernel_691452/471187787.py"
+                  "filename": "/tmp/ipykernel_2943113/986594268.py"
                 },
                 "data": "accumulator",
-                "guid": "9eddaf73-12ef-4398-9e69-0cd63187889e"
+                "guid": "fffdd574-748e-4cc7-91a9-c0a79f875a01"
               },
               "id": 15,
               "scope_entry": "7",
@@ -815,7 +815,7 @@
                   "attributes": {
                     "volume": "1",
                     "debuginfo": null,
-                    "guid": "80089429-4d4d-4d2d-a1e5-7768c6b49576",
+                    "guid": "b8a31eb6-2ef3-469e-bba6-b6f3c3e564bc",
                     "src_subset": null,
                     "dst_subset": null,
                     "is_data_src": false,
@@ -854,7 +854,7 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "5b229338-4133-4dbd-9a12-b1072ceef12b",
+                    "guid": "e164fde6-9e41-49d3-bfc5-ae2ecfa374e0",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -909,7 +909,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "b1ba4be3-9022-405f-b0d1-cc1e835dd066",
+                    "guid": "5bf9d832-abfb-4499-be4c-4ae02739cec8",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -944,19 +944,19 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "4096",
+                    "volume": "1024",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*ci + 128*gi + i",
-                          "end": "128*ci + 128*gi + i + 127",
+                          "start": "64*ci + 64*gi + i",
+                          "end": "64*ci + 64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
-                          "start": "32*cj + 32*gj + j",
-                          "end": "32*cj + 32*gj + j + 31",
+                          "start": "16*cj + 16*gj + j",
+                          "end": "16*cj + 16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -964,27 +964,27 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "d2b89e86-37d5-4b60-95c2-4bf63c5ce27b",
+                    "guid": "551086db-e381-47fa-8da1-2e14360f80e0",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*ci + 128*gi + i",
-                          "end": "128*ci + 128*gi + i + 127",
+                          "start": "64*ci + 64*gi + i",
+                          "end": "64*ci + 64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
-                          "start": "32*cj + 32*gj + j",
-                          "end": "32*cj + 32*gj + j + 31",
+                          "start": "16*cj + 16*gj + j",
+                          "end": "16*cj + 16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
                       ]
                     },
                     "is_data_src": false,
-                    "num_accesses": "4096"
+                    "num_accesses": "1024"
                   }
                 }
               },
@@ -999,7 +999,7 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "4096",
+                    "volume": "1024",
                     "subset": {
                       "type": "Range",
                       "ranges": [
@@ -1011,13 +1011,13 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1025,7 +1025,7 @@
                     },
                     "data": "accumulator",
                     "debuginfo": null,
-                    "guid": "6e82bda7-256c-4148-a10c-776e9d46d1ec",
+                    "guid": "867159a1-f568-49a6-85e0-ad639837b3fa",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1037,13 +1037,13 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1051,7 +1051,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "4096"
+                    "num_accesses": "1024"
                   }
                 }
               },
@@ -1072,13 +1072,13 @@
                       "ranges": [
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "63",
+                          "end": "31",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1086,19 +1086,19 @@
                     },
                     "data": "local_A",
                     "debuginfo": null,
-                    "guid": "efe3a10e-a94f-4e83-8e1b-42782f5701c3",
+                    "guid": "fd8b3817-4f71-4d7c-bac1-e9110bd72d9d",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "63",
+                          "end": "31",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1127,13 +1127,13 @@
                       "ranges": [
                         {
                           "start": "0",
-                          "end": "63",
+                          "end": "31",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1141,19 +1141,19 @@
                     },
                     "data": "local_B",
                     "debuginfo": null,
-                    "guid": "66c16152-3542-4709-9932-f153cc17374c",
+                    "guid": "2261260a-1ebd-47f2-8c8e-990e068134c3",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "0",
-                          "end": "63",
+                          "end": "31",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1176,19 +1176,19 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "8192",
+                    "volume": "2048",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*ci + 128*gi + i",
-                          "end": "128*ci + 128*gi + i + 127",
+                          "start": "64*ci + 64*gi + i",
+                          "end": "64*ci + 64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "bK",
-                          "end": "bK + 63",
+                          "end": "bK + 31",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1196,19 +1196,19 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "d2347f42-5592-4629-b733-054132c915b9",
+                    "guid": "9271fcdc-4210-40bd-a077-7c4c041fd97a",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*ci + 128*gi + i",
-                          "end": "128*ci + 128*gi + i + 127",
+                          "start": "64*ci + 64*gi + i",
+                          "end": "64*ci + 64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "bK",
-                          "end": "bK + 63",
+                          "end": "bK + 31",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1216,7 +1216,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "8192"
+                    "num_accesses": "2048"
                   }
                 }
               },
@@ -1231,13 +1231,13 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "512*K",
+                    "volume": "256*K",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "i",
-                          "end": "i + 511",
+                          "end": "i + 255",
                           "step": "1",
                           "tile": "1"
                         },
@@ -1251,13 +1251,13 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "e03d92dd-8327-4561-a9e2-3a2778fa08e0",
+                    "guid": "02cff7ee-9699-4212-abdd-d728cab62742",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "i",
-                          "end": "i + 511",
+                          "end": "i + 255",
                           "step": "1",
                           "tile": "1"
                         },
@@ -1271,7 +1271,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "512*K"
+                    "num_accesses": "256*K"
                   }
                 }
               },
@@ -1286,13 +1286,13 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "128*K",
+                    "volume": "64*K",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*gi + i",
-                          "end": "128*gi + i + 127",
+                          "start": "64*gi + i",
+                          "end": "64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
@@ -1306,13 +1306,13 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "2e83447a-f411-44ba-a683-084ed1e663d2",
+                    "guid": "f6cfb2a4-8cb2-4138-a938-a3e032d3747b",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*gi + i",
-                          "end": "128*gi + i + 127",
+                          "start": "64*gi + i",
+                          "end": "64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
@@ -1326,7 +1326,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "128*K"
+                    "num_accesses": "64*K"
                   }
                 }
               },
@@ -1341,13 +1341,13 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "128*K",
+                    "volume": "64*K",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*ci + 128*gi + i",
-                          "end": "128*ci + 128*gi + i + 127",
+                          "start": "64*ci + 64*gi + i",
+                          "end": "64*ci + 64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
@@ -1361,13 +1361,13 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "c749f101-fe01-44ab-99c1-142259531595",
+                    "guid": "d5e6efa1-4a84-43c4-ad46-346c39d52002",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*ci + 128*gi + i",
-                          "end": "128*ci + 128*gi + i + 127",
+                          "start": "64*ci + 64*gi + i",
+                          "end": "64*ci + 64*gi + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
@@ -1381,7 +1381,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "128*K"
+                    "num_accesses": "64*K"
                   }
                 }
               },
@@ -1396,19 +1396,19 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "2048",
+                    "volume": "512",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "bK",
-                          "end": "bK + 63",
+                          "end": "bK + 31",
                           "step": "1",
                           "tile": "1"
                         },
                         {
-                          "start": "32*cj + 32*gj + j",
-                          "end": "32*cj + 32*gj + j + 31",
+                          "start": "16*cj + 16*gj + j",
+                          "end": "16*cj + 16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1416,19 +1416,19 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "bcbf1105-f4db-4e30-a4db-e2fc6b81d4c7",
+                    "guid": "ed116ff4-907b-48f7-84b6-c89e7eea86c9",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "bK",
-                          "end": "bK + 63",
+                          "end": "bK + 31",
                           "step": "1",
                           "tile": "1"
                         },
                         {
-                          "start": "32*cj + 32*gj + j",
-                          "end": "32*cj + 32*gj + j + 31",
+                          "start": "16*cj + 16*gj + j",
+                          "end": "16*cj + 16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1436,7 +1436,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "2048"
+                    "num_accesses": "512"
                   }
                 }
               },
@@ -1451,7 +1451,7 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "128*K",
+                    "volume": "64*K",
                     "subset": {
                       "type": "Range",
                       "ranges": [
@@ -1463,7 +1463,7 @@
                         },
                         {
                           "start": "j",
-                          "end": "j + 127",
+                          "end": "j + 63",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1471,7 +1471,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "914f3ef2-015f-406a-ba32-6820d91519ff",
+                    "guid": "067bbc36-5397-4530-a01b-2be8198f8a4d",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1483,7 +1483,7 @@
                         },
                         {
                           "start": "j",
-                          "end": "j + 127",
+                          "end": "j + 63",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1491,7 +1491,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "128*K"
+                    "num_accesses": "64*K"
                   }
                 }
               },
@@ -1506,7 +1506,7 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "32*K",
+                    "volume": "16*K",
                     "subset": {
                       "type": "Range",
                       "ranges": [
@@ -1517,8 +1517,8 @@
                           "tile": "1"
                         },
                         {
-                          "start": "32*gj + j",
-                          "end": "32*gj + j + 31",
+                          "start": "16*gj + j",
+                          "end": "16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1526,7 +1526,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "e5cad079-4015-4424-b8f8-3f115e4f365e",
+                    "guid": "65839d97-716d-407b-bcb7-a744d24ab059",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1537,8 +1537,8 @@
                           "tile": "1"
                         },
                         {
-                          "start": "32*gj + j",
-                          "end": "32*gj + j + 31",
+                          "start": "16*gj + j",
+                          "end": "16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1546,7 +1546,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "32*K"
+                    "num_accesses": "16*K"
                   }
                 }
               },
@@ -1561,7 +1561,7 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "32*K",
+                    "volume": "16*K",
                     "subset": {
                       "type": "Range",
                       "ranges": [
@@ -1572,8 +1572,8 @@
                           "tile": "1"
                         },
                         {
-                          "start": "32*cj + 32*gj + j",
-                          "end": "32*cj + 32*gj + j + 31",
+                          "start": "16*cj + 16*gj + j",
+                          "end": "16*cj + 16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1581,7 +1581,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "2fa28c68-1797-411a-95b8-b033a931525d",
+                    "guid": "bd4f2064-ef3a-4298-b431-704dd32546c1",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1592,8 +1592,8 @@
                           "tile": "1"
                         },
                         {
-                          "start": "32*cj + 32*gj + j",
-                          "end": "32*cj + 32*gj + j + 31",
+                          "start": "16*cj + 16*gj + j",
+                          "end": "16*cj + 16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1601,7 +1601,7 @@
                     },
                     "dst_subset": null,
                     "is_data_src": true,
-                    "num_accesses": "32*K"
+                    "num_accesses": "16*K"
                   }
                 }
               },
@@ -1636,7 +1636,7 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "cda07151-4e6f-42dc-bc79-fa17767eb20f",
+                    "guid": "8fa8c9e7-ba7e-4e3f-891a-177bc49e9d29",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1671,19 +1671,19 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "65536",
+                    "volume": "16384",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "i",
-                          "end": "i + 511",
+                          "end": "i + 255",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "j",
-                          "end": "j + 127",
+                          "end": "j + 63",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1691,27 +1691,27 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "ad14ea8a-881b-418b-b031-db3136cd8870",
+                    "guid": "2496e24f-6872-4168-b9f7-1b09d2edbd33",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
                       "ranges": [
                         {
                           "start": "i",
-                          "end": "i + 511",
+                          "end": "i + 255",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "j",
-                          "end": "j + 127",
+                          "end": "j + 63",
                           "step": "1",
                           "tile": "1"
                         }
                       ]
                     },
                     "is_data_src": false,
-                    "num_accesses": "65536"
+                    "num_accesses": "16384"
                   }
                 }
               },
@@ -1726,19 +1726,19 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "4096",
+                    "volume": "1024",
                     "subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*gj + i",
-                          "end": "128*gj + i + 127",
+                          "start": "64*gj + i",
+                          "end": "64*gj + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
-                          "start": "32*gj + j",
-                          "end": "32*gj + j + 31",
+                          "start": "16*gj + j",
+                          "end": "16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1746,27 +1746,27 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "c7b44865-5fde-42e2-8bc2-d413069b0063",
+                    "guid": "1dae4e3b-d5a1-4794-a60f-e1cfa9165264",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
                       "ranges": [
                         {
-                          "start": "128*gj + i",
-                          "end": "128*gj + i + 127",
+                          "start": "64*gj + i",
+                          "end": "64*gj + i + 63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
-                          "start": "32*gj + j",
-                          "end": "32*gj + j + 31",
+                          "start": "16*gj + j",
+                          "end": "16*gj + j + 15",
                           "step": "1",
                           "tile": "1"
                         }
                       ]
                     },
                     "is_data_src": false,
-                    "num_accesses": "4096"
+                    "num_accesses": "1024"
                   }
                 }
               },
@@ -1781,7 +1781,7 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "4096",
+                    "volume": "1024",
                     "subset": {
                       "type": "Range",
                       "ranges": [
@@ -1793,13 +1793,13 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1807,7 +1807,7 @@
                     },
                     "data": "accumulator",
                     "debuginfo": null,
-                    "guid": "d3c81779-e84b-40bb-849f-5ad6fa7bfbc8",
+                    "guid": "0214b53c-2a4a-43e8-948e-68124a153309",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1820,20 +1820,20 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
                       ]
                     },
                     "is_data_src": false,
-                    "num_accesses": "4096"
+                    "num_accesses": "1024"
                   }
                 }
               },
@@ -1860,13 +1860,13 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1874,7 +1874,7 @@
                     },
                     "data": "accumulator",
                     "debuginfo": null,
-                    "guid": "62539a42-e58d-4e19-8748-e69678da7083",
+                    "guid": "ae8fc6f7-07be-4f2c-89f6-70dbfd05d248",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1886,13 +1886,13 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1915,7 +1915,7 @@
                 "data": {
                   "type": "Memlet",
                   "attributes": {
-                    "volume": "4096",
+                    "volume": "1024",
                     "subset": {
                       "type": "Range",
                       "ranges": [
@@ -1927,13 +1927,13 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
@@ -1941,7 +1941,7 @@
                     },
                     "data": "accumulator",
                     "debuginfo": null,
-                    "guid": "c5d7fef7-491f-49d4-b057-a32564a51e6a",
+                    "guid": "0ce10be4-d57e-449e-ba16-26003f6c9f31",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1954,20 +1954,20 @@
                         },
                         {
                           "start": "0",
-                          "end": "127",
+                          "end": "63",
                           "step": "1",
                           "tile": "1"
                         },
                         {
                           "start": "0",
-                          "end": "31",
+                          "end": "15",
                           "step": "1",
                           "tile": "1"
                         }
                       ]
                     },
                     "is_data_src": false,
-                    "num_accesses": "4096"
+                    "num_accesses": "1024"
                   }
                 }
               },
@@ -1978,7 +1978,7 @@
             }
           ],
           "attributes": {
-            "guid": "a19bf7b0-26f7-46db-a09e-aec8e5bb38fd"
+            "guid": "b2e567fb-d863-4842-b2f7-0d6d2ccd72be"
           }
         }
       ],
@@ -2001,10 +2001,10 @@
       }
     ],
     "using_explicit_control_flow": true,
-    "guid": "93853362-060b-4974-b3b2-f984fd1796b0",
+    "guid": "2ef85ba9-825b-413c-b6ca-9ccb2c668ef3",
     "executions": "1",
     "dynamic_executions": false,
-    "hash": "90a80edd8f73126d8b8fb48784a7ea82558bb6c042206991a7606afb3a9b7a2d"
+    "hash": "0caf3dbf275e5587c3e9a9cbea391f4adf1366499f24dad66ed0df072fded39d"
   },
   "nodes": [
     {
@@ -2037,7 +2037,7 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "gemm_entry[i=0:M:512, j=0:N:128]",
+          "label": "gemm_entry[i=0:M:256, j=0:N:64]",
           "attributes": {
             "label": "gemm_entry",
             "params": [
@@ -2050,13 +2050,13 @@
                 {
                   "start": "0",
                   "end": "M - 1",
-                  "step": "512",
+                  "step": "256",
                   "tile": "1"
                 },
                 {
                   "start": "0",
                   "end": "N - 1",
-                  "step": "128",
+                  "step": "64",
                   "tile": "1"
                 }
               ]
@@ -2068,7 +2068,7 @@
               "end_line": 48,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -2078,7 +2078,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "7bf526d9-7bfd-497f-ab0f-3ee42c0b3d05"
+            "guid": "8b67494e-9477-4ddf-87ff-4a67eb5bac00"
           },
           "id": 0,
           "scope_entry": null,
@@ -2086,7 +2086,7 @@
         },
         {
           "type": "MapExit",
-          "label": "gemm_entry[i=0:M:512, j=0:N:128]",
+          "label": "gemm_entry[i=0:M:256, j=0:N:64]",
           "attributes": {
             "in_connectors": {
               "IN_C": null
@@ -2094,7 +2094,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "b9e46929-5b37-4cb7-bd0f-d28b56adce1a"
+            "guid": "f4e6ed4d-86c0-4df0-8785-cd210b42ecb1"
           },
           "id": 1,
           "scope_entry": "0",
@@ -2110,10 +2110,10 @@
               "end_line": 58,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "data": "A",
-            "guid": "1b25fbe6-4fe2-4c30-b445-d08f249961f7"
+            "guid": "f4bd73c0-b451-406e-97a5-bb5d27bbef47"
           },
           "id": 2,
           "scope_entry": null,
@@ -2129,10 +2129,10 @@
               "end_line": 58,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "data": "B",
-            "guid": "214ccbd9-b502-41c7-9a8f-c156d7ffad4a"
+            "guid": "d5006b61-5781-44b3-bf81-93486adebaf5"
           },
           "id": 3,
           "scope_entry": null,
@@ -2148,10 +2148,10 @@
               "end_line": 65,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "data": "C",
-            "guid": "d2114737-1647-481b-95e6-feb3f53afa6f"
+            "guid": "90020721-3b46-4339-8bce-8bc8ab335a63"
           },
           "id": 4,
           "scope_entry": null,
@@ -2190,7 +2190,7 @@
               "end_line": 68,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -2200,7 +2200,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "02c6df5d-bcb9-45f8-9d05-155908fea18c"
+            "guid": "215647a4-ef26-4a2f-9676-c82f7ae721a0"
           },
           "id": 5,
           "scope_entry": "0",
@@ -2216,7 +2216,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "e82906a6-b107-445b-821b-8216f889476b"
+            "guid": "21ee8e16-3d97-42be-b3be-b1691b150b05"
           },
           "id": 6,
           "scope_entry": "5",
@@ -2224,7 +2224,7 @@
         },
         {
           "type": "MapEntry",
-          "label": "thread_coarsened[ci=0:128:128, cj=0:32:32]",
+          "label": "thread_coarsened[ci=0:64:64, cj=0:16:16]",
           "attributes": {
             "label": "thread_coarsened",
             "params": [
@@ -2236,14 +2236,14 @@
               "ranges": [
                 {
                   "start": "0",
-                  "end": "127",
-                  "step": "128",
+                  "end": "63",
+                  "step": "64",
                   "tile": "1"
                 },
                 {
                   "start": "0",
-                  "end": "31",
-                  "step": "32",
+                  "end": "15",
+                  "step": "16",
                   "tile": "1"
                 }
               ]
@@ -2255,7 +2255,7 @@
               "end_line": 92,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -2265,7 +2265,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "230c21ae-888a-4623-8b0a-ed3b91594423"
+            "guid": "cdfcc23f-897b-43c3-87ce-b98361095a3c"
           },
           "id": 7,
           "scope_entry": "5",
@@ -2273,7 +2273,7 @@
         },
         {
           "type": "MapExit",
-          "label": "thread_coarsened[ci=0:128:128, cj=0:32:32]",
+          "label": "thread_coarsened[ci=0:64:64, cj=0:16:16]",
           "attributes": {
             "in_connectors": {
               "IN_C": null
@@ -2281,7 +2281,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "67d398d9-7f87-4e90-b02b-06e904de343f"
+            "guid": "018c4116-b97a-424b-9e4b-7319fc9462e7"
           },
           "id": 8,
           "scope_entry": "7",
@@ -2298,10 +2298,10 @@
               "end_line": 122,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "data": "accumulator",
-            "guid": "c42ca6a1-db3c-4c81-a78b-c7808e0a8a71"
+            "guid": "ed0b560a-6040-4a95-836e-4674275d2919"
           },
           "id": 9,
           "scope_entry": "7",
@@ -2317,10 +2317,10 @@
               "end_line": 188,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_691452/471187787.py"
+              "filename": "/tmp/ipykernel_2943113/986594268.py"
             },
             "data": "accumulator",
-            "guid": "0ab30a20-6525-40b5-b085-573cc5dcd019"
+            "guid": "47b62c62-1c5c-43f2-abaf-d2cab81c88d5"
           },
           "id": 10,
           "scope_entry": "7",
@@ -2335,15 +2335,15 @@
               "attributes": {
                 "name": "nested_main",
                 "_arrays": {
-                  "local_A": {
+                  "local_B": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
-                        "8192",
-                        "64",
+                        "512",
+                        "16",
                         "1"
                       ],
-                      "total_size": "16384",
+                      "total_size": "1024",
                       "offset": [
                         "0",
                         "0",
@@ -2353,15 +2353,15 @@
                       "dtype": "float16",
                       "shape": [
                         "2",
-                        "128",
-                        "64"
+                        "32",
+                        "16"
                       ],
                       "transient": true,
                       "storage": "SoftHier_TCDM",
                       "debuginfo": null
                     }
                   },
-                  "local_B": {
+                  "local_A": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -2391,11 +2391,11 @@
                     "type": "Array",
                     "attributes": {
                       "strides": [
-                        "4096",
-                        "32",
+                        "1024",
+                        "16",
                         "1"
                       ],
-                      "total_size": "4096",
+                      "total_size": "1024",
                       "offset": [
                         "0",
                         "0",
@@ -2405,8 +2405,8 @@
                       "dtype": "float16",
                       "shape": [
                         "1",
-                        "128",
-                        "32"
+                        "64",
+                        "16"
                       ],
                       "storage": "SoftHier_TCDM",
                       "debuginfo": null
@@ -2427,7 +2427,7 @@
                       "is_hbm_interleaved": true,
                       "hbm_split_scheme": [
                         "4",
-                        "2"
+                        "8"
                       ],
                       "hbm_placement_scheme": [
                         "0",
@@ -2436,7 +2436,7 @@
                       ],
                       "dtype": "float16",
                       "shape": [
-                        "128",
+                        "64",
                         "K"
                       ],
                       "storage": "SoftHier_HBM",
@@ -2458,17 +2458,17 @@
                       "is_hbm_interleaved": true,
                       "hbm_split_scheme": [
                         "2",
-                        "4"
+                        "2"
                       ],
                       "hbm_placement_scheme": [
-                        "4",
-                        "7",
+                        "0",
+                        "3",
                         "1"
                       ],
                       "dtype": "float16",
                       "shape": [
                         "K",
-                        "32"
+                        "16"
                       ],
                       "storage": "SoftHier_HBM",
                       "debuginfo": null
@@ -2498,7 +2498,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "503c990a-f556-417a-b869-2d6bc6fedf59",
+                "guid": "dcb56407-816c-4e4f-b78c-124940478131",
                 "executions": "1",
                 "dynamic_executions": false
               },
@@ -2507,7 +2507,7 @@
                   "type": "LoopRegion",
                   "attributes": {
                     "update_statement": {
-                      "string_data": "bK = (bK + 64)",
+                      "string_data": "bK = (bK + 32)",
                       "language": "Python"
                     },
                     "init_statement": {
@@ -2515,11 +2515,11 @@
                       "language": "Python"
                     },
                     "loop_condition": {
-                      "string_data": "(bK < (K - 64))",
+                      "string_data": "(bK < (K - 32))",
                       "language": "Python"
                     },
                     "loop_variable": "bK",
-                    "guid": "031b631d-49bc-415d-b255-451a33ba0d08",
+                    "guid": "3a91b845-5447-4bb3-b829-324cf22198ca",
                     "executions": "1",
                     "dynamic_executions": false
                   },
@@ -2553,10 +2553,10 @@
                               "end_line": 148,
                               "start_column": 0,
                               "end_column": 0,
-                              "filename": "/tmp/ipykernel_691452/471187787.py"
+                              "filename": "/tmp/ipykernel_2943113/986594268.py"
                             },
                             "data": "local_A",
-                            "guid": "5ca7c441-b724-4cb0-8814-b098a9488674"
+                            "guid": "22f9bc5c-8289-435f-a4d7-462dceaa250b"
                           },
                           "id": 0,
                           "scope_entry": null,
@@ -2572,10 +2572,10 @@
                               "end_line": 148,
                               "start_column": 0,
                               "end_column": 0,
-                              "filename": "/tmp/ipykernel_691452/471187787.py"
+                              "filename": "/tmp/ipykernel_2943113/986594268.py"
                             },
                             "data": "local_B",
-                            "guid": "9f1fe655-e80b-4c92-9147-41ff8c764ec4"
+                            "guid": "d784fe0d-a490-4daf-bce1-f7c589661d07"
                           },
                           "id": 1,
                           "scope_entry": null,
@@ -2595,7 +2595,7 @@
                               "end_line": 159,
                               "start_column": 0,
                               "end_column": 0,
-                              "filename": "/tmp/ipykernel_691452/471187787.py"
+                              "filename": "/tmp/ipykernel_2943113/986594268.py"
                             },
                             "label": "mmad_redmule",
                             "in_connectors": {
@@ -2606,7 +2606,7 @@
                             "out_connectors": {
                               "_out_accumulator": null
                             },
-                            "guid": "08256f14-8b38-4fdb-8648-125e923c25b6"
+                            "guid": "1f81c8b8-9b95-4ad6-a4de-6d7b55a41a90"
                           },
                           "id": 2,
                           "scope_entry": null,
@@ -2625,7 +2625,7 @@
                               "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                             },
                             "data": "accumulator",
-                            "guid": "665ac704-1e84-4fff-a6f4-7fa5fc34d38d"
+                            "guid": "08d0f734-cdc4-4587-b326-52c410ff1530"
                           },
                           "id": 3,
                           "scope_entry": null,
@@ -2644,7 +2644,7 @@
                               "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                             },
                             "data": "accumulator",
-                            "guid": "d17d60e9-c2e5-4b30-b730-79d3e5613132"
+                            "guid": "9fccdf95-0ad6-44f5-8851-b40878c9bfda"
                           },
                           "id": 4,
                           "scope_entry": null,
@@ -2663,7 +2663,7 @@
                               "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                             },
                             "data": "A",
-                            "guid": "56cee6de-6cd4-41ae-bfb0-820fbc3ad463"
+                            "guid": "057cab3a-874e-4829-809f-a744b323fb0f"
                           },
                           "id": 5,
                           "scope_entry": null,
@@ -2682,7 +2682,7 @@
                               "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                             },
                             "data": "local_A",
-                            "guid": "e4a18c34-80da-4ca3-9e59-61b7fe486669"
+                            "guid": "71cdf2cc-6016-4935-9d88-f32d31886bd5"
                           },
                           "id": 6,
                           "scope_entry": null,
@@ -2701,7 +2701,7 @@
                               "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                             },
                             "data": "B",
-                            "guid": "e08b21ba-5910-4848-9335-07dad9dc92d9"
+                            "guid": "bf8c6384-9998-4679-b50d-e468c77c2ac2"
                           },
                           "id": 7,
                           "scope_entry": null,
@@ -2720,7 +2720,7 @@
                               "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                             },
                             "data": "local_B",
-                            "guid": "dd8847bb-87a9-4e1a-b70f-638871a78abd"
+                            "guid": "a3be365c-bbaa-4cd4-a19f-a7f53270af4f"
                           },
                           "id": 8,
                           "scope_entry": null,
@@ -2734,19 +2734,19 @@
                             "data": {
                               "type": "Memlet",
                               "attributes": {
-                                "volume": "8192",
+                                "volume": "2048",
                                 "subset": {
                                   "type": "Range",
                                   "ranges": [
                                     {
                                       "start": "0",
-                                      "end": "127",
+                                      "end": "63",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
-                                      "start": "bK + 64",
-                                      "end": "bK + 127",
+                                      "start": "bK + 32",
+                                      "end": "bK + 63",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -2756,20 +2756,20 @@
                                   "type": "Range",
                                   "ranges": [
                                     {
-                                      "start": "Mod(bK/64 + 1, 2)",
-                                      "end": "Mod(bK/64 + 1, 2)",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "127",
+                                      "start": "Mod(bK/32 + 1, 2)",
+                                      "end": "Mod(bK/32 + 1, 2)",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
                                       "end": "63",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "31",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -2777,19 +2777,19 @@
                                 },
                                 "data": "A",
                                 "debuginfo": null,
-                                "guid": "ab988377-f06d-41b1-9b36-6ba476d62bc0",
+                                "guid": "d67eee79-8834-4c03-84b7-20eeeb0b0fa1",
                                 "src_subset": {
                                   "type": "Range",
                                   "ranges": [
                                     {
                                       "start": "0",
-                                      "end": "127",
+                                      "end": "63",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
-                                      "start": "bK + 64",
-                                      "end": "bK + 127",
+                                      "start": "bK + 32",
+                                      "end": "bK + 63",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -2799,108 +2799,8 @@
                                   "type": "Range",
                                   "ranges": [
                                     {
-                                      "start": "Mod(bK/64 + 1, 2)",
-                                      "end": "Mod(bK/64 + 1, 2)",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "127",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "63",
-                                      "step": "1",
-                                      "tile": "1"
-                                    }
-                                  ]
-                                },
-                                "is_data_src": true,
-                                "num_accesses": "8192"
-                              }
-                            }
-                          },
-                          "src": "5",
-                          "dst": "6",
-                          "dst_connector": null,
-                          "src_connector": null
-                        },
-                        {
-                          "type": "MultiConnectorEdge",
-                          "attributes": {
-                            "data": {
-                              "type": "Memlet",
-                              "attributes": {
-                                "volume": "2048",
-                                "subset": {
-                                  "type": "Range",
-                                  "ranges": [
-                                    {
-                                      "start": "bK + 64",
-                                      "end": "bK + 127",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "31",
-                                      "step": "1",
-                                      "tile": "1"
-                                    }
-                                  ]
-                                },
-                                "other_subset": {
-                                  "type": "Range",
-                                  "ranges": [
-                                    {
-                                      "start": "Mod(bK/64 + 1, 2)",
-                                      "end": "Mod(bK/64 + 1, 2)",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "63",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "31",
-                                      "step": "1",
-                                      "tile": "1"
-                                    }
-                                  ]
-                                },
-                                "data": "B",
-                                "debuginfo": null,
-                                "guid": "e6b5b676-af6c-4780-94bf-346558fff922",
-                                "src_subset": {
-                                  "type": "Range",
-                                  "ranges": [
-                                    {
-                                      "start": "bK + 64",
-                                      "end": "bK + 127",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "31",
-                                      "step": "1",
-                                      "tile": "1"
-                                    }
-                                  ]
-                                },
-                                "dst_subset": {
-                                  "type": "Range",
-                                  "ranges": [
-                                    {
-                                      "start": "Mod(bK/64 + 1, 2)",
-                                      "end": "Mod(bK/64 + 1, 2)",
+                                      "start": "Mod(bK/32 + 1, 2)",
+                                      "end": "Mod(bK/32 + 1, 2)",
                                       "step": "1",
                                       "tile": "1"
                                     },
@@ -2920,6 +2820,106 @@
                                 },
                                 "is_data_src": true,
                                 "num_accesses": "2048"
+                              }
+                            }
+                          },
+                          "src": "5",
+                          "dst": "6",
+                          "dst_connector": null,
+                          "src_connector": null
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "512",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "bK + 32",
+                                      "end": "bK + 63",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "15",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "other_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "Mod(bK/32 + 1, 2)",
+                                      "end": "Mod(bK/32 + 1, 2)",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "31",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "15",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "B",
+                                "debuginfo": null,
+                                "guid": "34c50f93-862c-4251-a76f-8de069fc182f",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "bK + 32",
+                                      "end": "bK + 63",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "15",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "Mod(bK/32 + 1, 2)",
+                                      "end": "Mod(bK/32 + 1, 2)",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "31",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "15",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": true,
+                                "num_accesses": "512"
                               }
                             }
                           },
@@ -2946,13 +2946,13 @@
                                     },
                                     {
                                       "start": "0",
-                                      "end": "127",
+                                      "end": "63",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
-                                      "end": "31",
+                                      "end": "15",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -2960,7 +2960,7 @@
                                 },
                                 "data": "accumulator",
                                 "debuginfo": null,
-                                "guid": "501d515a-4548-4c8c-8205-29da4f3bf25a",
+                                "guid": "90c046de-183f-4368-bcf9-3c418f1cb1b9",
                                 "src_subset": {
                                   "type": "Range",
                                   "ranges": [
@@ -2972,13 +2972,13 @@
                                     },
                                     {
                                       "start": "0",
-                                      "end": "127",
+                                      "end": "63",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
-                                      "end": "31",
+                                      "end": "15",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -3006,20 +3006,20 @@
                                   "type": "Range",
                                   "ranges": [
                                     {
-                                      "start": "Mod(bK/64, 2)",
-                                      "end": "Mod(bK/64, 2)",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "127",
+                                      "start": "Mod(bK/32, 2)",
+                                      "end": "Mod(bK/32, 2)",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
                                       "end": "63",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "31",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -3027,25 +3027,25 @@
                                 },
                                 "data": "local_A",
                                 "debuginfo": null,
-                                "guid": "55cc245f-ed9c-44e9-b5a9-9c2f5b517474",
+                                "guid": "86ee8fa3-24f9-4941-bb70-c7bfe9a10aad",
                                 "src_subset": {
                                   "type": "Range",
                                   "ranges": [
                                     {
-                                      "start": "Mod(bK/64, 2)",
-                                      "end": "Mod(bK/64, 2)",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "127",
+                                      "start": "Mod(bK/32, 2)",
+                                      "end": "Mod(bK/32, 2)",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
                                       "end": "63",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "31",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -3073,20 +3073,20 @@
                                   "type": "Range",
                                   "ranges": [
                                     {
-                                      "start": "Mod(bK/64, 2)",
-                                      "end": "Mod(bK/64, 2)",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "63",
+                                      "start": "Mod(bK/32, 2)",
+                                      "end": "Mod(bK/32, 2)",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
                                       "end": "31",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "15",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -3094,25 +3094,25 @@
                                 },
                                 "data": "local_B",
                                 "debuginfo": null,
-                                "guid": "b0246b01-d213-48cf-84fe-de3d3fc46d81",
+                                "guid": "5d4397a8-540f-482f-952d-3b1a1322d4c3",
                                 "src_subset": {
                                   "type": "Range",
                                   "ranges": [
                                     {
-                                      "start": "Mod(bK/64, 2)",
-                                      "end": "Mod(bK/64, 2)",
-                                      "step": "1",
-                                      "tile": "1"
-                                    },
-                                    {
-                                      "start": "0",
-                                      "end": "63",
+                                      "start": "Mod(bK/32, 2)",
+                                      "end": "Mod(bK/32, 2)",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
                                       "end": "31",
+                                      "step": "1",
+                                      "tile": "1"
+                                    },
+                                    {
+                                      "start": "0",
+                                      "end": "15",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -3135,7 +3135,7 @@
                             "data": {
                               "type": "Memlet",
                               "attributes": {
-                                "volume": "4096",
+                                "volume": "1024",
                                 "subset": {
                                   "type": "Range",
                                   "ranges": [
@@ -3147,13 +3147,13 @@
                                     },
                                     {
                                       "start": "0",
-                                      "end": "127",
+                                      "end": "63",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
-                                      "end": "31",
+                                      "end": "15",
                                       "step": "1",
                                       "tile": "1"
                                     }
@@ -3161,7 +3161,7 @@
                                 },
                                 "data": "accumulator",
                                 "debuginfo": null,
-                                "guid": "e5ab2665-6b70-4ed0-a9ff-2f63943b595b",
+                                "guid": "44b51b60-3888-452e-98bd-916b6301404d",
                                 "src_subset": null,
                                 "dst_subset": {
                                   "type": "Range",
@@ -3174,20 +3174,20 @@
                                     },
                                     {
                                       "start": "0",
-                                      "end": "127",
+                                      "end": "63",
                                       "step": "1",
                                       "tile": "1"
                                     },
                                     {
                                       "start": "0",
-                                      "end": "31",
+                                      "end": "15",
                                       "step": "1",
                                       "tile": "1"
                                     }
                                   ]
                                 },
                                 "is_data_src": false,
-                                "num_accesses": "4096"
+                                "num_accesses": "1024"
                               }
                             }
                           },
@@ -3198,21 +3198,21 @@
                         }
                       ],
                       "attributes": {
-                        "guid": "65e2b7b6-5d50-4417-be08-864fd0b49235",
+                        "guid": "020448b6-70ff-4148-b512-41c2fa44e5bf",
                         "ranges": {
                           "bK": {
                             "type": "Range",
                             "ranges": [
                               {
                                 "start": "0",
-                                "end": "K - 65",
-                                "step": "64",
+                                "end": "K - 33",
+                                "step": "32",
                                 "tile": "1"
                               }
                             ]
                           }
                         },
-                        "executions": "ceiling(K/64) - 1",
+                        "executions": "ceiling(K/32) - 1",
                         "dynamic_executions": false
                       }
                     }
@@ -3251,7 +3251,7 @@
                           "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "A",
-                        "guid": "6e1e2789-e6f3-42f5-83df-fdfc3c53f6a9"
+                        "guid": "ad80005c-286b-4959-8f6a-580063fc1160"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -3270,7 +3270,7 @@
                           "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                         },
                         "data": "local_A",
-                        "guid": "8ed4dffa-cdfa-4531-b468-2453215c9c23"
+                        "guid": "c95b1967-f862-4883-9153-8cab36e4ad48"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -3289,7 +3289,7 @@
                           "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "B",
-                        "guid": "88d651d2-ac25-4091-992d-2f1f980cc3d4"
+                        "guid": "f3242640-1265-4ad2-9993-93e1d7787498"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -3308,7 +3308,7 @@
                           "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                         },
                         "data": "local_B",
-                        "guid": "c14c1ed2-9052-4a5a-8caf-6ba8148cf8d8"
+                        "guid": "ae865e70-ce1c-436c-b187-5229c1cafa7c"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -3316,106 +3316,6 @@
                     }
                   ],
                   "edges": [
-                    {
-                      "type": "MultiConnectorEdge",
-                      "attributes": {
-                        "data": {
-                          "type": "Memlet",
-                          "attributes": {
-                            "volume": "8192",
-                            "subset": {
-                              "type": "Range",
-                              "ranges": [
-                                {
-                                  "start": "0",
-                                  "end": "127",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "63",
-                                  "step": "1",
-                                  "tile": "1"
-                                }
-                              ]
-                            },
-                            "other_subset": {
-                              "type": "Range",
-                              "ranges": [
-                                {
-                                  "start": "0",
-                                  "end": "0",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "127",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "63",
-                                  "step": "1",
-                                  "tile": "1"
-                                }
-                              ]
-                            },
-                            "data": "A",
-                            "debuginfo": null,
-                            "guid": "58cc74ba-a036-4ef6-a0cf-c64b2079b01c",
-                            "src_subset": {
-                              "type": "Range",
-                              "ranges": [
-                                {
-                                  "start": "0",
-                                  "end": "127",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "63",
-                                  "step": "1",
-                                  "tile": "1"
-                                }
-                              ]
-                            },
-                            "dst_subset": {
-                              "type": "Range",
-                              "ranges": [
-                                {
-                                  "start": "0",
-                                  "end": "0",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "127",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "63",
-                                  "step": "1",
-                                  "tile": "1"
-                                }
-                              ]
-                            },
-                            "is_data_src": true,
-                            "num_accesses": "8192"
-                          }
-                        }
-                      },
-                      "src": "0",
-                      "dst": "1",
-                      "dst_connector": null,
-                      "src_connector": null
-                    },
                     {
                       "type": "MultiConnectorEdge",
                       "attributes": {
@@ -3463,9 +3363,9 @@
                                 }
                               ]
                             },
-                            "data": "B",
+                            "data": "A",
                             "debuginfo": null,
-                            "guid": "69252866-3a27-4fd6-8a8b-1376bbb99a9e",
+                            "guid": "0e5c19de-8d7a-4480-89e4-fd7196c0eddf",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3511,6 +3411,106 @@
                           }
                         }
                       },
+                      "src": "0",
+                      "dst": "1",
+                      "dst_connector": null,
+                      "src_connector": null
+                    },
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "512",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "31",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "15",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "other_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "31",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "15",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "B",
+                            "debuginfo": null,
+                            "guid": "0a2548c4-0178-4613-8485-467358b96f04",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "31",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "15",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "31",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "15",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": true,
+                            "num_accesses": "512"
+                          }
+                        }
+                      },
                       "src": "2",
                       "dst": "3",
                       "dst_connector": null,
@@ -3518,7 +3518,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "4fa22484-2699-474e-892c-9fddf2c32282",
+                    "guid": "092f263e-e811-4158-92a6-3335759af4e4",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -3548,10 +3548,10 @@
                           "end_line": 148,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/tmp/ipykernel_691452/471187787.py"
+                          "filename": "/tmp/ipykernel_2943113/986594268.py"
                         },
                         "data": "local_A",
-                        "guid": "4e435b23-f408-46ed-ae23-707836727606"
+                        "guid": "66dea7d9-7c84-4ae8-92bb-1cb025801ae7"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -3567,10 +3567,10 @@
                           "end_line": 148,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/tmp/ipykernel_691452/471187787.py"
+                          "filename": "/tmp/ipykernel_2943113/986594268.py"
                         },
                         "data": "local_B",
-                        "guid": "1d926476-55f5-4b6a-80d2-e5dc232cecdf"
+                        "guid": "70e1f8b4-adab-4f05-84ee-fa9ac136305e"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -3590,7 +3590,7 @@
                           "end_line": 159,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/tmp/ipykernel_691452/471187787.py"
+                          "filename": "/tmp/ipykernel_2943113/986594268.py"
                         },
                         "label": "mmad_redmule",
                         "in_connectors": {
@@ -3601,7 +3601,7 @@
                         "out_connectors": {
                           "_out_accumulator": null
                         },
-                        "guid": "08256f14-8b38-4fdb-8648-125e923c25b6"
+                        "guid": "1f81c8b8-9b95-4ad6-a4de-6d7b55a41a90"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -3620,7 +3620,7 @@
                           "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "accumulator",
-                        "guid": "0a5c9519-f684-41bd-ab86-6f294d8ca96d"
+                        "guid": "e017edf5-1af3-45d8-825c-ff49cf1fe1e8"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -3639,7 +3639,7 @@
                           "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "accumulator",
-                        "guid": "5ebf5175-68fb-4a67-8b2f-8550c18e2c27"
+                        "guid": "a4636005-d260-4790-9682-1b03beb0e1b8"
                       },
                       "id": 4,
                       "scope_entry": null,
@@ -3665,13 +3665,13 @@
                                 },
                                 {
                                   "start": "0",
-                                  "end": "127",
+                                  "end": "63",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
-                                  "end": "31",
+                                  "end": "15",
                                   "step": "1",
                                   "tile": "1"
                                 }
@@ -3679,7 +3679,7 @@
                             },
                             "data": "accumulator",
                             "debuginfo": null,
-                            "guid": "d20d6355-47b9-4bdf-93eb-11a3c2c06a04",
+                            "guid": "b3fe9112-7657-47bd-a41a-8853bca634f6",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3691,13 +3691,13 @@
                                 },
                                 {
                                   "start": "0",
-                                  "end": "127",
+                                  "end": "63",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
-                                  "end": "31",
+                                  "end": "15",
                                   "step": "1",
                                   "tile": "1"
                                 }
@@ -3725,20 +3725,20 @@
                               "type": "Range",
                               "ranges": [
                                 {
-                                  "start": "Mod(bK/64, 2)",
-                                  "end": "Mod(bK/64, 2)",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "127",
+                                  "start": "Mod(bK/32, 2)",
+                                  "end": "Mod(bK/32, 2)",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
                                   "end": "63",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "31",
                                   "step": "1",
                                   "tile": "1"
                                 }
@@ -3746,25 +3746,25 @@
                             },
                             "data": "local_A",
                             "debuginfo": null,
-                            "guid": "67ad22c3-c44b-402b-8a39-97c6aa47772c",
+                            "guid": "537fc210-349d-4480-86f5-bdc422394815",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
                                 {
-                                  "start": "Mod(bK/64, 2)",
-                                  "end": "Mod(bK/64, 2)",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "127",
+                                  "start": "Mod(bK/32, 2)",
+                                  "end": "Mod(bK/32, 2)",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
                                   "end": "63",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "31",
                                   "step": "1",
                                   "tile": "1"
                                 }
@@ -3792,20 +3792,20 @@
                               "type": "Range",
                               "ranges": [
                                 {
-                                  "start": "Mod(bK/64, 2)",
-                                  "end": "Mod(bK/64, 2)",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "63",
+                                  "start": "Mod(bK/32, 2)",
+                                  "end": "Mod(bK/32, 2)",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
                                   "end": "31",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "15",
                                   "step": "1",
                                   "tile": "1"
                                 }
@@ -3813,25 +3813,25 @@
                             },
                             "data": "local_B",
                             "debuginfo": null,
-                            "guid": "c7df406a-57d9-4682-9872-8225d85ed5a5",
+                            "guid": "cdf7835e-3468-4502-aa8e-a7529f424876",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
                                 {
-                                  "start": "Mod(bK/64, 2)",
-                                  "end": "Mod(bK/64, 2)",
-                                  "step": "1",
-                                  "tile": "1"
-                                },
-                                {
-                                  "start": "0",
-                                  "end": "63",
+                                  "start": "Mod(bK/32, 2)",
+                                  "end": "Mod(bK/32, 2)",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
                                   "end": "31",
+                                  "step": "1",
+                                  "tile": "1"
+                                },
+                                {
+                                  "start": "0",
+                                  "end": "15",
                                   "step": "1",
                                   "tile": "1"
                                 }
@@ -3854,7 +3854,7 @@
                         "data": {
                           "type": "Memlet",
                           "attributes": {
-                            "volume": "4096",
+                            "volume": "1024",
                             "subset": {
                               "type": "Range",
                               "ranges": [
@@ -3866,13 +3866,13 @@
                                 },
                                 {
                                   "start": "0",
-                                  "end": "127",
+                                  "end": "63",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
-                                  "end": "31",
+                                  "end": "15",
                                   "step": "1",
                                   "tile": "1"
                                 }
@@ -3880,7 +3880,7 @@
                             },
                             "data": "accumulator",
                             "debuginfo": null,
-                            "guid": "13ac2a2b-671a-4445-ad96-cb25405eaf8f",
+                            "guid": "3411a7dc-f483-4096-b270-cdce290f7191",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -3893,20 +3893,20 @@
                                 },
                                 {
                                   "start": "0",
-                                  "end": "127",
+                                  "end": "63",
                                   "step": "1",
                                   "tile": "1"
                                 },
                                 {
                                   "start": "0",
-                                  "end": "31",
+                                  "end": "15",
                                   "step": "1",
                                   "tile": "1"
                                 }
                               ]
                             },
                             "is_data_src": false,
-                            "num_accesses": "4096"
+                            "num_accesses": "1024"
                           }
                         }
                       },
@@ -3917,7 +3917,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "39086ea2-bc25-45c5-aac7-80e5ed236a7e",
+                    "guid": "2cb12174-e9b0-4859-abee-a7a619eb0e90",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -3930,7 +3930,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "9581b607-f5a0-4439-8bf4-43d62d734425"
+                        "guid": "b118daed-d244-4375-9237-6f7a35cb26dc"
                       },
                       "label": ""
                     }
@@ -3944,7 +3944,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "e62abb39-d89a-4ac3-afb4-461bef8eb204"
+                        "guid": "6dab8ace-75ea-46c6-b39c-b40c7a47ac72"
                       },
                       "label": ""
                     }
@@ -3982,7 +3982,7 @@
             "out_connectors": {
               "accumulator": null
             },
-            "guid": "62947d2c-2fa1-4eec-8273-d19c33c7a74f"
+            "guid": "cf8c4756-39fc-4d6b-82e5-94277ac280b9"
           },
           "id": 11,
           "scope_entry": "7",
@@ -3998,7 +3998,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "d1f3c374-d5ab-482e-9565-47c9ba74216a",
+                "guid": "61065aba-a402-4add-83cc-6493678cadea",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -4037,7 +4037,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "41c94784-4760-4270-83e6-6067851d6114",
+                "guid": "17be5d90-f3e4-432b-b973-1f26ca070b2f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4092,7 +4092,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "9d45a52d-a85d-49ba-81e6-42cc57bbf018",
+                "guid": "e7bd9821-f546-4b89-bb86-49f47fdd401b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4127,19 +4127,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "4096",
+                "volume": "1024",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*ci + 128*gi + i",
-                      "end": "128*ci + 128*gi + i + 127",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "16*cj + 16*gj + j",
+                      "end": "16*cj + 16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4147,27 +4147,27 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "572ddbd3-06c4-4eb4-b7de-3def66d1da35",
+                "guid": "cac545ee-5d9a-4f00-97ff-8ecf4e6c55d5",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*ci + 128*gi + i",
-                      "end": "128*ci + 128*gi + i + 127",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "16*cj + 16*gj + j",
+                      "end": "16*cj + 16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "4096"
+                "num_accesses": "1024"
               }
             }
           },
@@ -4194,13 +4194,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "127",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4208,7 +4208,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "74eb91a7-b139-4870-9763-4a0984e095eb",
+                "guid": "2d2b2405-8e2d-4750-bc79-98d9a55e62db",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4220,13 +4220,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "127",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4254,8 +4254,8 @@
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*ci + 128*gi + i",
-                      "end": "128*ci + 128*gi + i + 127",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -4269,13 +4269,13 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "41c94784-4760-4270-83e6-6067851d6114",
+                "guid": "17be5d90-f3e4-432b-b973-1f26ca070b2f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*ci + 128*gi + i",
-                      "end": "128*ci + 128*gi + i + 127",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -4310,7 +4310,7 @@
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 511",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
@@ -4324,13 +4324,13 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "41c94784-4760-4270-83e6-6067851d6114",
+                "guid": "17be5d90-f3e4-432b-b973-1f26ca070b2f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 511",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
@@ -4364,8 +4364,8 @@
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*gi + i",
-                      "end": "128*gi + i + 127",
+                      "start": "64*gi + i",
+                      "end": "64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -4379,13 +4379,13 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "41c94784-4760-4270-83e6-6067851d6114",
+                "guid": "17be5d90-f3e4-432b-b973-1f26ca070b2f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*gi + i",
-                      "end": "128*gi + i + 127",
+                      "start": "64*gi + i",
+                      "end": "64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -4425,8 +4425,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "16*cj + 16*gj + j",
+                      "end": "16*cj + 16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4434,7 +4434,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "9d45a52d-a85d-49ba-81e6-42cc57bbf018",
+                "guid": "e7bd9821-f546-4b89-bb86-49f47fdd401b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4445,8 +4445,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "16*cj + 16*gj + j",
+                      "end": "16*cj + 16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4481,7 +4481,7 @@
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4489,7 +4489,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "9d45a52d-a85d-49ba-81e6-42cc57bbf018",
+                "guid": "e7bd9821-f546-4b89-bb86-49f47fdd401b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4501,7 +4501,7 @@
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4535,8 +4535,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "16*gj + j",
+                      "end": "16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4544,7 +4544,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "9d45a52d-a85d-49ba-81e6-42cc57bbf018",
+                "guid": "e7bd9821-f546-4b89-bb86-49f47fdd401b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4555,8 +4555,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "16*gj + j",
+                      "end": "16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4579,7 +4579,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "65536*ceiling(M/512)*ceiling(N/128)",
+                "volume": "16384*ceiling(M/256)*ceiling(N/64)",
                 "subset": {
                   "type": "Range",
                   "ranges": [
@@ -4599,7 +4599,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "572ddbd3-06c4-4eb4-b7de-3def66d1da35",
+                "guid": "cac545ee-5d9a-4f00-97ff-8ecf4e6c55d5",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4619,7 +4619,7 @@
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "65536*ceiling(M/512)*ceiling(N/128)"
+                "num_accesses": "16384*ceiling(M/256)*ceiling(N/64)"
               }
             }
           },
@@ -4634,19 +4634,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "65536",
+                "volume": "16384",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 511",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4654,27 +4654,27 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "572ddbd3-06c4-4eb4-b7de-3def66d1da35",
+                "guid": "cac545ee-5d9a-4f00-97ff-8ecf4e6c55d5",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 511",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 63",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "65536"
+                "num_accesses": "16384"
               }
             }
           },
@@ -4689,19 +4689,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "4096",
+                "volume": "1024",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*gi + i",
-                      "end": "128*gi + i + 127",
+                      "start": "64*gi + i",
+                      "end": "64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "16*gj + j",
+                      "end": "16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4709,27 +4709,27 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "572ddbd3-06c4-4eb4-b7de-3def66d1da35",
+                "guid": "cac545ee-5d9a-4f00-97ff-8ecf4e6c55d5",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "128*gi + i",
-                      "end": "128*gi + i + 127",
+                      "start": "64*gi + i",
+                      "end": "64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "16*gj + j",
+                      "end": "16*gj + j + 15",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "4096"
+                "num_accesses": "1024"
               }
             }
           },
@@ -4756,13 +4756,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "127",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4770,7 +4770,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "29243054-452d-4575-8668-d1197e6610ea",
+                "guid": "514ecb87-b146-494f-be65-6d82f3c24f7e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4783,13 +4783,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "127",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "15",
                       "step": "1",
                       "tile": "1"
                     }
@@ -4807,7 +4807,7 @@
         }
       ],
       "attributes": {
-        "guid": "a19bf7b0-26f7-46db-a09e-aec8e5bb38fd",
+        "guid": "b2e567fb-d863-4842-b2f7-0d6d2ccd72be",
         "executions": "1",
         "dynamic_executions": false
       }

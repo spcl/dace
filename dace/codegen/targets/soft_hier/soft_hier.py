@@ -549,13 +549,13 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' %
                                 ( dataname, arrsize_malloc))
 
-            if node.setzero:
-                result_alloc.write('''
-                    if(flex_is_dm_core())
-                    {
-                        flex_dma_async_1d(local(accumulator), zomem(0), 2048);
-                        flex_dma_async_wait_all();
-                    }\n''')
+            # if node.setzero:
+            #     result_alloc.write('''
+            #         if(flex_is_dm_core())
+            #         {
+            #             flex_dma_async_1d(local(accumulator), zomem(0), 2048);
+            #             flex_dma_async_wait_all();
+            #         }\n''')
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.SoftHier_TCDM:
@@ -571,13 +571,13 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             result_alloc.write(f"{dataname} = {self.tcdm_offset};\n")
             if node.setzero:
                 result_alloc.write('// DACE_ACL_CHECK(aclrtMemset(%s, 0, %s));\n' % ( dataname, arrsize_malloc))
-                result_alloc.write(f'''
-                    if(flex_is_dm_core())
-                    {{
-                        flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
-                        flex_dma_async_wait_all();
-                    }}
-                ''')
+                # result_alloc.write(f'''
+                #     if(flex_is_dm_core())
+                #     {{
+                #         flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
+                #         flex_dma_async_wait_all();
+                #     }}
+                # ''')
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
             self.tcdm_offset += total_size
@@ -1196,10 +1196,23 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         num_channels = channel_end - channel_start + 1
                         block_width = length_1
                         block_height = length_0
-                        callsite_stream.write(f"const int tile_width = {hbm_width}/{width_split};")
-                        callsite_stream.write(f"const int tile_height = {hbm_height}/{height_split};")
-                        callsite_stream.write(f"const int row_start = {row_start};")
-                        callsite_stream.write(f"const int col_start = {col_start};")
+                        callsite_stream.write(f"const int tile_width = {src_name}_tile_width;")
+                        callsite_stream.write(f"const int tile_height = {src_name}_tile_height;")
+                        
+                        # callsite_stream.write(f"const int row_start_offset = 0;")
+                        # callsite_stream.write(f"const int col_start_offset = 0;")
+                        
+                        callsite_stream.write(f"const int row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
+                        callsite_stream.write(f"const int col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
+                        # callsite_stream.write(f"const int row_start = {row_start};")
+                        # callsite_stream.write(f"const int col_start = {col_start};")
+                        callsite_stream.write(f"const int col_start_temp = {col_start} + col_start_offset;")
+                        callsite_stream.write(f"const int col_start = col_start_temp % {src_name}_width;")
+                        callsite_stream.write(f"const int row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
+                        
+
+                        
+
                         callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
                         callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
                         callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
@@ -1212,7 +1225,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
                         callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
                         callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                        callsite_stream.write(f"const int block_addr = {src_name} + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                        callsite_stream.write(f"const int block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                        # callsite_stream.write(f"if (flex_is_dm_core() && flex_get_cluster_id() == 0)")
+                        # callsite_stream.write("{")
+                        # callsite_stream.write(f"printf(\"block_addr = %x\\n\", block_addr);")
+                        # callsite_stream.write("}")
                         funcname = "flex_dma_async_1d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
@@ -1292,10 +1309,20 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         num_channels = channel_end - channel_start + 1
                         block_width = length_1
                         block_height = length_0
-                        callsite_stream.write(f"const int tile_width = {hbm_width}/{width_split};")
-                        callsite_stream.write(f"const int tile_height = {hbm_height}/{height_split};")
-                        callsite_stream.write(f"const int row_start = {row_start};")
-                        callsite_stream.write(f"const int col_start = {col_start};")
+                        callsite_stream.write(f"const int tile_width = {dst_name}_tile_width;")
+                        callsite_stream.write(f"const int tile_height = {dst_name}_tile_height;")
+                        
+                        # callsite_stream.write(f"const int row_start_offset = 0;")
+                        # callsite_stream.write(f"const int col_start_offset = 0;")
+                        
+                        callsite_stream.write(f"const int row_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) / {dst_name}_width;")
+                        callsite_stream.write(f"const int col_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) % {dst_name}_width;")
+                        # callsite_stream.write(f"const int row_start = {row_start};")
+                        # callsite_stream.write(f"const int col_start = {col_start};")
+                        callsite_stream.write(f"const int col_start_temp = {col_start} + col_start_offset;")
+                        callsite_stream.write(f"const int col_start = col_start_temp % {dst_name}_width;")
+                        callsite_stream.write(f"const int row_start = {row_start} + row_start_offset + col_start_temp / {dst_name}_width;")
+
                         callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
                         callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
                         callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
@@ -1308,7 +1335,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
                         callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
                         callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                        callsite_stream.write(f"const int block_addr = {dst_name} + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                        callsite_stream.write(f"const int block_addr = {dst_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
                         funcname = "flex_dma_async_1d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
@@ -1626,6 +1653,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         #       Refactor and fix when nested SDFGs are separate functions.
         self._dispatcher.defined_vars.enter_scope(scope_entry)
         prototype_kernel_args = {}
+        hbm_interleaved_args = {}
         for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
             if aname in const_params:
                 defined_type, ctype = None, None
@@ -1661,6 +1689,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                     # Rename argument in kernel prototype as necessary
                     aname = inner_ptrname
+                    if data_desc.is_hbm_interleaved:
+                        self._globalcode.write(f"uint32_t {aname}_base;")
+                        self._globalcode.write(f"uint32_t {aname}_height;")
+                        self._globalcode.write(f"uint32_t {aname}_width;")
+                        self._globalcode.write(f"uint32_t {aname}_tile_height;")
+                        self._globalcode.write(f"uint32_t {aname}_tile_width;")
+                        self._dispatcher.defined_vars.add(f"{aname}_base", defined_type, ctype, allow_shadowing=True)         
+                        hbm_interleaved_args[aname] = arg
             else:
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
@@ -1676,6 +1712,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                     # Rename argument in kernel prototype as necessary
                     aname = inner_ptrname
+                    if data_desc.is_hbm_interleaved:
+                        self._globalcode.write(f"uint32_t {aname}_base;")     
+                        self._globalcode.write(f"uint32_t {aname}_height;")
+                        self._globalcode.write(f"uint32_t {aname}_width;")
+                        self._globalcode.write(f"uint32_t {aname}_tile_height;")
+                        self._globalcode.write(f"uint32_t {aname}_tile_width;")
+                        self._dispatcher.defined_vars.add(f"{aname}_base", defined_type, ctype, allow_shadowing=True)
+                        hbm_interleaved_args[aname] = arg     
 
             prototype_kernel_args[aname] = arg
 
@@ -1802,6 +1846,23 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             self._localcode.write(f'{k} = ((uint32_t *)(hbm_addr({start_address})))[0];')
             start_address += 4
 
+        for k, v in hbm_interleaved_args.items():
+            self._localcode.write(f'{k}_base = {k};')
+        
+        for aname, arg in hbm_interleaved_args.items():
+            if aname in sdfg.arrays:
+                nodedesc = sdfg.arrays[aname]
+                if nodedesc.is_hbm_interleaved:
+                    hbm_width = nodedesc.shape[1]
+                    hbm_height = nodedesc.shape[0]
+                    height_split = nodedesc.hbm_split_scheme[0]
+                    width_split = nodedesc.hbm_split_scheme[1]
+                    self._localcode.write(f'{aname}_height = {hbm_height};')
+                    self._localcode.write(f'{aname}_width = {hbm_width};')
+                    self._localcode.write(f'{aname}_tile_height = {hbm_height}/{height_split};')
+                    self._localcode.write(f'{aname}_tile_width = {hbm_width}/{width_split};')
+
+
         # Prepare an empty-grid check for runtime grids
         dimcheck = True
         if dimcheck:
@@ -1812,21 +1873,21 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
             self._localcode.write(
             '''
-            if (flex_is_first_core() && (flex_get_cluster_id()==0))
-            {{
-                printf("A: %x\\n", A);
-                printf("B: %x\\n", B);
-                printf("C: %x\\n", C);
-                printf("K: %x\\n", K);
-                printf("M: %x\\n", M);
-                printf("N: %x\\n", N);
-            }}
-            if (flex_is_first_core() && (flex_get_cluster_id()==0))
-            {{
-                printf("%x\\n", ((uint32_t *)(hbm_addr(A)))[0]);
-                printf("%x\\n", ((uint32_t *)(hbm_addr(B)))[0]);
-                printf("%x\\n", ((uint32_t *)(hbm_addr(C)))[0]);
-            }}
+            // if (flex_is_first_core() && (flex_get_cluster_id()==0))
+            // {{
+                // printf("A: %x\\n", A);
+                // printf("B: %x\\n", B);
+                // printf("C: %x\\n", C);
+                // printf("K: %x\\n", K);
+                // printf("M: %x\\n", M);
+                // printf("N: %x\\n", N);
+            // }}
+            // if (flex_is_first_core() && (flex_get_cluster_id()==0))
+            // {{
+                // printf("%x\\n", ((uint32_t *)(hbm_addr(A)))[0]);
+                // printf("%x\\n", ((uint32_t *)(hbm_addr(B)))[0]);
+                // printf("%x\\n", ((uint32_t *)(hbm_addr(C)))[0]);
+            // }}
             uint32_t eoc_val = 0;
             flex_global_barrier_xy();
             flex_timer_start();
@@ -1894,7 +1955,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         callsite_stream.write("printf(\"Start Running Kernel\");")
         # system("bash -c 'cd /scratch/dace4softhier/gvsoc && source sourceme.sh && ./install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ./sw_build/softhier.elf run --trace=/chip/cluster_0/redmule'");
         callsite_stream.write(
-            'int result = system("cd /usr/scratch/badile111/dace4softhier/gvsoc && ./dace.sh");'
+            'int result = system("cd ./.dacecache && ./dace.sh");'
+            # 'int result = system("pwd");'
         )
         callsite_stream.write("printf(\"Result: %d\", result);")
         callsite_stream.write("printf(\"Finish Running Kernel\");")

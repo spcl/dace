@@ -647,6 +647,9 @@ message(STATUS "Linking with ${DACE_PROGRAM_NAME}")
 
 # SoftHier executable
 if(DACE_ENABLE_SOFTHIER)
+  if (NOT SOFTHIER_INSTALL_PATH)
+    set(SOFTHIER_INSTALL_PATH /usr/scratch/badile111/dace4softhier/gvsoc/soft_hier/flex_cluster_sdk/runtime CACHE PATH "Path to SoftHier installation")
+  endif()
   # Set the linker script
   set(SHCC_LINKER_SCRIPT ${SOFTHIER_INSTALL_PATH}/flex_memory.ld)
 
@@ -654,9 +657,27 @@ if(DACE_ENABLE_SOFTHIER)
     set(SOFTHIER_INCLUDE_DIRS "")
   endif()
 
+  if (NOT GVSOC_DIR)
+    set(GVSOC_DIR "/usr/scratch/badile111/dace4softhier/gvsoc")
+  endif()
+
+  if (NOT GVSOC_INSTALL_PATH)
+    set(GVSOC_INSTALL_PATH "/usr/scratch/badile111/dace4softhier/gvsoc")
+  endif()
+  
+  configure_file(
+    ${DACE_SOFTHIER_SHCC_CMAKE_PATH}/dace.sh.in
+    ${CMAKE_BINARY_DIR}/../../dace.sh
+    @ONLY
+  )
+
   add_custom_command(
       OUTPUT softhier.elf
-      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${SOFTHIER_SW_BUILD_PATH}/softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      # COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${SOFTHIER_SW_BUILD_PATH}/softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      # COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${CMAKE_BINARY_DIR}/../../softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${CMAKE_BINARY_DIR}/../../softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      # COMMAND echo "bash -c \\\"cd /usr/scratch/badile111/dace4softhier/gvsoc && source sourceme.sh && ./install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ./sw_build/softhier.elf run --preload ./output.elf\\\"" > ./dace.sh
+      COMMAND chmod +x ${CMAKE_BINARY_DIR}/../../dace.sh
       COMMENT "Generating softhier.elf"
   )
 
