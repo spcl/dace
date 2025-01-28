@@ -41,7 +41,7 @@ module lib
     integer :: aA(3) = 4
     integer, allocatable :: aAZ(:)
     real :: b = 2.
-    real :: bB(3:5) = 5.
+    real, dimension(3:5) :: bB = 5.
     real, allocatable :: bBZ(:, :)
     double precision :: c = 3.d0
     double precision :: cC(3:4, 5:6) = 6.d0

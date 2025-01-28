@@ -7,11 +7,11 @@ from typing import Generator, Dict, Tuple, List
 from fparser.api import get_reader
 from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
     Procedure_Stmt, Component_Decl, Function_Subprogram, Interface_Block, Program, Do_Construct, Intrinsic_Type_Spec, \
-    Function_Stmt
+    Function_Stmt, Dimension_Component_Attr_Spec
 from fparser.two.utils import walk
 
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children
-from dace.frontend.fortran.ast_utils import singular, children_of_type
+from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 
 
@@ -70,11 +70,19 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
         ops = []
         for cdef in walk(dtdef, Data_Component_Def_Stmt):
             ctyp, attrs, cdecls = cdef.children
+            ptr = 'POINTER' in f"{attrs}" if attrs else False
+            alloc = 'ALLOCATABLE' in f"{attrs}" if attrs else False
+            dims = atmost_one(a for a in attrs.children
+                              if isinstance(a, Dimension_Component_Attr_Spec)) if attrs else None
+            if dims:
+                _, dims = dims.children
+
             for cdecl in cdecls.children:
                 cname, shape, _, _ = cdecl.children
+                if not shape:
+                    # In case the shape was descirbed earlier with `dimension`.
+                    shape = dims
 
-                ptr = 'POINTER' in f"{attrs}"
-                alloc = 'ALLOCATABLE' in f"{attrs}"
                 rank = 0
                 if shape:
                     rank = len(shape.children)
