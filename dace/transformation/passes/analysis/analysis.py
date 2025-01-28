@@ -335,15 +335,19 @@ class FindAccessStates(ppl.Pass):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class FindExclusiveData(ppl.Pass):
+class FindSingleUseData(ppl.Pass):
     """
     For each SDFG find all data descriptors that are referenced in exactly one location.
 
-    This means that for every data descriptor there exists exactly one AccessNode that
-    refers to that data. In addition to this the following rules applies as well:
-    - If the data is read by at least one interstate edge it will not be classified as exclusive.
-    - If there is no reference to a data descriptor, i.e. it exists inside `SDFG.arrays`
-        but there is no AccessNode, then it is _not_ classified as exclusive.
+    In addition to the requirement that there exists exactly one AccessNode that
+    refers to a data descriptor the following conditions have to be meet as well:
+    - The data is not read on an interstate edge.
+    - The data is not accessed in the branch condition, loop condition, etc. of
+        control flow regions.
+    - There must be at least one AccessNode that refers to the data. I.e. if it exists
+        inside `SDFG.arrays` but there is no AccessNode, then it is _not_ included.
+
+    It is also important to note that the degree of the AccessNodes are ignored.
     """
 
     CATEGORY: str = 'Analysis'
@@ -353,49 +357,53 @@ class FindExclusiveData(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If anything was modified, reapply
-        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.States
+        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.CFG
 
     def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFG, Set[str]]:
         """
         :return: A dictionary mapping SDFGs to a `set` of strings containing the name
-            of the data descriptors that are exclusively used.
+            of the data descriptors that are only used once.
         """
-        # pschaad: Should we index on cfg or the SDFG itself.
+        # TODO(pschaad): Should we index on cfg or the SDFG itself.
         exclusive_data: Dict[SDFG, Set[str]] = {}
         for nsdfg in sdfg.all_sdfgs_recursive():
-            exclusive_data[nsdfg] = self._find_exclusive_data_in_sdfg(nsdfg)
+            exclusive_data[nsdfg] = self._find_single_use_data_in_sdfg(nsdfg)
         return exclusive_data
 
-    def _find_exclusive_data_in_sdfg(self, sdfg: SDFG) -> Set[str]:
-        """Scans an SDFG and computes the exclusive data for that SDFG.
+    def _find_single_use_data_in_sdfg(self, sdfg: SDFG) -> Set[str]:
+        """Scans an SDFG and computes the data that is only used once in the SDFG.
 
-        This function only scans `sdfg` and does not go into nested ones.
+        The rules used to classify data descriptors are outlined above. The function
+        will not scan nested SDFGs.
 
-        :return: The set of data descriptors that have exclusive access.
+        :return: The set of data descriptors that are used once in the SDFG.
         """
-        # Data descriptor that are classified, up to now, as exclusive.
-        #  We add and data that we do not know to it the first time we seen it
-        #  and might remove it if we found another reference.
-        exclusive_data: Set[str] = set()
+        # If we encounter a data descriptor for the first time we immediately
+        #  classify it as single use. We will undo this decision as soon as
+        #  learn that it is used somewhere else.
+        single_use_data: Set[str] = set()
         previously_seen: Set[str] = set()
 
         for state in sdfg.states():
             for dnode in state.data_nodes():
                 data_name: str = dnode.data
-                if data_name in exclusive_data:
-                    exclusive_data.discard(data_name)  # Classified too early; Undo
+                if data_name in single_use_data:
+                    single_use_data.discard(data_name)  # Classified too early -> Undo
                 elif data_name not in previously_seen:
-                    exclusive_data.add(data_name)  # Never seen; Assume it is exclusive.
+                    single_use_data.add(data_name)  # Never seen -> Assume single use
                 previously_seen.add(data_name)
 
-        # Compute the set of all data that is accessed, i.e. read, by the edges.
-        interstate_read_symbols: Set[str] = set()
-        for edge in sdfg.edges():
-            interstate_read_symbols.update(edge.data.free_symbols)
+        # By definition, data that is referenced by interstate edges is not single
+        #  use data, also remove it.
+        for edge in sdfg.all_interstate_edges():
+            single_use_data.difference_update(edge.data.free_symbols)
 
-        # Enforces the first rule, "if data is accessed by an interstate edge it will
-        #  not be classified as exclusive".
-        return exclusive_data.difference(interstate_read_symbols)
+        # By definition, data that is referenced by the conditions (branching condition,
+        #  loop condition, ...) is not single use data, also remove that.
+        for cfr in sdfg.all_control_flow_regions():
+            single_use_data.difference_update(cfr.used_symbols(all_symbols=True, with_contents=False))
+
+        return single_use_data
 
 
 @properties.make_properties
