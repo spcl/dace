@@ -108,6 +108,7 @@ class MapFusion(transformation.SingleStateTransformation):
         only_inner_maps: Optional[bool] = None,
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
+        assume_always_shared: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -117,6 +118,8 @@ class MapFusion(transformation.SingleStateTransformation):
             self.only_inner_maps = only_inner_maps
         if strict_dataflow is not None:
             self.strict_dataflow = strict_dataflow
+        if assume_always_shared is not None:
+            self.assume_always_shared = assume_always_shared
 
 
     @classmethod
