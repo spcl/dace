@@ -679,8 +679,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         else:
                             data_path = "".join(data_path)
 
-                    else:                  
-                        data_path = ".".join(data_path)
+                    else:  
+                        if must_remove_zero_index:
+                            pass
+                        else:                
+                            data_path = ".".join(data_path)
                 else:
                     data_path = data_path[0]
                 for edge in nsdfg.all_interstate_edges():
@@ -690,12 +693,18 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     else:
                         edge.data.replace(arg, data_path)
                 for cfr in nsdfg.all_control_flow_regions():
+                    if not isinstance(data_path, str):
+                        print("ALARM!")
+                        raise ("Not implemented for complex replacements in CFG regions")
                     cfr.replace_meta_accesses({ arg: data_path })
             else:
                 for edge in nsdfg.all_interstate_edges():
                     edge.data.replace_complex(arg, data_path,remove_zero_index=False)
                     edge.data.replace(arg, data_path)        
                 for cfr in nsdfg.all_control_flow_regions():
+                    if not isinstance(data_path, str):
+                        print("ALARM!")
+                        raise NotImplementedError("Not implemented for complex replacements in CFG regions")
                     cfr.replace_meta_accesses({ arg: data_path })
 
         #######################################################

@@ -1373,7 +1373,7 @@ class AST_translator:
                         #    internal_sdfg, elem[2], src_conn=self.name_mapping[new_sdfg][local_name.name],
                         #    memlet=Memlet(expr=elem[2].label, subset=memlet))
                         shape= sdfg.arrays[elem[2].label].shape
-                        if len(shape)==1:
+                        if len(shape)==1 and shape[0]==1:
                             memlet = "0"
                             substate.add_memlet_path(
                                 internal_sdfg, elem[2], src_conn=self.name_mapping[new_sdfg][local_name.name],
@@ -1391,7 +1391,7 @@ class AST_translator:
                     if local_name.name in read_names:
                         # memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
                         shape= sdfg.arrays[elem[1].label].shape
-                        if len(shape)==1:
+                        if len(shape)==1 and shape[0]==1:
                             memlet = "0"
                             substate.add_memlet_path(
                                 elem[1], internal_sdfg, dst_conn=self.name_mapping[new_sdfg][local_name.name],
@@ -1498,8 +1498,8 @@ class AST_translator:
             #new_sdfg.validate()
             #tmp_sdfg=copy.deepcopy(new_sdfg)
             new_sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
-            from dace.transformation.dataflow import RemoveSliceView
-            new_sdfg.apply_transformations_repeated([RemoveSliceView])
+            # from dace.transformation.dataflow import RemoveSliceView
+            # new_sdfg.apply_transformations_repeated([RemoveSliceView])
             from dace.transformation.passes.lift_struct_views import LiftStructViews
             from dace.transformation.pass_pipeline import FixedPointPipeline
             FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
@@ -1958,6 +1958,7 @@ class AST_translator:
                         #this is a simple array, but must still have first view to Array and then to subset.
                         last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
                         last_read, last_written=self.add_simple_array_to_element_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write,shape,offsets,strides,subset)
+                        
                         if len(shape)==0:
                             shape=[1]
                             offsets=[0]
