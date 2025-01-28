@@ -1,5 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Dict, Optional, Set
+
+import warnings
 
 from dace import SDFG, SDFGState, properties, transformation
 from dace.transformation import pass_pipeline as ppl
@@ -110,7 +112,15 @@ class FullMapFusion(ppl.Pass):
         :return: The numbers of Maps that were fused or `None` if none were fused.
         """
         if ap.FindSingleUseData.__name__ not in pipeline_results:
-            raise ValueError(f"Expected to find `FindSingleUseData` in `pipeline_results`.")
+            raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
+
+        # For an explanation see the `pattern_matching.py` file on line 283 or 254, where
+        #  `match_pattern()` is called without `pipeline_results`.
+        warnings.warn(
+                'Currently the `FullMapFusion` pass does not work correctly, because '
+                '`pipeline_results` is not present during `can_be_applied()` only during '
+                '`apply()`, because of this the speed up benefit of this transformation is limited.'
+        )
 
         fusion = MapFusion(
                 only_inner_maps=self.only_inner_maps,
