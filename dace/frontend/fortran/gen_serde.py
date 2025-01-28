@@ -2,22 +2,64 @@ import argparse
 import os
 from itertools import chain
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Dict, Tuple, List
 
 from fparser.api import get_reader
 from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
-    Procedure_Stmt, Component_Decl, Function_Subprogram, Interface_Block, Program
+    Procedure_Stmt, Component_Decl, Function_Subprogram, Interface_Block, Program, Do_Construct, Intrinsic_Type_Spec, \
+    Function_Stmt
 from fparser.two.utils import walk
 
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children
-from dace.frontend.fortran.ast_utils import singular
+from dace.frontend.fortran.ast_utils import singular, children_of_type
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
+
+
+def generate_array_meta(arr: str, rank: int) -> List[str]:
+    # Assumes there is `arr` is an array in local scope with rank `rank`.
+    # Also assumes there is a serialization sink `s` and an integer `kmeta` that can be used as an iterator.
+    return f"""
+s = s // "# rank" // new_line('A') // serialize({rank}) // new_line('A')
+s = s // "# size" // new_line('A')
+do kmeta = 1, {rank}
+  s = s // serialize(size({arr}, kmeta)) // new_line('A')
+end do
+s = s // "# lbound" // new_line('A')
+do kmeta = 1, {rank}
+  s = s // serialize(lbound({arr}, kmeta)) // new_line('A')
+end do
+""".strip().split('\n')
+
+
+def generate_array_serializer(dtyp: str, rank: int, tag: str) -> Function_Subprogram:
+    iter_vars = ', '.join([f"k{k}" for k in range(1, rank+1)])
+    decls = f"""
+{dtyp}, intent(in) :: a({', '.join([':']*rank)})
+character(len=:), allocatable :: s
+integer :: k, {iter_vars}
+"""
+    loop_ops = []
+    for k in range(1, rank+1):
+        loop_ops.append(f"do k{k} = lbound(a, {k}), ubound(a, {k})")
+    loop_ops.append(f"s = s // serialize(a({iter_vars})) // new_line('A')")
+    loop_ops.extend(['end do'] * rank)
+    loop = '\n'.join(loop_ops)
+
+    return Function_Subprogram(get_reader(f"""
+function {tag}_2s{rank}(a) result(s)
+{decls}
+s = "# entries" // new_line('A')
+{loop}
+end function {tag}_2s{rank}
+""".strip()))
 
 
 def generate_serde_module(serde_base: Module, ast: Program) -> Module:
     serde_mod = serde_base
     proc_names = []
     impls = singular(sp for sp in walk(serde_mod, Module_Subprogram_Part))
+
+    array_serializers: Dict[Tuple[str, int], Function_Subprogram] = {}
 
     for tspec, dt in identifier_specs(ast).items():
         if not isinstance(dt, Derived_Type_Stmt):
@@ -27,11 +69,38 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
 
         ops = []
         for cdef in walk(dtdef, Data_Component_Def_Stmt):
-            for cdecl in walk(cdef, Component_Decl):
-                cname, _, _, _ = cdecl.children
-                exprs = ['s'] if ops else []
-                exprs.extend([f"'# {cname}'", 'new_line("A")', f"serialize(x%{cname})", 'new_line("A")'])
-                ops.append(f"s = {'//'.join(exprs)}")
+            ctyp, attrs, cdecls = cdef.children
+            for cdecl in cdecls.children:
+                cname, shape, _, _ = cdecl.children
+
+                ptr = 'POINTER' in f"{attrs}"
+                alloc = 'ALLOCATABLE' in f"{attrs}"
+                rank = 0
+                if shape:
+                    rank = len(shape.children)
+                if rank:
+                    tag = f"{ctyp}".replace(' ', '_').replace('(', '_').replace(')', '_').lower()
+                    dtyp = f"{ctyp}"
+                    if (tag, rank) not in array_serializers:
+                        array_serializers[(tag, rank)] = generate_array_serializer(dtyp, rank, tag)
+
+                ops.append(f"s = s // '# {cname}' // new_line('A')")
+                if ptr:
+                    # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes, we
+                    #  will only populate this when it points to a different component of the same structure.
+                    ops.append(
+                        f"s = s // '# assoc' // new_line('A') // serialize(associated(x%{cname})) // new_line('A')")
+                else:
+                    if alloc:
+                        ops.append(
+                            f"s = s // '# alloc' // new_line('A') // serialize(allocated(x%{cname})) // new_line('A')")
+                        ops.append(f"if (allocated(x%{cname})) then")
+                    if rank:
+                        ops.extend(generate_array_meta(f"x%{cname}", rank))
+                    ops.append(f"s = s // new_line('A') // serialize(x%{cname}) // new_line('A')")
+
+                    if alloc:
+                        ops.append("end if")
 
         ops = '\n'.join(ops)
         impl_fn = Function_Subprogram(get_reader(f"""
@@ -39,11 +108,17 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
       use {tspec[0]}, only: {dtname}
       type({dtname}), intent(in) :: x
       character(len=:), allocatable :: s
+      integer :: kmeta
       {ops}
     end function {dtname}_2s
     """.strip()))
         proc_names.append(f"{dtname}_2s")
         append_children(impls, impl_fn)
+
+    for fn in array_serializers.values():
+        _, name, _, _ = singular(children_of_type(fn, Function_Stmt)).children
+        proc_names.append(f"{name}")
+        append_children(impls, fn)
 
     iface = singular(p for p in walk(serde_mod, Interface_Block))
     proc_names = Procedure_Stmt(f"module procedure {', '.join(proc_names)}")

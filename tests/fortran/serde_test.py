@@ -39,12 +39,16 @@ module lib
   type T3
     integer :: a = 1
     integer :: aA(3) = 4
+    integer, allocatable :: aAZ(:)
     real :: b = 2.
-    real :: bB(3) = 5.
+    real :: bB(3:5) = 5.
+    real, allocatable :: bBZ(:, :)
     double precision :: c = 3.d0
-    double precision :: cC(3) = 6.d0
+    double precision :: cC(3:4, 5:6) = 6.d0
+    double precision, pointer :: cCP(:, :) => null()
     logical :: d = .true.
     logical :: dD(3) = .false.
+    logical, pointer :: dDP(:) => null()
   end type T3
 
   type T2
@@ -62,7 +66,10 @@ program main
   use lib
   implicit none
   real :: d(5, 5)
-  type(T) :: s
+  type(T), target :: s
+  allocate(s%name%w%bBZ(2,2))
+  s%name%w%bBZ = 5.1
+  s%name%w%dDP => s%name%w%dD
   call f2(s)
   ! TODO: Find a way to use generic functions to serialize arbitrary types.
   ! d(1, 1) = s%name%w(8, 10)%a
@@ -95,12 +102,12 @@ end subroutine f2
             ast, {'serde.f90': serde_mod.tofortran()}, [], ParserFactory().create(std="f2008"))
 
         code = ast.tofortran()
-        stdout = SourceCodeBuilder().add_file(code).run_with_gfortran()
-        print(stdout)
+        SourceCodeBuilder().add_file(code).run_with_gfortran()
 
         got = Path(s_data.name).read_text().strip()
         # TODO: Get rid of unwanted whitespaces in the generated fortran code.
         got = '\n'.join(l.strip() for l in got.split('\n') if l.strip())
+        print(got)
         want = """
 # name
 # w
@@ -110,51 +117,79 @@ end subroutine f2
 # rank
 1
 # size
-0
+3
 # lbound
 1
 # entries
 4
 4
 4
+# aAZ
+# alloc
+F
 # b
 2.00000000
 # bB
 # rank
 1
 # size
-0
+3
 # lbound
-1
+3
 # entries
 5.00000000
 5.00000000
 5.00000000
+# bBZ
+# alloc
+T
+# rank
+2
+# size
+2
+2
+# lbound
+1
+1
+# entries
+5.09999990
+5.09999990
+5.09999990
+5.09999990
 # c
 3.0000000000000000
 # cC
 # rank
-1
+2
 # size
-0
+2
+2
 # lbound
-1
+3
+5
 # entries
 6.0000000000000000
 6.0000000000000000
 6.0000000000000000
+6.0000000000000000
+# cCP
+# assoc
+F
 # d
 T
 # dD
 # rank
 1
 # size
-0
+3
 # lbound
 1
 # entries
 F
 F
 F
+# dDP
+# assoc
+T
 """.strip()
         assert want == got
