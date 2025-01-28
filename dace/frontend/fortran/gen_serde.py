@@ -6,8 +6,8 @@ from typing import Generator, Dict, Tuple, List, Optional
 
 from fparser.api import get_reader
 from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
-    Procedure_Stmt, Component_Decl, Function_Subprogram, Interface_Block, Program, Do_Construct, Intrinsic_Type_Spec, \
-    Function_Stmt, Dimension_Component_Attr_Spec
+    Procedure_Stmt, Function_Subprogram, Interface_Block, Program, Intrinsic_Type_Spec, \
+    Function_Stmt, Dimension_Component_Attr_Spec, Declaration_Type_Spec
 from fparser.two.utils import walk
 
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children
@@ -47,7 +47,7 @@ end do
 """.strip().split('\n')
 
 
-def generate_array_serializer(dtyp: str, rank: int, tag: str) -> Function_Subprogram:
+def generate_array_serializer(dtyp: str, rank: int, tag: str, use: Optional[str] = None) -> Function_Subprogram:
     iter_vars = ', '.join([f"k{k}" for k in range(1, rank+1)])
     decls = f"""
 {dtyp}, intent(in) :: a({', '.join([':']*rank)})
@@ -63,6 +63,7 @@ integer :: k, {iter_vars}
 
     return Function_Subprogram(get_reader(f"""
 function {tag}_2s{rank}(a) result(s)
+{use or ''}
 {decls}
 s = "# entries" // new_line('A')
 {loop}
@@ -86,9 +87,11 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
     ]
     array_serializers: Dict[Tuple[str, int], Function_Subprogram] = {}
 
-    for tspec, dt in identifier_specs(ast).items():
+    ident_map = identifier_specs(ast)
+    for tspec, dt in ident_map.items():
         if not isinstance(dt, Derived_Type_Stmt):
             continue
+        assert len(tspec) == 2
         _, dtname, _ = dt.children
         dtdef = dt.parent
 
@@ -118,11 +121,26 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
                         if dtyp == 'DOUBLE PRECISION':
                             dtyp, kind = 'REAL', '(KIND = 8)'
                         dtyp = f"{dtyp}{kind or ''}"
+                        use = None
                     else:
-                        dtyp = f"{ctyp}"
-                    tag = dtyp.replace('(KIND =', '_').replace(' ', '_').replace(')', '').lower()
+                        assert isinstance(ctyp, Declaration_Type_Spec)
+                        _, dtyp = ctyp.children
+                        dtyp = f"{dtyp}"
+                        # TODO: Don't rely on unique names.
+                        if (tspec[0], dtyp) in ident_map:
+                            use = f"use {tspec[0]}, only: {dtyp}"
+                        else:
+                            mod = singular(k[0] for k in ident_map.keys() if len(k) == 2 and k[-1] == dtyp)
+                            use = f"use {mod}, only: {dtyp}"
+                        dtyp = f"TYPE({dtyp})"
+                    tag = (dtyp
+                           .replace('TYPE(', 'dt_')
+                           .replace('(KIND =', '_')
+                           .replace(' ', '_')
+                           .replace(')', '')
+                           .lower())
                     if (tag, rank) not in array_serializers:
-                        array_serializers[(tag, rank)] = generate_array_serializer(dtyp, rank, tag)
+                        array_serializers[(tag, rank)] = generate_array_serializer(dtyp, rank, tag, use)
 
                 ops.append(f"s = s // '# {cname}' // new_line('A')")
                 if ptr:

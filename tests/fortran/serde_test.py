@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from tempfile import TemporaryFile, NamedTemporaryFile
+from tempfile import NamedTemporaryFile
 from typing import Dict
 
 from fparser.api import get_reader
@@ -52,9 +52,7 @@ module lib
   end type T3
 
   type T2
-    ! TODO: Find a way to use generic functions to serialize arbitrary types.
-    ! type(T3) :: w(7:12, 8:13)
-    type(T3) :: w
+    type(T3) :: w(1)
   end type T2
 
   type T
@@ -67,13 +65,12 @@ program main
   implicit none
   real :: d(5, 5)
   type(T), target :: s
-  allocate(s%name%w%bBZ(2,2))
-  s%name%w%bBZ = 5.1
-  s%name%w%dDP => s%name%w%dD
+  allocate(s%name%w(1)%bBZ(2,2))
+  s%name%w(1)%bBZ = 5.1
+  s%name%w(1)%dDP => s%name%w(1)%dD
   call f2(s)
   ! TODO: Find a way to use generic functions to serialize arbitrary types.
-  ! d(1, 1) = s%name%w(8, 10)%a
-  d(1, 1) = s%name%w%a
+  d(1, 1) = s%name%w(1)%a
 end program main
 
 subroutine f2(s)
@@ -111,6 +108,13 @@ end subroutine f2
         want = """
 # name
 # w
+# rank
+1
+# size
+1
+# lbound
+1
+# entries
 # a
 42
 # aA
