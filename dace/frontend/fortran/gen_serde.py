@@ -2,7 +2,7 @@ import argparse
 import os
 from itertools import chain
 from pathlib import Path
-from typing import Generator, Dict, Tuple, List
+from typing import Generator, Dict, Tuple, List, Optional
 
 from fparser.api import get_reader
 from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
@@ -13,6 +13,22 @@ from fparser.two.utils import walk
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
+
+
+def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Function_Subprogram:
+    assert typ in {'logical', 'integer', 'real'}
+    assert kind is None or kind in {1, 2, 4, 8}
+    fn_name = f"{typ}{kind or ''}_2s"
+    kind = f"(kind={kind})" if kind else ''
+    return Function_Subprogram(get_reader(f"""
+function {fn_name}(x) result(s)
+{typ}{kind}, intent(in) :: x
+character(len=:), allocatable :: s
+allocate (character(len=50) :: s)
+write (s, *) x
+s = trim(s)
+end function {fn_name}
+"""))
 
 
 def generate_array_meta(arr: str, rank: int) -> List[str]:
@@ -59,6 +75,15 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
     proc_names = []
     impls = singular(sp for sp in walk(serde_mod, Module_Subprogram_Part))
 
+    base_serializers: List[Function_Subprogram] = [
+        gen_base_type_serializer('logical'),
+        gen_base_type_serializer('integer', 1),
+        gen_base_type_serializer('integer', 2),
+        gen_base_type_serializer('integer', 4),
+        gen_base_type_serializer('integer', 8),
+        gen_base_type_serializer('real', 4),
+        gen_base_type_serializer('real', 8),
+    ]
     array_serializers: Dict[Tuple[str, int], Function_Subprogram] = {}
 
     for tspec, dt in identifier_specs(ast).items():
@@ -87,8 +112,15 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
                 if shape:
                     rank = len(shape.children)
                 if rank:
-                    tag = f"{ctyp}".replace(' ', '_').replace('(', '_').replace(')', '_').lower()
-                    dtyp = f"{ctyp}"
+                    if isinstance(ctyp, Intrinsic_Type_Spec):
+                        dtyp, kind = ctyp.children
+                        dtyp = f"{dtyp}".lower()
+                        if dtyp == 'DOUBLE PRECISION':
+                            dtyp, kind = 'REAL', '(KIND = 8)'
+                        dtyp = f"{dtyp}{kind or ''}"
+                    else:
+                        dtyp = f"{ctyp}"
+                    tag = dtyp.replace('(KIND =', '_').replace(' ', '_').replace(')', '').lower()
                     if (tag, rank) not in array_serializers:
                         array_serializers[(tag, rank)] = generate_array_serializer(dtyp, rank, tag)
 
@@ -123,7 +155,7 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
         proc_names.append(f"{dtname}_2s")
         append_children(impls, impl_fn)
 
-    for fn in array_serializers.values():
+    for fn in chain(array_serializers.values(), base_serializers):
         _, name, _, _ = singular(children_of_type(fn, Function_Stmt)).children
         proc_names.append(f"{name}")
         append_children(impls, fn)
