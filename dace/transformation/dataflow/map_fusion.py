@@ -57,11 +57,13 @@ class MapFusion(transformation.SingleStateTransformation):
     necessary to scan the whole SDFG, which is the default behaviour. There are two ways to
     speed this up. The first way is to set `assume_always_shared` to `True`. In this case the
     transformation will not perform the scan, but assume that the data is shared, i.e. used
-    somewhere else.
-    The second way is to use the transformation inside a pipeline and to run the `FindExclusiveData`
-    analysis pass. If the result of this pass is present the transformation will use its result
-    to determine if an intermediate can be removed or not. Note that `assume_always_shared`
-    takes precedence.
+    somewhere else. This might lead to dead data flow.
+    The second way is to use the transformation inside a pipeline, which includes the
+    `FindSingleUseData` analysis pass. If the result of this pass is present then the
+    transformation will use it instead to determine if a intermediate can be removed.
+    Note that `assume_always_shared` takes precedence.
+    For this pattern the `FullMapFusion` pass is provided, that combines the analysis
+    pass and `MapFusion`
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
@@ -1378,7 +1380,7 @@ class MapFusion(transformation.SingleStateTransformation):
             must be reconstructed always.
         3) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
             it is classified as shared.
-        2) If `FindExclusiveData` is in the pipeline it will be used and no scan will be performed.
+        2) If `FindSingleUseData` is in the pipeline it will be used and no scan will be performed.
         3) The function will perform a scan.
 
         :param data: The transient that should be checked.
@@ -1402,12 +1404,12 @@ class MapFusion(transformation.SingleStateTransformation):
         if state.in_degree(data) > 1:
             return True
 
-        # If the `FindExclusiveData` pass is present in the pipeline then we will use
+        # If the `FindSingleUseData` pass is present in the pipeline then we will use
         #  it. Note that the pass computes the data that can be removed, so we have to
         #  check if it is not inside.
-        if self._pipeline_results and 'FindExclusiveData' in self._pipeline_results:
-            exclusive_data: Dict[SDFG, Set[str]] = self._pipeline_results["FindExclusiveData"]
-            return data.data not in exclusive_data[sdfg]
+        if self._pipeline_results and 'FindSingleUseData' in self._pipeline_results:
+            single_use_data: Dict[SDFG, Set[str]] = self._pipeline_results["FindSingleUseData"]
+            return data.data not in single_use_data[sdfg]
 
         # We have to perform the full scan of the SDFG.
         return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
