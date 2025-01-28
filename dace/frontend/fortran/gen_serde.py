@@ -1,6 +1,6 @@
 import argparse
 import os
-from itertools import chain
+from itertools import chain, combinations
 from pathlib import Path
 from typing import Generator, Dict, Tuple, List, Optional
 
@@ -44,6 +44,52 @@ s = s // "# lbound" // new_line('A')
 do kmeta = 1, {rank}
   s = s // serialize(lbound({arr}, kmeta)) // new_line('A')
 end do
+""".strip().split('\n')
+
+
+def generate_pointer_meta(ptr: str, rank: int, candidates: Dict[str, Tuple]) -> List[str]:
+    # Assumes there is `ptr` is a pointer to an array in local scope with rank `rank`.
+    # Also assumes there is a serialization sink `s` and integers `kmeta` and `kmeta_n` that can be used as iterators.
+    cand_checks: List[str] = []
+    for c, c_shape in candidates.items():
+        c_rank = len(c_shape)
+        assert rank <= c_rank
+        sub_checks: List[str] = []
+        for subsc in combinations(range(c_rank), c_rank-rank):
+            ops: List[str] = []
+            subsc_str, subsc_str_serialized_ops = [], []
+            for k in range(c_rank):
+                if k not in subsc:
+                    subsc_str.append(':')
+                    subsc_str_serialized_ops.append(f"s = s // ':'")
+                    continue
+                subsc_str.append(f"kmeta_{k}")
+                subsc_str_serialized_ops.append(f"s = s // serialize(kmeta_{k})")
+                ops.append(f"do kmeta_{k} = lbound({c}, {k+1}), ubound({c}, {k+1})")
+            end_dos = ['end do']*len(ops)
+            subsc_str = ', '.join(subsc_str)
+            subsc_str_serialized_ops = '\n'.join(subsc_str_serialized_ops)
+            ops.append(f"""
+if (associated({ptr}, {c}({subsc_str}))) then
+kmeta = 1
+s = s // "=> {c}("
+{subsc_str_serialized_ops}
+s = s // "))" // new_line('A')
+end if
+""")
+            ops.extend(end_dos)
+            sub_checks.append('\n'.join(ops))
+        cand_checks.append('\n'.join(sub_checks))
+
+    cand_checks: str = '\n'.join(cand_checks)
+    return f"""
+if (associated({ptr})) then
+    kmeta = 0
+    {cand_checks}
+    if (kmeta == 0) then
+    s = s // "=> missing" // new_line('A')
+    end if
+end if
 """.strip().split('\n')
 
 
@@ -94,6 +140,40 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
         assert len(tspec) == 2
         _, dtname, _ = dt.children
         dtdef = dt.parent
+
+        # We need to make a table to find pointer associations later.
+        array_map: Dict = {}
+        for cdef in walk(dtdef, Data_Component_Def_Stmt):
+            ctyp, attrs, cdecls = cdef.children
+            ptr = 'POINTER' in f"{attrs}" if attrs else False
+            dims = atmost_one(a for a in attrs.children
+                              if isinstance(a, Dimension_Component_Attr_Spec)) if attrs else None
+            if dims:
+                _, dims = dims.children
+
+            # Convert to canonical types.
+            if isinstance(ctyp, Intrinsic_Type_Spec):
+                dtyp, kind = ctyp.children
+                dtyp = f"{dtyp}".lower()
+                if dtyp == 'DOUBLE PRECISION':
+                    dtyp, kind = 'REAL', '(KIND = 8)'
+                dtyp = f"{dtyp}{kind or ''}"
+            else:
+                assert isinstance(ctyp, Declaration_Type_Spec)
+                _, dtyp = ctyp.children
+                dtyp = f"TYPE({dtyp})"
+
+            for cdecl in cdecls.children:
+                cname, shape, _, _ = cdecl.children
+                if not shape:
+                    # In case the shape was descirbed earlier with `dimension`.
+                    shape = dims
+                if ptr or not shape:
+                    # We are looking for arrays.
+                    continue
+                rank = len(shape.children)
+
+                array_map[(dtyp, rank)] = (cname, shape)
 
         ops = []
         for cdef in walk(dtdef, Data_Component_Def_Stmt):
@@ -148,6 +228,11 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
                     #  will only populate this when it points to a different component of the same structure.
                     ops.append(
                         f"s = s // '# assoc' // new_line('A') // serialize(associated(x%{cname})) // new_line('A')")
+                    assert rank, f"TODO: Non-slice pointers not implemented."
+                    if rank:
+                        candidates = {f"x%{v[0]}": v[1].children for k, v in array_map.items()
+                                      if k[0] == dtyp and rank <= k[1]}
+                        ops.extend(generate_pointer_meta(f"x%{cname}", rank, candidates))
                 else:
                     if alloc:
                         ops.append(
@@ -161,12 +246,13 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
                         ops.append("end if")
 
         ops = '\n'.join(ops)
+        kmetas = ', '.join(f"kmeta_{k}" for k in range(10))
         impl_fn = Function_Subprogram(get_reader(f"""
     function {dtname}_2s(x) result(s)
       use {tspec[0]}, only: {dtname}
-      type({dtname}), intent(in) :: x
+      type({dtname}), target, intent(in) :: x
       character(len=:), allocatable :: s
-      integer :: kmeta
+      integer :: kmeta, {kmetas}
       {ops}
     end function {dtname}_2s
     """.strip()))
@@ -192,7 +278,7 @@ def find_all_f90_files(root: Path) -> Generator[Path, None, None]:
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument('--icon_dir', type=str,
+    argp.add_argument('--icon_dir', type=str, required=False,
                       help='The directory containing ICON source code (absolute path or relative to CWD).')
     argp.add_argument('--ecrad_dir', type=str,
                       default='externals/ecrad',
@@ -200,7 +286,8 @@ def main():
     argp.add_argument('--ecrad_entry_file', type=str,
                       default='radiation/radiation_interface.F90',
                       help='The file containing the entry point (path relative to `ecrad_dir`).')
-    argp.add_argument('--single_file_ast', type=str,
+    argp.add_argument('--single_file_ast', type=str, required=False,
+                      default='/Users/pmz/gitspace/icon-dace/spcl_preprocessed/ast.f90',
                       help='A file containing a self contained fortran program (absolute path or relative to CWD).')
     argp.add_argument('--serde_f90', type=str,
                       default=Path(os.path.dirname(os.path.realpath(__file__))).joinpath('conf_files/serde_base.f90'),
@@ -214,6 +301,7 @@ def main():
     if args.single_file_ast:
         parse_cfg = ParseConfig(main=Path(args.single_file_ast))
     else:
+        assert args.icon_dir
         icon_dir = Path(args.icon_dir)
         ecrad_dir = icon_dir.joinpath(args.ecrad_dir)
         ecrad_entry_file = ecrad_dir.joinpath(args.ecrad_entry_file)

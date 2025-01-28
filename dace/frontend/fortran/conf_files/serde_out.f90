@@ -14,9 +14,9 @@ MODULE serde
   END SUBROUTINE write_to
   FUNCTION aerosol_type_2s(x) RESULT(s)
     USE radiation_aerosol, ONLY: aerosol_type
-    TYPE(aerosol_type), INTENT(IN) :: x
+    TYPE(aerosol_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# od_sw' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % od_sw)) // NEW_LINE('A')
     IF (ALLOCATED(x % od_sw)) THEN
@@ -90,9 +90,9 @@ MODULE serde
   END FUNCTION aerosol_type_2s
   FUNCTION cloud_type_2s(x) RESULT(s)
     USE radiation_cloud, ONLY: cloud_type
-    TYPE(cloud_type), INTENT(IN) :: x
+    TYPE(cloud_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# mixing_ratio' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % mixing_ratio)) // NEW_LINE('A')
     IF (ALLOCATED(x % mixing_ratio)) THEN
@@ -109,12 +109,184 @@ MODULE serde
     END IF
     s = s // '# q_liq' // NEW_LINE('A')
     s = s // '# assoc' // NEW_LINE('A') // serialize(ASSOCIATED(x % q_liq)) // NEW_LINE('A')
+    IF (ASSOCIATED(x % q_liq)) THEN
+      kmeta = 0
+      DO kmeta_0 = LBOUND(x % mixing_ratio, 1), UBOUND(x % mixing_ratio, 1)
+        IF (ASSOCIATED(x % q_liq, x % mixing_ratio(kmeta_0, :, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // serialize(kmeta_0)
+          s = s // ':'
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_1 = LBOUND(x % mixing_ratio, 2), UBOUND(x % mixing_ratio, 2)
+        IF (ASSOCIATED(x % q_liq, x % mixing_ratio(:, kmeta_1, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // serialize(kmeta_1)
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_2 = LBOUND(x % mixing_ratio, 3), UBOUND(x % mixing_ratio, 3)
+        IF (ASSOCIATED(x % q_liq, x % mixing_ratio(:, :, kmeta_2))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // ':'
+          s = s // serialize(kmeta_2)
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      IF (ASSOCIATED(x % q_liq, x % overlap_param(:, :))) THEN
+        kmeta = 1
+        s = s // "=> x%overlap_param("
+        s = s // ':'
+        s = s // ':'
+        s = s // "))" // NEW_LINE('A')
+      END IF
+      IF (kmeta == 0) THEN
+        s = s // "=> missing" // NEW_LINE('A')
+      END IF
+    END IF
     s = s // '# q_ice' // NEW_LINE('A')
     s = s // '# assoc' // NEW_LINE('A') // serialize(ASSOCIATED(x % q_ice)) // NEW_LINE('A')
+    IF (ASSOCIATED(x % q_ice)) THEN
+      kmeta = 0
+      DO kmeta_0 = LBOUND(x % mixing_ratio, 1), UBOUND(x % mixing_ratio, 1)
+        IF (ASSOCIATED(x % q_ice, x % mixing_ratio(kmeta_0, :, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // serialize(kmeta_0)
+          s = s // ':'
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_1 = LBOUND(x % mixing_ratio, 2), UBOUND(x % mixing_ratio, 2)
+        IF (ASSOCIATED(x % q_ice, x % mixing_ratio(:, kmeta_1, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // serialize(kmeta_1)
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_2 = LBOUND(x % mixing_ratio, 3), UBOUND(x % mixing_ratio, 3)
+        IF (ASSOCIATED(x % q_ice, x % mixing_ratio(:, :, kmeta_2))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // ':'
+          s = s // serialize(kmeta_2)
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      IF (ASSOCIATED(x % q_ice, x % overlap_param(:, :))) THEN
+        kmeta = 1
+        s = s // "=> x%overlap_param("
+        s = s // ':'
+        s = s // ':'
+        s = s // "))" // NEW_LINE('A')
+      END IF
+      IF (kmeta == 0) THEN
+        s = s // "=> missing" // NEW_LINE('A')
+      END IF
+    END IF
     s = s // '# re_liq' // NEW_LINE('A')
     s = s // '# assoc' // NEW_LINE('A') // serialize(ASSOCIATED(x % re_liq)) // NEW_LINE('A')
+    IF (ASSOCIATED(x % re_liq)) THEN
+      kmeta = 0
+      DO kmeta_0 = LBOUND(x % mixing_ratio, 1), UBOUND(x % mixing_ratio, 1)
+        IF (ASSOCIATED(x % re_liq, x % mixing_ratio(kmeta_0, :, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // serialize(kmeta_0)
+          s = s // ':'
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_1 = LBOUND(x % mixing_ratio, 2), UBOUND(x % mixing_ratio, 2)
+        IF (ASSOCIATED(x % re_liq, x % mixing_ratio(:, kmeta_1, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // serialize(kmeta_1)
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_2 = LBOUND(x % mixing_ratio, 3), UBOUND(x % mixing_ratio, 3)
+        IF (ASSOCIATED(x % re_liq, x % mixing_ratio(:, :, kmeta_2))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // ':'
+          s = s // serialize(kmeta_2)
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      IF (ASSOCIATED(x % re_liq, x % overlap_param(:, :))) THEN
+        kmeta = 1
+        s = s // "=> x%overlap_param("
+        s = s // ':'
+        s = s // ':'
+        s = s // "))" // NEW_LINE('A')
+      END IF
+      IF (kmeta == 0) THEN
+        s = s // "=> missing" // NEW_LINE('A')
+      END IF
+    END IF
     s = s // '# re_ice' // NEW_LINE('A')
     s = s // '# assoc' // NEW_LINE('A') // serialize(ASSOCIATED(x % re_ice)) // NEW_LINE('A')
+    IF (ASSOCIATED(x % re_ice)) THEN
+      kmeta = 0
+      DO kmeta_0 = LBOUND(x % mixing_ratio, 1), UBOUND(x % mixing_ratio, 1)
+        IF (ASSOCIATED(x % re_ice, x % mixing_ratio(kmeta_0, :, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // serialize(kmeta_0)
+          s = s // ':'
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_1 = LBOUND(x % mixing_ratio, 2), UBOUND(x % mixing_ratio, 2)
+        IF (ASSOCIATED(x % re_ice, x % mixing_ratio(:, kmeta_1, :))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // serialize(kmeta_1)
+          s = s // ':'
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      DO kmeta_2 = LBOUND(x % mixing_ratio, 3), UBOUND(x % mixing_ratio, 3)
+        IF (ASSOCIATED(x % re_ice, x % mixing_ratio(:, :, kmeta_2))) THEN
+          kmeta = 1
+          s = s // "=> x%mixing_ratio("
+          s = s // ':'
+          s = s // ':'
+          s = s // serialize(kmeta_2)
+          s = s // "))" // NEW_LINE('A')
+        END IF
+      END DO
+      IF (ASSOCIATED(x % re_ice, x % overlap_param(:, :))) THEN
+        kmeta = 1
+        s = s // "=> x%overlap_param("
+        s = s // ':'
+        s = s // ':'
+        s = s // "))" // NEW_LINE('A')
+      END IF
+      IF (kmeta == 0) THEN
+        s = s // "=> missing" // NEW_LINE('A')
+      END IF
+    END IF
     s = s // '# fraction' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % fraction)) // NEW_LINE('A')
     IF (ALLOCATED(x % fraction)) THEN
@@ -160,9 +332,9 @@ MODULE serde
   END FUNCTION cloud_type_2s
   FUNCTION cloud_optics_type_2s(x) RESULT(s)
     USE radiation_cloud_optics_data, ONLY: cloud_optics_type
-    TYPE(cloud_optics_type), INTENT(IN) :: x
+    TYPE(cloud_optics_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# liq_coeff_lw' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % liq_coeff_lw)) // NEW_LINE('A')
     IF (ALLOCATED(x % liq_coeff_lw)) THEN
@@ -222,9 +394,9 @@ MODULE serde
   END FUNCTION cloud_optics_type_2s
   FUNCTION gas_type_2s(x) RESULT(s)
     USE radiation_gas, ONLY: gas_type
-    TYPE(gas_type), INTENT(IN) :: x
+    TYPE(gas_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# mixing_ratio' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % mixing_ratio)) // NEW_LINE('A')
     IF (ALLOCATED(x % mixing_ratio)) THEN
@@ -242,9 +414,9 @@ MODULE serde
   END FUNCTION gas_type_2s
   FUNCTION pdf_sampler_type_2s(x) RESULT(s)
     USE radiation_pdf_sampler, ONLY: pdf_sampler_type
-    TYPE(pdf_sampler_type), INTENT(IN) :: x
+    TYPE(pdf_sampler_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# ncdf' // NEW_LINE('A')
     s = s // NEW_LINE('A') // serialize(x % ncdf) // NEW_LINE('A')
     s = s // '# nfsd' // NEW_LINE('A')
@@ -270,9 +442,9 @@ MODULE serde
   END FUNCTION pdf_sampler_type_2s
   FUNCTION config_type_2s(x) RESULT(s)
     USE radiation_config, ONLY: config_type
-    TYPE(config_type), INTENT(IN) :: x
+    TYPE(config_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# i_emiss_from_band_lw' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % i_emiss_from_band_lw)) // NEW_LINE('A')
     IF (ALLOCATED(x % i_emiss_from_band_lw)) THEN
@@ -350,9 +522,9 @@ MODULE serde
   END FUNCTION config_type_2s
   FUNCTION flux_type_2s(x) RESULT(s)
     USE radiation_flux, ONLY: flux_type
-    TYPE(flux_type), INTENT(IN) :: x
+    TYPE(flux_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# lw_up' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % lw_up)) // NEW_LINE('A')
     IF (ALLOCATED(x % lw_up)) THEN
@@ -664,9 +836,9 @@ MODULE serde
   END FUNCTION flux_type_2s
   FUNCTION thermodynamics_type_2s(x) RESULT(s)
     USE radiation_thermodynamics, ONLY: thermodynamics_type
-    TYPE(thermodynamics_type), INTENT(IN) :: x
+    TYPE(thermodynamics_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# pressure_hl' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % pressure_hl)) // NEW_LINE('A')
     IF (ALLOCATED(x % pressure_hl)) THEN
@@ -726,9 +898,9 @@ MODULE serde
   END FUNCTION thermodynamics_type_2s
   FUNCTION randomnumberstream_2s(x) RESULT(s)
     USE random_numbers_mix, ONLY: randomnumberstream
-    TYPE(randomnumberstream), INTENT(IN) :: x
+    TYPE(randomnumberstream), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# iused' // NEW_LINE('A')
     s = s // NEW_LINE('A') // serialize(x % iused) // NEW_LINE('A')
     s = s // '# inittest' // NEW_LINE('A')
@@ -749,9 +921,9 @@ MODULE serde
   END FUNCTION randomnumberstream_2s
   FUNCTION single_level_type_2s(x) RESULT(s)
     USE radiation_single_level, ONLY: single_level_type
-    TYPE(single_level_type), INTENT(IN) :: x
+    TYPE(single_level_type), TARGET, INTENT(IN) :: x
     CHARACTER(LEN = :), ALLOCATABLE :: s
-    INTEGER :: kmeta
+    INTEGER :: kmeta, kmeta_0, kmeta_1, kmeta_2, kmeta_3, kmeta_4, kmeta_5, kmeta_6, kmeta_7, kmeta_8, kmeta_9
     s = s // '# cos_sza' // NEW_LINE('A')
     s = s // '# alloc' // NEW_LINE('A') // serialize(ALLOCATED(x % cos_sza)) // NEW_LINE('A')
     IF (ALLOCATED(x % cos_sza)) THEN

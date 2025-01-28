@@ -45,7 +45,7 @@ module lib
     real, allocatable :: bBZ(:, :)
     double precision :: c = 3.d0
     double precision :: cC(3:4, 5:6) = 6.d0
-    double precision, pointer :: cCP(:, :) => null()
+    double precision, pointer :: cCP(:) => null()
     logical :: d = .true.
     logical :: dD(3) = .false.
     logical, pointer :: dDP(:) => null()
@@ -67,7 +67,7 @@ program main
   type(T), target :: s
   allocate(s%name%w(1)%bBZ(2,2))
   s%name%w(1)%bBZ = 5.1
-  s%name%w(1)%dDP => s%name%w(1)%dD
+  s%name%w(1)%cCP => s%name%w(1)%cC(:, 5)
   call f2(s)
   ! TODO: Find a way to use generic functions to serialize arbitrary types.
   d(1, 1) = s%name%w(1)%a
@@ -77,9 +77,7 @@ subroutine f2(s)
   use lib
   implicit none
   type(T) :: s
-  ! TODO: Find a way to use generic functions to serialize arbitrary types.
-  ! s%name%w(8, 10)%a = 42
-  s%name%w%a = 42
+  s%name%w(1)%a = 42
 end subroutine f2
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -178,7 +176,8 @@ T
 6.0000000000000000
 # cCP
 # assoc
-F
+T
+=> x%cC(:           5))
 # d
 T
 # dD
@@ -194,6 +193,6 @@ F
 F
 # dDP
 # assoc
-T
+F
 """.strip()
         assert want == got
