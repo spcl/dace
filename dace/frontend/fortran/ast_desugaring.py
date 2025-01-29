@@ -519,6 +519,9 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         init = atmost_one(children_of_type(decl, Initialization))
         # TODO: Add ref.
         _, iexpr = init.children
+        if f"{iexpr}" == 'NULL()':
+            # We don't have good representation of "null pointer".
+            return None
         val = _const_eval_basic_type(iexpr, alias_map)
         assert val is not None
         if typ.spec == ('INTEGER1',):
