@@ -12,6 +12,7 @@ from dace import properties, symbolic, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import align_memlet, propagate_memlet, propagate_subset
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.sdfg import SDFG, memlets_in_ast
@@ -325,16 +326,17 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
 
         # Gather all writes and reads inside this state now to determine the state-wide reads and writes.
         # Collect write memlets.
-        writes: Dict[str, List[Tuple[Memlet, nodes.AccessNode]]] = defaultdict(lambda: [])
+        writes: Dict[str, List[Tuple[MultiConnectorEdge[Memlet], nodes.AccessNode]]] = defaultdict(lambda: [])
         for anode in state.data_nodes():
             is_view = isinstance(state.sdfg.data(anode.data), dt.View)
             for iedge in state.in_edges(anode):
                 if not iedge.data.is_empty() and not (is_view and iedge.dst_conn == 'views'):
                     root_edge = state.memlet_tree(iedge).root().edge
-                    writes[anode.data].append((root_edge.data, anode))
+                    writes[anode.data].append((root_edge, anode))
 
         # Go over (overapproximated) reads and check if they are covered by writes.
-        not_covered_reads: Dict[str, Set[Memlet]] = defaultdict(set)
+        not_covered_reads: Dict[str, List[Tuple[MultiConnectorEdge[Memlet],
+                                                nodes.AccessNode]]] = defaultdict(lambda: [])
         for anode in state.data_nodes():
             for oedge in state.out_edges(anode):
                 if not oedge.data.is_empty() and not (isinstance(oedge.dst, nodes.AccessNode) and
@@ -357,11 +359,51 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                         read_subset = oedge.data.src_subset or oedge.data.subset
                     covered = False
                     for [write, to] in writes[anode.data]:
-                        if write.subset.covers_precise(read_subset) and nx.has_path(state.nx, to, anode):
+                        if write.data.subset.covers_precise(read_subset) and nx.has_path(state.nx, to, anode):
                             covered = True
                             break
                     if not covered:
-                        not_covered_reads[anode.data].add(oedge.data)
+                        not_covered_reads[anode.data].append((oedge, anode))
+
+        # Filter out any writes that are overwritten later on
+        for data in writes:
+            if len(writes[data]) > 1:
+                to_remove: Set[nodes.AccessNode] = set()
+                grouped_by_anodes: Dict[nodes.AccessNode, Set[MultiConnectorEdge[Memlet]]] = {}
+                for edge, nd in writes[data]:
+                    if nd in grouped_by_anodes:
+                        grouped_by_anodes[nd].add(edge)
+                    else:
+                        grouped_by_anodes[nd] = set([edge])
+                for nd in grouped_by_anodes.keys():
+                    if nd in to_remove:
+                        continue
+                    write_subset = None
+                    for write in grouped_by_anodes[nd]:
+                        if write_subset is None:
+                            write_subset = subsets.SubsetUnion(write.data.subset)
+                        else:
+                            write_subset.union(write.data.subset)
+                    if write_subset is None:
+                        continue
+                    for other_write_nd in grouped_by_anodes.keys():
+                        if other_write_nd is nd or other_write_nd in to_remove:
+                            continue
+                        if nx.has_path(state.nx, nd, other_write_nd):
+                            other_write_subset = None
+                            for other_write in grouped_by_anodes[other_write_nd]:
+                                if other_write_subset is None:
+                                    other_write_subset = subsets.SubsetUnion(other_write.data.subset)
+                                else:
+                                    other_write_subset.union(other_write.data.subset)
+                            if other_write_subset is not None and other_write_subset.covers_precise(write_subset):
+                                to_remove.add(nd)
+                filtered_writes = []
+                for nd in grouped_by_anodes.keys():
+                    if nd not in to_remove:
+                        for write in grouped_by_anodes[nd]:
+                            filtered_writes.append((write, nd))
+                writes[data] = filtered_writes
 
         state.certain_writes = {}
         state.possible_writes = {}
@@ -370,7 +412,8 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 subset = None
                 volume = None
                 is_dynamic = False
-                for memlet, _ in writes[data]:
+                for edge, _ in writes[data]:
+                    memlet = edge.data
                     is_dynamic |= memlet.dynamic
                     if subset is None:
                         subset = subsets.SubsetUnion(memlet.dst_subset or memlet.subset)
@@ -395,7 +438,8 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             subset = None
             volume = None
             is_dynamic = False
-            for memlet in not_covered_reads[data]:
+            for edge, _ in not_covered_reads[data]:
+                memlet = edge.data
                 is_dynamic |= memlet.dynamic
                 if subset is None:
                     subset = subsets.SubsetUnion(memlet.dst_subset or memlet.subset)
