@@ -290,6 +290,15 @@ class StateFusion(transformation.MultiStateTransformation):
             if len(second_input) > len(second_input_names):
                 return False
 
+            # If the second input contains a structure access as an input, and the first output writes to a member of
+            # that structure, we cannot safely fuse as the structure can be passed to, for instance, a nested SDFG,
+            # hiding which members are actually being accessed.
+            for second_in in second_input:
+                if isinstance(second_in.desc(sdfg), dt.Structure):
+                    struct_member_query = second_in.data + '.'
+                    if any([first_out.startswith(struct_member_query) for first_out in first_output_names]):
+                        return False
+
             # If any first output that is an input to the second state
             # appears in more than one CC, fail
             matches = first_output_names & second_input_names
