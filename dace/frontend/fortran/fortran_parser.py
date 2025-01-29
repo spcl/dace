@@ -2,6 +2,7 @@
 
 import copy
 import os
+import sys
 import warnings
 from copy import deepcopy as dpcp
 from dataclasses import dataclass
@@ -10,12 +11,15 @@ from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
 
 import networkx as nx
+from fparser.api import get_reader
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranStringReader as fsr
+from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
 from fparser.two.Fortran2003 import Program, Name, Module_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
-from fparser.two.utils import Base, walk
+from fparser.two.utils import Base, walk, FortranSyntaxError
+from tqdm import tqdm
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
@@ -2686,16 +2690,31 @@ class ParseConfig:
             entry_points = [entry_points]
 
         self.main = main
-        self.sources = sources
+        self.sources: Dict[str, str] = sources
         self.includes = includes
-        self.entry_points = entry_points
-        self.config_injections = config_injections or []
+        self.entry_points: List[SPEC] = entry_points
+        self.config_injections: List[ConstInjection] = config_injections or []
+
+
+def top_level_objects_map(path: str, f90: str, parser) -> Dict[str, Base]:
+    ast = parser(get_reader(f90))
+    assert isinstance(ast, Program)
+
+    out: Dict[str, Base] = {}
+    for top in ast.children:
+        if type(top).__name__ in CPP_CLASS_NAMES:
+            print(f"Resolve the C++ preprocessor statements before starting to do anything with it;"
+                  f" got `{top}` in {path}", file=sys.stderr)
+            continue
+        name = find_name_of_node(top)
+        assert name
+        out[name.lower()] = top
+    return out
 
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
-    ast = parser(cfg.main)
-    ast = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
+    ast = construct_full_ast(cfg.sources, parser)
     ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
     return ast
@@ -3058,7 +3077,28 @@ def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.Di
     return dep_graph
 
 
-def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
+def construct_full_ast(sources: Dict[str, str], parser) -> Program:
+    tops = {}
+    for path, f90 in tqdm(sources.items(), "Building a map of top-level objects"):
+        try:
+            ctops = top_level_objects_map(path, f90, parser)
+        except FortranSyntaxError as e:
+            print(f"Could not parse `{path}`; got {e}", file=sys.stderr)
+            ctops = {}
+        if ctops.keys() & tops.keys():
+            print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
+        tops.update(ctops)
+
+    ast = Program(get_reader(''))
+    ast.content = []
+    for k, v in tops.items():
+        append_children(ast, v)
+
+    ast = sort_modules(ast)
+    return ast
+
+
+def recursive_ast_improver(ast: Program, sources: Dict[str, str], include_list, parser):
     exclude = set()
 
     NAME_REPLACEMENTS = {
@@ -3077,14 +3117,14 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
             if name in NAME_REPLACEMENTS:
                 name = NAME_REPLACEMENTS[name]
 
-            mod_file = [srcf for srcf in source_list if os.path.basename(srcf).lower() == f"{name}.f90"]
+            mod_file = [srcf for srcf in sources if os.path.basename(srcf).lower() == f"{name}.f90"]
             assert len(mod_file) <= 1, f"Found multiple files for the same module `{mod}`: {mod_file}"
             if not mod_file:
                 print(f"Ignoring error: cannot find a file for `{mod}`")
                 continue
             mod_file = mod_file[0]
 
-            reader = fsr(source_list[mod_file], include_dirs=include_list)
+            reader = fsr(sources[mod_file], include_dirs=include_list)
             try:
                 next_ast = parser(reader)
             except Exception as e:
@@ -3107,7 +3147,7 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
     _recursive_ast_improver(ast)
 
     # Add all the free-floating subprograms from other source files in case we missed them.
-    ast = collect_floating_subprograms(ast, source_list, include_list, parser)
+    ast = collect_floating_subprograms(ast, sources, include_list, parser)
     # Sort the modules in the order of their dependency.
     ast = sort_modules(ast)
 
