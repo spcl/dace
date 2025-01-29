@@ -587,7 +587,7 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None,
     """
 
     state: SDFGState = subgraph.graph
-    if target_state:
+    if target_state is not None:
         newstate = target_state
     else:
         newstate = state.parent_graph.add_state_before(state, label=label)
