@@ -11,6 +11,7 @@ from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
+from dace.transformation.dataflow.redundant_array import RemoveRedundantStructureView
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
@@ -165,7 +166,7 @@ class ArrayElimination(ppl.Pass):
         Removes access nodes that contain views, which can be represented normally by memlets. For example, slices.
         """
         removed_nodes: Set[nodes.AccessNode] = set()
-        xforms = [RemoveSliceView()]
+        xforms = [RemoveSliceView(), RemoveRedundantStructureView()]
         state_id = state.block_id
 
         for nodeset in access_nodes.values():
