@@ -114,27 +114,29 @@ class FullMapFusion(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
 
-        # For an explanation see the `pattern_matching.py` file on line 283 or 254, where
-        #  `match_pattern()` is called without `pipeline_results`.
-        warnings.warn(
-                'Currently the `FullMapFusion` pass does not work correctly, because '
-                '`pipeline_results` is not present during `can_be_applied()` only during '
-                '`apply()`, because of this the speed up benefit of this transformation is limited.'
-        )
-
         fusion = MapFusion(
                 only_inner_maps=self.only_inner_maps,
                 only_toplevel_maps=self.only_toplevel_maps,
                 strict_dataflow=self.strict_dataflow,
                 assume_always_shared=self.assume_always_shared
         )
-        pazz = pmp.PatternMatchAndApplyRepeated(
-                [fusion],
-                permissive=False,
-                validate=False,
-                validate_all=self.validate_all,
-        )
-        result = pazz.apply_pass(sdfg, pipeline_results)
+
+        try:
+            # The short answer why we do this is because  `fusion._pipeline_results` is
+            #  only defined during `apply()` and not during `can_be_applied()`. For more
+            #  information see the note in `MapFusion.is_shared_data()` and/or [issue#1911](https://github.com/spcl/dace/issues/1911).
+            assert fusion._single_use_data is None
+            fusion._single_use_data = pipeline_results["FindSingleUseData"]
+            pazz = pmp.PatternMatchAndApplyRepeated(
+                    [fusion],
+                    permissive=False,
+                    validate=False,
+                    validate_all=self.validate_all,
+            )
+            result = pazz.apply_pass(sdfg, pipeline_results)
+
+        finally:
+            fusion._single_use_data = None
 
         if self.validate:
             sdfg.validate()

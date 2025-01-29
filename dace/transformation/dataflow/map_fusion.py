@@ -123,6 +123,9 @@ class MapFusion(transformation.SingleStateTransformation):
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
 
+        # See comment in `is_shared_data()` for more information.
+        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
+
 
     @classmethod
     def expressions(cls) -> Any:
@@ -1404,12 +1407,20 @@ class MapFusion(transformation.SingleStateTransformation):
         if state.in_degree(data) > 1:
             return True
 
-        # If the `FindSingleUseData` pass is present in the pipeline then we will use
-        #  it. Note that the pass computes the data that can be removed, so we have to
-        #  check if it is not inside.
-        if self._pipeline_results and 'FindSingleUseData' in self._pipeline_results:
-            single_use_data: Dict[SDFG, Set[str]] = self._pipeline_results["FindSingleUseData"]
-            return data.data not in single_use_data[sdfg]
+        # NOTE: Actually, if this transformation is run through the `FullMapFusion` pass, it should
+        #  read the results from `FindSingelUseData`, that was computed because it is a dependent
+        #  pass through the `self._pipeline_results` which is set by the `SingleStateTransformation`.
+        #  However, this member is only set during when `apply()` is called, but not during
+        #  `can_be_applied()`, see [issue#1911](https://github.com/spcl/dace/issues/1911).
+        #  Because, the whole goal of this separation of scanning and fusion was to make the
+        #  transformation stateless, the member `_single_use_data` was introduced. If it is set
+        #  then we use it otherwise we use the scanner.
+        #  This value is set for example by the `FullMapFusion` pass.
+        # TODO(phimuell): Change this once the issue is resolved.
+        if self._single_use_data is not None:
+            assert sdfg in self._single_use_data, f"`_single_use_data` was set, but does not contain information about the SDFG '{sdfg.name}'."
+            single_use_data: Set[str] = self._single_use_data[sdfg]
+            return data.data not in single_use_data
 
         # We have to perform the full scan of the SDFG.
         return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
