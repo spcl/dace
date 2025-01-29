@@ -48,47 +48,6 @@ ReverseNodeReturnType = Tuple[nodes.Node, BackwardResult]
 log = logging.getLogger(__name__)
 
 
-def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> SDFGState:
-    """
-    Add a state where `data` is initialized with zero.
-
-    :param data: the data to initialize
-    :param sdfg: the SDFG to add the state to
-    :param current_state: the current state; the initialization will be done before this state
-    :return: the newly created initialization state
-    """
-    arr = sdfg.arrays[data]
-
-    state = sdfg.add_state_before(current_state, label="init_" + data)
-
-    scalar = 0
-    if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, arr.storage):
-        cuda = False
-    elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, arr.storage):
-        cuda = True
-    else:
-        raise ValueError(f"Unsupported storage {arr.storage}")
-
-    if isinstance(arr, (dt.Array, dt.Scalar)):
-        state.add_mapped_tasklet(
-            "_init_" + data + "_", {
-                "i{}".format(i): "0:{}".format(shape)
-                for i, shape in enumerate(arr.shape)
-            }, {},
-            "__out = {}".format(scalar),
-            {"__out": dace.Memlet.simple(data, ", ".join("i{}".format(i) for i in range(len(arr.shape))))},
-            schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
-            external_edges=True)
-    elif type(arr) is dt.View:
-        # not need to initialize: the viewed array will always be visited
-        # (since a view can never be a required grad), and thus the viewed array will be initialized.
-        pass
-    else:
-        raise AutoDiffException("Unsupported data descriptor {}".format(arr))
-
-    return state
-
-
 def _symbols_to_strings(symbs: Set[sp.Symbol]) -> Set[str]:
     return {str(symb) for symb in symbs}
 
@@ -332,6 +291,9 @@ class BackwardPassGenerator:
 
         #: Mapping between states and their necessary initialization states
         self.init_states: Dict[SDFGState, SDFGState] = {}
+
+        #: Mapping between the map entry of a conditional assignement block and its zeroout AN
+        self.conditional_block_entry: Dict[nodes.MapEntry, nodes.AccessNode] = {}
 
         #: Mapping from forward_node -> BackwardResult for that node
         self.result_map: Dict[nodes.Node, BackwardResult] = {}
@@ -1685,8 +1647,10 @@ class BackwardPassGenerator:
                         f" on edge {edge} has type {edge_type}")
 
     def _connect_conditional_map_exist(self, forward_state: SDFGState, backward_state: SDFGState,
-                                       backward_map_exit: nodes.MapExit, fwd_tasklet: nodes.Tasklet) -> SDFGState:
+                                       backward_map_exit: nodes.MapExit, fwd_tasklet: nodes.Tasklet):
         """
+        This function connects the map exit of a conditional tasklet to a new access node which will zero out the gradient
+        # TODO: in the generalization of this a wcr sum should be added in case we are not zeroing out the gradients
         """
 
         assert len(backward_map_exit.in_connectors) == 0
@@ -1725,9 +1689,23 @@ class BackwardPassGenerator:
         an_memlet_data.data = self.array_grad_map[an_memlet_data.data]
         backward_state.add_edge(backward_map_exit, "OUT_zero_out", replicated_bwd_target_an, None, an_memlet_data)
 
-        new_backward_state = self.backward_sdfg.add_state_after(backward_state)
-        return new_backward_state
+        # We need to get the map entry that starts the conditional block
+        # First get the conditional tasklet
+        conditional_block = self._extract_conditional_array_assignement_block(
+            forward_state=forward_state, tasklet_node=fwd_tasklet, subgraph=self.states_view_map[forward_state])
+        # Get the map entry of the conditional bloc
+        map_entries = [n for n in conditional_block if isinstance(n, nodes.MapEntry)]
 
+        if len(map_entries) != 1:
+            raise AutoDiffException(
+                f"Expected a single MapEntry node in the conditional block, found {len(map_entries)}")
+        else:
+            map_entry = map_entries[0]
+
+        # Add the new access node to a dictionary in case it needs to be connected
+        self.conditional_block_entry[map_entry] = replicated_bwd_target_an
+
+        # self.dict[map_exist] = replicated_bwd_target_an
     def _differentiate_code_symbolically(
         self,
         code_str: str,
@@ -1767,7 +1745,7 @@ class BackwardPassGenerator:
                 result.given_grad_names[output_conn] = rev_input_grad_name
 
                 # zero out the gradient
-                code = f"\n{rev_input_grad_name} = 0.0"
+                code = f"\n__zero_out_conn__ = 0.0"
                 rev_outputs = {}
                 rev_inputs = {rev_input_grad_name}
 
@@ -2163,43 +2141,6 @@ class BackwardPassGenerator:
                 return True
         return False
 
-    def _init_grad(self, forward_state: SDFGState, backward_state: SDFGState, data_an: nodes.AccessNode):
-        desc = self.backward_sdfg.arrays[data_an.data]
-        # No need to initialize if gradients point to outputs
-        if not self.zero_non_transients and not desc.transient:
-            return
-
-        # No need to initialize if this is a view
-        if isinstance(self.backward_sdfg.arrays[data_an.data], dt.ArrayView):
-            return
-
-        # Initialize this array to zero
-        data_an.setzero = True
-
-        # There is a special case when the data is the output of a nested SDFG
-        # In this case the data will not be allocated within the nested-SDFG
-        # Thus the setzero attrinute is irrelavant and we need to add an initilization state
-
-        # First we check if this is a gradient_contribution node
-        # We created these nodes so they don't need any extra check
-        if "gradient" in data_an.label and "contribution" in data_an.label:
-            return
-
-        # Otherwise, we get the forward access node
-        forward_node = {node for node in self.reverse_map if self.reverse_map[node] == data_an}
-        assert len(forward_node) == 1
-        forward_node = forward_node.pop()
-
-        if not self._is_data_output_of_nested_sdfg(forward_data_an=forward_node, forward_state=forward_state):
-            return
-
-        state = init_grad(data_an.data, self.backward_sdfg, backward_state)
-
-        # we only want the init_states to contain the first initial state
-        # since this information is used for create edges only
-        if backward_state not in self.init_states:
-            self.init_states[backward_state] = state
-
     def _reverse_subgraph(self, forward_state: SDFGState, backward_state: SDFGState,
                           subgraph: dstate.StateSubgraphView):
         """ Reverse a given subgraph. All nodes in the subgraph will be reversed. """
@@ -2216,9 +2157,6 @@ class BackwardPassGenerator:
                 # If this node is a part of the conditional assignement block, we skip it
                 if node in conditional_assignement_nodes:
                     continue
-
-                if new_backward_state is not None:
-                    backward_state = new_backward_state
 
                 # Output names on the forward node
                 # (for which the gradient will be connected as an input on the reverse node)
@@ -2241,10 +2179,10 @@ class BackwardPassGenerator:
 
                 # Connect the required inputs of the reverse node:
                 # the gradients ...
-                new_backward_state = self._connect_given_gradients(forward_state=forward_state,
-                                                                   backward_state=backward_state,
-                                                                   subgraph=subgraph,
-                                                                   forward_node=node)
+                self._connect_given_gradients(forward_state=forward_state,
+                                              backward_state=backward_state,
+                                              subgraph=subgraph,
+                                              forward_node=node)
 
                 # ... and any required input values from the forward pass
                 ####################################
@@ -2253,7 +2191,6 @@ class BackwardPassGenerator:
                 already_connected = {e.dst_conn for e in backward_state.in_edges(reversed_node)}
                 required_inputs = set(reversed_node.in_connectors).difference(already_connected)
                 required_inputs = {c: c for c in required_inputs}
-                self.backward_sdfg.save("log_sdfgs/after_connect_given_gradients.sdfg")
                 self._connect_forward_inputs(forward_state, backward_state, node, reversed_node, required_inputs)
 
                 if isinstance(node, nodes.AccessNode):
@@ -2464,8 +2401,6 @@ class BackwardPassGenerator:
                 add_wcr = True
                 # NOTE even though init_grad is called below, the gradient
                 # buffer will not actually be zeroed when
-                # self.zero_non_transients is False (this is checked in
-                # self._init_grad)
                 break
 
             # Set the wcr to sum temporarily so that the following works
@@ -2578,10 +2513,16 @@ class BackwardPassGenerator:
         new_backward_state = None
         for edge in subgraph.out_edges(forward_node):
             if not _path_src_node_in_subgraph(edge, subgraph) or edge.dst not in self.reverse_map:
+                if edge.dst in self.conditional_block_entry:
+                    backward_node = self.reverse_map[edge.src]
+                    assert isinstance(edge.dst, nodes.MapEntry)
+                    conditional_zero_out_an = self.conditional_block_entry[edge.dst]
+                    # Add an empty edge to skip the conditional block
+                    backward_state.add_edge(conditional_zero_out_an, None, backward_node, None, Memlet())
                 # skip connecting edges for which we don't need to generate grads.
                 continue
 
-            # skip connecting boolean edges
+            # Skip connecting boolean edges
             if self.sdfg.arrays[edge.data.data].dtype == dace.bool:
                 # we also need to remove this connector otherwise it will be dangeling
                 backward_node = self.reverse_map[edge.src]
@@ -2589,10 +2530,10 @@ class BackwardPassGenerator:
                 assert conn_to_remove in backward_node.in_connectors
                 assert backward_node.remove_in_connector(conn_to_remove)
                 if len(backward_node.in_connectors) == 0:
-                    new_backward_state = self._connect_conditional_map_exist(forward_state=forward_state,
-                                                                             backward_state=backward_state,
-                                                                             backward_map_exit=backward_node,
-                                                                             fwd_tasklet=edge.dst)
+                    self._connect_conditional_map_exist(forward_state=forward_state,
+                                                        backward_state=backward_state,
+                                                        backward_map_exit=backward_node,
+                                                        fwd_tasklet=edge.dst)
                 continue
 
             src_node, output_conn, dest_node, input_conn, fwd_memlet = edge
@@ -2634,7 +2575,6 @@ class BackwardPassGenerator:
                 memlet,
             )
 
-            self.sdfg.save("log_sdfgs/after_connect_given_gradients.sdfg")
             # Change the access data in the memlet path if it has been zeroed out
             # Calling the memlet path while reversing will raise an error
             # Because the map has not been completely added for the backward state yet
@@ -4389,6 +4329,30 @@ class BackwardPassGenerator:
 
         return smallest_index, largest_index
 
+    def _shape_has_symbols_to_replace(self, shape: Union[str, sp.Symbol, sp.Expr]) -> bool:
+        """"
+        Check if the shape dimension passed as a pramater has a symbol that needs to be replaced.
+        We do not replace global SDFG symbols but rather the loop indicies only
+        """
+        symbol_not_numeric_and_not_sdfg_symb = False
+        if isinstance(shape, (sp.Symbol, sp.Expr)):
+            # TODO: we should check the type of the symbol if it is in arg_names
+            if any(
+                    str(s) not in self.sdfg.free_symbols and str(s) not in self.sdfg.arg_names
+                    for s in shape.free_symbols):
+                # Check if any of these symbols will be given as a parameter to the SDFG
+                symbol_not_numeric_and_not_sdfg_symb = True
+
+        string_not_int_and_not_sdfg_symb = False
+        if isinstance(shape, str):
+            variable_regex = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
+            loop_size_indices = re.findall(variable_regex, shape)
+            if any(
+                    str(symb) not in self.sdfg.free_symbols and str(symb) not in self.sdfg.arg_names
+                    for symb in loop_size_indices):
+                string_not_int_and_not_sdfg_symb = True
+        return string_not_int_and_not_sdfg_symb or symbol_not_numeric_and_not_sdfg_symb
+
     def _get_symbol_upper_bound_from_loop(self, s: sp.Symbol, loops: List[LoopRegion]) -> int:
         """
         Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
@@ -4396,7 +4360,8 @@ class BackwardPassGenerator:
         """
         # Get the symbol to match
         if isinstance(s, (sp.Symbol, sp.Expr)):
-            loop_indices = s.free_symbols
+            # We don't want to match global SDFG symbols
+            loop_indices = {symb for symb in s.free_symbols if str(symb) not in self.sdfg.free_symbols}
             if len(loop_indices) != 1:
                 raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
             loop_index = str(list(loop_indices)[0])
@@ -4433,9 +4398,8 @@ class BackwardPassGenerator:
             raise AutoDiffException(
                 f"Can't figure out how to save the data inside: {l.label} because of its symbol shape {s}")
 
-        # We will call this function recusrively until loop size is numeric
-        if (isinstance(loop_size, sp.Symbol) and not loop_size.is_number) or (isinstance(loop_size, str)
-                                                                              and not is_int(loop_size)):
+        # We will call this function recusrively until loop size is numeric or it is a global SDFG symbol
+        if self._shape_has_symbols_to_replace(loop_size):
             loop_size, _ = self._get_symbol_upper_bound_from_loop(loop_size, loops)
         return loop_size, loop_index
 
@@ -4497,7 +4461,7 @@ class BackwardPassGenerator:
             if len(loops) > 0:
                 # Loop over the shape dimensions
                 for i, s in enumerate(shape):
-                    if isinstance(s, dace.symbol) or isinstance(s, sp.Expr):
+                    if self._shape_has_symbols_to_replace(s):
                         loop_size, loop_index = self._get_symbol_upper_bound_from_loop(s, loops)
                         # Replace the symbol with the loop size and evaluate the expression
                         # Check if loop size can be converted to an integer
@@ -4530,8 +4494,8 @@ class BackwardPassGenerator:
 
                 # First we check if the new dimension contains symbols
                 # These will need to be replaced with scalars for correct allocation
-                if isinstance(new_dim, dace.symbol) or isinstance(new_dim,
-                                                                  sp.Expr) or str(new_dim) in self.sdfg.symbols:
+                # The sdfg symbols are allowed to be in the shape
+                if self._shape_has_symbols_to_replace(new_dim):
                     # Take the expression to sympy for easier processing
                     if isinstance(new_dim, str):
                         new_dim = sp.Symbol(new_dim)
@@ -4549,9 +4513,6 @@ class BackwardPassGenerator:
         # Add the array descriptor and AccessNode to the forward state
         original_desc = forward_an.desc(forward_state)
 
-        # TODO: the shape could depend on a runtime dependant symbol,
-        # TODO: we cannot do data-dependant shapes,
-        # how should we deal with these?
         new_store_node = forward_state.add_array(
             name=new_store_node_name,
             shape=shape,
@@ -4699,8 +4660,9 @@ class BackwardPassGenerator:
             for out_edge in forward_state.out_edges(forward_an):
                 # Get the destination of the edge
                 dst = out_edge.dst
-                if not isinstance(dst, nodes.MapEntry):
+                if not isinstance(dst, nodes.MapEntry) and dst is not assign_tasklet_node:
                     # This will not be necessary for maps since the storing is added to the same map
+                    # We also don't connect the newly created assign tasklet to avoid creating a cycle
                     if dst not in to_connect:
                         # We only need to make a single connection to the new stored data
                         to_connect.append(dst)
