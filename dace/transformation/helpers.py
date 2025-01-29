@@ -576,7 +576,8 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
+def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None,
+                  target_state: Optional[SDFGState] = None) -> SDFGState:
     """
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
@@ -586,7 +587,10 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     """
 
     state: SDFGState = subgraph.graph
-    newstate = state.parent_graph.add_state_before(state, label=label)
+    if target_state:
+        newstate = target_state
+    else:
+        newstate = state.parent_graph.add_state_before(state, label=label)
 
     # Save edges before removing nodes
     orig_edges = subgraph.edges()
@@ -595,12 +599,27 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     nodes_to_remove = set(subgraph.nodes())
     boundary_nodes = [n for n in subgraph.nodes() if len(state.out_edges(n)) > len(subgraph.out_edges(n))
                       ] + [n for n in subgraph.nodes() if len(state.in_edges(n)) > len(subgraph.in_edges(n))]
+    nodes_to_remove -= set(boundary_nodes)
+    # Mark nodes to keep if they are needed for building views.
+    kept_nodes = set(state.nodes()) - nodes_to_remove
+    view_base_nodes_to_keep = set()
+    for kept_node in kept_nodes:
+        if isinstance(kept_node, nodes.AccessNode) and isinstance(kept_node.desc(state.sdfg), data.View):
+            for viewed_node in utils.get_all_view_nodes(state, kept_node):
+                if viewed_node in nodes_to_remove:
+                    view_base_nodes_to_keep.add(viewed_node)
+    nodes_to_remove -= view_base_nodes_to_keep
 
     # Make dictionary of nodes to add to new state
-    new_nodes = {n: n for n in subgraph.nodes()}
+    new_nodes = {}
+    for n in subgraph.nodes():
+        if n in view_base_nodes_to_keep:
+            # These nodes will be in both states, so we need a copy.
+            new_nodes[n] = copy.deepcopy(n)
+        else:
+            new_nodes[n] = n
     new_nodes.update({b: copy.deepcopy(b) for b in boundary_nodes})
 
-    nodes_to_remove -= set(boundary_nodes)
     state.remove_nodes_from(nodes_to_remove)
 
     for n in new_nodes.values():
@@ -611,10 +630,12 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     newstate.add_nodes_from(new_nodes.values())
 
     for e in orig_edges:
-        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, e.data)
+        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, copy.deepcopy(e.data))
 
     for bn in boundary_nodes:
-        bn._in_connectors.clear()
+        # Do not clear the 'views' connectors for access nodes to Views.
+        if not (isinstance(bn, nodes.AccessNode) and isinstance(bn.desc(state.sdfg), data.View)):
+            bn._in_connectors.clear()
 
     return newstate
 
@@ -626,26 +647,21 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
 
     # Bookkeeping
     nodes_to_move = set([node])
-    boundary_nodes = set()
-    orig_edges = set()
 
     # Collect predecessors
     if not isinstance(node, nodes.AccessNode):
         for edge in state.in_edges(node):
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
-                orig_edges.add(e)
                 pivot = e.src
                 while isinstance(pivot, nodes.AccessNode) and isinstance(state.sdfg.arrays[pivot.data], data.View):
                     for vedge in utils.get_all_view_edges(state, pivot):
                         nodes_to_move.add(vedge.src)
                         pivot = vedge.src
-                        orig_edges.add(vedge)
 
     # Collect nodes_to_move
     for edge in state.edge_bfs(node):
         nodes_to_move.add(edge.dst)
-        orig_edges.add(edge)
 
         if not isinstance(edge.dst, nodes.AccessNode):
             for iedge in state.in_edges(edge.dst):
@@ -654,54 +670,13 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
 
                 for e in state.memlet_path(iedge):
                     nodes_to_move.add(e.src)
-                    orig_edges.add(e)
-
-    # Define boundary nodes
-    for node in set(nodes_to_move):
-        if isinstance(node, nodes.AccessNode):
-            for iedge in state.in_edges(node):
-                if iedge.src not in nodes_to_move:
-                    boundary_nodes.add(node)
-                    break
-
-            if node in boundary_nodes:
-                continue
-
-            for oedge in state.out_edges(node):
-                if oedge.dst not in nodes_to_move:
-                    boundary_nodes.add(node)
-                    break
-
-    # Duplicate boundary nodes
-    new_nodes = {}
-    for node in boundary_nodes:
-        node_ = copy.deepcopy(node)
-        state.add_node(node_)
-        new_nodes[node] = node_
-
-    for edge in state.edges():
-        if edge.src in boundary_nodes and edge.dst in boundary_nodes:
-            state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
-                           copy.deepcopy(edge.data))
-        elif edge.src in boundary_nodes:
-            state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-        elif edge.dst in boundary_nodes:
-            state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
-
-    # Move nodes
-    state.remove_nodes_from(nodes_to_move)
-
-    for n in nodes_to_move:
-        if isinstance(n, nodes.NestedSDFG):
-            # Set the new parent state
-            n.sdfg.parent = newstate
-
-    newstate.add_nodes_from(nodes_to_move)
-
-    for e in orig_edges:
-        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
-
-    return newstate
+                    pivot = e.src
+                    while isinstance(pivot, nodes.AccessNode) and isinstance(state.sdfg.arrays[pivot.data], data.View):
+                        for vedge in utils.get_all_view_edges(state, pivot):
+                            nodes_to_move.add(vedge.src)
+                            pivot = vedge.src
+    node_subgraph = SubgraphView(state, nodes_to_move)
+    return state_fission(node_subgraph, None, newstate)
 
 
 def _get_internal_subset(internal_memlet: Memlet,
