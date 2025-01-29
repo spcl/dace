@@ -14,7 +14,7 @@ from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
 from dace.sdfg.replace import replace_datadesc_names, replace
 from dace.transformation import transformation, helpers
-from dace.properties import Property, make_properties
+from dace.properties import make_properties
 from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
 from dace.sdfg.utils import get_all_view_nodes, get_view_edge
 
@@ -27,8 +27,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
-
-    inline_sdfgs_with_returns = Property(dtype=bool, default=False)
 
     @staticmethod
     def annotates_memlets():
@@ -59,13 +57,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 return False
             if not isinstance(oedge.dst, nodes.AccessNode):
                 return False
-
-        has_return = False
-        for blk in nested_sdfg.sdfg.all_control_flow_blocks():
-            if isinstance(blk, ReturnBlock):
-                has_return = True
-        if has_return and not self.inline_sdfgs_with_returns:
-            return False
 
         return True
 
@@ -147,7 +138,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Make symbol mapping explicit
         statenames = set([s.label for s in nsdfg.all_control_flow_blocks()])
-        newname = find_new_name('mapping_state', statenames)
+        newname = find_new_name("mapping_state", statenames)
         mapping_state = nsdfg.add_state_before(nsdfg.start_state, label=newname, is_start_state=True)
         mapping_edge = nsdfg.out_edges(mapping_state)[0]
         for inner_sym, expr in nsdfg_node.symbol_mapping.items():
@@ -248,7 +239,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
                     datadesc = nsdfg.arrays[node.data]
-                    if isinstance(datadesc, View) or not datadesc.transient:
+                    if not datadesc.transient:
                         continue
 
                     if node.data not in transient_replacements:
@@ -260,7 +251,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
                     if edge.data.data is not None:
                         datadesc = nsdfg.arrays[edge.data.data]
-                        if isinstance(datadesc, View) or not datadesc.transient:
+                        if not datadesc.transient:
                             continue
 
                         if edge.data.data not in transient_replacements:
@@ -288,6 +279,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
     def _isolate_nsdfg_node(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG, outer_state: SDFGState) -> SDFGState:
         # Push nsdfg plus childs into new state
         nsdfg_state = helpers.state_fission_after(outer_state, nsdfg_node)
+        sdfg.reset_cfg_list()
 
         # Split nsdfg from its childs
         direct_subgraph = set()
@@ -297,13 +289,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         for node in list(direct_subgraph):
             if isinstance(node, nodes.AccessNode) and isinstance(sdfg.arrays[node.data], View):
-                all_view_nodes = get_all_view_nodes(nsdfg_state, node)
-                if all_view_nodes:
-                    for view_node in all_view_nodes:
-                        direct_subgraph.add(view_node)
+                for view_node in get_all_view_nodes(nsdfg_state, node):
+                    direct_subgraph.add(view_node)
 
         direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
         new_state = helpers.state_fission(direct_subgraph)
+        sdfg.reset_cfg_list()
         return new_state
 
     def _replace_arguments_by_views(
@@ -332,7 +323,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             new_name = find_new_name(outp, used_symbol_names)
             used_symbol_names.add(new_name)
             replacements[outp] = new_name
-
+        
         replace_datadesc_names(nsdfg, replacements)
 
 
@@ -433,7 +424,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 outer_desc.transient = (viewed_node != outer_nodes[-1])
                 if viewed_node.data in nsdfg.arrays:
                     del nsdfg.arrays[viewed_node.data]
-                nsdfg.add_datadesc(viewed_node.data, outer_desc)
+                if viewed_node.data not in nsdfg.symbols:
+                    nsdfg.add_datadesc(viewed_node.data, outer_desc)
+                else:
+                    nsdfg_node.symbol_mapping[viewed_node.data] = viewed_node.data
 
             # Provide full desc as argument
             outer_node = outer_nodes[-1]
@@ -469,38 +463,70 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         in_node = node
                         out_node = node
 
-                    if out_edges and node.data in input_memlets:
+                    if out_edges:
                         # Add directly viewed node
-                        outer_node = input_memlets[node.data].src
-                        viewed_node = nstate.add_access(outer_node.data)
-                        nstate.add_edge(
-                            viewed_node,
-                            None,
-                            out_node,
-                            "views",
-                            dc(input_memlets[node.data].data)
-                        )
-
-                        # Add tower of views
-                        viewing_node = viewed_node
-                        outer_nodes = get_all_view_nodes(outer_state, outer_node)
-                        outer_node_ = outer_node
-                        for outer_node in outer_nodes[1:]:
+                        if node.data in input_memlets:
+                            outer_node = input_memlets[node.data].src
                             viewed_node = nstate.add_access(outer_node.data)
-                            view_edge = list(outer_state.edges_between(outer_node, outer_node_))[0]
                             nstate.add_edge(
                                 viewed_node,
-                                view_edge.src_conn,
-                                viewing_node,
-                                view_edge.dst_conn,
-                                dc(view_edge.data)
+                                None,
+                                out_node,
+                                "views",
+                                dc(input_memlets[node.data].data)
                             )
-                            viewing_node = viewed_node
-                            outer_node_ = outer_node
 
-                        last_out_node = viewing_node
+                            # Add tower of views
+                            viewing_node = viewed_node
+                            outer_nodes = get_all_view_nodes(outer_state, outer_node)
+                            outer_node_ = outer_node
+                            for outer_node in outer_nodes[1:]:
+                                viewed_node = nstate.add_access(outer_node.data)
+                                view_edge = list(outer_state.edges_between(outer_node, outer_node_))[0]
+                                nstate.add_edge(
+                                    viewed_node,
+                                    view_edge.src_conn,
+                                    viewing_node,
+                                    view_edge.dst_conn,
+                                    dc(view_edge.data)
+                                )
+                                viewing_node = viewed_node
+                                outer_node_ = outer_node
+
+                            last_out_node = viewing_node
+                        else:
+                            # This is the case, if the read is 'self-contained', i.e., has been written to right before.
+                            # In this case, we get the necessary information for the tower of views from the output.
+                            outer_node = output_memlets[node.data].dst
+                            viewed_node = nstate.add_access(outer_node.data)
+                            nstate.add_edge(
+                                viewed_node,
+                                None,
+                                out_node,
+                                "views",
+                                dc(output_memlets[node.data].data)
+                            )
+
+                            # Add tower of views
+                            viewing_node = viewed_node
+                            outer_nodes = get_all_view_nodes(outer_state, outer_node)
+                            outer_node_ = outer_node
+                            for outer_node in outer_nodes[1:]:
+                                viewed_node = nstate.add_access(outer_node.data)
+                                view_edge = list(outer_state.edges_between(outer_node_, outer_node))[0]
+                                nstate.add_edge(
+                                    viewed_node,
+                                    view_edge.dst_conn,
+                                    viewing_node,
+                                    view_edge.src_conn,
+                                    dc(view_edge.data)
+                                )
+                                viewing_node = viewed_node
+                                outer_node_ = outer_node
+
+                            last_out_node = viewing_node
                     
-                    if in_edges and node.data in output_memlets:
+                    if in_edges:
                         # Add directly viewed node
                         outer_node = output_memlets[node.data].dst
                         viewed_node = nstate.add_access(outer_node.data)
@@ -543,6 +569,15 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Control-flow: Replace old arguments by the true data
         # Hint: Old arguments are now views and cannot be used here
 
+        # args_used_in_shapes=    set()
+        # for arr in nsdfg.arrays:
+        #     for dim in nsdfg.arrays[arr].shape:
+        #         if not isinstance(dim, int):
+        #             args_used_in_shapes |= dim.free_symbols
+        # #args_used_in_shapes &= input_memlets.keys()
+        # for arg in args_used_in_shapes:
+        #      in_edge = input_memlets[arg]        
+
         # Find arguments to be replaced
         args_used_in_assignments = set()
         for edge in nsdfg.all_interstate_edges():
@@ -559,6 +594,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             not_a_struct = True
             in_edge = input_memlets[arg]
             if in_edge.data.data in nsdfg.symbols:
+                for edge in nsdfg.all_interstate_edges():
+                    edge.data.replace(arg, in_edge.data.data)        
+                for cfr in nsdfg.all_control_flow_regions():
+                    cfr.replace_meta_accesses({ arg: in_edge.data.data })
                 continue
             if not isinstance(nsdfg.arrays[in_edge.data.data], View):
                 if isinstance(nsdfg.arrays[in_edge.data.data], Array):
@@ -569,7 +608,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         for i in range(len(shape_out)):
                             if shape_out[i] != shape_in[i]:
                                 if shape_in[i] != 1:
-                                    raise NotImplementedError
+                                    print(f"Array {arg} has different shapes for dim{1}: {shape_out[i]}, {shape_in[i]}. We hope they evaluate to same value")
+                                    #raise NotImplementedError
                                 else:
                                     collapsed += 1
                         if collapsed == len(shape_out):            
@@ -577,7 +617,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             must_remove_zero_index= True     
                             components = [""]*len(in_edge.data.subset.size())
                             for i in range(len(in_edge.data.subset.size())):
-                                components[i]=str(in_edge.data.subset.ranges[i][0])
+                                components[i]=(str(in_edge.data.subset.ranges[i][0]),1)
                             
                             first_data = ("",components)
                             data_path = [in_edge.data.data,first_data]
@@ -588,11 +628,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         must_remove_zero_index= True     
                         components = [""]*len(in_edge.data.subset.size())
                         for i in range(len(in_edge.data.subset.size())):
-                            components[i]=str(in_edge.data.subset.ranges[i][0])
+                            components[i]=(str(in_edge.data.subset.ranges[i][0]),1)
                         
                         first_data = ("",components)
                         data_path = [in_edge.data.data,first_data]
                 else:
+                    if isinstance(nsdfg.arrays[arg],ArrayView) and nsdfg.arrays[arg].shape[0]==1 and len(nsdfg.arrays[arg].shape)==1 and isinstance(nsdfg.arrays[in_edge.data.data],Scalar):
+                        must_remove_zero_index= True
                     first_data = in_edge.data.data
                     data_path = [first_data]
                 
@@ -630,19 +672,31 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             collapsed = [False]*len(view_edge.data.subset.size())
                             components = [""]*len(view_edge.data.subset.size())
                             #check if the view is collapsed in any dimension
+                            dims_outside =len([i for i in view_edge.data.subset.size() if i!=1])
+                            dims_inside=len([i for i in nsdfg.arrays[arg].shape if i!=1])
+                            with_reshape=False
+                            if dims_outside > dims_inside:
+                                if dims_outside!=2 or dims_inside!=1:
+                                    raise NotImplementedError("The view is not collapsed in the same dimensions as the internal array and the internal array is not 1d")
+                                else:
+                                    with_reshape=True
+
                             for i in range(len(view_edge.data.subset.size())):
                                 if view_edge.data.subset.size()[i] ==1:
                                         collapsed[i] = True
-                                        components[i] = str(view_edge.data.subset.ranges[i][0])
+                                        components[i] = (str(view_edge.data.subset.ranges[i][0]),1)
                                 elif view_edge.data.subset.size()[i] != current_desc.shape[i]:
                                     raise NotImplementedError
                                 else:
-                                    components[i] = "__to_be_replaced__"
+                                    if with_reshape:
+                                        components[i] = ("__to_be_reshaped__",view_edge.data.subset.size()[i])
+                                    else:
+                                        components[i] = ("__to_be_replaced__",1)
                                     complex_replacement = True
-                                    data_path.append((member_name,components))
+                            data_path.append((member_name,components))
                             if all(collapsed): 
                                 must_remove_zero_index= True
-                                data_path.append((member_name,components))
+                            #    data_path.append((member_name,components))
                             # TODO: Non-trivial, memlet offsetting required
                             print("Warning: Non-trivial view on a subset")
                             #raise NotImplementedError
@@ -665,14 +719,16 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     data_path = data_path[0]
                 for edge in nsdfg.all_interstate_edges():
                     if must_remove_zero_index:
-                        edge.data.replace_complex(arg, data_path,remove_zero_index=True)        
+                        edge.data.replace_complex(arg, data_path,remove_zero_index=True)
+                        edge.data.replace(arg, data_path)        
                     else:
                         edge.data.replace(arg, data_path)
                 for cfr in nsdfg.all_control_flow_regions():
                     cfr.replace_meta_accesses({ arg: data_path })
             else:
                 for edge in nsdfg.all_interstate_edges():
-                    edge.data.replace_complex(arg, data_path,remove_zero_index=False)        
+                    edge.data.replace_complex(arg, data_path,remove_zero_index=False)
+                    edge.data.replace(arg, data_path)        
                 for cfr in nsdfg.all_control_flow_regions():
                     cfr.replace_meta_accesses({ arg: data_path })
 
@@ -684,3 +740,4 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         for argument, edge in output_memlets.items():
             outer_state.remove_memlet_path(edge)
+
