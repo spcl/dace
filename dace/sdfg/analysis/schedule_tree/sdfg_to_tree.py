@@ -56,19 +56,17 @@ def dealias_sdfg(sdfg: SDFG):
                 continue
             for edge in parent_state.edges_by_connector(parent_node, name):
                 parent_name = edge.data.data
-                # TODO: this should be done better maybe
-                if parent_name in parent_node.in_connectors or parent_name in parent_node.out_connectors:
+                if parent_name == name or parent_name in nsdfg.arrays:
                     continue
                 assert parent_name in parent_sdfg.arrays
-                if name != parent_name:
-                    replacements[name] = parent_name
-                    parent_edges[name] = edge
-                    if parent_name in inv_replacements:
-                        inv_replacements[parent_name].append(name)
-                        to_unsqueeze.add(parent_name)
-                    else:
-                        inv_replacements[parent_name] = [name]
-                    break
+                replacements[name] = parent_name
+                parent_edges[name] = edge
+                if parent_name in inv_replacements:
+                    inv_replacements[parent_name].append(name)
+                    to_unsqueeze.add(parent_name)
+                else:
+                    inv_replacements[parent_name] = [name]
+                break
 
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
@@ -143,6 +141,14 @@ def dealias_sdfg(sdfg: SDFG):
                             e.data.other_subset = subsets.Range.from_array(parent_arr)
 
         if replacements:
+            cleaned_replacements = {}
+            for k, val in replacements.items():
+                if '.' in val:
+                    continue
+                else:
+                    cleaned_replacements[k] = val
+            replacements = cleaned_replacements
+
             symbolic.safe_replace(replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
             parent_node.in_connectors = {
                 replacements[c] if c in replacements else c: t
