@@ -28,7 +28,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
-from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
+from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
@@ -2944,6 +2944,10 @@ def inject_const_evals(ast: Program,
 def lower_identifier_names(ast: Program) -> Program:
     for nm in walk(ast, Name):
         nm.string = nm.string.lower()
+    for num in walk(ast, NumberBase):
+        val, kind = num.children
+        if isinstance(kind, str):
+            set_children(num, (val, kind.lower()))
     return ast
 
 
