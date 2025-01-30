@@ -19,7 +19,6 @@ from fparser.two.Fortran2003 import Program, Name, Module_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
 from fparser.two.utils import Base, walk, FortranSyntaxError
-from tqdm import tqdm
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
@@ -3080,7 +3079,7 @@ def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.Di
 
 def construct_full_ast(sources: Dict[str, str], parser) -> Program:
     tops = {}
-    for path, f90 in tqdm(sources.items(), "Building a map of top-level objects"):
+    for path, f90 in sources.items():
         try:
             ctops = top_level_objects_map(path, f90, parser)
         except FortranSyntaxError as e:
