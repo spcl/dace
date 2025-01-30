@@ -2,8 +2,9 @@
 
 import numpy as np
 
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, deduce_f2dace_variables_for_array
+
 
 def test_fortran_frontend_array_attribute_no_offset():
     """
@@ -243,7 +244,8 @@ end subroutine main
     arrsize = 5
     arrsize2 = 10
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
-    sdfg(d=a, __f2dace_A_d_d_0_s_0=arrsize,__f2dace_OA_d_d_0_s_0=1,__f2dace_A_d_d_1_s_1=arrsize2,__f2dace_OA_d_d_1_s_1=1, arrsize=arrsize, arrsize2=arrsize2)
+    sdfg(d=a, **deduce_f2dace_variables_for_array(a, 'd', 0),
+         arrsize=arrsize, arrsize2=arrsize2)
     for i in range(arrsize):
         # offset -1 is already added
         assert a[i, 0] == (i + 1) * 2
@@ -267,7 +269,8 @@ end subroutine main
     arrsize = 5
     arrsize2 = 10
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
-    sdfg(d=a, __f2dace_A_d_d_0_s_0=arrsize, __f2dace_OA_d_d_0_s_0=1,__f2dace_A_d_d_1_s_1=arrsize2,__f2dace_OA_d_d_1_s_1=1, arrsize=arrsize, arrsize2=arrsize2)
+    sdfg(d=a, **deduce_f2dace_variables_for_array(a, 'd', 0),
+         arrsize=arrsize, arrsize2=arrsize2)
     for i in range(arrsize):
         # offset -1 is already added
         assert a[i, 0] == (i + 1) * 2
@@ -301,8 +304,8 @@ end module lib
     arrsize4 = 7
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
     b = np.full([arrsize3, arrsize4], 42, order="F", dtype=np.float64)
-    sdfg(d=a, __f2dace_A_d_d_0_s_0=arrsize,__f2dace_OA_d_d_0_s_0=1, __f2dace_A_d_d_1_s_1=arrsize2,__f2dace_OA_d_d_1_s_1=1,
-         d2=b, __f2dace_A_d2_d_0_s_2=arrsize3,__f2dace_OA_d2_d_0_s_2=1, __f2dace_A_d2_d_1_s_3=arrsize4,__f2dace_OA_d2_d_1_s_3=1,
+    sdfg(d=a, **deduce_f2dace_variables_for_array(a, 'd', 0),
+         d2=b, **deduce_f2dace_variables_for_array(b, 'd2', 2),
          arrsize=arrsize, arrsize2=arrsize2, arrsize3=arrsize3, arrsize4=arrsize4)
     assert a[0, 0] == arrsize
     assert a[0, 1] == arrsize2

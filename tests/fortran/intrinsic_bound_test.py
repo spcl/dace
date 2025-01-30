@@ -211,13 +211,16 @@ END SUBROUTINE intrinsic_bound_test_function3
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
-    sdfg(
-        res=res,
-        __f2dace_A_input_var_0_d_0_s_0=4,
-        __f2dace_A_input_var_0_d_1_s_1=7,
-        __f2dace_OA_input_var_0_d_0_s_0=42,
-        __f2dace_OA_input_var_0_d_1_s_1=13
-    )
+
+    # TODO: This really should not work like this! Reasons follow:
+    #  - `input` is not a function argument. It's an entirely local variable that the function allcoates and discards.
+    #  - Even if our `allocate()` is does not really allocate, we should set the f2dace variables correctly. Currently
+    #    that happens only for the "ALLCOATED" variable.
+    sdfg(res=res,
+         __f2dace_A_input_var_0_d_0_s_0=4,
+         __f2dace_A_input_var_0_d_1_s_1=7,
+         __f2dace_OA_input_var_0_d_0_s_0=42,
+         __f2dace_OA_input_var_0_d_1_s_1=13)
 
     assert np.allclose(res, [42, 13, 45, 19])
 

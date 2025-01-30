@@ -1,7 +1,6 @@
-
 import numpy as np
 
-from dace.frontend.fortran.fortran_parser import create_internal_ast, ParseConfig, create_singular_sdfg_from_string
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 """
@@ -13,6 +12,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
     - 2D copy from array, data refs in array and indices
     - FIXME 2D copy, transpose (ECRAD example) 
 """
+
 
 def test_fortran_frontend_noncontiguous_slices():
     """
@@ -55,6 +55,7 @@ end subroutine fun
     assert np.all(d == [1, 2, 3, 4, 5])
     assert np.all(d2 == [2, 6, 10])
 
+
 def test_fortran_frontend_noncontiguous_slices_2d():
     """
     Tests that the Fortran frontend can also work with slicing across one dimension.
@@ -95,6 +96,7 @@ end subroutine fun
     sdfg(d=d, d2=d2)
 
     assert np.all(d[1, [0, 2, 4]] * 2 == d2)
+
 
 def test_fortran_frontend_noncontiguous_slices_2d_double_copy():
     """
@@ -144,6 +146,7 @@ end subroutine fun
 
     assert np.all(d[[1, 3]][:, [0, 2, 4]] * 2 == d2)
 
+
 def test_fortran_frontend_noncontiguous_slices_2d_pardecl():
     """
     Tests that the Fortran frontend can parse array non-contiguous accesses together with a range.
@@ -189,6 +192,7 @@ end subroutine fun
 
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
 
+
 def test_fortran_frontend_noncontiguous_slices_2d_pardecl2():
     """
     As above, but pass the whole subset across one dimension.
@@ -233,6 +237,7 @@ end subroutine fun
     sdfg(d=d, d2=d2)
 
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
+
 
 def test_fortran_frontend_noncontiguous_slices_2d_data_refs():
     """
@@ -298,6 +303,7 @@ end subroutine fun
 
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
 
+
 def test_fortran_frontend_noncontiguous_nested():
     """
     As above, but pass the whole subset across one dimension.
@@ -350,6 +356,7 @@ end subroutine fun
     sdfg(d=d, d2=d2)
 
     assert np.all(d[1, [0, 2, 4]] * 2 == d2)
+
 
 if __name__ == "__main__":
     test_fortran_frontend_noncontiguous_slices()
