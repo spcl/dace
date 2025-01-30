@@ -2,6 +2,7 @@
 
 import copy
 import os
+import sys
 import warnings
 from copy import deepcopy as dpcp
 from dataclasses import dataclass
@@ -10,12 +11,14 @@ from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
 
 import networkx as nx
+from fparser.api import get_reader
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranStringReader as fsr
+from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
 from fparser.two.Fortran2003 import Program, Name, Module_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
-from fparser.two.utils import Base, walk
+from fparser.two.utils import Base, walk, FortranSyntaxError
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
@@ -2673,7 +2676,8 @@ class ParseConfig:
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
             main = main.read_text()
-        main = FortranStringReader(main)
+        if main:
+            main = FortranStringReader(main)
         if not sources:
             sources: Dict[str, str] = {}
         elif isinstance(sources, list):
@@ -2686,16 +2690,31 @@ class ParseConfig:
             entry_points = [entry_points]
 
         self.main = main
-        self.sources = sources
+        self.sources: Dict[str, str] = sources
         self.includes = includes
-        self.entry_points = entry_points
-        self.config_injections = config_injections or []
+        self.entry_points: List[SPEC] = entry_points
+        self.config_injections: List[ConstInjection] = config_injections or []
+
+
+def top_level_objects_map(f90: FortranStringReader, path: str, parser) -> Dict[str, Base]:
+    ast = parser(f90)
+    assert isinstance(ast, Program)
+
+    out: Dict[str, Base] = {}
+    for top in ast.children:
+        if type(top).__name__ in CPP_CLASS_NAMES:
+            print(f"Resolve the C++ preprocessor statements before starting to do anything with it;"
+                  f" got `{top}` in {path}", file=sys.stderr)
+            continue
+        name = find_name_of_node(top)
+        assert name
+        out[name.lower()] = top
+    return out
 
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
-    ast = parser(cfg.main)
-    ast = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
+    ast = construct_full_ast(cfg.sources, parser, cfg.main)
     ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
     return ast
@@ -3058,104 +3077,35 @@ def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.Di
     return dep_graph
 
 
-def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
-    exclude = set()
-
-    NAME_REPLACEMENTS = {
-        'mo_restart_nml_and_att': 'mo_restart_nmls_and_atts',
-        'yomhook': 'yomhook_dummy',
-    }
-
-    def _recursive_ast_improver(_ast: Base):
-        defined_modules = ast_utils.get_defined_modules(_ast)
-        used_modules, objects_in_modules = ast_utils.get_used_modules(_ast)
-
-        modules_to_parse = [mod for mod in used_modules if mod not in chain(defined_modules, exclude)]
-        added_modules = []
-        for mod in modules_to_parse:
-            name = mod.lower()
-            if name in NAME_REPLACEMENTS:
-                name = NAME_REPLACEMENTS[name]
-
-            mod_file = [srcf for srcf in source_list if os.path.basename(srcf).lower() == f"{name}.f90"]
-            assert len(mod_file) <= 1, f"Found multiple files for the same module `{mod}`: {mod_file}"
-            if not mod_file:
-                print(f"Ignoring error: cannot find a file for `{mod}`")
-                continue
-            mod_file = mod_file[0]
-
-            reader = fsr(source_list[mod_file], include_dirs=include_list)
-            try:
-                next_ast = parser(reader)
-            except Exception as e:
-                raise RuntimeError(f"{mod_file} could not be parsed: {e}") from e
-
-            _recursive_ast_improver(next_ast)
-
-            for c in reversed(next_ast.children):
-                if c in added_modules:
-                    added_modules.remove(c)
-                added_modules.insert(0, c)
-                c_stmt = c.children[0]
-                c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
-                exclude.add(c_name)
-
-        for mod in reversed(added_modules):
-            if mod not in _ast.children:
-                _ast.children.append(mod)
-
-    _recursive_ast_improver(ast)
-
-    # Add all the free-floating subprograms from other source files in case we missed them.
-    ast = collect_floating_subprograms(ast, source_list, include_list, parser)
-    # Sort the modules in the order of their dependency.
-    ast = sort_modules(ast)
-
-    return ast
-
-
-def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], include_list, parser) -> Program:
-    known_names: Set[str] = {nm.string for nm in walk(ast, Name)}
-
-    known_floaters: Set[str] = set()
-    for esp in ast.children:
-        name = find_name_of_node(esp)
-        if name:
-            known_floaters.add(name)
-
-    known_sub_asts: Dict[str, Program] = {}
-    for src, content in source_list.items():
-
-        # TODO: Should be fixed in FParser.
-        # FParser cannot handle `convert=...` argument in the `open()` statement.
-        content = content.replace(',convert="big_endian"', '')
-
-        reader = fsr(content, include_dirs=include_list)
+def construct_full_ast(sources: Dict[str, str], parser, main: Optional[FortranStringReader] = None) -> Program:
+    tops = {}
+    for path, f90 in sources.items():
         try:
-            sub_ast = parser(reader)
-        except Exception as e:
-            print(f"Ignoring {src} due to error: {e}")
-            continue
-        known_sub_asts[src] = sub_ast
+            ctops = top_level_objects_map(get_reader(f90), path, parser)
+        except FortranSyntaxError as e:
+            print(f"Could not parse `{path}`; got {e}", file=sys.stderr)
+            ctops = {}
+        if ctops.keys() & tops.keys():
+            print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
+        tops.update(ctops)
 
-    # Since the order is not topological, we need to incrementally find more connected floating subprograms.
-    changed = True
-    while changed:
-        changed = False
-        new_floaters = []
-        for src, sub_ast in known_sub_asts.items():
-            # Find all the new floating subprograms that are known to be needed so far.
-            for esp in sub_ast.children:
-                name = find_name_of_node(esp)
-                if name and name in known_names and name not in known_floaters:
-                    # We have found a new floating subprogram that's needed.
-                    known_floaters.add(name)
-                    known_names.update({nm.string for nm in walk(esp, Name)})
-                    new_floaters.append(esp)
-        if new_floaters:
-            # Append the new floating subprograms to our main AST.
-            append_children(ast, new_floaters)
-            changed = True
+    # TODO: Remove after fixing the tests to not need `cfg.main` anymore.
+    if main:
+        try:
+            ctops = top_level_objects_map(main, 'main.f90', parser)
+        except FortranSyntaxError as e:
+            print(f"Could not parse the main file; got {e}", file=sys.stderr)
+            ctops = {}
+        if ctops.keys() & tops.keys():
+            print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
+        tops.update(ctops)
+
+    ast = Program(get_reader(''))
+    ast.content = []
+    for k, v in tops.items():
+        append_children(ast, v)
+
+    ast = sort_modules(ast)
     return ast
 
 

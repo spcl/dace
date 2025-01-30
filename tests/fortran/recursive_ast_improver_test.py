@@ -1,22 +1,18 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Dict
 
-from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from dace.frontend.fortran.ast_desugaring import deconstruct_procedure_calls
+from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):
     parser = ParserFactory().create(std="f2008")
     assert 'main.f90' in sources
-    reader = FortranStringReader(sources['main.f90'])
-    ast = parser(reader)
-    ast = recursive_ast_improver(ast, sources, [], parser)
-    ast = deconstruct_procedure_calls(ast)
+    ast = construct_full_ast(sources, parser)
     assert isinstance(ast, Program)
 
     return ast

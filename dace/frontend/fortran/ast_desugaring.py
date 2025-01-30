@@ -28,7 +28,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
-from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
+from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
@@ -519,6 +519,9 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         init = atmost_one(children_of_type(decl, Initialization))
         # TODO: Add ref.
         _, iexpr = init.children
+        if f"{iexpr}" == 'NULL()':
+            # We don't have good representation of "null pointer".
+            return None
         val = _const_eval_basic_type(iexpr, alias_map)
         assert val is not None
         if typ.spec == ('INTEGER1',):
@@ -1245,7 +1248,11 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         name, args = fref.children
         if isinstance(name, Intrinsic_Name):
             continue
-        fref_spec = find_real_ident_spec(name.string, scope_spec, alias_map)
+        fref_spec = search_real_ident_spec(name.string, scope_spec, alias_map)
+        if not fref_spec:
+            print(f"Could not resolve the function `{fref}` in scope `{scope_spec}`; "
+                  f"parts of AST is missing, but moving on", file=sys.stderr)
+            continue
         assert fref_spec in alias_map, f"cannot find: {fref_spec}"
         if fref_spec not in iface_map:
             # We are only interested in calls to interfaces here.
@@ -2004,13 +2011,18 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             loc = search_real_local_alias_spec(lv, alias_map)
             assert loc
             lspec = ident_spec(alias_map[loc])
+            ltyp = None
+            if isinstance(alias_map[lspec], Entity_Decl):
+                ltyp = find_type_of_entity(alias_map[lspec], alias_map)
         elif isinstance(lv, Data_Ref):
             lspec = _root_comp(lv)
-        if lspec:
+            scope_spec = find_scope_spec(lv)
+            ltyp = find_type_dataref(lv, scope_spec, alias_map)
+        if lspec and ltyp:
             rval = _const_eval_basic_type(rv, alias_map)
             if rval is None:
                 _integrate_subresults({}, {lspec})
-            else:
+            elif not ltyp.shape:
                 plus[lspec] = numpy_type_to_literal(rval)
                 if lspec in minus:
                     minus.remove(lspec)
@@ -2944,6 +2956,10 @@ def inject_const_evals(ast: Program,
 def lower_identifier_names(ast: Program) -> Program:
     for nm in walk(ast, Name):
         nm.string = nm.string.lower()
+    for num in walk(ast, NumberBase):
+        val, kind = num.children
+        if isinstance(kind, str):
+            set_children(num, (val, kind.lower()))
     return ast
 
 

@@ -82,13 +82,7 @@ end subroutine fun
     assert not ast.main_program
     assert set(s.name.name for s in ast.subroutine_definitions) == {'main', 'fun'}
 
-    assert len(ast.modules) == 1
-    module = ast.modules[0]
-    assert not module.parent
-
-    assert module.specification_part
-    # Integer constants are eliminated.
-    assert not module.specification_part.symbols
+    assert not ast.modules
 
 
 if __name__ == "__main__":
