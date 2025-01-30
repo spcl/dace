@@ -6,7 +6,8 @@ import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set
 
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
+                             ReturnBlock)
 
 
 def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
@@ -57,6 +58,33 @@ def all_dominators(
         alldoms[node] = set(dst for _, dst in tc.out_edges(node))
 
     return alldoms
+
+
+def all_post_dominators(
+        cfg: ControlFlowRegion,
+        ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+    """ Returns a mapping between each control flow block and all its post dominators. """
+    dummy_exit = cfg.add_state('__DACE_DUMM_EXIT_POSTDOM__')
+    for nd in cfg.nodes():
+        if nd is dummy_exit:
+            continue
+        if isinstance(nd, (BreakBlock, ContinueBlock, ReturnBlock)) or cfg.out_degree(nd) == 0:
+            cfg.add_edge(nd, dummy_exit, InterstateEdge())
+    ipostdom = ipostdom or nx.immediate_dominators(cfg.nx.reverse(), dummy_exit)
+    # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
+    g = nx.DiGraph()
+    for node, postdom in ipostdom.items():
+        if node is postdom:  # Skip root
+            continue
+        g.add_edge(node, postdom)
+    tc = nx.transitive_closure_dag(g)
+    all_postdom: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {dummy_exit: set()}
+    for node in tc:
+        all_postdom[node] = set(dst for _, dst in tc.out_edges(node) if dst is not dummy_exit)
+    cfg.remove_node(dummy_exit)
+    del all_postdom[dummy_exit]
+
+    return all_postdom
 
 
 def back_edges(cfg: ControlFlowRegion,

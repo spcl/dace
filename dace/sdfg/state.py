@@ -5,10 +5,11 @@ import ast
 import abc
 import collections
 import copy
+from dataclasses import dataclass
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union,
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, TypedDict, Union,
                     overload)
 
 import dace
@@ -1189,6 +1190,15 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 block.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
 
 
+@dataclass
+class GlobalDepDataRecordT():
+    memlet: mm.Memlet
+    accesses: List[Tuple[MultiConnectorEdge[mm.Memlet], nd.AccessNode]]
+
+    def __hash__(self):
+        return hash(id(self))
+
+
 @make_properties
 class ControlFlowBlock(BlockGraphView, abc.ABC):
 
@@ -1217,6 +1227,11 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     certain_writes = DictProperty(key_type=str, value_type=mm.Memlet)
     possible_writes = DictProperty(key_type=str, value_type=mm.Memlet)
 
+    _certain_reads_moredata: Dict[str, GlobalDepDataRecordT] = {}
+    _possible_reads_moredata: Dict[str, GlobalDepDataRecordT] = {}
+    _certain_writes_moredata: Dict[str, GlobalDepDataRecordT] = {}
+    _possible_writes_moredata: Dict[str, GlobalDepDataRecordT] = {}
+
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
@@ -1231,6 +1246,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.possible_reads = {}
         self.certain_writes = {}
         self.possible_writes = {}
+        self._certain_reads_moredata = {}
+        self._possible_reads_moredata = {}
+        self._certain_writes_moredata = {}
+        self._possible_writes_moredata = {}
 
         self.guid = generate_element_id(self)
 
@@ -3163,6 +3182,8 @@ class LoopRegion(ControlFlowRegion):
                                        'do-while style into a while(true) with a break before the update (at the end ' +
                                        'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
+
+    _carry_dependencies_moredata: Dict[str, Dict[GlobalDepDataRecordT, GlobalDepDataRecordT]] = {}
 
     def __init__(self,
                  label: str,

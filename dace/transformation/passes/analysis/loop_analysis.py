@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
@@ -10,8 +10,7 @@ import sympy
 
 from dace import symbolic
 from dace.frontend.python import astutils
-from dace.memlet import Memlet
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import GlobalDepDataRecordT, LoopRegion
 from dace.subsets import Range, SubsetUnion, intersects
 
 
@@ -118,41 +117,41 @@ def _loop_read_intersects_loop_write(loop: LoopRegion, write_subset: Union[Subse
     offset_write = write_subset.offset_new(offset_list, True)
     return intersects(offset_write, read_subset)
 
-def get_loop_carry_dependencies(loop: LoopRegion) -> Optional[Dict[Memlet, Memlet]]:
+def get_loop_carry_dependencies(loop: LoopRegion) -> Optional[Dict[GlobalDepDataRecordT, GlobalDepDataRecordT]]:
     """
     Compute loop carry dependencies.
     :return: A dictionary mapping loop reads to writes in the same loop, from which they may carry a RAW dependency.
              None if the loop cannot be analyzed.
     """
     update_assignment = None
-    raw_deps: Dict[Memlet, Memlet] = dict()
-    for data in loop.possible_reads:
-        if not data in loop.possible_writes:
+    raw_deps: Dict[GlobalDepDataRecordT, GlobalDepDataRecordT] = dict()
+    for data in loop._possible_reads_moredata:
+        if not data in loop._possible_writes_moredata:
             continue
 
-        input = loop.possible_reads[data]
-        read_subset = input.src_subset or input.subset
-        if loop.loop_variable and loop.loop_variable in input.free_symbols:
+        input = loop._possible_reads_moredata[data]
+        read_subset = input.memlet.src_subset or input.memlet.subset
+        if loop.loop_variable and loop.loop_variable in input.memlet.free_symbols:
             # If the iteration variable is involved in an access, we need to first offset it by the loop
             # stride and then check for an overlap/intersection. If one is found after offsetting, there
             # is a RAW loop carry dependency.
-            output = loop.possible_writes[data]
+            output = loop._possible_writes_moredata[data]
             # Get and cache the update assignment for the loop.
             if update_assignment is None:
                 update_assignment = get_update_assignment(loop)
                 if update_assignment is None:
                     return None
 
-            if isinstance(output.subset, SubsetUnion):
+            if isinstance(output.memlet.subset, SubsetUnion):
                 if any([_loop_read_intersects_loop_write(loop, s, read_subset, update_assignment)
-                        for s in output.subset.subset_list]):
+                        for s in output.memlet.subset.subset_list]):
                     raw_deps[input] = output
-            elif _loop_read_intersects_loop_write(loop, output.subset, read_subset, update_assignment):
+            elif _loop_read_intersects_loop_write(loop, output.memlet.subset, read_subset, update_assignment):
                 raw_deps[input] = output
         else:
             # Check for basic overlaps/intersections in RAW loop carry dependencies, when there is no
             # iteration variable involved.
-            output = loop.possible_writes[data]
-            if intersects(output.subset, read_subset):
+            output = loop._possible_writes_moredata[data]
+            if intersects(output.memlet.subset, read_subset):
                 raw_deps[input] = output
     return raw_deps
