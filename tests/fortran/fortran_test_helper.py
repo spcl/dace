@@ -5,12 +5,10 @@ from os import path
 from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection
 
+import numpy as np
 from fparser.two.Fortran2003 import Name
 
-from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection
 from dace.frontend.fortran.ast_internal_classes import Name_Node
-from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
-    create_sdfg_from_internal_ast
 
 
 @dataclass
@@ -275,3 +273,18 @@ class InternalASTMatcher:
     @classmethod
     def NAMED(cls, name: str):
         return cls(Name_Node, {'name': cls(has_value=name)})
+
+
+def deduce_f2dace_variables_for_array(arr: np.ndarray, arg: str, start_counting_from: int) -> Dict[str, Union[np.bool_, np.int32]]:
+    """This needs to be kept in sync with the naming convention of "f2dace" variables."""
+    out: Dict[str, Union[np.bool_, np.int32]] = {
+        f"__f2dace_ALLOCATED_{arg}": np.bool_(arr.size > 0),
+    }
+
+    for idx, dim in enumerate(arr.shape):
+        out[f"__f2dace_A_{arg}_d_{idx}_s_{start_counting_from}"] = np.int32(dim)
+        # TODO: Do we ever pass non-1 offset here?
+        out[f"__f2dace_OA_{arg}_d_{idx}_s_{start_counting_from}"] = np.int32(1)
+        start_counting_from += 1
+
+    return out

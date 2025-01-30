@@ -6,7 +6,6 @@ import sys
 import warnings
 from copy import deepcopy as dpcp
 from dataclasses import dataclass
-from itertools import chain
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
 
@@ -15,7 +14,7 @@ from fparser.api import get_reader
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
-from fparser.two.Fortran2003 import Program, Name, Module_Stmt
+from fparser.two.Fortran2003 import Program, Module_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
 from fparser.two.utils import Base, walk, FortranSyntaxError
@@ -2995,8 +2994,7 @@ def create_singular_sdfg_from_string(
         config_injections: Optional[List[ConstTypeInjection]] = None) -> SDFG:
     entry_point = entry_point.split('.')
 
-    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point),
-                      config_injections=config_injections)
+    cfg = ParseConfig(sources=sources, entry_points=tuple(entry_point), config_injections=config_injections)
     own_ast, program = create_internal_ast(cfg)
 
     cfg = SDFGConfig({entry_point[-1]: entry_point}, config_injections=config_injections,

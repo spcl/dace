@@ -5,7 +5,7 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, deduce_f2dace_variables_for_array
 
 
 def test_fortran_frontend_bit_size():
@@ -43,39 +43,26 @@ def test_fortran_frontend_bit_size():
 
 
 def test_fortran_frontend_bit_size_symbolic():
-    test_string = """
-                    PROGRAM intrinsic_math_test_bit_size
-                    implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
-                    integer :: arrsize3
-                    integer :: res(arrsize)
-                    integer :: res2(arrsize, arrsize2, arrsize3)
-                    integer :: res3(arrsize+arrsize2, arrsize2 * 5, arrsize3 + arrsize2*arrsize)
-                    CALL intrinsic_math_test_bit_size_function(arrsize, arrsize2, arrsize3, res, res2, res3)
-                    end
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(arrsize, arrsize2, arrsize3, res, res2, res3)
+  implicit none
+  integer :: arrsize
+  integer :: arrsize2
+  integer :: arrsize3
+  integer :: res(arrsize)
+  integer :: res2(arrsize, arrsize2, arrsize3)
+  integer :: res3(arrsize + arrsize2, arrsize2*5, arrsize3 + arrsize2*arrsize)
 
-                    SUBROUTINE intrinsic_math_test_bit_size_function(arrsize, arrsize2, arrsize3, res, res2, res3)
-                    implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
-                    integer :: arrsize3
-                    integer :: res(arrsize)
-                    integer :: res2(arrsize, arrsize2, arrsize3)
-                    integer :: res3(arrsize+arrsize2, arrsize2 * 5, arrsize3 + arrsize2*arrsize)
-
-                    res(1) = SIZE(res)
-                    res(2) = SIZE(res2)
-                    res(3) = SIZE(res3)
-                    res(4) = SIZE(res)*2
-                    res(5) = SIZE(res)*SIZE(res2)*SIZE(res3)
-                    res(6) = SIZE(res2, 1) + SIZE(res2, 2) + SIZE(res2, 3)
-                    res(7) = SIZE(res3, 1) + SIZE(res3, 2) + SIZE(res3, 3)
-
-                    END SUBROUTINE intrinsic_math_test_bit_size_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", True)
+  res(1) = size(res)
+  res(2) = size(res2)
+  res(3) = size(res3)
+  res(4) = size(res)*2
+  res(5) = size(res)*size(res2)*size(res3)
+  res(6) = size(res2, 1) + size(res2, 2) + size(res2, 3)
+  res(7) = size(res3, 1) + size(res3, 2) + size(res3, 3)
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -97,42 +84,24 @@ def test_fortran_frontend_bit_size_symbolic():
 
 
 def test_fortran_frontend_size_arbitrary():
-    test_string = """
-                    PROGRAM intrinsic_basic_size_arbitrary
-                    implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
-                    integer :: res(arrsize, arrsize2)
-                    CALL intrinsic_basic_size_arbitrary_test_function(res)
-                    end
-
-                    SUBROUTINE intrinsic_basic_size_arbitrary_test_function(res)
-                    implicit none
-                    integer :: res(:, :)
-
-                    res(1,1) = SIZE(res)
-                    res(2,1) = SIZE(res, 1)
-                    res(3,1) = SIZE(res, 2)
-
-                    END SUBROUTINE intrinsic_basic_size_arbitrary_test_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_test", True)
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(res)
+  implicit none
+  integer :: res(:, :)
+  res(1, 1) = size(res)
+  res(2, 1) = size(res, 1)
+  res(3, 1) = size(res, 2)
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 7
     size2 = 5
     res = np.full([size, size2], 42, order="F", dtype=np.int32)
-    sdfg(
-        res=res,
-        arrsize=size,
-        arrsize2=size2,
-        __f2dace_A_res_d_0_s_0=size,
-        __f2dace_A_res_d_1_s_1=size2,
-        __f2dace_OA_res_d_0_s_0=1,
-        __f2dace_OA_res_d_1_s_1=1
-    )
+    sdfg(res=res, **deduce_f2dace_variables_for_array(res, 'res', 0),
+         arrsize=size, arrsize2=size2)
     print(res)
 
     assert res[0, 0] == size * size2

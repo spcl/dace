@@ -655,6 +655,11 @@ class Section_Subscript_List_Node(FNode):
 
 
 class Pointer_Assignment_Stmt_Node(FNode):
+    def __init__(self, name_pointer: Name_Node, name_target: FNode, **kwargs):
+        super().__init__(**kwargs)
+        self.name_pointer = name_pointer
+        self.name_target = name_target
+
     _attributes = ()
     _fields = ('name_pointer', 'name_target')
 

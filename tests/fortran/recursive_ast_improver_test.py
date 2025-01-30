@@ -4,7 +4,6 @@ from typing import Dict
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.ast_desugaring import deconstruct_procedure_calls
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -14,7 +13,6 @@ def parse_and_improve(sources: Dict[str, str]):
     assert 'main.f90' in sources
     ast = construct_full_ast(sources, parser)
     assert isinstance(ast, Program)
-
     return ast
 
 

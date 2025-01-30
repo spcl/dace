@@ -4,7 +4,6 @@ from typing import Dict, List
 
 import numpy as np
 
-import dace
 from dace.frontend.fortran.ast_components import InternalFortranAst
 from dace.frontend.fortran.ast_internal_classes import FNode
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
