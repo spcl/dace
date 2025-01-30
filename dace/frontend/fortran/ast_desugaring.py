@@ -26,7 +26,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Contains_Stmt, Implicit_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, \
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
-    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part
+    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -1049,6 +1049,9 @@ def remove_access_statements(ast: Program):
         remove_self(acc)
         if not spec.children:
             remove_self(spec)
+
+    for acc in walk(ast, Private_Components_Stmt):
+        remove_self(acc)
 
     return ast
 
