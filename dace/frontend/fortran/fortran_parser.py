@@ -2696,8 +2696,8 @@ class ParseConfig:
         self.config_injections: List[ConstInjection] = config_injections or []
 
 
-def top_level_objects_map(path: str, f90: str, parser) -> Dict[str, Base]:
-    ast = parser(get_reader(f90))
+def top_level_objects_map(f90: FortranStringReader, path: str, parser) -> Dict[str, Base]:
+    ast = parser(f90)
     assert isinstance(ast, Program)
 
     out: Dict[str, Base] = {}
@@ -2714,7 +2714,7 @@ def top_level_objects_map(path: str, f90: str, parser) -> Dict[str, Base]:
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(cfg.sources, parser)
+    ast = construct_full_ast(cfg.sources, parser, cfg.main)
     ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
     return ast
@@ -3077,13 +3077,24 @@ def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.Di
     return dep_graph
 
 
-def construct_full_ast(sources: Dict[str, str], parser) -> Program:
+def construct_full_ast(sources: Dict[str, str], parser, main: Optional[FortranStringReader] = None) -> Program:
     tops = {}
     for path, f90 in sources.items():
         try:
-            ctops = top_level_objects_map(path, f90, parser)
+            ctops = top_level_objects_map(get_reader(f90), path, parser)
         except FortranSyntaxError as e:
             print(f"Could not parse `{path}`; got {e}", file=sys.stderr)
+            ctops = {}
+        if ctops.keys() & tops.keys():
+            print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
+        tops.update(ctops)
+
+    # TODO: Remove after fixing the tests to not need `cfg.main` anymore.
+    if main:
+        try:
+            ctops = top_level_objects_map(main, 'main.f90', parser)
+        except FortranSyntaxError as e:
+            print(f"Could not parse the main file; got {e}", file=sys.stderr)
             ctops = {}
         if ctops.keys() & tops.keys():
             print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
