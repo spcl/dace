@@ -2011,13 +2011,18 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             loc = search_real_local_alias_spec(lv, alias_map)
             assert loc
             lspec = ident_spec(alias_map[loc])
+            ltyp = None
+            if isinstance(alias_map[lspec], Entity_Decl):
+                ltyp = find_type_of_entity(alias_map[lspec], alias_map)
         elif isinstance(lv, Data_Ref):
             lspec = _root_comp(lv)
-        if lspec:
+            scope_spec = find_scope_spec(lv)
+            ltyp = find_type_dataref(lv, scope_spec, alias_map)
+        if lspec and ltyp:
             rval = _const_eval_basic_type(rv, alias_map)
             if rval is None:
                 _integrate_subresults({}, {lspec})
-            else:
+            elif not ltyp.shape:
                 plus[lspec] = numpy_type_to_literal(rval)
                 if lspec in minus:
                     minus.remove(lspec)

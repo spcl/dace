@@ -1818,6 +1818,7 @@ subroutine main()
   logical :: cond = .true.
   real :: out = 0.
   integer :: i
+  logical :: arr(5) = .true.
 
   ! `cond` is known in this block and doesn't change. `out` is unknown`, since it changes conditionally.
   if (cond) out = out + 1.
@@ -1865,6 +1866,14 @@ subroutine main()
     end if
   end if
 
+  ! The content of an array we don't track.
+  arr = .false.
+  do i=1, 5
+    if (arrfun(arr) .or. arr(2)) then
+      out = out + 3.14
+    end if
+  end do
+
 contains
   real function fun(cond, out)
     implicit none
@@ -1873,6 +1882,11 @@ contains
     if (cond) out = out + 42
     fun = out + 1.0
   end function fun
+  logical function arrfun(arr)
+    implicit none
+    logical, intent(in) :: arr(:)
+    arrfun = arr(1)
+  end function arrfun
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1885,6 +1899,7 @@ SUBROUTINE main
   LOGICAL :: cond = .TRUE.
   REAL :: out = 0.
   INTEGER :: i
+  LOGICAL :: arr(5) = .TRUE.
   IF (.TRUE.) out = 0. + 1.
   out = out * 2
   IF (.TRUE.) THEN
@@ -1916,6 +1931,12 @@ SUBROUTINE main
       out = out + 7.
     END IF
   END IF
+  arr = .FALSE.
+  DO i = 1, 5
+    IF (arrfun(arr) .OR. arr(2)) THEN
+      out = out + 3.14
+    END IF
+  END DO
   CONTAINS
   REAL FUNCTION fun(cond, out)
     IMPLICIT NONE
@@ -1924,6 +1945,11 @@ SUBROUTINE main
     IF (cond) out = out + 42
     fun = out + 1.0
   END FUNCTION fun
+  LOGICAL FUNCTION arrfun(arr)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: arr(:)
+    arrfun = arr(1)
+  END FUNCTION arrfun
 END SUBROUTINE main
 """.strip()
     assert got == want
