@@ -3,12 +3,12 @@
 import numpy as np
 
 from dace import dtypes, symbolic
-from dace.frontend.fortran.fortran_parser import create_sdfg_from_string
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg.state import LoopRegion
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
-from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+
 
 def test_fortran_frontend_array_access():
     """
@@ -24,9 +24,7 @@ end subroutine main
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0] == 42)
-    assert (a[1] == 5.5)
-    assert (a[2] == 42)
+    assert np.allclose(a, [42, 5.5, 42, 42])
 
 
 def test_fortran_frontend_array_ranges():
