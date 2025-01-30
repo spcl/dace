@@ -1,28 +1,23 @@
-import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Dict
 
-from fparser.api import get_reader
-from fparser.common.readfortran import FortranStringReader
-from fparser.two.Fortran2003 import Program, Module, Execution_Part, Specification_Part, Use_Stmt, Call_Stmt, \
+from fparser.two.Fortran2003 import Program, Execution_Part, Specification_Part, Use_Stmt, Call_Stmt, \
     Main_Program
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children
 from dace.frontend.fortran.ast_utils import singular
-from dace.frontend.fortran.fortran_parser import recursive_ast_improver
-from dace.frontend.fortran.gen_serde import generate_serde_module
+from dace.frontend.fortran.fortran_parser import construct_full_ast
+from dace.frontend.fortran.gen_serde import generate_serde_module, gen_serde_module_skeleton, minimal_preprocessing
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):
     parser = ParserFactory().create(std="f2008")
     assert 'main.f90' in sources
-    reader = FortranStringReader(sources['main.f90'])
-    ast = parser(reader)
-    ast = recursive_ast_improver(ast, sources, [], parser)
+    ast = construct_full_ast(sources, parser)
     ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
     return ast
@@ -83,18 +78,20 @@ end subroutine f2
     ast = parse_and_improve(sources)
 
     with NamedTemporaryFile() as s_data:
-        test_dir = Path(os.path.dirname(os.path.realpath(__file__)))
-        serde_base = Module(get_reader(
-            test_dir.joinpath('../../dace/frontend/fortran/conf_files/serde_base.f90').read_text()))
-        serde_mod = generate_serde_module(serde_base, ast)
+        ast = minimal_preprocessing(ast)
+        serde_mod = generate_serde_module(gen_serde_module_skeleton(), ast)
 
         # Modify the AST to use the serializer.
+        # 1. Reconstruct the original AST, since we have run some preprocessing on the existing one.
+        ast = parse_and_improve(sources)
+        # 2. Instrument the module usage, to serialize certain data into the path `s_data`.
         y = singular(y for p in walk(ast, Main_Program) for y in walk(p, Specification_Part))
         x = singular(x for p in walk(ast, Main_Program) for x in walk(p, Execution_Part))
         prepend_children(y, Use_Stmt(f"use serde"))
         append_children(x, Call_Stmt(f'call write_to("{s_data.name}", trim(serialize(s)))'))
-        ast = recursive_ast_improver(
-            ast, {'serde.f90': serde_mod.tofortran()}, [], ParserFactory().create(std="f2008"))
+
+        # Now reconstruct the AST again, this time with serde module in place.
+        ast = parse_and_improve({'serde.f90': serde_mod.tofortran(), 'main.f90': ast.tofortran()})
 
         code = ast.tofortran()
         SourceCodeBuilder().add_file(code).run_with_gfortran()
@@ -102,7 +99,6 @@ end subroutine f2
         got = Path(s_data.name).read_text().strip()
         # TODO: Get rid of unwanted whitespaces in the generated fortran code.
         got = '\n'.join(l.strip() for l in got.split('\n') if l.strip())
-        print(got)
         want = """
 # name
 # w
