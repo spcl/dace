@@ -2677,7 +2677,8 @@ class ParseConfig:
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
             main = main.read_text()
-        main = FortranStringReader(main)
+        if main:
+            main = FortranStringReader(main)
         if not sources:
             sources: Dict[str, str] = {}
         elif isinstance(sources, list):
