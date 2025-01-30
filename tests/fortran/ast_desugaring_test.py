@@ -1,6 +1,5 @@
 from typing import Dict
 
-from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
@@ -11,16 +10,14 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, deconstuct_goto_statements
-from dace.frontend.fortran.fortran_parser import recursive_ast_improver
+from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):
     parser = ParserFactory().create(std="f2008")
     assert 'main.f90' in sources
-    reader = FortranStringReader(sources['main.f90'])
-    ast = parser(reader)
-    ast = recursive_ast_improver(ast, sources, [], parser)
+    ast = construct_full_ast(sources, parser)
     ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
     return ast
