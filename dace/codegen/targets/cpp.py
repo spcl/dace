@@ -1140,7 +1140,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
         rng = subsets.Range(rng)
         if rng.num_elements() != 1:
-            raise SyntaxError('Range subscripts disallowed in interstate edges')
+            raise SyntaxError(f"Range subscripts disallowed in interstate edges; got {rng}")
 
         memlet = mmlt.Memlet(data=target, subset=rng)
         to_write = cpp_array_expr(self.sdfg, memlet, codegen=self.codegen)
