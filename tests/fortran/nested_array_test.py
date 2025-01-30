@@ -2,9 +2,8 @@
 
 import numpy as np
 
-from dace.frontend.fortran import fortran_parser
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, deduce_f2dace_variables_for_array
 
 
 def test_fortran_frontend_nested_array_access():
@@ -27,25 +26,61 @@ end subroutine main
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0] == 42)
-    assert (a[1] == 5.5)
-    assert (a[2] == 42)
+    assert np.allclose(a, [42, 5.5, 42, 42])
 
 
-def test_fortran_frontend_nested_array_access2():
+def test_fortran_frontend_nested_array_access_pointer_args_1():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
     """
     sources, main = SourceCodeBuilder().add_file("""
-subroutine main(d, test1, indices1)
+subroutine main(d, test, indices)
   implicit none
-  integer, pointer :: test1(:, :, :)
-  integer, pointer :: indices1(:, :, :)
-  double precision d(4)
-  integer, pointer :: test(:, :, :)
-  integer, pointer :: indices(:, :, :)
-  test1 => test
-  indices1 => indices
+  double precision, intent(inout) :: d(4)
+
+  ! WARNING: There are some caveats about these arguments.
+  ! - SDFG will treat these pointer args as **allocatable array args**, and will generate the extra symbols for them.
+  ! - But the function actually does not read from the input pointers, but immediately repoint them to internal arrays.
+  integer, pointer, intent(inout) :: test(:, :, :)
+  integer, pointer, intent(inout) :: indices(:, :, :)
+
+  integer, target :: internal_test(3, 4, 5)
+  integer, target :: internal_indices(3, 4, 5)
+  indices => internal_test
+  indices => internal_indices
+  internal_indices(1, 1, 1) = 2
+  internal_indices(1, 1, 2) = 3
+  internal_indices(1, 1, 3) = 1
+  internal_test(internal_indices(1, 1, 1), internal_indices(1, 1, 2), internal_indices(1, 1, 3)) = 2
+  d(internal_test(2, 3, 1)) = 5.5
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
+    sdfg.simplify(verbose=True)
+    d = np.full([4], 42, order="F", dtype=np.float64)
+    test = np.full([0, 0, 0], 42, order="F", dtype=np.int32)
+    indices = np.full([0, 0, 0], 42, order="F", dtype=np.int32)
+    sdfg(d=d,
+         test=test, **deduce_f2dace_variables_for_array(test, 'test', 0),
+         indices=indices, **deduce_f2dace_variables_for_array(indices, 'indices', 3))
+    assert np.allclose(d, [42, 5.5, 42, 42])
+
+
+def test_fortran_frontend_nested_array_access_pointer_args_2():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d, test, indices)
+  implicit none
+  double precision, intent(inout) :: d(4)
+
+  ! WARNING: There are some caveats about these arguments.
+  ! - SDFG will treat these pointer args as **allocatable array args**, and will generate the extra symbols for them.
+  ! - This time, the function will actually write and read from those arrays (although igoring their initial values).
+  integer, pointer, intent(inout) :: test(:, :, :)
+  integer, pointer, intent(inout) :: indices(:, :, :)
+
   indices(1, 1, 1) = 2
   indices(1, 1, 2) = 3
   indices(1, 1, 3) = 1
@@ -55,17 +90,16 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
-    a = np.full([4], 42, order="F", dtype=np.float64)
-    sdfg(d=a,__f2dace_A_test_d_0_s_6=3,__f2dace_A_test_d_1_s_7=3,__f2dace_A_test_d_2_s_8=3,
-         __f2dace_OA_test_d_0_s_6=1,__f2dace_OA_test_d_1_s_7=1,__f2dace_OA_test_d_2_s_8=1,
-         __f2dace_A_indices_d_0_s_9=3,__f2dace_A_indices_d_1_s_10=3,__f2dace_A_indices_d_2_s_11=3,
-         __f2dace_OA_indices_d_0_s_9=1,__f2dace_OA_indices_d_1_s_10=1,__f2dace_OA_indices_d_2_s_11=1)
-    assert (a[0] == 42)
-    assert (a[1] == 5.5)
-    assert (a[2] == 42)
+    d = np.full([4], 42, order="F", dtype=np.float64)
+    test = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
+    indices = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
+    sdfg(d=d,
+         test=test, **deduce_f2dace_variables_for_array(test, 'test', 0),
+         indices=indices, **deduce_f2dace_variables_for_array(indices, 'indices', 3))
+    assert np.allclose(d, [42, 5.5, 42, 42])
 
 
 if __name__ == "__main__":
-
-    #test_fortran_frontend_nested_array_access()
-    test_fortran_frontend_nested_array_access2()
+    test_fortran_frontend_nested_array_access()
+    test_fortran_frontend_nested_array_access_pointer_args_1()
+    test_fortran_frontend_nested_array_access_pointer_args_2()
