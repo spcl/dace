@@ -1248,7 +1248,11 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         name, args = fref.children
         if isinstance(name, Intrinsic_Name):
             continue
-        fref_spec = find_real_ident_spec(name.string, scope_spec, alias_map)
+        fref_spec = search_real_ident_spec(name.string, scope_spec, alias_map)
+        if not fref_spec:
+            print(f"Could not resolve the function `{fref}` in scope `{scope_spec}`; "
+                  f"parts of AST is missing, but moving on", file=sys.stderr)
+            continue
         assert fref_spec in alias_map, f"cannot find: {fref_spec}"
         if fref_spec not in iface_map:
             # We are only interested in calls to interfaces here.
