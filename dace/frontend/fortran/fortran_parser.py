@@ -2784,7 +2784,6 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
     ast = assign_globally_unique_subprogram_names(ast, set(cfg.entry_points))
-    # TODO: Disabled because some other transforms rely on the naming scheme of variables.
     ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
     ast = consolidate_uses(ast)
 
