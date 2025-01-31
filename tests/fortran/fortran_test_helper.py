@@ -22,7 +22,7 @@ class SourceCodeBuilder:
     # compile together, then get a dictionary mapping file names (possibly auto-inferred) to their content.
     sources, main = SourceCodeBuilder().add_file('''
     module lib
-    end end module lib
+    end module lib
     ''').add_file('''
     program main
     use lib
@@ -39,8 +39,9 @@ class SourceCodeBuilder:
         """Add source file contents in the order you'd pass them to `gfortran`."""
         if not name:
             name = SourceCodeBuilder._identify_name(content)
-        key = f"{name}.f90"
-        assert key not in self.sources, f"{key} in {list(self.sources.keys())}: {self.sources[key]}"
+        key, COUNTER = f"{name}.f90", 0
+        while key in self.sources:
+            key, COUNTER = f"{name}_{COUNTER}.f90", COUNTER+1
         self.sources[key] = content
         return self
 
@@ -93,20 +94,23 @@ class SourceCodeBuilder:
 
     @staticmethod
     def _identify_name(content: str) -> str:
-        PPAT = re.compile("^.*\\bprogram\\b\\s*\\b(?P<prog>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
+        PPAT = re.compile("^.*\\bprogram\\b\\s*\\b(?P<prog>[a-zA-Z0-9_]*)\\b.*$", re.I | re.M | re.S)
         if PPAT.match(content):
-            return 'main'
+            match = PPAT.search(content)
+            return match.group('prog') or 'main'
         MPAT = re.compile("^.*\\bmodule\\b\\s*\\b(?P<mod>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
         if MPAT.match(content):
             match = MPAT.search(content)
             return match.group('mod')
-        FPAT = re.compile("^.*\\bfunction\\b\\s*\\b(?P<mod>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
+        FPAT = re.compile("^.*\\bfunction\\b\\s*\\b(?P<fn>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
         if FPAT.match(content):
-            return 'main'
-        SPAT = re.compile("^.*\\bsubroutine\\b\\s*\\b(?P<mod>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
+            match = FPAT.search(content)
+            return match.group('fn')
+        SPAT = re.compile("^.*\\bsubroutine\\b\\s*\\b(?P<subr>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
         if SPAT.match(content):
-            return 'main'
-        assert not any(PAT.match(content) for PAT in (PPAT, MPAT, FPAT, SPAT))
+            match = SPAT.search(content)
+            return match.group('subr')
+        raise ValueError(f"Could not find any identifiable object in the content:\n{content}")
 
 
 class FortranASTMatcher:

@@ -207,7 +207,7 @@ module lib
     integer :: arrsize4
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
   use lib
   implicit none

@@ -52,7 +52,7 @@ module lib
   ! good enough approximation
   integer, parameter :: pi = 4
 end module lib
-""").add_file("""
+
 subroutine main(d)
   implicit none
   double precision d(4)

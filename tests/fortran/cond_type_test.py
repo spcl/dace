@@ -19,7 +19,7 @@ module lib
     real :: name
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none

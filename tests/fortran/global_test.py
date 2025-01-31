@@ -19,7 +19,7 @@ module global_test_module
   end type simple_type
   integer :: outside_init = 1
 end module global_test_module
-""").add_file("""
+
 module nested_two
   implicit none
 contains
@@ -29,7 +29,7 @@ contains
     i = outside_init + 1
   end subroutine nestedtwo
 end module nested_two
-""").add_file("""
+
 module nested_one
   implicit none
 contains
@@ -42,7 +42,7 @@ contains
     a(i + 1, i + 1, i + 1) = 5.5
   end subroutine nested
 end module nested_one
-""").add_file("""
+
 subroutine main(d)
   use global_test_module, only: outside_init, simple_type
   use nested_one, only: nested

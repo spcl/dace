@@ -43,7 +43,7 @@ contains
     recv(1, 1, 1) = recv(1, 1, 1) + p_pat%n_pnts
   end subroutine exchange_data_r3d
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
