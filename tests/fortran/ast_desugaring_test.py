@@ -10,7 +10,7 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, deconstuct_goto_statements, SPEC, remove_access_and_bind_statements, \
-    identifier_specs, alias_specs
+    identifier_specs, alias_specs, consolidate_uses
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -715,6 +715,52 @@ SUBROUTINE main
   a = perim(s, 1.0)
   a = perim_deconproc_0(s, 1.0)
 END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_uses_with_renames():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  integer, parameter :: pi4 = 9
+  integer, parameter :: i4 = selected_int_kind(pi4)  ! `i4` will be const-evaluated to 4
+end module lib
+
+module main
+contains
+  subroutine fun(d)
+    use lib, only: ik4 => i4  ! After const-evaluation, will be redundant.
+    integer(ik4) :: i  ! `ik4` will also be const-evaluated to 4
+    real, intent(out) :: d(2)
+    i = 4
+    d(2) = 5.5 + i
+  end subroutine fun
+end module main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+
+    # A constant-evaluation will pin the constant values.
+    ast = const_eval_nodes(ast)
+    # A use-consolidation will remove the now-redundant use.
+    ast = consolidate_uses(ast)
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: pi4 = 9
+  INTEGER, PARAMETER :: i4 = 4
+END MODULE lib
+MODULE main
+  CONTAINS
+  SUBROUTINE fun(d)
+    INTEGER(KIND = 4) :: i
+    REAL, INTENT(OUT) :: d(2)
+    i = 4
+    d(2) = 5.5 + i
+  END SUBROUTINE fun
+END MODULE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
