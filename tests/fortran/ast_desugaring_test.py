@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional, Iterable
 
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
@@ -9,15 +9,15 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
-    deconstruct_statement_functions, deconstuct_goto_statements
+    deconstruct_statement_functions, deconstuct_goto_statements, SPEC
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
-def parse_and_improve(sources: Dict[str, str]):
+def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[SPEC]] = None):
     parser = ParserFactory().create(std="f2008")
     assert 'main.f90' in sources
-    ast = construct_full_ast(sources, parser)
+    ast = construct_full_ast(sources, parser, entry_points=entry_points)
     ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
     return ast
@@ -1336,6 +1336,108 @@ SUBROUTINE main
   REAL :: a = 1
   ucfg % b = a * i
   garray(3) % b = a * i * 2
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_completely_unsed_modules_are_pruned_early():
+    sources, main = SourceCodeBuilder().add_file("""
+module used
+  implicit none
+contains
+  real function fun()
+    fun = 1.
+  end function fun
+end module used
+
+module unused
+  implicit none
+contains
+  real function fun()
+    fun = 2.
+  end function fun
+end module unused
+
+subroutine main(d)
+  use used
+  implicit none
+  real, intent(inout) :: d
+  d = fun()
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources, [('main',)])
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE used
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun()
+    fun = 1.
+  END FUNCTION fun
+END MODULE used
+SUBROUTINE main(d)
+  USE used
+  IMPLICIT NONE
+  REAL, INTENT(INOUT) :: d
+  d = fun()
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_operator_overloading():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type cmplx
+    real :: r = 1., i = 2.
+  end type cmplx
+  interface operator(+)
+    module procedure :: add_cmplx
+  end interface
+contains
+  function add_cmplx(a, b) result(c)
+    type(cmplx), intent(in) :: a, b
+    type(cmplx) :: c
+    c%r = a%r + b%r
+    c%i = a%i + b%i
+  end function add_cmplx
+end module lib
+
+subroutine main
+  use lib, only : cmplx, operator(+)
+  type(cmplx) :: a, b
+  b = a + a
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE lib
+  TYPE :: cmplx
+    REAL :: r = 1., i = 2.
+  END TYPE cmplx
+  INTERFACE OPERATOR(+)
+    MODULE PROCEDURE :: add_cmplx
+  END INTERFACE
+  CONTAINS
+  FUNCTION add_cmplx(a, b) RESULT(c)
+    TYPE(cmplx), INTENT(IN) :: a, b
+    TYPE(cmplx) :: c
+    c % r = a % r + b % r
+    c % i = a % i + b % i
+  END FUNCTION add_cmplx
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: cmplx, OPERATOR(+)
+  TYPE(cmplx) :: a, b
+  b = a + a
 END SUBROUTINE main
 """.strip()
     assert got == want

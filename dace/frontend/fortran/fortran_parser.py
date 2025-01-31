@@ -7,7 +7,7 @@ import warnings
 from copy import deepcopy as dpcp
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Set, Dict, Tuple, Union
+from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 
 import networkx as nx
 from fparser.api import get_reader
@@ -30,7 +30,7 @@ from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran import ast_utils
 from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, SPEC, \
-    find_name_of_stmt, find_name_of_node, append_children, correct_for_function_calls, sort_modules, \
+    find_name_of_stmt, find_name_of_node, append_children, correct_for_function_calls, keep_sorted_used_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
@@ -2735,7 +2735,7 @@ def top_level_objects_map(f90: FortranStringReader, path: str, parser) -> Dict[s
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(cfg.sources, parser, cfg.main)
+    ast = construct_full_ast(cfg.sources, parser, cfg.entry_points, cfg.main)
     ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
     return ast
@@ -3098,7 +3098,9 @@ def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.Di
     return dep_graph
 
 
-def construct_full_ast(sources: Dict[str, str], parser, main: Optional[FortranStringReader] = None) -> Program:
+def construct_full_ast(sources: Dict[str, str], parser,
+                       entry_points: Optional[Iterable[SPEC]] = None,
+                       main: Optional[FortranStringReader] = None) -> Program:
     tops = {}
     for path, f90 in sources.items():
         try:
@@ -3126,7 +3128,7 @@ def construct_full_ast(sources: Dict[str, str], parser, main: Optional[FortranSt
     for k, v in tops.items():
         append_children(ast, v)
 
-    ast = sort_modules(ast)
+    ast = keep_sorted_used_modules(ast, entry_points)
     return ast
 
 

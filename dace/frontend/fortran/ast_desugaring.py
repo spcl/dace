@@ -4,6 +4,7 @@ import re
 import sys
 from copy import copy
 from dataclasses import dataclass
+from itertools import chain
 from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
 
 import networkx as nx
@@ -1060,7 +1061,7 @@ def remove_access_statements(ast: Program):
     return ast
 
 
-def sort_modules(ast: Program) -> Program:
+def keep_sorted_used_modules(ast: Program, entry_points: Optional[Iterable[SPEC]] = None) -> Program:
     TOPLEVEL = '__toplevel__'
 
     def _get_module(n: Base) -> str:
@@ -1082,10 +1083,24 @@ def sort_modules(ast: Program) -> Program:
         v_name = _get_module(u)
         g.add_edge(u_name, v_name)
 
-    top_ord = {n: i for i, n in enumerate(nx.lexicographical_topological_sort(g))}
+    if entry_points is None:
+        # If there was no option given, then keep all the modules.
+        entry_modules: Set[str] = set(g.nodes)
+    else:
+        entry_modules: Set[str] = {ep[0] if len(ep) > 1 else TOPLEVEL for ep in entry_points}
+
+    assert all(g.has_node(em) for em in entry_modules)
+    used_modules: Set[str] = entry_modules.union(*chain(nx.ancestors(g, em) for em in entry_modules))
+    h = g.subgraph(used_modules).to_directed()
+
+    top_ord = {n: i for i, n in enumerate(nx.lexicographical_topological_sort(h))}
     # We keep the top-level subroutines at the end. It is only a cosmetic choice and fortran accepts them anywhere.
-    top_ord[TOPLEVEL] = len(top_ord) + 1
+    top_ord[TOPLEVEL] = g.number_of_nodes() + 1
+
+    # Discard the unused modules.
+    ast.content = [n for n in ast.children if _get_module(n) in used_modules]
     assert all(_get_module(n) in top_ord for n in ast.children)
+    # Sort the rest.
     ast.content = sorted(ast.children, key=lambda x: top_ord[_get_module(x)])
 
     return ast
