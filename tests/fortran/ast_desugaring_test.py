@@ -2277,3 +2277,57 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_operator_overloading():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type cmplx
+    real :: r = 1., i = 2.
+  end type cmplx
+  interface operator(+)
+    module procedure :: add_cmplx
+  end interface
+contains
+  function add_cmplx(a, b) result(c)
+    type(cmplx), intent(in) :: a, b
+    type(cmplx) :: c
+    c%r = a%r + b%r
+    c%i = a%i + b%i
+  end function add_cmplx
+end module lib
+
+subroutine main
+  use lib, only : cmplx, operator(+)
+  type(cmplx) :: a, b
+  b = a + a
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE lib
+  TYPE :: cmplx
+    REAL :: r = 1., i = 2.
+  END TYPE cmplx
+  INTERFACE OPERATOR(+)
+    MODULE PROCEDURE :: add_cmplx
+  END INTERFACE
+  CONTAINS
+  FUNCTION add_cmplx(a, b) RESULT(c)
+    TYPE(cmplx), INTENT(IN) :: a, b
+    TYPE(cmplx) :: c
+    c % r = a % r + b % r
+    c % i = a % i + b % i
+  END FUNCTION add_cmplx
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: cmplx, OPERATOR(+)
+  TYPE(cmplx) :: a, b
+  b = a + a
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()

@@ -26,7 +26,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Contains_Stmt, Implicit_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, \
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
-    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt
+    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -102,8 +102,7 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
         # TODO: Test out other type specific ways of finding names.
         name = singular(children_of_type(node, Name))
     if name:
-        assert isinstance(name, Name)
-        name = name.string
+        name = f"{name}"
     return name
 
 
@@ -298,12 +297,14 @@ def alias_specs(ast: Program):
         else:
             # Otherwise, only specific identifiers are aliased.
             for c in olist.children:
-                assert isinstance(c, (Name, Rename))
+                assert isinstance(c, (Name, Rename, Generic_Spec))
                 if isinstance(c, Name):
                     src, tgt = c, c
                 elif isinstance(c, Rename):
                     _, src, tgt = c.children
-                src, tgt = src.string, tgt.string
+                elif isinstance(c, Generic_Spec):
+                    src, tgt = c, c
+                src, tgt = f"{src}", f"{tgt}"
                 src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
                 # `tgt_spec` must have already been resolved if we have sorted the modules properly.
                 assert tgt_spec in alias_map, f"{src_spec} => {tgt_spec}"
