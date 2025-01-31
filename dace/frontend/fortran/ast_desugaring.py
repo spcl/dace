@@ -96,6 +96,9 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
         # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
         _, _, _, bname, _ = node.children
         name = bname
+    elif isinstance(node, Generic_Binding):
+        _, bname, _ = node.children
+        name = bname
     elif isinstance(node, Interface_Stmt):
         name, = node.children
     else:
