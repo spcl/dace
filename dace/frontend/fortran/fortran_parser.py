@@ -2989,11 +2989,15 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
 
     return gmap
 
+
 def create_singular_sdfg_from_string(
-        sources: Dict[str, str],
+        sources: Union[str, Dict[str, str]],
         entry_point: str,
         normalize_offsets: bool = True,
         config_injections: Optional[List[ConstTypeInjection]] = None) -> SDFG:
+    if isinstance(sources, str):
+        # Allow passing a single file's content.
+        sources = {'main.f90': sources}
     entry_point = entry_point.split('.')
 
     cfg = ParseConfig(sources=sources, entry_points=tuple(entry_point), config_injections=config_injections)
@@ -3008,11 +3012,7 @@ def create_singular_sdfg_from_string(
     return g
 
 
-def create_sdfg_from_string(
-        source_string: str,
-        sdfg_name: str,
-        normalize_offsets: bool = True,
-        multiple_sdfgs: bool = False):
+def create_sdfg_from_string(source_string: str, sdfg_name: str, normalize_offsets: bool = True):
     """
     Creates an SDFG from a fortran file in a string
     :param source_string: The fortran file as a string
@@ -3020,20 +3020,9 @@ def create_sdfg_from_string(
     :return: The resulting SDFG
 
     """
-    cfg = ParseConfig(sources={'main.f90': source_string})
-    own_ast, program = create_internal_ast(cfg)
+    # TODO: Replace `create_sdfg_from_string()` with  `create_singular_sdfg_from_string()` in all places.
+    return create_singular_sdfg_from_string(source_string, f"{sdfg_name}_function", normalize_offsets)
 
-    cfg = SDFGConfig(
-        {sdfg_name: f"{sdfg_name}_function"}, 
-        config_injections=None,
-        normalize_offsets=normalize_offsets,
-        multiple_sdfgs=multiple_sdfgs
-    )
-    gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
-    assert gmap.keys() == {sdfg_name}
-    g = list(gmap.values())[0]
-
-    return g
 
 def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.DiGraph:
     """
