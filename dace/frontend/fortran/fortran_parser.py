@@ -2654,64 +2654,6 @@ class AST_translator:
             cfg.add_edge(self.last_sdfg_states[cfg], continue_block, InterstateEdge())
 
 
-def create_ast_from_string(
-        source_string: str,
-        sdfg_name: str,
-        transform: bool = False,
-        normalize_offsets: bool = False,
-        multiple_sdfgs: bool = False
-):
-    """
-    Creates an AST from a Fortran file in a string
-    :param source_string: The fortran file as a string
-    :param sdfg_name: The name to be given to the resulting SDFG
-    :return: The resulting AST
-
-    """
-    parser = pf().create(std="f2008")
-    reader = fsr(source_string)
-    ast = parser(reader)
-    tables = SymbolTable
-    own_ast = ast_components.InternalFortranAst()
-    program = own_ast.create_ast(ast)
-
-    structs_lister = ast_transforms.StructLister()
-    structs_lister.visit(program)
-    struct_dep_graph = nx.DiGraph()
-    for i, name in zip(structs_lister.structs, structs_lister.names):
-        if name not in struct_dep_graph.nodes:
-            struct_dep_graph.add_node(name)
-        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
-        struct_deps_finder.visit(i)
-        struct_deps = struct_deps_finder.structs_used
-        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-                                           struct_deps_finder.pointer_names):
-            if j not in struct_dep_graph.nodes:
-                struct_dep_graph.add_node(j)
-            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
-
-    program.structures = ast_transforms.Structures(structs_lister.structs)
-
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
-
-    if transform:
-        program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-        program = ast_transforms.CallExtractor(program).visit(program)
-        program = ast_transforms.SignToIf().visit(program)
-        program = ast_transforms.ArrayToLoop(program).visit(program)
-
-        for transformation in own_ast.fortran_intrinsics().transformations():
-            transformation.initialize(program)
-            program = transformation.visit(program)
-
-        program = ast_transforms.ForDeclarer().visit(program)
-        program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-        program = ast_transforms.optionalArgsExpander(program)
-
-    return program, own_ast
-
-
 class ParseConfig:
     def __init__(self,
                  main: Union[None, Path, str] = None,
@@ -3066,6 +3008,7 @@ def create_singular_sdfg_from_string(
 
     return g
 
+
 def create_sdfg_from_string(
         source_string: str,
         sdfg_name: str,
@@ -3087,7 +3030,7 @@ def create_sdfg_from_string(
         {sdfg_name: f"{sdfg_name}_function"}, 
         config_injections=None,
         normalize_offsets=normalize_offsets,
-        multiple_sdfgs=False
+        multiple_sdfgs=multiple_sdfgs
     )
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
     assert gmap.keys() == {sdfg_name}
