@@ -19,7 +19,7 @@ module lib
     integer :: end
   end type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none

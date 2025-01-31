@@ -136,7 +136,7 @@ contains
     end subroutine subr
   end function fn2
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none

@@ -12,9 +12,8 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def construct_internal_ast(sources: Dict[str, str], entry_points: List[str]):
-    assert 'main.f90' in sources
     entry_points = [tuple(ep.split('.')) for ep in entry_points]
-    cfg = ParseConfig(sources['main.f90'], sources, [], entry_points=entry_points)
+    cfg = ParseConfig(sources=sources, entry_points=entry_points)
     iast, prog = create_internal_ast(cfg)
     return iast, prog
 
@@ -110,7 +109,7 @@ contains
     d(4) = val
   end subroutine not_fun
 end module lib
-""").add_file("""
+
 program main
   use lib
   implicit none
@@ -175,7 +174,7 @@ contains
     fun = x + x
   end function fun
 end module lib
-""").add_file("""
+
 subroutine main(z)
   use lib
   implicit none

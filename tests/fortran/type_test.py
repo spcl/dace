@@ -20,7 +20,7 @@ module lib
     real :: name
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -59,7 +59,7 @@ module lib
     real:: omega
   end type meta_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -97,7 +97,7 @@ module lib
     integer:: a
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -140,7 +140,7 @@ module lib
     integer:: a
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -191,7 +191,7 @@ module lib
     !INTEGER :: unkown_size
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -251,7 +251,7 @@ module lib
     integer :: xy
   end type d_t
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -287,7 +287,7 @@ module lib
     real :: name
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -328,7 +328,7 @@ module lib
     type(simple_type2) :: name
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -376,7 +376,7 @@ module lib
     type(simple_type2) :: name
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -422,7 +422,7 @@ module lib
     real :: name
   end type simple_type
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -467,7 +467,7 @@ contains
     my_arr(1, 1) = 42
   end subroutine deepest
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -505,7 +505,7 @@ contains
     d(1, 1) = my_arr(1, 1)
   end subroutine deepest
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -544,7 +544,7 @@ contains
     d(2, 1) = 2*sta(1, 1)
   end subroutine internal_function
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none

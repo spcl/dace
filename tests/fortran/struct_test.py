@@ -15,7 +15,7 @@ module lib
     integer :: end
   end type
 end module lib
-""").add_file("""
+
 subroutine main(res, startidx, endidx)
   use lib
   implicit none
@@ -62,7 +62,7 @@ module lib
     type(test_type) :: var
   end type
 end module lib
-""").add_file("""
+
 subroutine main(res, start, end)
   use lib
   implicit none

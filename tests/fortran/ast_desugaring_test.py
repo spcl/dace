@@ -16,7 +16,6 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 def parse_and_improve(sources: Dict[str, str]):
     parser = ParserFactory().create(std="f2008")
-    assert 'main.f90' in sources
     ast = construct_full_ast(sources, parser)
     ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
@@ -48,7 +47,7 @@ contains
     a = area(this, 1.0)
   end subroutine get_area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -132,7 +131,7 @@ contains
     get_area = m*side*side
   end function get_area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -202,7 +201,7 @@ contains
     area = m*this%side*this%side
   end function area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -262,7 +261,7 @@ contains
     area = m*this%side*this%side
   end function area
 end module lib_1
-""").add_file("""
+
 module lib_2
   implicit none
   type Circle
@@ -278,7 +277,7 @@ contains
     area = m*this%rad*this%rad
   end function area
 end module lib_2
-""").add_file("""
+
 subroutine main
   use lib_1, only: Square
   use lib_2, only: Circle
@@ -368,7 +367,7 @@ contains
     area_integer = m*this%side*this%side
   end function area_integer
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -439,7 +438,7 @@ contains
     area = m*this%side*this%side
   end function area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square, area
   implicit none
@@ -502,7 +501,7 @@ contains
     perim = m * sum(this%sides)
   end function perim
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square, perim
   implicit none
@@ -572,7 +571,7 @@ contains
     perim = m * sum(this%sides)
   end function perim
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square, perim
   implicit none
@@ -641,12 +640,12 @@ contains
     perim = m * sum(this%sides)
   end function perim
 end module lib
-""").add_file("""
+
 module lib2
   use lib
   implicit none
 end module lib2
-""").add_file("""
+
 subroutine main
   use lib2, only: Square, perim
   implicit none
@@ -754,7 +753,7 @@ contains
     real_fun = 1.0
   end function real_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun
   implicit none
@@ -812,7 +811,7 @@ contains
     a = 1.0
   end subroutine not_real_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun, not_fun
   implicit none
@@ -863,7 +862,7 @@ module lib
     end subroutine fun
   end interface
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: no_fun => fun
   implicit none
@@ -923,7 +922,7 @@ contains
     integer_fun = x * 2
   end function integer_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun
   implicit none
@@ -992,7 +991,7 @@ contains
     end if
   end function real_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun
   implicit none
@@ -1070,7 +1069,7 @@ contains
     m = this%val(1, 1)
   end subroutine copy_matrix
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: T
   implicit none
@@ -1163,7 +1162,7 @@ contains
     area = m*sum(this%sides)
   end function area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib
   use lib, only: perim
@@ -1304,7 +1303,7 @@ contains
     this%b = 5.1
   end subroutine fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib
   implicit none
@@ -1467,7 +1466,7 @@ contains
     this%b = 5.1
   end subroutine fun
 end module lib
-""").add_file("""
+
 subroutine main(cfg)
   use lib
   implicit none
@@ -1534,7 +1533,7 @@ contains
     this%b = 5.1
   end subroutine fun
 end module lib
-""").add_file("""
+
 subroutine main(cfg)
   use lib
   implicit none
@@ -1599,7 +1598,7 @@ contains
     endif
   end function fun
 end module lib
-""").add_file("""
+
 subroutine main(cfg)
   use lib
   implicit none
@@ -1690,7 +1689,7 @@ contains
     c = 3*fun(.false., kwcond=.false., opt=.true.)*not_fun(.true., kwcond=.true., opt=.true.)
   end subroutine user_2
 end module lib
-""").add_file("""
+
 subroutine main()
   use lib
   implicit none
@@ -1769,7 +1768,7 @@ contains
     what = .true.
   end subroutine update
 end module lib
-""").add_file("""
+
 subroutine main
   use lib
   implicit none
@@ -2054,7 +2053,7 @@ contains
     what = .true.
   end subroutine update
 end module
-""").add_file("""
+
 subroutine main
   use lib
   implicit none
