@@ -7,9 +7,6 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_parent():
-    """
-    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
-    """
     sources, main = SourceCodeBuilder().add_file("""
 program main
   implicit none
@@ -23,7 +20,7 @@ subroutine fun(d)
   d(2) = 5.5
 end subroutine fun
 """, 'main').check_with_gfortran().get()
-    cfg = ParseConfig(main=sources['main.f90'], sources=sources)
+    cfg = ParseConfig(sources=sources)
     _, ast = create_internal_ast(cfg)
     ast_transforms.ParentScopeAssigner().visit(ast)
 
@@ -49,9 +46,6 @@ end subroutine fun
 
 
 def test_fortran_frontend_module():
-    """
-    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
-    """
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
@@ -73,7 +67,7 @@ subroutine fun(d)
   d(2) = pi
 end subroutine fun
 """, 'main').check_with_gfortran().get()
-    cfg = ParseConfig(main=sources['main.f90'], sources=sources)
+    cfg = ParseConfig(sources=sources)
     _, ast = create_internal_ast(cfg)
     ast_transforms.ParentScopeAssigner().visit(ast)
 
