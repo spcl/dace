@@ -3012,9 +3012,7 @@ def create_sdfg_from_string(
         source_string: str,
         sdfg_name: str,
         normalize_offsets: bool = True,
-        multiple_sdfgs: bool = False,
-        sources: List[str] = None,
-):
+        multiple_sdfgs: bool = False):
     """
     Creates an SDFG from a fortran file in a string
     :param source_string: The fortran file as a string
@@ -3022,7 +3020,7 @@ def create_sdfg_from_string(
     :return: The resulting SDFG
 
     """
-    cfg = ParseConfig(main=source_string, sources=sources)
+    cfg = ParseConfig(sources={'main.f90': source_string})
     own_ast, program = create_internal_ast(cfg)
 
     cfg = SDFGConfig(

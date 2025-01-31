@@ -55,7 +55,7 @@ def test_fortran_frontend_rename():
                     INTEGER, PARAMETER :: i4 = SELECTED_INT_KIND(pi4)  
                     END MODULE rename_test_module
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "rename_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "rename_test")
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
