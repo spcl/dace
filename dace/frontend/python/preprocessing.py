@@ -210,6 +210,57 @@ class ConditionalCodeResolver(ast.NodeTransformer):
         return self.visit_If(node)
 
 
+class ConditionalOptionalArrayResolver(ast.NodeTransformer):
+    """ 
+    Replaces compare operator with trivial True/False
+    if we can infer than array is/isnot None using type hinting
+    (stored in data.Data.optional)
+    """
+
+    def __init__(self, argtypes: Dict[str, data.Data]):
+        super().__init__()
+        self.argtypes = copy.copy(argtypes)
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Store):
+            self.argtypes[node.id] = SyntaxError
+        return self.generic_visit(node)
+
+    def _resolve_array_optional(self, node: ast.Compare, is_none: bool):
+        # Is lhs or rhs None?
+        if isinstance(node.left, ast.Constant) and node.left is None:
+            cmp_to_test = node.comparators[0]
+        elif isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is None:
+            cmp_to_test = node.left
+        else:
+            return self.generic_visit(node)
+
+        # Is the non-None cmp and array? Check it's optional status
+        try:
+            array = astutils.evalnode(cmp_to_test, self.argtypes)
+            if isinstance(array, data.Data) and array.optional is not None:
+                if array.optional == is_none:
+                    return ast.Constant(value=False)
+                else:
+                    return ast.Constant(value=True)
+            else:
+                return self.generic_visit(node)
+        except SyntaxError:
+            # Cannot evaluate if condition at compile time
+            pass
+
+    def visit_Compare(self, node: ast.Compare) -> Any:
+        node = self.generic_visit(node)
+        if len(node.comparators) != 1:
+            return self.generic_visit(node)
+
+        if isinstance(node.ops[0], (ast.Eq, ast.Is)):
+            return self._resolve_array_optional(node, True)  # arr is None
+        elif isinstance(node.ops[0], (ast.NotEq, ast.IsNot)):
+            return self._resolve_array_optional(node, False)  # arr is not None
+        return self.generic_visit(node)
+
+
 class _FindBreakContinueStmts(ast.NodeVisitor):
     """
     Find control statements in the given loop (break / continue), without
@@ -1309,10 +1360,16 @@ class ExpressionInliner(ast.NodeTransformer):
 
 class CallTreeResolver(ast.NodeVisitor):
 
-    def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        closure: SDFGClosure,
+        globals: Dict[str, Any],
+        caller_argtypes: Dict[str, data.Data],
+    ) -> None:
         self.closure = closure
         self.seen_calls: Set[str] = set()
         self.globals = globals
+        self.caller_argtypes = caller_argtypes
 
     def _eval_args(self, node: ast.Call) -> Dict[str, Any]:
         res = {}
@@ -1337,13 +1394,19 @@ class CallTreeResolver(ast.NodeVisitor):
 
         return res
 
-    def _get_given_args(self, node: ast.Call, function: 'DaceProgram') -> Set[str]:
+    def _get_given_args(
+        self,
+        node: ast.Call,
+        function: 'DaceProgram',
+        caller_argtypes: Dict[str, data.Data],
+    ) -> Set[str]:
         """ Returns a set of names of the given arguments from the positional and keyword arguments """
         from dace.frontend.python.parser import DaceProgram  # Avoid import loop
 
         posargs = node.args
         kwargs = [kwarg.arg for kwarg in node.keywords]
         result = set()
+        argtypes = {}
 
         if not isinstance(function, DaceProgram):
             # Make set of parameters from __sdfg_signature__
@@ -1374,6 +1437,7 @@ class CallTreeResolver(ast.NodeVisitor):
             # END OF VARIABLE-LENGTH ARGUMENTS
             elif sig_kind is inspect.Parameter.POSITIONAL_ONLY:
                 if arg_ind < nargs:
+                    argtypes[aname] = caller_argtypes[posargs[arg_ind].id]
                     result.add(aname)
                     arg_ind += 1
             elif sig_kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
@@ -1381,13 +1445,18 @@ class CallTreeResolver(ast.NodeVisitor):
                     if aname in kwargs:
                         result.add(aname)
                 else:
+                    argtypes[aname] = caller_argtypes[posargs[arg_ind].id]
                     result.add(aname)
                     arg_ind += 1
             elif sig_kind is inspect.Parameter.KEYWORD_ONLY:
                 if aname in kwargs:
                     result.add(aname)
 
-        return result
+        for kwarg in node.keywords:
+            if kwarg.value.id in caller_argtypes.keys():
+                argtypes[kwarg.arg] = caller_argtypes[kwarg.value.id]
+
+        return result, argtypes
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
@@ -1416,10 +1485,15 @@ class CallTreeResolver(ast.NodeVisitor):
             self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
                 # Get given arguments from signature and args/kwargs
-                given_args = self._get_given_args(node, value)
+                given_args, argtypes = self._get_given_args(node, value, self.caller_argtypes)
 
-                self.closure.nested_closures.append(
-                    (qualname, value.closure_resolver(constant_args, given_args, self.closure)))
+                self.closure.nested_closures.append((qualname,
+                                                     value.closure_resolver(
+                                                         constant_args,
+                                                         given_args,
+                                                         argtypes=argtypes,
+                                                         parent_closure=self.closure,
+                                                     )))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
         except DaceRecursionError:  # Parsing failed in a nested context, raise
@@ -1689,6 +1763,7 @@ def preprocess_dace_program(f: Callable[..., Any],
             src_ast = ExpressionInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+            src_ast = ConditionalOptionalArrayResolver(argtypes).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:
             if Config.get_bool('frontend', 'verbose_errors'):
@@ -1697,7 +1772,7 @@ def preprocess_dace_program(f: Callable[..., Any],
             raise
 
     try:
-        ctr = CallTreeResolver(closure_resolver.closure, resolved)
+        ctr = CallTreeResolver(closure_resolver.closure, resolved, argtypes)
         ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
