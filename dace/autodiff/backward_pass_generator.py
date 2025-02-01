@@ -348,14 +348,13 @@ class BackwardPassGenerator:
                 raise AutoDiffException(f"Could not find input {inp} in any of the SDFG states")
 
         if sdfg is backward_sdfg:
-            # TODO: why is this condition necessary
-            # this only makes sense if the output is a single scalar.
-            # if len(given_gradients) != 1:
-            #     raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
-            #                             "single scalar")
-            # if not _is_int_value(sdfg.arrays[given_gradients[0].data].total_size, 1):
-            #     raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
-            #                             "single scalar")
+            # We only do reverse mode AD, which requires a single scalar output for now
+            if len(given_gradients) != 1:
+                raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
+                                        "single scalar")
+            if not _is_int_value(sdfg.arrays[given_gradients[0].data].total_size, 1):
+                raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
+                                        "single scalar")
             self.separate_sdfgs = False
         else:
             self.separate_sdfgs = True

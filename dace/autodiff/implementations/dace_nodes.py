@@ -51,15 +51,26 @@ class ReverseReduce(BackwardImplementation):
             # in this case, we need to simply scatter the grad across the axes that were reduced
 
             sdfg = SDFG("_reverse_" + str(reduction_type).replace(".", "_") + "_")
-            state = sdfg.add_state()
+            # Create a name with a random number to avoid name clashes
+            # TODO: This is not an issue in the backward pass
+            # but sometimes simplify will inline these SDFGs and create states with the same label
+            state_label = f"block_{id(forward_node)}"
+            state = sdfg.add_state(state_label)
 
             rev_input_conn_name = "input_gradient"
             rev_output_conn_name = "output_gradient"
             result.required_grad_names[output_name] = rev_output_conn_name
             result.given_grad_names[input_name] = rev_input_conn_name
 
-            _, rev_input_arr = sdfg.add_array(rev_input_conn_name, shape=out_desc.shape, dtype=out_desc.dtype)
-            _, rev_output_arr = sdfg.add_array(rev_output_conn_name, shape=in_desc.shape, dtype=in_desc.dtype)
+            # It is important to add the strides in the case of accesses to a view where the shape is not enough
+            _, rev_input_arr = sdfg.add_array(rev_input_conn_name,
+                                              shape=out_desc.shape,
+                                              dtype=out_desc.dtype,
+                                              strides=out_desc.strides)
+            _, rev_output_arr = sdfg.add_array(rev_output_conn_name,
+                                               shape=in_desc.shape,
+                                               dtype=in_desc.dtype,
+                                               strides=in_desc.strides)
             reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
 
             state.add_mapped_tasklet(
@@ -71,8 +82,11 @@ class ReverseReduce(BackwardImplementation):
                     Memlet.simple(rev_input_conn_name, "0" if reduce_all_axes else ",".join("i" + str(i)
                                                                                             for i in non_reduce_axes))
                 },
-                "__out = __in",
-                {"__out": Memlet.simple(rev_output_conn_name, ",".join("i" + str(i) for i in all_axes))},
+                "__out = __in", {
+                    "__out":
+                    Memlet.simple(
+                        rev_output_conn_name, ",".join("i" + str(i) for i in all_axes), wcr_str="lambda x, y: x + y")
+                },
                 external_edges=True)
 
             return context.backward_state.add_nested_sdfg(sdfg, None, {rev_input_conn_name},
