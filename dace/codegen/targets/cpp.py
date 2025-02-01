@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import re
 import sys
 import warnings
 
@@ -230,6 +231,14 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
             copy_shape, dst_strides = reshape_strides(src_subset, src_strides, dst_strides, copy_shape)
         elif memlet.data == dst_node.data:
             copy_shape, src_strides = reshape_strides(dst_subset, dst_strides, src_strides, copy_shape)
+
+    def replace_dace_defer_dim(string, arrname):
+        pattern = r"__dace_defer_dim(\d+)"
+        return re.sub(pattern, r"A_size[\1]", string)
+
+    # TODO: do this better?
+    dst_expr = replace_dace_defer_dim(dst_expr, dst_node.data) if dst_expr is not None else None
+    src_expr = replace_dace_defer_dim(src_expr, src_node.data) if src_expr is not None else None
 
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
@@ -539,7 +548,8 @@ def ndcopy_to_strided_copy(
         return None
 
 
-def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None):
+def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None,
+                    packed_veclen=1, indices=None, deferred_size_names=None):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
 
@@ -569,8 +579,61 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
     if packed_veclen > 1:
         index /= packed_veclen
 
-    return sym2cpp(index)
+    if deferred_size_names is not None:
+        access_str_with_deferred_vars = sym2cpp(index)
+        def replace_pattern(match):
+            number = match.group(1)
+            return deferred_size_names[int(number)]
+        pattern = r'__dace_defer_dim(\d+)'
+        access_str = re.sub(pattern, replace_pattern, access_str_with_deferred_vars)
+        return access_str
+    else:
+        return sym2cpp(index)
 
+
+def _get_deferred_size_names(desc, name):
+    if (desc.storage not in dtypes.REALLOCATABLE_STORAGES and
+        not desc.transient):
+        return None
+    def check_dace_defer(elements):
+        for elem in elements:
+            if "__dace_defer" in str(elem):
+                return True
+        return False
+    deferred_size_names = None
+    if check_dace_defer(desc.shape):
+        if desc.storage in dtypes.REALLOCATABLE_STORAGES:
+            deferred_size_names = []
+            for i, elem in enumerate(desc.shape):
+                if "__dace_defer" in str(elem):
+                    deferred_size_names.append(f"__{name}_dim{i}_size" if desc.storage == dtypes.StorageType.GPU_Global else f"{desc.size_desc_name}[{i}]")
+                else:
+                    deferred_size_names.append(elem)
+    return deferred_size_names if deferred_size_names is not None and len(deferred_size_names) > 0 else None
+
+def _get_realloc_dimensions(size_array_name:str, new_size_array_name:str, shape):
+    # Only consider the offsets with __dace_defer in original dim
+    mask_array = ["__dace_defer" in str(dim) for dim in shape]
+
+    # In case the size does not only consist of a "__dace_defer" symbol but from an expression involving "__dace_defer"
+    # The size array is only updated with the symbol, and while calculating the expression, we only replace the __dace_defer_dim pattern
+    # With the corresponding access from the size array
+    size_assignment_strs = []
+    new_size_strs = []
+    old_size_strs = []
+    for i, mask in enumerate(mask_array):
+        if mask:
+            new_size_str = sym2cpp(shape[i])
+            pattern = r'__dace_defer_dim(\d+)'
+            new_size_strs.append(re.sub(pattern, lambda m: f'{new_size_array_name}[{m.group(1)}]', new_size_str))
+            old_size_strs.append(re.sub(pattern, lambda m: f"{size_array_name}[{m.group(1)}]", new_size_str))
+            size_assignment_strs.append(
+                f"{size_array_name}[{i}] = {new_size_array_name}[{i}];"
+            )
+        else:
+            old_size_strs.append(sym2cpp(shape[i]))
+            new_size_strs.append(sym2cpp(shape[i]))
+    return size_assignment_strs, new_size_strs, old_size_strs
 
 def cpp_array_expr(sdfg,
                    memlet,
@@ -586,8 +649,10 @@ def cpp_array_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
-    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
+    desc : dace.Data = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
+    desc_name = memlet.data
+    deferred_size_names = _get_deferred_size_names(desc, desc_name)
+    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices, deferred_size_names=deferred_size_names)
 
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
     # TODO: Study this when changing Structures to be (optionally?) non-pointers.
@@ -763,7 +828,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
     the decision.
-    
+
     :return: None if the conflict is nonatomic, otherwise returns the scope entry
              node or SDFG that caused the decision to be made.
     """
