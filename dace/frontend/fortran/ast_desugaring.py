@@ -265,7 +265,7 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
         if isinstance(stmt, Stmt_Function_Stmt):
             # An exception is statement-functions, which must have a dummy variable already declared in the same scope.
             continue
-        assert spec not in ident_map, f"{spec} / {stmt.parent.parent.parent.parent} / {ident_map[spec].parent.parent.parent.parent}"
+        assert spec not in ident_map, f"{spec}"
         ident_map[spec] = stmt
     return ident_map
 

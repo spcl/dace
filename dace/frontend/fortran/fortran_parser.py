@@ -14,7 +14,7 @@ from fparser.api import get_reader
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
-from fparser.two.Fortran2003 import Program, Module_Stmt
+from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
 from fparser.two.utils import Base, walk, FortranSyntaxError
@@ -3104,7 +3104,31 @@ def construct_full_ast(sources: Dict[str, str], parser,
     tops = {}
     for path, f90 in sources.items():
         try:
+            # C++ preprocessor would not resolve the Fortran include statements, so we resolve them ourselves first.
+            # 1. Get a first-glance AST.
+            cast = parser(get_reader(f90))
+            # 2. Create a table of how to replace string content.
+            inc_map = {}
+            for inc in walk(cast, Include_Stmt):
+                file, = inc.children
+                repls = {k: c for k, c in sources.items() if k.endswith(f"{file}")}
+                if not repls:
+                    print(f"Could not find the file to include `{inc}`; moving on", file=sys.stderr)
+                    continue
+                elif len(repls) > 1:
+                    print(f"Found multiple candidate files to include `{inc}`: {sorted(repls.keys())}; "
+                          f"proceeding with an arbitrary one", file=sys.stderr)
+                _, content = repls.popitem()
+                inc_map[inc.tofortran()] = content
+            # 3. Replace that string content.
+            if inc_map:
+                f90_again = cast.tofortran()
+                for k, v in inc_map.items():
+                    f90_again = f90_again.replace(k, v)
+                f90 = f90_again
+            # 4. Now proceed to map the top-level objects in this preprocessed Fortran content.
             ctops = top_level_objects_map(get_reader(f90), path, parser)
+
         except FortranSyntaxError as e:
             print(f"Could not parse `{path}`; got {e}", file=sys.stderr)
             ctops = {}
