@@ -2538,49 +2538,19 @@ class PointerRemoval(NodeTransformer):
             return self.generic_visit(node)
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
-
         if node.name in self.nodes:
             return self.nodes[node.name]
         return node
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
-
         for child in node.execution:
-
             if isinstance(child, ast_internal_classes.Pointer_Assignment_Stmt_Node):
                 self.nodes[child.name_pointer.name] = child.name_target
             else:
                 newbody.append(self.visit(child))
-
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
-    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
-
-        if node.execution_part is not None:
-            execution_part = self.visit(node.execution_part)
-        else:
-            execution_part = node.execution_part
-
-        if node.specification_part is not None:
-            specification_part = self.visit(node.specification_part)
-        else:
-            specification_part = node.specification_part
-
-        if node.internal_subprogram_part is not None:
-            internal_subprogram_part = self.visit(node.internal_subprogram_part)
-        else:
-            internal_subprogram_part = node.internal_subprogram_part
-
-        return ast_internal_classes.Subroutine_Subprogram_Node(
-            name=node.name,
-            args=node.args,
-            specification_part=specification_part,
-            execution_part=execution_part,
-            internal_subprogram_part=internal_subprogram_part,
-            line_number=node.line_number,
-            elemental=node.elemental
-        )
 
     def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
 
