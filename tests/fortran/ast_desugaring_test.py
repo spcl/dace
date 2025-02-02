@@ -2461,3 +2461,37 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_remove_contiguous_statements():
+    # TODO: We're testing here that FParser can even parse these (it couldn't in v0.1.3). Do we want to remove these?
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(a)
+  implicit none
+  type T
+    integer, contiguous, pointer :: x(:)
+  end type T
+  integer, contiguous, target :: a(:)
+  type(T) :: z
+  z % x => a
+  a = sum(z % x)
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = remove_access_and_bind_statements(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main(a)
+  IMPLICIT NONE
+  TYPE :: T
+    INTEGER, CONTIGUOUS, POINTER :: x(:)
+  END TYPE T
+  INTEGER, CONTIGUOUS, TARGET :: a(:)
+  TYPE(T) :: z
+  z % x => a
+  a = SUM(z % x)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
