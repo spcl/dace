@@ -652,7 +652,15 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                                         collapsed[i] = True
                                         components[i] = (str(view_edge.data.subset.ranges[i][0]),1)
                                 elif view_edge.data.subset.size()[i] != current_desc.shape[i]:
-                                    raise NotImplementedError
+                                    if (str(current_desc.shape[i])).startswith("__f2dace"):
+                                        #hopefully this resolves to the same actual dimension
+                                        if with_reshape:
+                                            components[i] = ("__to_be_reshaped__",view_edge.data.subset.size()[i])
+                                        else:
+                                            components[i] = ("__to_be_replaced__",1)
+                                        complex_replacement = True    
+                                    else:
+                                        raise NotImplementedError
                                 else:
                                     if with_reshape:
                                         components[i] = ("__to_be_reshaped__",view_edge.data.subset.size()[i])
@@ -695,7 +703,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 for cfr in nsdfg.all_control_flow_regions():
                     if not isinstance(data_path, str):
                         print("ALARM!")
-                        raise ("Not implemented for complex replacements in CFG regions")
+                        #raise ("Not implemented for complex replacements in CFG regions")
                     cfr.replace_meta_accesses({ arg: data_path })
             else:
                 for edge in nsdfg.all_interstate_edges():
@@ -704,7 +712,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 for cfr in nsdfg.all_control_flow_regions():
                     if not isinstance(data_path, str):
                         print("ALARM!")
-                        raise NotImplementedError("Not implemented for complex replacements in CFG regions")
+                        #raise NotImplementedError("Not implemented for complex replacements in CFG regions")
                     cfr.replace_meta_accesses({ arg: data_path })
 
         #######################################################

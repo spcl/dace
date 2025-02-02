@@ -1988,6 +1988,64 @@ class IfConditionExtractor(NodeTransformer):
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
 
+
+class WhileConditionExtractor(NodeTransformer):
+    """
+    Ensures that each loop iterator is unique by extracting the actual iterator and assigning it to a uniquely named local variable
+    """
+
+    def __init__(self):
+        self.count = 0
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+        for child in node.execution:
+
+            if isinstance(child, ast_internal_classes.While_Stmt_Node):
+                if isinstance(child.cond, ast_internal_classes.BinOp_Node):
+                    if child.cond.op == "==" and isinstance(child.cond.rval, ast_internal_classes.Int_Literal_Node):
+                       if isinstance(child.cond.lval, ast_internal_classes.Name_Node):
+                           if child.cond.lval.name=="jb_var_1001":
+                               newbody.append(child)
+                               continue 
+                    
+                old_cond = child.cond
+                newbody.append(
+                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                        ast_internal_classes.Var_Decl_Node(
+                            name="_while_cond_" + str(self.count), type="INTEGER", sizes=None, init=None)
+                    ]))
+                newbody.append(ast_internal_classes.BinOp_Node(
+                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
+                    op="=",
+                    rval=old_cond,
+                    line_number=child.line_number,
+                    parent=child.parent))
+                newcond = ast_internal_classes.BinOp_Node(
+                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
+                    op="==",
+                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                    line_number=child.line_number, parent=old_cond.parent)
+                newwhilebody = self.visit(child.body)
+                newwhilebody.execution.append(ast_internal_classes.BinOp_Node(
+                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
+                    op="=",
+                    rval=old_cond,
+                    line_number=child.line_number,
+                    parent=child.parent))
+                
+
+                newwhile = ast_internal_classes.While_Stmt_Node(cond=newcond, body=newwhilebody,
+                                                          line_number=child.line_number, parent=child.parent)
+                self.count += 1
+
+                newbody.append(newwhile)
+
+            else:
+                newbody.append(self.visit(child))
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+
 class ForDeclarer(NodeTransformer):
     """
     Ensures that each loop iterator is unique by extracting the actual iterator and assigning it to a uniquely named local variable
