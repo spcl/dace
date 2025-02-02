@@ -1094,7 +1094,7 @@ def keep_sorted_used_modules(ast: Program, entry_points: Optional[Iterable[SPEC]
             return TOPLEVEL
         else:
             p = singular(children_of_type(p, (Module_Stmt, Program_Stmt)))
-            return find_name_of_stmt(p)
+            return find_name_of_stmt(p).lower()
 
     g = nx.DiGraph()  # An edge u->v means u should come before v, i.e., v depends on u.
     for c in ast.children:
@@ -1121,10 +1121,10 @@ def keep_sorted_used_modules(ast: Program, entry_points: Optional[Iterable[SPEC]
     top_ord[TOPLEVEL] = g.number_of_nodes() + 1
 
     # Discard the unused modules.
-    ast.content = [n for n in ast.children if _get_module(n) in used_modules]
+    set_children(ast, [n for n in ast.children if _get_module(n) in used_modules])
     assert all(_get_module(n) in top_ord for n in ast.children)
     # Sort the rest.
-    ast.content = sorted(ast.children, key=lambda x: top_ord[_get_module(x)])
+    set_children(ast, sorted(ast.children, key=lambda x: top_ord[_get_module(x)]))
 
     return ast
 
