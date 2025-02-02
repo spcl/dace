@@ -3134,7 +3134,7 @@ def construct_full_ast(sources: Dict[str, str], parser,
 
     tops = {}
 
-    for path, f90 in tqdm.tqdm(sources.items()):
+    for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
         if ctops.keys() & tops.keys():
             print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
