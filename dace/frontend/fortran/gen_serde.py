@@ -219,7 +219,7 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
         for c in dtdef.children:
             if isinstance(c, Private_Components_Stmt):
                 private_access = True
-            assert 'PUBLIC' != f"{c}".strip(),\
+            assert 'PUBLIC' != f"{c}".strip(), \
                 f"We need to access public access statements in derived type defintions; got one in: {dtdef}"
             if not isinstance(c, Component_Part):
                 # We care only about serialising components.
@@ -276,8 +276,8 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
 
                     ops.append(f"s = s // '# {cname}' // new_line('A')")
                     if ptr:
-                        # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes, we
-                        #  will only populate this when it points to a different component of the same structure.
+                        # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes,
+                        #  we will only populate this when it points to a different component of the same structure.
                         ops.append(
                             f"s = s // '# assoc' // new_line('A') // serialize(associated(x%{cname})) // new_line('A')")
                         candidates = {f"x%{v[0]}": v[1].children for k, v in array_map.items()
@@ -344,6 +344,7 @@ def minimal_preprocessing(ast: Program) -> Program:
     ast = correct_for_function_calls(ast)
     ast = const_eval_nodes(ast)
     return ast
+
 
 def main():
     argp = argparse.ArgumentParser()

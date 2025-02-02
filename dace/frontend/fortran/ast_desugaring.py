@@ -27,7 +27,8 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Contains_Stmt, Implicit_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, \
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
-    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec
+    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
+    Bind_Stmt, Language_Binding_Spec, Type_Attr_Spec, Suffix
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -102,6 +103,8 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
         name = bname
     elif isinstance(node, Interface_Stmt):
         name, = node.children
+        if name == 'ABSTRACT':
+            return None
     else:
         # TODO: Test out other type specific ways of finding names.
         name = singular(children_of_type(node, Name))
@@ -892,7 +895,7 @@ def set_children(par: Base, children: Iterable[Base]):
     _reparent_children(par)
 
 
-def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
+def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
     # A lot of hacky stuff to make sure that the new nodes are not just the same objects over and over.
     par = node.parent
     only_child = bool([c for c in par.children if c is node])
@@ -901,7 +904,7 @@ def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
         if c != node:
             repls.append(c)
             continue
-        if isinstance(subst, Base):
+        if subst is None or isinstance(subst, Base):
             subst = [subst]
         if not only_child:
             subst = [Base.__new__(type(t), t.tofortran()) for t in subst]
@@ -1041,7 +1044,7 @@ def correct_for_function_calls(ast: Program):
     return ast
 
 
-def remove_access_statements(ast: Program):
+def remove_access_and_bind_statements(ast: Program):
     """Look for public/private access statements and just remove them."""
     # TODO: This can get us into ambiguity and unintended shadowing.
 
@@ -1057,6 +1060,25 @@ def remove_access_statements(ast: Program):
 
     for acc in walk(ast, Private_Components_Stmt):
         remove_self(acc)
+
+    for bind in walk(ast, Language_Binding_Spec):
+        if isinstance(bind.parent, (Suffix, Subroutine_Stmt, Function_Stmt)):
+            # Since this is part of a tuple, we need to replace it with a `None`.
+            replace_node(bind, None)
+        else:
+            par = bind.parent
+            remove_self(bind)
+            if not par.children:
+                # Since this is part of a tuple, we need to replace it with a `None`.
+                replace_node(par, None)
+    for bind in walk(ast, Type_Attr_Spec):
+        b, c = bind.children
+        if b == 'BIND':
+            par = bind.parent
+            remove_self(bind)
+            if not par.children:
+                # Since this is part of a tuple, we need to replace it with a `None`.
+                replace_node(par, None)
 
     return ast
 
@@ -1077,20 +1099,21 @@ def keep_sorted_used_modules(ast: Program, entry_points: Optional[Iterable[SPEC]
     g = nx.DiGraph()  # An edge u->v means u should come before v, i.e., v depends on u.
     for c in ast.children:
         g.add_node(_get_module(c))
+    g.add_node(TOPLEVEL)
 
     for u in walk(ast, Use_Stmt):
-        u_name = singular(children_of_type(u, Name)).string
+        u_name = singular(children_of_type(u, Name)).string.lower()
         v_name = _get_module(u)
         g.add_edge(u_name, v_name)
 
     if entry_points is None:
         # If there was no option given, then keep all the modules.
-        entry_modules: Set[str] = set(g.nodes)
+        entry_modules: Set[str] = set(g.nodes) | {TOPLEVEL}
     else:
-        entry_modules: Set[str] = {ep[0] if len(ep) > 1 else TOPLEVEL for ep in entry_points}
+        entry_modules: Set[str] = {ep[0] if len(ep) > 1 else TOPLEVEL for ep in entry_points} | {TOPLEVEL}
 
     assert all(g.has_node(em) for em in entry_modules)
-    used_modules: Set[str] = entry_modules.union(*chain(nx.ancestors(g, em) for em in entry_modules))
+    used_modules: Set[str] = {anc for em in entry_modules for anc in nx.ancestors(g, em)} | entry_modules
     h = g.subgraph(used_modules).to_directed()
 
     top_ord = {n: i for i, n in enumerate(nx.lexicographical_topological_sort(h))}

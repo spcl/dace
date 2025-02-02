@@ -33,11 +33,11 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     find_name_of_stmt, find_name_of_node, append_children, correct_for_function_calls, keep_sorted_used_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
-    inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
+    inject_const_evals, remove_access_and_bind_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
     create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
-    assign_globally_unique_variable_names, deconstuct_goto_statements
+    assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -2717,10 +2717,7 @@ class ParseConfig:
         self.config_injections: List[ConstInjection] = config_injections or []
 
 
-def top_level_objects_map(f90: FortranStringReader, path: str, parser) -> Dict[str, Base]:
-    ast = parser(f90)
-    assert isinstance(ast, Program)
-
+def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
     out: Dict[str, Base] = {}
     for top in ast.children:
         if type(top).__name__ in CPP_CLASS_NAMES:
@@ -2779,7 +2776,7 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     print("FParser Op: Removing indirections from AST...")
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
-    ast = remove_access_statements(ast)
+    ast = remove_access_and_bind_statements(ast)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_statement_functions(ast)
     ast = deconstruct_procedure_calls(ast)
@@ -3098,51 +3095,54 @@ def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.Di
     return dep_graph
 
 
+def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[str, Base]:
+    path, f90 = path_f90
+    assert isinstance(f90, str)
+    try:
+        # C++ preprocessor would not resolve the Fortran include statements, so we resolve them ourselves first.
+        # 1. Get a first-glance AST.
+        cast = parser(get_reader(f90))
+        # 2. Create a table of how to replace string content.
+        inc_map = {}
+        for inc in walk(cast, Include_Stmt):
+            file, = inc.children
+            repls = {k: c for k, c in sources.items() if k.endswith(f"{file}")}
+            if not repls:
+                print(f"Could not find the file to include `{inc}` in {path}; moving on", file=sys.stderr)
+                continue
+            elif len(repls) > 1:
+                print(f"Found multiple candidate files to include `{inc}` in {path}: {sorted(repls.keys())}; "
+                      f"proceeding with an arbitrary one", file=sys.stderr)
+            _, content = repls.popitem()
+            inc_map[inc.tofortran()] = content
+        # 3. Replace that string content.
+        if inc_map:
+            f90_again = cast.tofortran()
+            for k, v in inc_map.items():
+                f90_again = f90_again.replace(k, v)
+            cast = parser(get_reader(f90_again))
+        # 4. Now proceed to map the top-level objects in this preprocessed Fortran content.
+        return top_level_objects_map(cast, path)
+    except FortranSyntaxError as e:
+        print(f"Could not parse `{path}`; got {e}", file=sys.stderr)
+        return {}
+
+
 def construct_full_ast(sources: Dict[str, str], parser,
                        entry_points: Optional[Iterable[SPEC]] = None,
                        main: Optional[FortranStringReader] = None) -> Program:
-    tops = {}
-    for path, f90 in sources.items():
-        try:
-            # C++ preprocessor would not resolve the Fortran include statements, so we resolve them ourselves first.
-            # 1. Get a first-glance AST.
-            cast = parser(get_reader(f90))
-            # 2. Create a table of how to replace string content.
-            inc_map = {}
-            for inc in walk(cast, Include_Stmt):
-                file, = inc.children
-                repls = {k: c for k, c in sources.items() if k.endswith(f"{file}")}
-                if not repls:
-                    print(f"Could not find the file to include `{inc}`; moving on", file=sys.stderr)
-                    continue
-                elif len(repls) > 1:
-                    print(f"Found multiple candidate files to include `{inc}`: {sorted(repls.keys())}; "
-                          f"proceeding with an arbitrary one", file=sys.stderr)
-                _, content = repls.popitem()
-                inc_map[inc.tofortran()] = content
-            # 3. Replace that string content.
-            if inc_map:
-                f90_again = cast.tofortran()
-                for k, v in inc_map.items():
-                    f90_again = f90_again.replace(k, v)
-                f90 = f90_again
-            # 4. Now proceed to map the top-level objects in this preprocessed Fortran content.
-            ctops = top_level_objects_map(get_reader(f90), path, parser)
 
-        except FortranSyntaxError as e:
-            print(f"Could not parse `{path}`; got {e}", file=sys.stderr)
-            ctops = {}
+    tops = {}
+
+    for path, f90 in tqdm.tqdm(sources.items()):
+        ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
         if ctops.keys() & tops.keys():
             print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
         tops.update(ctops)
 
     # TODO: Remove after fixing the tests to not need `cfg.main` anymore.
     if main:
-        try:
-            ctops = top_level_objects_map(main, 'main.f90', parser)
-        except FortranSyntaxError as e:
-            print(f"Could not parse the main file; got {e}", file=sys.stderr)
-            ctops = {}
+        ctops = _get_toplevel_objects(('main.f90', f"{parser(main)}"), parser, sources)
         if ctops.keys() & tops.keys():
             print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
         tops.update(ctops)
