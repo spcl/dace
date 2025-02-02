@@ -7,7 +7,6 @@ from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collectio
 
 import numpy as np
 from fparser.two.Fortran2003 import Name
-from typing_extensions import Self
 
 from dace.frontend.fortran.ast_internal_classes import Name_Node
 
@@ -36,7 +35,7 @@ class SourceCodeBuilder:
     """
     sources: Dict[str, str] = field(default_factory=dict)
 
-    def add_file(self, content: str, name: Optional[str] = None) -> Self:
+    def add_file(self, content: str, name: Optional[str] = None):
         """Add source file contents in the order you'd pass them to `gfortran`."""
         if not name:
             name = SourceCodeBuilder._identify_name(content)
@@ -45,7 +44,7 @@ class SourceCodeBuilder:
         self.sources[key] = content
         return self
 
-    def check_with_gfortran(self) -> Self:
+    def check_with_gfortran(self):
         """Assert that it all compiles with `gfortran`."""
         with TemporaryDirectory() as td:
             # Create temporary Fortran source-file structure.
