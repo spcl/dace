@@ -37,7 +37,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
     create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
-    assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self
+    assign_globally_unique_variable_names, deconstuct_goto_statements
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -2732,7 +2732,7 @@ def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(cfg.sources, parser, cfg.entry_points, cfg.main)
+    ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None, cfg.main)
     ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
     return ast
