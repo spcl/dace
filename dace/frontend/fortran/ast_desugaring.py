@@ -1110,7 +1110,7 @@ def keep_sorted_used_modules(ast: Program, entry_points: Optional[Iterable[SPEC]
         # If there was no option given, then keep all the modules.
         entry_modules: Set[str] = set(g.nodes) | {TOPLEVEL}
     else:
-        entry_modules: Set[str] = {ep[0] if len(ep) > 1 else TOPLEVEL for ep in entry_points} | {TOPLEVEL}
+        entry_modules: Set[str] = {ep[0] for ep in entry_points if ep[0] in g.nodes} | {TOPLEVEL}
 
     assert all(g.has_node(em) for em in entry_modules)
     used_modules: Set[str] = {anc for em in entry_modules for anc in nx.ancestors(g, em)} | entry_modules
