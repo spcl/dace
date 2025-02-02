@@ -912,7 +912,7 @@ class SDFG(ControlFlowRegion):
 
     def append_transformation(self, transformation):
         """
-        Appends a transformation to the treansformation history of this SDFG.
+        Appends a transformation to the transformation history of this SDFG.
         If this is the first transformation being applied, it also saves the
         initial state of the SDFG to return to and play back the history.
 
