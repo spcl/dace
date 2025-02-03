@@ -141,7 +141,7 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
 
                     for ref, val in zip(reference_result, dace_result):
                         if ref.dtype == np.float32:
-                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5), f"SDFG: {ssdf_json_str}"
+                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5), f"{ref} || {val} // SDFG: {ssdf_json_str}"
                         else:
                             assert np.allclose(ref, val, equal_nan=True), f"SDFG: {ssdf_json_str}"
                         if check_dtype and not validation_func:
