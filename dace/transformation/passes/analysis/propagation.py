@@ -25,6 +25,11 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.analysis import ControlFlowBlockReachability
 
 
+MemletPropResultT = Dict[ControlFlowBlock, Tuple[Dict[str, GlobalDepDataRecordT],
+                                                 Dict[str, GlobalDepDataRecordT],
+                                                 Dict[str, GlobalDepDataRecordT],
+                                                 Dict[str, GlobalDepDataRecordT]]]
+
 @transformation.explicit_cf_compatible
 class StatePropagation(ppl.ControlFlowRegionPass):
     """
@@ -319,7 +324,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     oedge.data.volume = 0
                     oedge.data.dynamic = True
 
-    def _propagate_state(self, state: SDFGState) -> None:
+    def _propagate_state(self, state: SDFGState, result: MemletPropResultT) -> None:
         # Ensure memlets around nested SDFGs are propagated correctly.
         for nd in state.nodes():
             if isinstance(nd, nodes.NestedSDFG):
@@ -471,7 +476,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             state._possible_reads_moredata[data] = GlobalDepDataRecordT(memlet=new_memlet,
                                                                         accesses=not_covered_reads[data])
 
-    def _propagate_conditional(self, conditional: ConditionalBlock) -> None:
+        result[state] = (state._certain_reads_moredata, state._possible_reads_moredata,
+                         state._certain_writes_moredata, state._possible_writes_moredata)
+
+    def _propagate_conditional(self, conditional: ConditionalBlock, result: MemletPropResultT) -> None:
         # The union of all reads between all conditions and branches gives the set of _possible_ reads, while the
         # intersection gives the set of _guaranteed_ reads. The first condition can also be counted as a guaranteed
         # read. The same applies for writes, except that conditions do not contain writes.
@@ -597,9 +605,12 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 add_memlet(read_memlet, conditional.certain_reads, conditional._certain_reads_moredata,
                            False, [first_cond])
 
-    def _propagate_loop(self, loop: LoopRegion) -> None:
+        result[conditional] = (conditional._certain_reads_moredata, conditional._possible_reads_moredata,
+                               conditional._certain_writes_moredata, conditional._possible_writes_moredata)
+
+    def _propagate_loop(self, loop: LoopRegion, result: MemletPropResultT) -> None:
         # First propagate the contents of the loop for one iteration.
-        self._propagate_cfg(loop)
+        self._propagate_cfg(loop, result)
 
         # Propagate memlets from inside the loop through the loop ranges.
         # Collect loop information and form the loop variable range first.
@@ -675,7 +686,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 repo[dat] = propagated_write_memlet
                 repo_moredata[dat].memlet = propagated_write_memlet
 
-    def _propagate_cfg(self, cfg: ControlFlowRegion) -> None:
+        result[loop] = (loop._certain_reads_moredata, loop._possible_reads_moredata,
+                        loop._certain_writes_moredata, loop._possible_writes_moredata)
+
+    def _propagate_cfg(self, cfg: ControlFlowRegion, result: MemletPropResultT) -> None:
         cfg.possible_reads = {}
         cfg.possible_writes = {}
         cfg.certain_reads = {}
@@ -820,13 +834,24 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     else:
                         cfg._certain_writes_moredata[cont] = copy.deepcopy(nd._certain_writes_moredata[cont])
 
-    def apply(self, region: ControlFlowRegion, _) -> None:
+        if isinstance(cfg, ControlFlowBlock):
+            result[cfg] = (cfg._certain_reads_moredata, cfg._possible_reads_moredata,
+                           cfg._certain_writes_moredata, cfg._possible_writes_moredata)
+
+    def apply(self, region: ControlFlowRegion, _) -> Optional[MemletPropResultT]:
+        result: MemletPropResultT = {}
+
         for nd in region.nodes():
             if isinstance(nd, SDFGState):
-                self._propagate_state(nd)
+                self._propagate_state(nd, result)
         if isinstance(region, ConditionalBlock):
-            self._propagate_conditional(region)
+            self._propagate_conditional(region, result)
         elif isinstance(region, LoopRegion):
-            self._propagate_loop(region)
+            self._propagate_loop(region, result)
         else:
-            self._propagate_cfg(region)
+            self._propagate_cfg(region, result)
+
+        if result:
+            return result
+        else:
+            return None
