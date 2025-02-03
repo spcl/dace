@@ -733,8 +733,8 @@ class AST_translator:
         node_body=node.body
         node_body_else=node.body_else
 
-        body_list=[node_cond]
-        cond_list=[node_body]
+        body_list=[node_body]
+        cond_list=[node_cond]
         #Very specific hack
         case_processing_ready=True
         if isinstance(node.cond,ast_internal_classes.BinOp_Node):
@@ -766,7 +766,7 @@ class AST_translator:
                 cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
             self.last_sdfg_states[cfg] = cond_block
 
-            for i in range(cond_list):
+            for i in range(len(cond_list)):
                 cond_node = cond_list[i]
                 body_node = body_list[i]
                 case_condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders,
