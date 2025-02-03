@@ -445,7 +445,7 @@ def test_inlining_view_input():
         sdfg.expand_library_nodes()
     sdfg.simplify()
 
-    state = sdfg.nodes()[1]
+    state = sdfg.sink_nodes()[0]
     # find nested_sdfg
     nsdfg = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.NestedSDFG)][0]
     # delete gemm initialization state

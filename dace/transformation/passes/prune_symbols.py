@@ -111,6 +111,8 @@ class RemoveUnusedSymbols(ppl.Pass):
                         if node.code_exit.language != dtypes.Language.Python:
                             result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
                                                             node.ignored_symbols)
+            else:
+                result |= block.used_symbols(all_symbols=True, with_contents=False)
 
         for e in sdfg.all_interstate_edges():
             result |= e.data.free_symbols

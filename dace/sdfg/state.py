@@ -2620,7 +2620,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         """
         return []
 
-    def replace_meta_accesses(self, replacements: dict) -> None:
+    def replace_meta_accesses(self, replacements: Dict[str, str]) -> None:
         """
         Replace accesses to specific data containers in reads or writes performed by the control flow region itself in
         meta accesses, such as in condition checks for conditional blocks or in loop conditions for loops, etc.
@@ -3331,6 +3331,8 @@ class LoopRegion(ControlFlowRegion):
         return read_memlets
 
     def replace_meta_accesses(self, replacements):
+        if self.loop_variable in replacements:
+            self.loop_variable = replacements[self.loop_variable]
         replace_in_codeblock(self.loop_condition, replacements)
         if self.init_statement:
             replace_in_codeblock(self.init_statement, replacements)

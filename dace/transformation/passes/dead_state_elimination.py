@@ -77,6 +77,10 @@ class DeadStateElimination(ppl.Pass):
                             cfg.remove_node(node)
                     else:
                         result.add(node)
+                        is_start = node is cfg.start_block
+                        replacement_pre = cfg.add_state_before(node, node.label + '_pre', is_start_block=is_start)
+                        replacement_post = cfg.add_state_after(node, node.label + '_post')
+                        cfg.add_edge(replacement_pre, replacement_post, InterstateEdge())
                         cfg.remove_node(node)
 
         if not annotated:
