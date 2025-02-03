@@ -134,13 +134,18 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                 if not isinstance(reference_result, (tuple, list)):
                     reference_result = [reference_result]
                     dace_result = [dace_result]
+                    import json
+                    ssdfg = dp.to_sdfg(**dace_input, use_cache=True)
+                    ssdfg_json = ssdfg.to_json()
+                    ssdf_json_str = json.dumps(ssdfg_json, indent=None)
+
                     for ref, val in zip(reference_result, dace_result):
                         if ref.dtype == np.float32:
-                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5)
+                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5), f"SDFG: {ssdf_json_str}"
                         else:
-                            assert np.allclose(ref, val, equal_nan=True)
+                            assert np.allclose(ref, val, equal_nan=True), f"SDFG: {ssdf_json_str}"
                         if check_dtype and not validation_func:
-                            assert (ref.dtype == val.dtype)
+                            assert (ref.dtype == val.dtype), f"SDFG: {ssdf_json_str}"
 
         return test
 
