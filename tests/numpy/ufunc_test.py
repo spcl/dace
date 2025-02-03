@@ -978,7 +978,7 @@ def test_ufunc_isfinite_c():
     @compare_numpy_output(check_dtype=True)
     def ufunc_isfinite_c(A: dace.complex64[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isfinite(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -997,7 +997,7 @@ def test_ufunc_isfinite_f():
     @compare_numpy_output(check_dtype=True)
     def ufunc_isfinite_f(A: dace.float32[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isfinite(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1017,7 +1017,7 @@ def test_ufunc_isfinite_f():
 @compare_numpy_output(validation_func=lambda a: np.isfinite(a))
 def test_ufunc_isfinite_u(A: dace.uint32[10]):
     A[0] = np.inf
-    A[1] = np.NaN
+    A[1] = np.nan
     return np.isfinite(A)
 
 
@@ -1026,7 +1026,7 @@ def test_ufunc_isinf_c():
     @compare_numpy_output(check_dtype=True)
     def ufunc_isinf_c(A: dace.complex64[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isinf(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1045,7 +1045,7 @@ def test_ufunc_isinf_f():
     @compare_numpy_output(check_dtype=True)
     def ufunc_isinf_f(A: dace.float32[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isinf(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1065,7 +1065,7 @@ def test_ufunc_isinf_f():
 @compare_numpy_output(validation_func=lambda a: np.isinf(a))
 def test_ufunc_isinf_u(A: dace.uint32[10]):
     A[0] = np.inf
-    A[1] = np.NaN
+    A[1] = np.nan
     return np.isinf(A)
 
 
@@ -1074,7 +1074,7 @@ def test_ufunc_isnan_c():
     @compare_numpy_output(check_dtype=True)
     def ufunc_isnan_c(A: dace.complex64[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isnan(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1093,7 +1093,7 @@ def test_ufunc_isnan_f():
     @compare_numpy_output(check_dtype=True)
     def ufunc_isnan_f(A: dace.float32[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isnan(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1113,7 +1113,7 @@ def test_ufunc_isnan_f():
 @compare_numpy_output(validation_func=lambda a: np.isnan(a))
 def test_ufunc_isnan_u(A: dace.uint32[10]):
     A[0] = np.inf
-    A[1] = np.NaN
+    A[1] = np.nan
     return np.isnan(A)
 
 
