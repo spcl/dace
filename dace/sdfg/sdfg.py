@@ -1376,12 +1376,20 @@ class SDFG(ControlFlowRegion):
         read_set = set()
         write_set = set()
         for state in self.states():
-            for edge in state.parent_graph.in_edges(state):
-                read_set |= edge.data.free_symbols & self.arrays.keys()
             # Get dictionaries of subsets read and written from each state
             rs, ws = state._read_and_write_sets()
             read_set |= rs.keys()
             write_set |= ws.keys()
+
+        array_names = self.arrays.keys()
+        for edge in self.all_interstate_edges():
+            read_set |= edge.data.free_symbols & array_names
+
+        # By definition, data that is referenced by the conditions (branching condition,
+        #  loop condition, ...) is not single use data, also remove that.
+        for cfr in self.all_control_flow_regions():
+            read_set |= cfr.used_symbols(all_symbols=True, with_contents=False) & array_names
+
         return read_set, write_set
 
     def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
