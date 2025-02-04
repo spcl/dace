@@ -8,15 +8,13 @@ from fparser.api import get_reader
 from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
     Procedure_Stmt, Function_Subprogram, Interface_Block, Program, Intrinsic_Type_Spec, \
     Function_Stmt, Dimension_Component_Attr_Spec, Declaration_Type_Spec, Private_Components_Stmt, Component_Part, \
-    Derived_Type_Def, Subroutine_Subprogram, Main_Program, Type_Bound_Procedure_Part, Interface_Stmt, Execution_Part
+    Derived_Type_Def
 from fparser.two.utils import walk
 
 import dace
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
-    correct_for_function_calls, const_eval_nodes, deconstruct_enums, deconstruct_associations, \
-    deconstruct_statement_functions, deconstruct_procedure_calls, deconstruct_interface_calls, \
-    SPEC_TABLE, SPEC, remove_self, consolidate_uses
+    SPEC_TABLE, SPEC
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, run_fparser_transformations
 
