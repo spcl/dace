@@ -117,7 +117,7 @@ def test_conj(A: dace.complex64[M, N, N, M]):
 
 
 @compare_numpy_output()
-def test_sum(A: dace.float32[M, N, N, M]):
+def test_sum__with_different_name(A: dace.float32[M, N, N, M]):
     return A.sum()
 
 
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     test_min()
     test_argmin()
     test_conj()
-    test_sum()
+    test_sum__with_different_name()
     test_mean()
     test_prod()
     test_all()
