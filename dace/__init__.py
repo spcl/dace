@@ -31,6 +31,7 @@ hooks._install_hooks_from_config()
 # See https://stackoverflow.com/a/48100440/6489142
 class DaceModule(sys.modules[__name__].__class__):
     breakpoint()
+
     def __call__(self, *args, **kwargs):
         return function(*args, **kwargs)
 
