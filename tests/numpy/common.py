@@ -122,7 +122,9 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                     sdfg.apply_gpu_transformations()
                     dace_result = sdfg(**dace_input)
                 else:
-                    dace_result = dp(**dace_input)
+                    sdfg = dp.to_sdfg(**dace_input)
+                    sdfg.simplify()
+                    dace_result = sdfg(**dace_input)
 
             except Exception as e:
                 dace_thrown = e
