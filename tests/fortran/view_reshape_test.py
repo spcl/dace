@@ -13,7 +13,7 @@ module lib1
   implicit none
   real :: outside_init = 1
 end module lib1
-""").add_file("""
+
 module lib2
 contains
   subroutine view_reshape_test_function(dd)
@@ -25,7 +25,7 @@ contains
     
   end subroutine view_reshape_test_function
 end module lib2
-""").add_file("""
+
 subroutine main(d)
   use lib2, only: view_reshape_test_function
   implicit none

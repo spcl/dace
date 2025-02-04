@@ -13,7 +13,6 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):
-    assert 'main.f90' in sources
     parser = ParserFactory().create(std="f2008")
     ast = construct_full_ast(sources, parser)
     assert isinstance(ast, Program)
@@ -178,7 +177,7 @@ module lib
   implicit none
   double precision :: val = 5.5
 end module lib
-""").add_file("""
+
 program main
   implicit none
   double precision d(4)
@@ -233,7 +232,7 @@ contains
     d(2) = 5.5
   end subroutine fun
 end module lib
-""").add_file("""
+
 module lib_indirect
   use lib
 contains
@@ -243,7 +242,7 @@ contains
     call fun(d)
   end subroutine fun_indirect
 end module lib_indirect
-""").add_file("""
+
 program main
   use lib_indirect, only: fun_indirect
   implicit none
@@ -299,7 +298,7 @@ contains
     fun = 5.5
   end function fun
 end module lib
-""").add_file("""
+
 module lib_indirect
   use lib, only: fun
   implicit none
@@ -313,7 +312,7 @@ contains
     fun2 = 4.2
   end function fun2
 end module lib_indirect
-""").add_file("""
+
 program main
   use lib_indirect, only : fun, fun2
   implicit none
@@ -383,7 +382,7 @@ contains
     real_fun = 4.7
   end function real_fun
 end module lib
-""").add_file("""
+
 program main
   use lib, only: fun
   implicit none
@@ -436,7 +435,7 @@ module lib
     real :: name
   end type dead_type
 end module lib
-""").add_file("""
+
 program main
   use lib, only : used_type
   implicit none
@@ -495,7 +494,7 @@ module lib
   integer, parameter :: used = 1
   real, parameter :: unused = 4.2
 end module lib
-""").add_file("""
+
 program main
   use lib, only: used
   implicit none
@@ -548,7 +547,7 @@ module lib
   integer, parameter :: used = 1
   real, parameter :: unused = 4.2
 end module lib
-""").add_file("""
+
 program main
   use lib
   implicit none
@@ -602,7 +601,7 @@ module lib
   real, parameter :: b = 4.2
   real, parameter :: c = -7.1
 end module lib
-""").add_file("""
+
 program main
   use lib, only: a
   use lib, only: b
@@ -660,7 +659,7 @@ module lib
   real, parameter :: b = 4.2
   real, parameter :: c = -7.1
 end module lib
-""").add_file("""
+
 program main
   use lib
   use lib, only: a
@@ -727,7 +726,7 @@ contains
     end function fun2
   end subroutine fun
 end module lib
-""").add_file("""
+
 program main
   use lib, only: fun
   implicit none

@@ -9,8 +9,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder, InternalASTMatc
 
 
 def construct_internal_ast(sources: Dict[str, str]):
-    assert 'main.f90' in sources
-    cfg = ParseConfig(sources['main.f90'], sources, [])
+    cfg = ParseConfig(sources=sources)
     iast, prog = create_internal_ast(cfg)
     return iast, prog
 
@@ -109,7 +108,7 @@ contains
     d(4) = val
   end subroutine not_fun
 end module lib
-""").add_file("""
+
 program main
   use lib
   implicit none
@@ -193,7 +192,7 @@ contains
     end function fun2
   end subroutine fun
 end module lib
-""").add_file("""
+
 program main
   use lib, only: fun
   implicit none
@@ -245,7 +244,7 @@ module lib
     real :: name
   end type used_type
 end module lib
-""").add_file("""
+
 program main
   implicit none
   real :: d(5, 5)

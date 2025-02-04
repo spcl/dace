@@ -76,7 +76,7 @@ end
    END FUNCTION function_test_function
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -136,7 +136,7 @@ PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
 
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -256,7 +256,7 @@ ELEMENTAL FUNCTION function3_test_function (v) result(length)
 END FUNCTION function3_test_function
 """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -323,7 +323,7 @@ length=norm(v)+a
 
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -383,7 +383,7 @@ end
 
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:

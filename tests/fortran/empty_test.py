@@ -18,7 +18,7 @@ contains
     fun_with_no_arguments = (process_mpi_all_size <= 1)
   end function fun_with_no_arguments
 end module module_mpi
-""").add_file("""
+
 subroutine main(d)
   use module_mpi, only: fun_with_no_arguments
   double precision d(2, 3)

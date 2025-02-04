@@ -16,7 +16,6 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 def parse_and_improve(sources: Dict[str, str]):
     parser = ParserFactory().create(std="f2008")
-    assert 'main.f90' in sources
     ast = construct_full_ast(sources, parser)
     ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
@@ -54,7 +53,7 @@ module lib
     type(T2) :: name
   end type T
 end module lib
-""").add_file("""
+
 program main
   use lib
   implicit none

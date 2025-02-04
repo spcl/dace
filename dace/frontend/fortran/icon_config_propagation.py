@@ -91,7 +91,6 @@ if __name__ == "__main__":
 
     # Construct the primary ECRad AST.
     parse_cfg = ParseConfig(
-        main=Path(f"{base_icon_path}/{icon_file}"),
         sources=[Path(f) for f in fortran_files],
         entry_points=[('radiation_interface', 'radiation')],
         config_injections=config_injection_list('dace/frontend/fortran/conf_files'),

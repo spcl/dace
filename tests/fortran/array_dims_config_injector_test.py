@@ -10,8 +10,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def construct_internal_ast(sources: Dict[str, str]):
-    assert 'main.f90' in sources
-    cfg = ParseConfig(sources['main.f90'], sources, [])
+    cfg = ParseConfig(sources=sources)
     iast, prog = create_internal_ast(cfg)
     return iast, prog
 
@@ -33,7 +32,7 @@ contains
     cfg%b = 5.1
   end subroutine fun
 end module lib
-""").add_file("""
+
 subroutine main(cfg, c)
   use lib
   implicit none
