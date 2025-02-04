@@ -3,21 +3,23 @@ from tempfile import NamedTemporaryFile
 from typing import Dict
 
 from fparser.two.Fortran2003 import Program, Execution_Part, Specification_Part, Use_Stmt, Call_Stmt, \
-    Main_Program
-from fparser.two.parser import ParserFactory
+    Main_Program, Component_Decl
 from fparser.two.utils import walk
 
-from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children
+from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children, \
+    identifier_specs
 from dace.frontend.fortran.ast_utils import singular
-from dace.frontend.fortran.fortran_parser import construct_full_ast
-from dace.frontend.fortran.gen_serde import generate_serde_code, gen_serde_module_skeleton, minimal_preprocessing
+from dace.frontend.fortran.fortran_parser import ParseConfig, \
+    create_fparser_ast, create_internal_ast, SDFGConfig, create_sdfg_from_internal_ast
+from dace.frontend.fortran.gen_serde import generate_serde_code
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):
-    parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(sources, parser)
+    ast = create_fparser_ast(ParseConfig(sources=sources))
     ast = correct_for_function_calls(ast)
+    # NOTE: We don't run `run_fparser_transformations(ast, cfg)` here since we use this function to produce AST that
+    # retains interfaces and procedures too.
     assert isinstance(ast, Program)
     return ast
 
@@ -54,7 +56,7 @@ module lib
   end type T
 end module lib
 
-program main
+program main  ! Original entry point.
   use lib
   implicit none
   real :: d(5, 5)
@@ -67,7 +69,7 @@ program main
   d(1, 1) = s%name%w(1)%a
 end program main
 
-subroutine f2(s)
+subroutine f2(s)  ! Entry point for the SDFG.
   use lib
   implicit none
   type(T) :: s
@@ -76,9 +78,21 @@ end subroutine f2
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
 
+    # We want a particular SDFG where the typical prunings do not happen, since we want to test them.
+    # TODO: We have to discard the `pointer` type components, because internal AST cannot handle them.
+    do_not_prune = ({k for k, v in identifier_specs(ast).items() if isinstance(v, Component_Decl)}
+                    - {('lib', 't3', 'ccp'), ('lib', 't3', 'ddp')})
+    cfg = ParseConfig(sources={'main.f90': ast.tofortran()}, entry_points=('f2',), do_not_prune=list(do_not_prune))
+    own_ast, program = create_internal_ast(cfg)
+    gmap = create_sdfg_from_internal_ast(own_ast, program, SDFGConfig({'f2': 'f2'}))
+    assert gmap.keys() == {'f2'}
+    g = list(gmap.values())[0]
+    g.simplify()
+    # TODO: We cannot compile with `allocatable` type components, because the generated C++ code is broken.
+    # g.compile()
+
     with NamedTemporaryFile() as s_data:
-        ast = minimal_preprocessing(ast)
-        serde_mod = generate_serde_code(ast)
+        serde_code = generate_serde_code(ast, g)
 
         # Modify the AST to use the serializer.
         # 1. Reconstruct the original AST, since we have run some preprocessing on the existing one.
@@ -89,9 +103,9 @@ end subroutine f2
         prepend_children(y, Use_Stmt(f"use serde"))
         append_children(x, Call_Stmt(f'call write_to("{s_data.name}", trim(serialize(s)))'))
 
-        # Now reconstruct the AST again, this time with serde module in place.
-        ast = parse_and_improve({'serde.f90': serde_mod.tofortran(), 'main.f90': ast.tofortran()})
-
+        # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
+        # the serialization is as expected.
+        ast = parse_and_improve({'serde.f90': serde_code.f90_serializer, 'main.f90': ast.tofortran()})
         code = ast.tofortran()
         SourceCodeBuilder().add_file(code).run_with_gfortran()
 
@@ -110,7 +124,7 @@ end subroutine f2
 # entries
 # a
 42
-# aA
+# aa
 # rank
 1
 # size
@@ -121,12 +135,12 @@ end subroutine f2
 4
 4
 4
-# aAZ
+# aaz
 # alloc
 F
 # b
 2.00000000
-# bB
+# bb
 # rank
 1
 # size
@@ -137,7 +151,7 @@ F
 5.00000000
 5.00000000
 5.00000000
-# bBZ
+# bbz
 # alloc
 T
 # rank
@@ -155,7 +169,7 @@ T
 5.09999990
 # c
 3.0000000000000000
-# cC
+# cc
 # rank
 2
 # size
@@ -169,13 +183,9 @@ T
 6.0000000000000000
 6.0000000000000000
 6.0000000000000000
-# cCP
-# assoc
-T
-=> missing
 # d
 T
-# dD
+# dd
 # rank
 1
 # size
@@ -185,9 +195,6 @@ T
 # entries
 F
 F
-F
-# dDP
-# assoc
 F
 """.strip()
         assert want == got
