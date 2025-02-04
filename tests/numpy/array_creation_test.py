@@ -220,32 +220,14 @@ def test_strides_1():
 def program_strides_2():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(1, 2))
     for i, j in dace.map[0:2, 0:2]:
-        A[i, j] = j + i # * 2 + j
+        A[i, j] = i * 2 + j
     return A
 
 
 def test_strides_2():
-    # Current state:
-    #   - If it is serial it does not fail.
-    #   - If we write to the output again, i.e. by adding `A[0, 0] += 1` it still fails.
-    #   - If we remove the `__restrict` from the output it still fails.
-    #   - Changing to `A[i, j] = 0` does remove the bug and makes it correct.
-    #   - Changing to `A[i, j] = i` does remove the bug and makes it correct.
-    #   - Changing to `A[i, j] = j` does remove the bug and makes it correct.
-    #   - Changing to `A[i, j] = i + j` triggers the bug.
-    sdfg = program_strides_2.to_sdfg()
-
-    csdfg = sdfg.compile()
-    A = csdfg()
-    Res1 = A.copy()
-    A = csdfg()
-    Res2 = A.copy()
-
+    A = program_strides_2()
     assert A.strides == (4, 8)
-    assert np.allclose(Res2, [[0, 1], [1, 2]])
-    assert np.allclose(Res1, [[0, 1], [1, 2]])
-    #assert np.allclose(Res2, [[0, 1], [2, 3]])
-    #assert np.allclose(Res1, [[0, 1], [2, 3]])
+    assert np.allclose(A, [[0, 1], [2, 3]])
 
 
 @dace.program
