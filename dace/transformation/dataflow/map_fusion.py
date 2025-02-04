@@ -1474,6 +1474,12 @@ class MapFusion(transformation.SingleStateTransformation):
                 # The data is used in the inter state edges. So it is shared.
                 return True
 
+        # Test if the data is referenced inside a control flow, such as a conditional
+        #  block or loop condition.
+        for cfr in sdfg.all_control_flow_regions():
+            if data_name in cfr.used_symbols(all_symbols=True, with_contents=False):
+                return True
+
         # The `data` is not used anywhere else, thus `data` is not shared.
         return False
 
