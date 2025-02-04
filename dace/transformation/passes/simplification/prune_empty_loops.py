@@ -15,10 +15,6 @@ class PruneEmptyLoops(ppl.Pass):
 
     CATEGORY: str = 'Simplification'
 
-    def __init__(self):
-        super().__init__()
-        self.apply_to_conditionals = True
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
