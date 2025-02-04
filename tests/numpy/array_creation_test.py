@@ -104,11 +104,12 @@ def test_array(A: dace.float64[N, M]):
     return np.array(A)
 
 
-#cst = np.random.rand(10, 10).astype(np.float32)
-#
-#@compare_numpy_output()
-#def test_array_constant():
-#    return np.array(, dtype=np.float32)
+cst = np.random.rand(10, 10).astype(np.float32)
+
+
+@compare_numpy_output()
+def test_array_constant():
+    return np.array(, dtype=np.float32)
 
 
 @compare_numpy_output()
