@@ -1385,8 +1385,8 @@ class SDFG(ControlFlowRegion):
         for edge in self.all_interstate_edges():
             read_set |= edge.data.free_symbols & array_names
 
-        # By definition, data that is referenced by the conditions (branching condition,
-        #  loop condition, ...) is not single use data, also remove that.
+        # By definition, data that is referenced by symbolic condition expressions
+        # (branching condition, loop condition, ...) is also part of the read set.
         for cfr in self.all_control_flow_regions():
             read_set |= cfr.used_symbols(all_symbols=True, with_contents=False) & array_names
 
