@@ -307,7 +307,7 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
                         ops.extend(generate_pointer_meta(f"x%{cname}", rank, candidates))
                     else:
                         if alloc:
-                            ops.append(f"s = add_line(s, '# alloc')")
+                            ops.append(f"s = add_line(s, '# alloc'")
                             ops.append(f"s = add_line(s, serialize(allocated(x%{cname})))")
                             ops.append(f"if (allocated(x%{cname})) then")
                         if rank:
