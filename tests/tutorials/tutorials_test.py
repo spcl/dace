@@ -18,3 +18,7 @@ def test_notebook_exec(notebook):
             assert ep.preprocess(nb) is not None, f"Got empty notebook for {notebook}"
         except Exception:
             assert False, f"Failed executing {notebook}"
+
+
+if __name__ == '__main__':
+    pytest.main(["-v", __file__])
