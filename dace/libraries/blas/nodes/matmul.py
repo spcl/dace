@@ -145,8 +145,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         a, b, c = _get_matmul_operands(node, state, sdfg)
-        size_a = a[4]
-        size_b = b[4]
+        size_a = a[2]
+        size_b = b[2]
         if len(size_a) == 2 and len(size_b) == 2:
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
