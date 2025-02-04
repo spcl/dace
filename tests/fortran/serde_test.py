@@ -10,7 +10,7 @@ from fparser.two.utils import walk
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children
 from dace.frontend.fortran.ast_utils import singular
 from dace.frontend.fortran.fortran_parser import construct_full_ast
-from dace.frontend.fortran.gen_serde import generate_serde_module, gen_serde_module_skeleton, minimal_preprocessing
+from dace.frontend.fortran.gen_serde import generate_serde_code, gen_serde_module_skeleton, minimal_preprocessing
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -78,7 +78,7 @@ end subroutine f2
 
     with NamedTemporaryFile() as s_data:
         ast = minimal_preprocessing(ast)
-        serde_mod = generate_serde_module(gen_serde_module_skeleton(), ast)
+        serde_mod = generate_serde_code(ast)
 
         # Modify the AST to use the serializer.
         # 1. Reconstruct the original AST, since we have run some preprocessing on the existing one.
