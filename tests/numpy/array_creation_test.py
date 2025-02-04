@@ -109,7 +109,7 @@ cst = np.random.rand(10, 10).astype(np.float32)
 
 @compare_numpy_output()
 def test_array_constant():
-    return np.array(, dtype=np.float32)
+    return np.array(cst, dtype=np.float32)
 
 
 @compare_numpy_output()
