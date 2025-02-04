@@ -2660,7 +2660,8 @@ class ParseConfig:
                  sources: Union[None, List[Path], Dict[str, str]] = None,
                  includes: Union[None, List[Path], Dict[str, str]] = None,
                  entry_points: Union[None, SPEC, List[SPEC]] = None,
-                 config_injections: Optional[List[ConstInjection]] = None):
+                 config_injections: Optional[List[ConstInjection]] = None,
+                 do_not_prune: Union[None, SPEC, List[SPEC]] = None):
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
             main = main.read_text()
@@ -2676,12 +2677,23 @@ class ParseConfig:
             entry_points = []
         elif isinstance(entry_points, tuple):
             entry_points = [entry_points]
+        if not do_not_prune:
+            do_not_prune = []
+        elif isinstance(do_not_prune, tuple):
+            do_not_prune = [do_not_prune]
+        do_not_prune = list({x for x in entry_points + do_not_prune})
 
         self.main = main
         self.sources: Dict[str, str] = sources
         self.includes = includes
         self.entry_points: List[SPEC] = entry_points
         self.config_injections: List[ConstInjection] = config_injections or []
+        self.do_not_prune: List[SPEC] = do_not_prune
+
+    def set_all_possible_entry_points_from(self, ast: Program):
+        # Keep all the possible entry points.
+        self.entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
+                             for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
 
 
 def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
@@ -2709,9 +2721,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     ast = create_fparser_ast(cfg)
 
     if not cfg.entry_points:
-        # Keep all the possible entry points.
-        cfg.entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
-                            for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
+        cfg.set_all_possible_entry_points_from(ast)
 
     ast = run_fparser_transformations(ast, cfg)
     assert isinstance(ast, Program)
@@ -2740,6 +2750,9 @@ class SDFGConfig:
 
 
 def run_fparser_transformations(ast: Program, cfg: ParseConfig):
+    if not cfg.entry_points:
+        cfg.set_all_possible_entry_points_from(ast)
+
     print("FParser Op: Removing indirections from AST...")
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
@@ -2765,21 +2778,21 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast = make_practically_constant_global_vars_constants(ast)
     ast = const_eval_nodes(ast)
     ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.entry_points)
+    ast = prune_unused_objects(ast, cfg.do_not_prune)
 
     print("FParser Op: Fix arguments & prune...")
     # Another round of pruning after fixing the practically constant arguments, just in case.
     ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
     ast = const_eval_nodes(ast)
     ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.entry_points)
+    ast = prune_unused_objects(ast, cfg.do_not_prune)
 
     print("FParser Op: Fix local vars & prune...")
     # Another round of pruning after fixing the locally constant variables, just in case.
     ast = exploit_locally_constant_variables(ast)
     ast = const_eval_nodes(ast)
     ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.entry_points)
+    ast = prune_unused_objects(ast, cfg.do_not_prune)
 
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
