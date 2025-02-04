@@ -733,8 +733,8 @@ class AST_translator:
         node_body=node.body
         node_body_else=node.body_else
 
-        body_list=[node_cond]
-        cond_list=[node_body]
+        body_list=[node_body]
+        cond_list=[node_cond]
         #Very specific hack
         case_processing_ready=True
         if isinstance(node.cond,ast_internal_classes.BinOp_Node):
@@ -755,10 +755,31 @@ class AST_translator:
                                         cond_list.append(node_body_else.execution[0].cond)
                                         node_body_else=node_body_else.execution[0].body_else
         if len(body_list)>1:
-            print("Case making here!")
+            name = f"SwitchCase_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
 
+            prev_block = None if cfg not in self.last_sdfg_states else self.last_sdfg_states[cfg]
+            is_start = prev_block is None
+
+            cond_block = ConditionalBlock(name)
+            cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
+            if not is_start:
+                cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
+            self.last_sdfg_states[cfg] = cond_block
+
+            for i in range(len(cond_list)):
+                cond_node = cond_list[i]
+                body_node = body_list[i]
+                case_condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders,
+                                                           self.placeholders_offsets,
+                                                           self.replace_names).write_code(cond_node)
+                case_body = ControlFlowRegion(cond_block.label + '_body_case_' + str(i))
+                cond_block.add_branch(CodeBlock(case_condition), case_body)
+                self.translate(body_node, sdfg, case_body)
+                if len(case_body.nodes()) == 0:
+                    # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take
+                    # care of the rest.
+                    case_body.add_state('noop', is_start_block=True)
         else:
-
             name = f"Conditional_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
 
             prev_block = None if cfg not in self.last_sdfg_states else self.last_sdfg_states[cfg]
@@ -777,8 +798,8 @@ class AST_translator:
             cond_block.add_branch(CodeBlock(condition), if_body)
             self.translate(node.body, sdfg, if_body)
             if len(if_body.nodes()) == 0:
-                # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take care of
-                # the rest.
+                # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take care
+                # of the rest.
                 if_body.add_state('noop', is_start_block=True)
 
             if len(node.body_else.execution) > 0:
@@ -3540,6 +3561,7 @@ def create_sdfg_from_fortran_file_with_options(
             sdfg.simplify(verbose=True)
             print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22full.sdfg"), compress=False)
             sdfg.validate()
             print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
             sdfg.compile()

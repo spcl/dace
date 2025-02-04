@@ -19,6 +19,7 @@ from dace.transformation.passes.reference_reduction import ReferenceToView
 from dace.transformation.passes.lift_struct_views import LiftStructViews
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
+from dace.transformation.passes.simplification.prune_empty_loops import PruneEmptyLoops
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -32,6 +33,7 @@ SIMPLIFY_PASSES = [
     DeadDataflowElimination,
     DeadStateElimination,
     PruneEmptyConditionalBranches,
+    PruneEmptyLoops,
     RemoveUnusedSymbols,
     ReferenceToView,
     ArrayElimination,
