@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Optional, Iterable
 
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
@@ -9,18 +9,37 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
-    deconstruct_statement_functions, deconstuct_goto_statements
+    deconstruct_statement_functions, deconstuct_goto_statements, SPEC, remove_access_and_bind_statements, \
+    identifier_specs, alias_specs
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
-def parse_and_improve(sources: Dict[str, str]):
+def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[SPEC]] = None):
     parser = ParserFactory().create(std="f2008")
     assert 'main.f90' in sources
-    ast = construct_full_ast(sources, parser)
+    ast = construct_full_ast(sources, parser, entry_points=entry_points)
     ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
     return ast
+
+
+def test_spec_mapping():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib  ! should be present
+  abstract interface  ! should NOT be present
+    subroutine fun  ! should be present
+    end subroutine fun
+  end interface
+end module lib
+""").check_with_gfortran().get()
+    ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
+
+    ident_map = identifier_specs(ast)
+    assert ident_map.keys() == {('lib',), ('lib', 'fun')}
+
+    alias_map = alias_specs(ast)
+    assert alias_map.keys() == {('lib',), ('lib', 'fun')}
 
 
 def test_procedure_replacer():
@@ -1342,6 +1361,54 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_completely_unsed_modules_are_pruned_early():
+    sources, main = SourceCodeBuilder().add_file("""
+module used
+  implicit none
+contains
+  real function fun()
+    fun = 1.
+  end function fun
+end module used
+
+module unused
+  implicit none
+contains
+  real function fun()
+    fun = 2.
+  end function fun
+end module unused
+
+subroutine main(d)
+  use used
+  implicit none
+  real, intent(inout) :: d
+  d = fun()
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources, [('main',)])
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE used
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun()
+    fun = 1.
+  END FUNCTION fun
+END MODULE used
+SUBROUTINE main(d)
+  USE used
+  IMPLICIT NONE
+  REAL, INTENT(INOUT) :: d
+  d = fun()
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_constant_resolving_expressions():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main
@@ -2273,6 +2340,157 @@ SUBROUTINE main(d)
   IF (.NOT. (goto_2)) i = 2
 10002 CONTINUE
   d = 7.1 * i
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_operator_overloading():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type cmplx
+    real :: r = 1., i = 2.
+  end type cmplx
+  interface operator(+)
+    module procedure :: add_cmplx
+  end interface
+contains
+  function add_cmplx(a, b) result(c)
+    type(cmplx), intent(in) :: a, b
+    type(cmplx) :: c
+    c%r = a%r + b%r
+    c%i = a%i + b%i
+  end function add_cmplx
+end module lib
+
+subroutine main
+  use lib, only : cmplx, operator(+)
+  type(cmplx) :: a, b
+  b = a + a
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE lib
+  TYPE :: cmplx
+    REAL :: r = 1., i = 2.
+  END TYPE cmplx
+  INTERFACE OPERATOR(+)
+    MODULE PROCEDURE :: add_cmplx
+  END INTERFACE
+  CONTAINS
+  FUNCTION add_cmplx(a, b) RESULT(c)
+    TYPE(cmplx), INTENT(IN) :: a, b
+    TYPE(cmplx) :: c
+    c % r = a % r + b % r
+    c % i = a % i + b % i
+  END FUNCTION add_cmplx
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: cmplx, OPERATOR(+)
+  TYPE(cmplx) :: a, b
+  b = a + a
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_remove_binds():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type, bind(C) :: cmplx
+    real :: r = 1., i = 2.
+  end type cmplx
+  integer, bind(C) :: ii = 7
+  interface operator(+)
+    module procedure :: add_cmplx
+  end interface
+contains
+  function add_cmplx(a, b) result(c) bind(C, name='add_cmplx')
+    type(cmplx), intent(in) :: a, b
+    type(cmplx) :: c
+    c%r = a%r + b%r
+    c%i = a%i + b%i
+  end function add_cmplx
+  subroutine fun() bind(C)
+  end subroutine fun
+end module lib
+
+subroutine main
+  use lib, only : cmplx, operator(+), fun
+  type(cmplx) :: a, b
+  b = a + a
+  call fun
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = remove_access_and_bind_statements(ast)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE lib
+  TYPE :: cmplx
+    REAL :: r = 1., i = 2.
+  END TYPE cmplx
+  INTEGER :: ii = 7
+  INTERFACE OPERATOR(+)
+    MODULE PROCEDURE :: add_cmplx
+  END INTERFACE
+  CONTAINS
+  FUNCTION add_cmplx(a, b) RESULT(c)
+    TYPE(cmplx), INTENT(IN) :: a, b
+    TYPE(cmplx) :: c
+    c % r = a % r + b % r
+    c % i = a % i + b % i
+  END FUNCTION add_cmplx
+  SUBROUTINE fun
+  END SUBROUTINE fun
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: cmplx, OPERATOR(+), fun
+  TYPE(cmplx) :: a, b
+  b = a + a
+  CALL fun
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_remove_contiguous_statements():
+    # TODO: We're testing here that FParser can even parse these (it couldn't in v0.1.3). Do we want to remove these?
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(a)
+  implicit none
+  type T
+    integer, contiguous, pointer :: x(:)
+  end type T
+  integer, contiguous, target :: a(:)
+  type(T) :: z
+  z % x => a
+  a = sum(z % x)
+end subroutine main
+""", 'main').check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = remove_access_and_bind_statements(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main(a)
+  IMPLICIT NONE
+  TYPE :: T
+    INTEGER, CONTIGUOUS, POINTER :: x(:)
+  END TYPE T
+  INTEGER, CONTIGUOUS, TARGET :: a(:)
+  TYPE(T) :: z
+  z % x => a
+  a = SUM(z % x)
 END SUBROUTINE main
 """.strip()
     assert got == want

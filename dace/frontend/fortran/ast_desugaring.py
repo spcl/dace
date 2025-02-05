@@ -4,6 +4,7 @@ import re
 import sys
 from copy import copy
 from dataclasses import dataclass
+from itertools import chain
 from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
 
 import networkx as nx
@@ -26,7 +27,8 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Contains_Stmt, Implicit_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, \
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
-    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt
+    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
+    Bind_Stmt, Language_Binding_Spec, Type_Attr_Spec, Suffix
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -96,14 +98,18 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
         # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
         _, _, _, bname, _ = node.children
         name = bname
+    elif isinstance(node, Generic_Binding):
+        _, bname, _ = node.children
+        name = bname
     elif isinstance(node, Interface_Stmt):
         name, = node.children
+        if name == 'ABSTRACT':
+            return None
     else:
         # TODO: Test out other type specific ways of finding names.
         name = singular(children_of_type(node, Name))
     if name:
-        assert isinstance(name, Name)
-        name = name.string
+        name = f"{name}"
     return name
 
 
@@ -262,7 +268,7 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
         if isinstance(stmt, Stmt_Function_Stmt):
             # An exception is statement-functions, which must have a dummy variable already declared in the same scope.
             continue
-        assert spec not in ident_map, f"{spec} / {stmt.parent.parent.parent.parent} / {ident_map[spec].parent.parent.parent.parent}"
+        assert spec not in ident_map, f"{spec}"
         ident_map[spec] = stmt
     return ident_map
 
@@ -298,12 +304,14 @@ def alias_specs(ast: Program):
         else:
             # Otherwise, only specific identifiers are aliased.
             for c in olist.children:
-                assert isinstance(c, (Name, Rename))
+                assert isinstance(c, (Name, Rename, Generic_Spec))
                 if isinstance(c, Name):
                     src, tgt = c, c
                 elif isinstance(c, Rename):
                     _, src, tgt = c.children
-                src, tgt = src.string, tgt.string
+                elif isinstance(c, Generic_Spec):
+                    src, tgt = c, c
+                src, tgt = f"{src}", f"{tgt}"
                 src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
                 # `tgt_spec` must have already been resolved if we have sorted the modules properly.
                 assert tgt_spec in alias_map, f"{src_spec} => {tgt_spec}"
@@ -887,7 +895,7 @@ def set_children(par: Base, children: Iterable[Base]):
     _reparent_children(par)
 
 
-def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
+def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
     # A lot of hacky stuff to make sure that the new nodes are not just the same objects over and over.
     par = node.parent
     only_child = bool([c for c in par.children if c is node])
@@ -896,7 +904,7 @@ def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
         if c != node:
             repls.append(c)
             continue
-        if isinstance(subst, Base):
+        if subst is None or isinstance(subst, Base):
             subst = [subst]
         if not only_child:
             subst = [Base.__new__(type(t), t.tofortran()) for t in subst]
@@ -1036,7 +1044,7 @@ def correct_for_function_calls(ast: Program):
     return ast
 
 
-def remove_access_statements(ast: Program):
+def remove_access_and_bind_statements(ast: Program):
     """Look for public/private access statements and just remove them."""
     # TODO: This can get us into ambiguity and unintended shadowing.
 
@@ -1053,10 +1061,29 @@ def remove_access_statements(ast: Program):
     for acc in walk(ast, Private_Components_Stmt):
         remove_self(acc)
 
+    for bind in walk(ast, Language_Binding_Spec):
+        if isinstance(bind.parent, (Suffix, Subroutine_Stmt, Function_Stmt)):
+            # Since this is part of a tuple, we need to replace it with a `None`.
+            replace_node(bind, None)
+        else:
+            par = bind.parent
+            remove_self(bind)
+            if not par.children:
+                # Since this is part of a tuple, we need to replace it with a `None`.
+                replace_node(par, None)
+    for bind in walk(ast, Type_Attr_Spec):
+        b, c = bind.children
+        if b == 'BIND':
+            par = bind.parent
+            remove_self(bind)
+            if not par.children:
+                # Since this is part of a tuple, we need to replace it with a `None`.
+                replace_node(par, None)
+
     return ast
 
 
-def sort_modules(ast: Program) -> Program:
+def keep_sorted_used_modules(ast: Program, entry_points: Optional[Iterable[SPEC]] = None) -> Program:
     TOPLEVEL = '__toplevel__'
 
     def _get_module(n: Base) -> str:
@@ -1067,22 +1094,37 @@ def sort_modules(ast: Program) -> Program:
             return TOPLEVEL
         else:
             p = singular(children_of_type(p, (Module_Stmt, Program_Stmt)))
-            return find_name_of_stmt(p)
+            return find_name_of_stmt(p).lower()
 
     g = nx.DiGraph()  # An edge u->v means u should come before v, i.e., v depends on u.
     for c in ast.children:
         g.add_node(_get_module(c))
+    g.add_node(TOPLEVEL)
 
     for u in walk(ast, Use_Stmt):
-        u_name = singular(children_of_type(u, Name)).string
+        u_name = singular(children_of_type(u, Name)).string.lower()
         v_name = _get_module(u)
         g.add_edge(u_name, v_name)
 
-    top_ord = {n: i for i, n in enumerate(nx.lexicographical_topological_sort(g))}
+    if entry_points is None:
+        # If there was no option given, then keep all the modules.
+        entry_modules: Set[str] = set(g.nodes) | {TOPLEVEL}
+    else:
+        entry_modules: Set[str] = {ep[0] for ep in entry_points if ep[0] in g.nodes} | {TOPLEVEL}
+
+    assert all(g.has_node(em) for em in entry_modules)
+    used_modules: Set[str] = {anc for em in entry_modules for anc in nx.ancestors(g, em)} | entry_modules
+    h = g.subgraph(used_modules).to_directed()
+
+    top_ord = {n: i for i, n in enumerate(nx.lexicographical_topological_sort(h))}
     # We keep the top-level subroutines at the end. It is only a cosmetic choice and fortran accepts them anywhere.
-    top_ord[TOPLEVEL] = len(top_ord) + 1
+    top_ord[TOPLEVEL] = g.number_of_nodes() + 1
+
+    # Discard the unused modules.
+    set_children(ast, [n for n in ast.children if _get_module(n) in used_modules])
     assert all(_get_module(n) in top_ord for n in ast.children)
-    ast.content = sorted(ast.children, key=lambda x: top_ord[_get_module(x)])
+    # Sort the rest.
+    set_children(ast, sorted(ast.children, key=lambda x: top_ord[_get_module(x)]))
 
     return ast
 

@@ -16,6 +16,9 @@ from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_o
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 
 
+NEW_LINE = "new_line('A')"
+
+
 def gen_serde_module_skeleton() -> Module:
     return Module(get_reader("""
 module serde
@@ -36,12 +39,20 @@ contains
     close (UNIT=io)
   end subroutine write_to
 
+  ! Given a string `r`, adds a line it to with the content `l`, and returns as `r`.
+  function add_line(r, l) result(s)
+    character(len=*), intent(in) :: r
+    character(len=*), intent(in) :: l
+    character(len=:), allocatable :: s
+    s = r // trim(l) // NEW_LINE('A')
+  end function add_line
+
   ! Given a string `x`, returns a string where `x` has been serialised
   function character_2s(x) result(s)
-    character(len = *), intent(in) :: x
-    character(len = :), allocatable :: s
-    allocate(character(len = len(x))::s)
-    write (s, *) x
+    character(len=*), intent(in) :: x
+    character(len=:), allocatable :: s
+    allocate(character(len = len(x) + 1)::s)
+    write (s, *) trim(x)
     s = trim(s)
   end function character_2s
 end module serde
@@ -60,11 +71,11 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Function_S
     kind = f"(kind={kind})" if kind else ''
     return Function_Subprogram(get_reader(f"""
 function {fn_name}(x) result(s)
-{typ}{kind}, intent(in) :: x
-character(len=:), allocatable :: s
-allocate (character(len=50) :: s)
-write (s, *) x
-s = trim(s)
+  {typ}{kind}, intent(in) :: x
+  character(len=:), allocatable :: s
+  allocate (character(len=50) :: s)
+  write (s, *) x
+  s = trim(s)
 end function {fn_name}
 """))
 
@@ -73,14 +84,15 @@ def generate_array_meta(arr: str, rank: int) -> List[str]:
     # Assumes there is `arr` is an array in local scope with rank `rank`.
     # Also assumes there is a serialization sink `s` and an integer `kmeta` that can be used as an iterator.
     return f"""
-s = s // "# rank" // new_line('A') // serialize({rank}) // new_line('A')
-s = s // "# size" // new_line('A')
+s = add_line(s, "# rank")
+s = add_line(s, serialize({rank}))
+s = add_line(s, "# size")
 do kmeta = 1, {rank}
-  s = s // serialize(size({arr}, kmeta)) // new_line('A')
+  s = add_line(s, serialize(size({arr}, kmeta)))
 end do
-s = s // "# lbound" // new_line('A')
+s = add_line(s, "# lbound")
 do kmeta = 1, {rank}
-  s = s // serialize(lbound({arr}, kmeta)) // new_line('A')
+  s = add_line(s, serialize(lbound({arr}, kmeta)))
 end do
 """.strip().split('\n')
 
@@ -112,7 +124,7 @@ if (associated({ptr}, {c}({subsc_str}))) then
 kmeta = 1
 s = s // "=> {c}("
 {subsc_str_serialized_ops}
-s = s // "))" // new_line('A')
+s = s // "))" // {NEW_LINE}
 end if
 """)
             ops.extend(end_dos)
@@ -120,12 +132,14 @@ end if
         cand_checks.append('\n'.join(sub_checks))
 
     cand_checks: str = '\n'.join(cand_checks)
+    # TODO: We are essentially disabling all slice detection with this line. Enable back when it's performant enough.
+    cand_checks: str = ''
     return f"""
 if (associated({ptr})) then
     kmeta = 0
     {cand_checks}
     if (kmeta == 0) then
-    s = s // "=> missing" // new_line('A')
+    s = add_line(s, "=> missing")
     end if
 end if
 """.strip().split('\n')
@@ -141,16 +155,17 @@ integer :: k, {iter_vars}
     loop_ops = []
     for k in range(1, rank + 1):
         loop_ops.append(f"do k{k} = lbound(a, {k}), ubound(a, {k})")
-    loop_ops.append(f"s = s // serialize(a({iter_vars})) // new_line('A')")
+    loop_ops.append(f"s = add_line(s, serialize(a({iter_vars})))")
     loop_ops.extend(['end do'] * rank)
     loop = '\n'.join(loop_ops)
 
     return Function_Subprogram(get_reader(f"""
 function {tag}_2s{rank}(a) result(s)
-{use or ''}
-{decls}
-s = "# entries" // new_line('A')
-{loop}
+  {use or ''}
+  {decls}
+  s = ""  ! Start with an empty string.
+  s = add_line(s, "# entries")
+  {loop}
 end function {tag}_2s{rank}
 """.strip()))
 
@@ -192,7 +207,7 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
             # Convert to canonical types.
             if isinstance(ctyp, Intrinsic_Type_Spec):
                 dtyp, kind = ctyp.children
-                dtyp = f"{dtyp}".lower()
+                dtyp = f"{dtyp}"
                 if dtyp == 'DOUBLE PRECISION':
                     dtyp, kind = 'REAL', '(KIND = 8)'
                 dtyp = f"{dtyp}{kind or ''}"
@@ -219,7 +234,7 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
         for c in dtdef.children:
             if isinstance(c, Private_Components_Stmt):
                 private_access = True
-            assert 'PUBLIC' != f"{c}".strip(),\
+            assert 'PUBLIC' != f"{c}".strip(), \
                 f"We need to access public access statements in derived type defintions; got one in: {dtdef}"
             if not isinstance(c, Component_Part):
                 # We care only about serialising components.
@@ -248,9 +263,16 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
                     if rank:
                         if isinstance(ctyp, Intrinsic_Type_Spec):
                             dtyp, kind = ctyp.children
-                            dtyp = f"{dtyp}".lower()
+                            dtyp = f"{dtyp}"
                             if dtyp == 'DOUBLE PRECISION':
                                 dtyp, kind = 'REAL', '(KIND = 8)'
+                            if kind is None:
+                                assert dtyp in {'INTEGER', 'REAL', 'LOGICAL', 'CHAR'}, f"Unexpected type: {dtyp}"
+                                DEFAULT_KINDS = {
+                                    'INTEGER': '(KIND = 4)',
+                                    'REAL': '(KIND = 4)',
+                                }
+                                kind = DEFAULT_KINDS.get(dtyp)
                             dtyp = f"{dtyp}{kind or ''}"
                             use = None
                         else:
@@ -274,23 +296,23 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
                         if (tag, rank) not in array_serializers:
                             array_serializers[(tag, rank)] = generate_array_serializer(dtyp, rank, tag, use)
 
-                    ops.append(f"s = s // '# {cname}' // new_line('A')")
+                    ops.append(f"s = add_line(s , '# {cname}')")
                     if ptr:
-                        # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes, we
-                        #  will only populate this when it points to a different component of the same structure.
-                        ops.append(
-                            f"s = s // '# assoc' // new_line('A') // serialize(associated(x%{cname})) // new_line('A')")
+                        # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes,
+                        #  we will only populate this when it points to a different component of the same structure.
+                        ops.append(f"s = add_line(s, '# assoc')")
+                        ops.append(f"s = add_line(s, serialize(associated(x%{cname})))")
                         candidates = {f"x%{v[0]}": v[1].children for k, v in array_map.items()
                                       if k[0] == dtyp and rank <= k[1]}
                         ops.extend(generate_pointer_meta(f"x%{cname}", rank, candidates))
                     else:
                         if alloc:
-                            ops.append(
-                                f"s = s // '# alloc' // new_line('A') // serialize(allocated(x%{cname})) // new_line('A')")
+                            ops.append(f"s = add_line(s, '# alloc')")
+                            ops.append(f"s = add_line(s, serialize(allocated(x%{cname})))")
                             ops.append(f"if (allocated(x%{cname})) then")
                         if rank:
                             ops.extend(generate_array_meta(f"x%{cname}", rank))
-                        ops.append(f"s = s // new_line('A') // serialize(x%{cname}) // new_line('A')")
+                        ops.append(f"s = add_line(s, serialize(x%{cname}))")
 
                         if alloc:
                             ops.append("end if")
@@ -298,14 +320,15 @@ def generate_serde_module(serde_base: Module, ast: Program) -> Module:
         ops = '\n'.join(ops)
         kmetas = ', '.join(f"kmeta_{k}" for k in range(10))
         impl_fn = Function_Subprogram(get_reader(f"""
-    function {dtname}_2s(x) result(s)
-      use {tspec[0]}, only: {dtname}
-      type({dtname}), target, intent(in) :: x
-      character(len=:), allocatable :: s
-      integer :: kmeta, {kmetas}
-      {ops}
-    end function {dtname}_2s
-    """.strip()))
+function {dtname}_2s(x) result(s)
+  use {tspec[0]}, only: {dtname}
+  type({dtname}), target, intent(in) :: x
+  character(len=:), allocatable :: s
+  integer :: kmeta, {kmetas}
+  s = ""  ! Start with an empty string.
+  {ops}
+end function {dtname}_2s
+""".strip()))
         proc_names.append(f"{dtname}_2s")
         append_children(impls, impl_fn)
 
@@ -344,6 +367,7 @@ def minimal_preprocessing(ast: Program) -> Program:
     ast = correct_for_function_calls(ast)
     ast = const_eval_nodes(ast)
     return ast
+
 
 def main():
     argp = argparse.ArgumentParser()
