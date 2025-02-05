@@ -7,10 +7,12 @@ from fparser.two.Fortran2003 import Program, Execution_Part, Specification_Part,
 from fparser.two.utils import walk
 
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children, \
-    identifier_specs
+    identifier_specs, alias_specs, inject_const_evals
 from dace.frontend.fortran.ast_utils import singular
+from dace.frontend.fortran.config_propagation_data import deserialize
 from dace.frontend.fortran.fortran_parser import ParseConfig, \
-    create_fparser_ast, create_internal_ast, SDFGConfig, create_sdfg_from_internal_ast
+    create_fparser_ast, create_internal_ast, SDFGConfig, create_sdfg_from_internal_ast, \
+    run_fparser_transformations
 from dace.frontend.fortran.gen_serde import generate_serde_code
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -68,6 +70,13 @@ program main  ! Original entry point.
   ! TODO: Find a way to use generic functions to serialize arbitrary types.
   d(1, 1) = s%name%w(1)%a
 end program main
+
+logical function f1(s)
+  use lib
+  implicit none
+  type(T3) :: s
+  f1 = allocated(s % bbz)
+end function f1
 
 subroutine f2(s)  ! Entry point for the SDFG.
   use lib
@@ -198,6 +207,7 @@ F
 """.strip()
         assert want == got
 
+        # Now, verify that it can be deserialized from C++.
         cpp_code = f"""
 {serde_code.cpp_deserializer}
 
@@ -228,3 +238,37 @@ alloc(aaz): no
 alloc(bbz): yes
 volume(bbz): 4
 """.strip()
+
+        # Now, verify that C++ object can generate config injection JSON.
+        cpp_code = f"""
+        {serde_code.cpp_deserializer}
+
+        #include <fstream>
+        #include <iostream>
+
+        int main() {{
+          std::ifstream data("{s_data.name}");
+
+          t x;
+          serde::deserialize(&x, data);
+          std::cout << serde::config_injection(*(x.name->w[0])) << std::endl;
+
+          return EXIT_SUCCESS;
+        }}
+        """
+
+        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
+        print(output)
+        cinjs = [deserialize(l.strip()) for l in output.splitlines() if l.strip()]
+
+        cfg = ParseConfig(sources=sources, entry_points=[('f1',), ('f2',)], config_injections=cinjs)
+        ast = create_fparser_ast(cfg)
+        ast = run_fparser_transformations(ast, cfg)
+        assert f"""
+LOGICAL FUNCTION f1(s)
+  USE lib, ONLY: t3
+  IMPLICIT NONE
+  TYPE(t3) :: s
+  f1 = .TRUE.
+END FUNCTION f1
+""".strip() in ast.tofortran()

@@ -316,6 +316,7 @@ void deserialize(bool* x, std::istream& s) {{
     *x = (c == 'T');
 }}
 """]
+    config_injection_fns: List[str] = []
 
     # Actual code generation begins here.
     ident_map = identifier_specs(ast)
@@ -332,11 +333,17 @@ void deserialize(bool* x, std::istream& s) {{
             array_map[(f"{z.type}", z.rank)] = (z.name, z.shape)
 
         def __strip_last_int(x: str) -> str:
-            return '_'.join(x.split('_')[:-1])
+            return '_'.join(x.split('_')[:-1]) if x.startswith("__f2dace_") else x
+
         all_sa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
                                        if z.startswith("__f2dace_SA_")}
         all_soa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
-                                       if z.startswith("__f2dace_SOA_")}
+                                        if z.startswith("__f2dace_SOA_")}
+        all_cinjops: Dict[str, Tuple[str, str]] = {__strip_last_int(z): ('.'.join(dt.spec), z)
+                                                   for z, t in sdfg_structs[dt.name].items() if '*' not in t}
+        for z in iterate_over_public_components(dt):
+            if z.alloc:
+                all_cinjops[f"{z.name}_a"] = ('.'.join(dt.spec), z.name)
 
         f90ops: List[str] = []
         cppops: List[str] = []
@@ -481,6 +488,24 @@ void deserialize({dt.name}* x, std::istream& s) {{
     {cppops}
 }}
 """)
+        # Conclude the config injection representation of the type.
+        all_cinjops = {k: (a, f"""(x.{b} ? "true" : "false")""" if k.endswith('_a') else f"x.{b}") for k, (a, b) in all_cinjops.items()}
+        all_cinjops: List[str] = [f"""
+out << "{{";
+out << "\\"type\\": \\"ConstTypeInjection\\", ";
+out << "\\"scope\\": null, ";
+out << "\\"root\\": \\"{a}\\", ";
+out << "\\"component\\": \\"{k}\\", ";
+out << "\\"value\\": \\"" << {b} << "\\"}}" << std::endl;
+""".strip() for k, (a, b) in all_cinjops.items()]
+        all_cinjops: str = '\n'.join(all_cinjops)
+        config_injection_fns.append(f"""
+std::string config_injection(const {dt.name}& x) {{
+    std::stringstream out;
+    {all_cinjops}
+    return out.str();
+}}
+""")
 
     # Conclude the serializer code.
     for fn in chain(array_serializers.values(), base_serializers):
@@ -502,6 +527,7 @@ struct {name} {{
 }};
 """ for name, comps in struct_defs.items())
     deserializer_fns: str = '\n'.join(deserializer_fns)
+    config_injection_fns: str = '\n'.join(config_injection_fns)
     cpp_code = f"""
 #ifndef __DACE_SERDE__
 #define __DACE_SERDE__
@@ -509,6 +535,7 @@ struct {name} {{
 #include <cassert>
 #include <istream>
 #include <iostream>
+#include <sstream>
 
 // Forward declarations of structs.
 {forward_decls}
@@ -560,6 +587,7 @@ namespace serde {{
     }}
 
     {deserializer_fns}
+    {config_injection_fns}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__

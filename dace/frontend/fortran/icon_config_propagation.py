@@ -9,7 +9,7 @@ from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.parser import ParserFactory as pf
 
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.config_propagation_data import deserialse_v2
+from dace.frontend.fortran.config_propagation_data import deserialize_v2
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 
 current = os.path.dirname(os.path.realpath(__file__))
@@ -70,7 +70,7 @@ def config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> Lis
     ]
     injs = []
     for k, v in cfgs:
-        injs.extend(deserialse_v2(Path(v).read_text(), k))
+        injs.extend(deserialize_v2(Path(v).read_text(), k))
     return injs
 
 
