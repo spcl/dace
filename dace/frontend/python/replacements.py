@@ -27,6 +27,7 @@ import numpy as np
 import sympy as sp
 
 numpy_version = int(np.version.version.split('.')[0])
+numpy_minor_version = int(np.version.version.split('.')[1])
 
 Size = Union[int, dace.symbolic.symbol]
 Shape = Sequence[Size]
@@ -1736,7 +1737,8 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
         elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
               and coarse_types[0] == 3):
             raise TypeError("ufunc '{}' not supported for complex input".format(operator))
-        elif operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and numpy_version < 2:
+        elif (operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and
+                not (numpy_version > 1 and numpy_minor_version > 0)):
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
         elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt', 'Trigonometric', 'Angles', 'FpBoolean',
