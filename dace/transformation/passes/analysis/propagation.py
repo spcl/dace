@@ -776,6 +776,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                             existing_entry.accesses.extend(repo_moredata[read_data].accesses)
                         else:
                             cfg_repo_moredata[read_data] = copy.deepcopy(repo_moredata[read_data])
+                            for i, access in enumerate(cfg_repo_moredata[read_data].accesses):
+                                o_access = repo_moredata[read_data].accesses[i]
+                                if isinstance(access, tuple):
+                                    access[1].guid = o_access[1].guid
 
         # For each node in the CFG, check what writes are covered by exactly covering writes in a postdominating node.
         # If such a postdominating write is found, the write does not leave the CFG, and thus is not counted as a write
@@ -807,6 +811,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                         existing_entry.accesses.extend(nd._possible_writes_moredata[cont].accesses)
                     else:
                         cfg._possible_writes_moredata[cont] = copy.deepcopy(nd._possible_writes_moredata[cont])
+                        for i, access in enumerate(cfg._possible_writes_moredata[cont].accesses):
+                            o_access = nd._possible_writes_moredata[cont].accesses[i]
+                            if isinstance(access, tuple):
+                                access[1].guid = o_access[1].guid
             for cont in nd.certain_writes:
                 covered = False
                 for postdom in allpostdom[nd]:
@@ -833,6 +841,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                         existing_entry.accesses.extend(nd._certain_writes_moredata[cont].accesses)
                     else:
                         cfg._certain_writes_moredata[cont] = copy.deepcopy(nd._certain_writes_moredata[cont])
+                        for i, access in enumerate(cfg._certain_writes_moredata[cont].accesses):
+                            o_access = nd._certain_writes_moredata[cont].accesses[i]
+                            if isinstance(access, tuple):
+                                access[1].guid = o_access[1].guid
 
         if isinstance(cfg, ControlFlowBlock):
             result[cfg] = (cfg._certain_reads_moredata, cfg._possible_reads_moredata,
