@@ -1557,6 +1557,9 @@ class AST_translator:
                     mysize = mysize * array.shape[indices]
                     index_list.append(None)
                 else:
+                    current_state = self.last_sdfg_states[sdfg]
+                    in_edges = sdfg.in_edges(current_state)
+
                     start = i.range[0]
                     stop = i.range[1]
                     text_start = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
@@ -1570,7 +1573,9 @@ class AST_translator:
                         if str(token) in sdfg.arrays:
                             sym_token = f"sym_{token}"
                             if not sym_token in sdfg.symbols:
-                                raise NotImplementedError(f"We need to create a symbol for {token}")
+                                for edge in in_edges:
+                                    edge.data.assignments[sym_token] = str(token)
+                                # raise NotImplementedError(f"We need to create a symbol for {token}")
                             repl_dict[token] = sym_token
                     text_start = str(sym_text_start.subs(repl_dict))
                     text_stop = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
@@ -1584,7 +1589,9 @@ class AST_translator:
                         if str(token) in sdfg.arrays:
                             sym_token = f"sym_{token}"
                             if not sym_token in sdfg.symbols:
-                                raise NotImplementedError(f"We need to create a symbol for {token}")
+                                for edge in in_edges:
+                                    edge.data.assignments[sym_token] = str(token)
+                                # raise NotImplementedError(f"We need to create a symbol for {token}")
                             repl_dict[token] = sym_token
                     text_stop = str(sym_text_stop.subs(repl_dict))
                     symb_size = sym.pystr_to_symbolic(text_stop + " - ( " + text_start + " )+1")
