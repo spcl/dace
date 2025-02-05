@@ -10,7 +10,7 @@ import sympy
 
 from dace import symbolic
 from dace.frontend.python import astutils
-from dace.sdfg.state import GlobalDepDataRecordT, LoopRegion
+from dace.sdfg.state import GlobalDepDataRecord, LoopRegion
 from dace.subsets import Range, SubsetUnion, intersects
 
 
@@ -118,14 +118,14 @@ def _loop_read_intersects_loop_write(loop: LoopRegion, write_subset: Union[Subse
     return intersects(offset_write, read_subset)
 
 def get_loop_carry_dependencies(loop: LoopRegion,
-                                certain_only: bool = False) -> Optional[Dict[GlobalDepDataRecordT, GlobalDepDataRecordT]]:
+                                certain_only: bool = False) -> Optional[Dict[GlobalDepDataRecord, GlobalDepDataRecord]]:
     """
     Compute loop carry dependencies.
     :return: A dictionary mapping loop reads to writes in the same loop, from which they may carry a RAW dependency.
              None if the loop cannot be analyzed.
     """
     update_assignment = None
-    raw_deps: Dict[GlobalDepDataRecordT, GlobalDepDataRecordT] = dict()
+    raw_deps: Dict[GlobalDepDataRecord, GlobalDepDataRecord] = dict()
     read_repo = loop._certain_reads_moredata if certain_only else loop._possible_reads_moredata
     write_repo = loop._certain_writes_moredata if certain_only else loop._possible_writes_moredata
     for data in read_repo:

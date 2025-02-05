@@ -16,7 +16,7 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.propagation import align_memlet, propagate_memlet, propagate_subset
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.sdfg import SDFG, InterstateEdge, memlets_in_ast
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, GlobalDepDataRecordT, LoopRegion,
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, GlobalDepAccessEntry, GlobalDepDataRecord, LoopRegion,
                              SDFGState)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
@@ -25,10 +25,10 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.analysis import ControlFlowBlockReachability
 
 
-MemletPropResultT = Dict[ControlFlowBlock, Tuple[Dict[str, GlobalDepDataRecordT],
-                                                 Dict[str, GlobalDepDataRecordT],
-                                                 Dict[str, GlobalDepDataRecordT],
-                                                 Dict[str, GlobalDepDataRecordT]]]
+MemletPropResultT = Dict[ControlFlowBlock, Tuple[Dict[str, GlobalDepDataRecord],
+                                                 Dict[str, GlobalDepDataRecord],
+                                                 Dict[str, GlobalDepDataRecord],
+                                                 Dict[str, GlobalDepDataRecord]]]
 
 @transformation.explicit_cf_compatible
 class StatePropagation(ppl.ControlFlowRegionPass):
@@ -272,7 +272,13 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
 
         # Make sure any potential NSDFG symbol mapping is correctly reversed when propagating out.
         for mapping in [possible_reads, possible_writes, certain_reads, certain_writes]:
-            for border_memlet in mapping.values():
+            for dat in mapping.keys():
+                border_entry = mapping[dat]
+                border_memlet = Memlet()
+                border_memlet.data = dat
+                border_memlet.subset = border_entry.subset
+                border_memlet.volume = border_entry.volume
+                border_memlet.dynamic = border_entry.dynamic
                 border_memlet.replace(nsdfg_node.symbol_mapping)
 
                 # Also make sure that there's no symbol in the border memlet's range that only exists inside the
@@ -284,11 +290,20 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     if any(str(s) not in outer_symbols.keys() for s in border_memlet.dst_subset.free_symbols):
                         border_memlet.dst_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
 
+                mapping[dat].subset = border_memlet.subset
+                mapping[dat].volume = border_memlet.volume
+                mapping[dat].dynamic = border_memlet.dynamic
+
         # Propagate the inside 'border' memlets outside the SDFG by offsetting, and unsqueezing if necessary.
         for iedge in parent_state.in_edges(nsdfg_node):
             if iedge.dst_conn in possible_reads:
                 try:
-                    inner_memlet = possible_reads[iedge.dst_conn]
+                    inner_entry = possible_reads[iedge.dst_conn]
+                    inner_memlet = Memlet()
+                    inner_memlet.data = iedge.dst_conn
+                    inner_memlet.subset = inner_entry.subset
+                    inner_memlet.volume = inner_entry.volume
+                    inner_memlet.dynamic = inner_entry.dynamic
                     iedge.data = unsqueeze_memlet(inner_memlet, iedge.data, True)
                     if isinstance(iedge.data.subset, subsets.SubsetUnion):
                         iedge.data.subset = iedge.data.subset.to_bounding_box_subset()
@@ -307,7 +322,12 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         for oedge in parent_state.out_edges(nsdfg_node):
             if oedge.src_conn in possible_writes:
                 try:
-                    inner_memlet = possible_writes[oedge.src_conn]
+                    inner_entry = possible_writes[oedge.src_conn]
+                    inner_memlet = Memlet()
+                    inner_memlet.data = oedge.src_conn
+                    inner_memlet.subset = inner_entry.subset
+                    inner_memlet.volume = inner_entry.volume
+                    inner_memlet.dynamic = inner_entry.dynamic
                     oedge.data = unsqueeze_memlet(inner_memlet, oedge.data, True)
                     if isinstance(oedge.data.subset, subsets.SubsetUnion):
                         oedge.data.subset = oedge.data.subset.to_bounding_box_subset()
@@ -436,18 +456,23 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                             volume = memlet.volume
                         elif volume != 0:
                             volume += memlet.volume
-                new_memlet = Memlet(data=data, subset=subset)
-                new_memlet.dynamic = is_dynamic
-                new_memlet.volume = volume if volume is not None else 0
-                state.certain_writes[data] = new_memlet
-                state._certain_writes_moredata[data] = GlobalDepDataRecordT(memlet=new_memlet, accesses=writes[data])
-                state.possible_writes[data] = new_memlet
-                state._possible_writes_moredata[data] = GlobalDepDataRecordT(memlet=new_memlet, accesses=writes[data])
+                state.certain_writes[data] = GlobalDepDataRecord(subset=subset,
+                                                                  dynamic=is_dynamic,
+                                                                  volume=volume if volume is not None else 0,
+                                                                  accesses=[])
+                for aedge, anode in writes[data]:
+                    state.certain_writes[data].accesses.append(GlobalDepAccessEntry(node_id=state.node_id(anode),
+                                                                                     edge_id=state.edge_id(aedge)))
+                state.possible_writes[data] = GlobalDepDataRecord(subset=subset,
+                                                                   dynamic=is_dynamic,
+                                                                   volume=volume if volume is not None else 0,
+                                                                   accesses=[])
+                for aedge, anode in writes[data]:
+                    state.possible_writes[data].accesses.append(GlobalDepAccessEntry(node_id=state.node_id(anode),
+                                                                                     edge_id=state.edge_id(aedge)))
 
         state.certain_reads = {}
-        state._certain_reads_moredata = {}
         state.possible_reads = {}
-        state._possible_reads_moredata = {}
         for data in not_covered_reads:
             subset = None
             volume = None
@@ -466,147 +491,136 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                         volume = memlet.volume
                     elif volume != 0:
                         volume += memlet.volume
-            new_memlet = Memlet(data=data, subset=subset)
-            new_memlet.dynamic = is_dynamic
-            new_memlet.volume = volume
-            state.certain_reads[data] = new_memlet
-            state._certain_reads_moredata[data] = GlobalDepDataRecordT(memlet=new_memlet,
-                                                                       accesses=not_covered_reads[data])
-            state.possible_reads[data] = new_memlet
-            state._possible_reads_moredata[data] = GlobalDepDataRecordT(memlet=new_memlet,
-                                                                        accesses=not_covered_reads[data])
+            state.certain_reads[data] = GlobalDepDataRecord(subset=subset,
+                                                             dynamic=is_dynamic,
+                                                             volume=volume if volume is not None else 0,
+                                                             accesses=[])
+            for aedge, anode in not_covered_reads[data]:
+                state.certain_reads[data].accesses.append(GlobalDepAccessEntry(node_id=state.node_id(anode),
+                                                                                edge_id=state.edge_id(aedge)))
+            state.possible_reads[data] = GlobalDepDataRecord(subset=subset,
+                                                              dynamic=is_dynamic,
+                                                              volume=volume if volume is not None else 0,
+                                                              accesses=[])
+            for aedge, anode in not_covered_reads[data]:
+                state.possible_reads[data].accesses.append(GlobalDepAccessEntry(node_id=state.node_id(anode),
+                                                                                 edge_id=state.edge_id(aedge)))
 
-        result[state] = (state._certain_reads_moredata, state._possible_reads_moredata,
-                         state._certain_writes_moredata, state._possible_writes_moredata)
+        result[state] = (state.certain_reads, state.possible_reads, state.certain_writes, state.possible_writes)
 
     def _propagate_conditional(self, conditional: ConditionalBlock, result: MemletPropResultT) -> None:
         # The union of all reads between all conditions and branches gives the set of _possible_ reads, while the
         # intersection gives the set of _guaranteed_ reads. The first condition can also be counted as a guaranteed
         # read. The same applies for writes, except that conditions do not contain writes.
 
-        def add_memlet(memlet: Memlet,
-                       mlt_dict: Dict[str, Memlet],
-                       mlt_dict_moredata: Dict[str, GlobalDepDataRecordT],
-                       use_intersection: bool = False,
-                       accesses: Optional[List[Union[Tuple[MultiConnectorEdge[Memlet], nodes.AccessNode],
-                                                     Edge[InterstateEdge]]]] = None):
-            if memlet.data not in mlt_dict:
-                propagated_memlet = Memlet(data=memlet.data, subset=(memlet.src_subset or memlet.subset))
-                propagated_memlet.volume = memlet.volume
-                propagated_memlet.dynamic = memlet.dynamic
-                mlt_dict[memlet.data] = propagated_memlet
+        def add_memlet(data: str, subset: subsets.Subset, dynamic: bool, volume: symbolic.SymExpr,
+                       repo: Dict[str, GlobalDepDataRecord], use_intersection: bool = False,
+                       accesses: Optional[List[GlobalDepAccessEntry]] = None):
+            if data not in repo:
+                repo[data] = GlobalDepDataRecord(subset=subset, dynamic=dynamic, volume=volume, accesses=accesses)
             else:
-                propagated_memlet = mlt_dict[memlet.data]
+                existing_entry = repo[data]
                 if use_intersection:
-                    isect = propagated_memlet.subset.intersection(memlet.src_subset or memlet.subset)
+                    isect = existing_entry.subset.intersection(subset)
                     if isect is not None:
-                        propagated_memlet.subset = isect
+                        existing_entry.subset = isect
                     else:
-                        propagated_memlet.subset = subsets.SubsetUnion([])
-
-                    propagated_memlet.volume = sympy.Min(memlet.volume, propagated_memlet.volume)
-                    propagated_memlet.dynamic |= memlet.dynamic
+                        existing_entry.subset = subsets.SubsetUnion([])
+                    existing_entry.volume = sympy.Min(volume, existing_entry.volume)
+                    existing_entry.dynamic |= dynamic
                 else:
-                    mlt_subset = propagated_memlet.subset
+                    mlt_subset = existing_entry.subset
                     if not isinstance(mlt_subset, subsets.SubsetUnion):
                         mlt_subset = subsets.SubsetUnion([mlt_subset])
-                    mlt_subset.union(memlet.src_subset or memlet.subset)
-                    propagated_memlet.subset = mlt_subset
-
-                    if propagated_memlet.volume != 0:
-                        if memlet.volume == 0:
-                            propagated_memlet.volume = memlet.volume
+                    mlt_subset.union(subset)
+                    existing_entry.subset = mlt_subset
+                    if existing_entry.volume != 0:
+                        if volume == 0:
+                            existing_entry.volume = volume
                         else:
-                            propagated_memlet.volume = sympy.Max(memlet.volume, propagated_memlet.volume)
-                    propagated_memlet.dynamic |= memlet.dynamic
-            if memlet.data not in mlt_dict_moredata:
-                mlt_dict_moredata[memlet.data] = GlobalDepDataRecordT(memlet=mlt_dict[memlet.data], accesses=accesses)
-            else:
-                mlt_dict_moredata[memlet.data].memlet = mlt_dict[memlet.data]
-                mlt_dict_moredata[memlet.data].accesses.extend(accesses)
+                            existing_entry.volume = sympy.Max(volume, existing_entry.volume)
+                    existing_entry.dynamic |= dynamic
+                existing_entry.accesses.extend(accesses)
 
         conditional.possible_reads = {}
         conditional.certain_reads = {}
         conditional.possible_writes = {}
         conditional.certain_writes = {}
-        conditional._possible_reads_moredata = {}
-        conditional._certain_reads_moredata = {}
-        conditional._possible_writes_moredata = {}
-        conditional._certain_writes_moredata = {}
 
         # Gather the union of possible reads and writes. At the same time, determine if there is an else branch present.
         has_else = False
-        for cond, branch in conditional.branches:
+        for i, (cond, branch) in enumerate(conditional.branches):
             if cond is not None:
                 read_memlets = memlets_in_ast(cond.code[0], conditional.sdfg.arrays)
                 for read_memlet in read_memlets:
-                    # TODO: passing the condition like this probably won't work, needs adjusting
-                    add_memlet(read_memlet, conditional.possible_reads, conditional._possible_reads_moredata,
-                               False, [cond])
+                    add_memlet(read_memlet.data, read_memlet.src_subset or read_memlet.subset,
+                               conditional.possible_reads, False,
+                               [GlobalDepAccessEntry(node_id=conditional.block_id, edge_id=None)])
             else:
                 has_else = True
             for read_data in branch.possible_reads:
-                read_memlet = branch.possible_reads[read_data]
-                add_memlet(read_memlet, conditional.possible_reads, conditional._possible_reads_moredata,
-                           False, branch._possible_reads_moredata[read_data].accesses)
+                read_entry = branch.possible_reads[read_data]
+                add_memlet(read_data, read_entry.subset, read_entry.dynamic, read_entry.volume,
+                           conditional.possible_reads, False, [GlobalDepAccessEntry(node_id=i, edge_id=None)])
             for write_data in branch.possible_writes:
-                write_memlet = branch.possible_writes[write_data]
-                add_memlet(write_memlet, conditional.possible_writes, conditional._possible_writes_moredata,
-                           False, branch._possible_writes_moredata[write_data].accesses)
+                write_entry = branch.possible_writes[write_data]
+                add_memlet(write_data, write_entry.subset, write_entry.dynamic, write_entry.volume,
+                           conditional.possible_writes, False, [GlobalDepAccessEntry(node_id=i, edge_id=None)])
 
         # If there is no else branch or only one branch exists, there are no certain reads or writes.
         if len(conditional.branches) > 1 and has_else:
             # Gather the certain reads (= Intersection of certain reads for each branch)
             for container in conditional.possible_reads.keys():
-                candidates = []
+                candidates: List[GlobalDepDataRecord] = []
                 skip = False
-                for cond, branch in conditional.branches:
+                for i, (cond, branch) in enumerate(conditional.branches):
                     found = False
                     if cond is not None:
                         read_memlets = memlets_in_ast(cond.code[0], conditional.sdfg.arrays)
                         for read_memlet in read_memlets:
                             if read_memlet.data == container:
                                 found = True
-                                candidates.append((read_memlet, [cond]))
+                                candidates.append(GlobalDepDataRecord(read_memlet.subset, read_memlet.dynamic,
+                                                                       read_memlet.volume,
+                                                                       accesses=[GlobalDepAccessEntry(node_id=i,
+                                                                                                       edge_id=None)]))
                     if container in branch.certain_reads:
                         found = True
-                        candidates.append((branch.certain_reads[container],
-                                           branch._certain_reads_moredata[container].accesses))
+                        candidates.append(branch.certain_reads[container])
                     if not found:
                         skip = True
                         break
                 if skip:
                     continue
-                for cand_memlet, cand_accesses in candidates:
-                    add_memlet(cand_memlet, conditional.certain_reads, conditional._certain_reads_moredata,
-                               use_intersection=True, accesses=cand_accesses)
+                for cand_entry in candidates:
+                    add_memlet(container, cand_entry.subset, cand_entry.dynamic, cand_entry.volume,
+                               conditional.certain_reads, use_intersection=True, accesses=cand_entry.accesses)
             # Gather the certain writes (= Intersection of certain writes for each branch)
             for container in conditional.possible_writes.keys():
-                candidates = []
+                candidates: List[GlobalDepDataRecord] = []
                 skip = False
                 for _, branch in conditional.branches:
                     if container in branch.certain_writes:
-                        candidates.append((branch.certain_writes[container],
-                                           branch._certain_writes_moredata[container].accesses))
+                        candidates.append(branch.certain_writes[container])
                     else:
                         skip = True
                         break
                 if skip:
                     continue
-                for cand_memlet, cand_accesses in candidates:
-                    add_memlet(cand_memlet, conditional.certain_writes, conditional._certain_writes_moredata,
-                               use_intersection=True, accesses=cand_accesses)
+                for cand_entry in candidates:
+                    add_memlet(container, cand_entry.subset, cand_entry.dynamic, cand_entry.volume,
+                               conditional.certain_writes, use_intersection=True, accesses=cand_entry.accesses)
 
         # Ensure the first condition's reads are part of the certain reads.
         first_cond = conditional.branches[0][0]
         if first_cond is not None:
             read_memlets = memlets_in_ast(first_cond.code[0], conditional.sdfg.arrays)
             for read_memlet in read_memlets:
-                add_memlet(read_memlet, conditional.certain_reads, conditional._certain_reads_moredata,
-                           False, [first_cond])
+                add_memlet(read_memlet.data, read_memlet.subset, read_memlet.dynamic, read_memlet.volume,
+                           conditional.certain_reads, False, [GlobalDepAccessEntry(node_id=0, edge_id=None)])
 
-        result[conditional] = (conditional._certain_reads_moredata, conditional._possible_reads_moredata,
-                               conditional._certain_writes_moredata, conditional._possible_writes_moredata)
+        result[conditional] = (conditional.certain_reads, conditional.possible_reads,
+                               conditional.certain_writes, conditional.possible_writes)
 
     def _propagate_loop(self, loop: LoopRegion, result: MemletPropResultT) -> None:
         # First propagate the contents of the loop for one iteration.
@@ -624,17 +638,17 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         stride = loop_analysis.get_loop_stride(loop)
         if itvar and start is not None and end is not None and stride is not None:
             loop_range = subsets.Range([(start, end, stride)])
-            deps_ret = loop_analysis.get_loop_carry_dependencies(loop)
-            loop_carry_dependencies: Dict[str, Dict[GlobalDepDataRecordT, GlobalDepDataRecordT]] = {}
-            for loop_read in deps_ret.keys():
-                if loop_read.memlet.data in loop_carry_dependencies:
-                    loop_carry_dependencies[loop_read.memlet.data][loop_read] = deps_ret[loop_read]
-                else:
-                    loop_carry_dependencies[loop_read.memlet.data] = { loop_read: deps_ret[loop_read] }
-            loop._carry_dependencies_moredata = loop_carry_dependencies
+            #deps_ret = loop_analysis.get_loop_carry_dependencies(loop)
+            #loop_carry_dependencies: Dict[str, Dict[GlobalDepDataRecordT, GlobalDepDataRecordT]] = {}
+            #for loop_read in deps_ret.keys():
+            #    if loop_read.memlet.data in loop_carry_dependencies:
+            #        loop_carry_dependencies[loop_read.memlet.data][loop_read] = deps_ret[loop_read]
+            #    else:
+            #        loop_carry_dependencies[loop_read.memlet.data] = { loop_read: deps_ret[loop_read] }
+            #loop._carry_dependencies_moredata = loop_carry_dependencies
         else:
             loop_range = None
-            loop_carry_dependencies = {}
+            #loop_carry_dependencies = {}
 
         # Collect all symbols and variables (i.e., scalar data containers) defined at this point, particularly by
         # looking at defined loop variables in the parent chain up the control flow tree.
@@ -651,53 +665,56 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         defined_variables = [symbolic.pystr_to_symbolic(s) for s in variables_at_loop.keys()]
         # Propagate memlet subsets through the loop variable and its range.
         # TODO: Remove loop-carried dependencies from the writes (i.e., only the first read would be a true read)
-        for repo, repo_moredata in [(loop.certain_reads, loop._certain_reads_moredata),
-                                    (loop.possible_reads, loop._possible_reads_moredata)]:
-            for dat in repo_moredata.keys():
-                read_memlet = repo_moredata[dat].memlet
+        for repo in [loop.certain_reads, loop.possible_reads]:
+            for dat in repo.keys():
                 desc = loop.sdfg.data(dat)
-                if dat in loop_carry_dependencies and read_memlet in loop_carry_dependencies[dat]:
-                    #dep_write = loop_carry_deps[read_memlet]
-                    #diff = subsets.difference(read.subset, dep_write.subset)
-                    #if isinstance(diff, subsets.SubsetUnion):
-                    #    diff = diff.to_bounding_box_subset()
-                    #tgt_expr = symbolic.pystr_to_symbolic(itvar) - loop_range.ranges[0][-1]
-                    #for i in range(diff.dims()):
-                    #    dim = diff.dim_to_string(i)
-                    #    ...
-                    ## Check if the remaining read subset is only in the direction opposing the loop iteration. If
-                    #diff.__getitem__(0)
-                    propagated_read_memlet = propagate_subset([read_memlet], desc, [itvar], loop_range,
-                                                              defined_variables, use_dst=False)
-                    repo[dat] = propagated_read_memlet
-                    repo_moredata[dat].memlet = propagated_read_memlet
-                else:
-                    propagated_read_memlet = propagate_subset([read_memlet], desc, [itvar], loop_range,
-                                                              defined_variables, use_dst=False)
-                    repo[dat] = propagated_read_memlet
-                    repo_moredata[dat].memlet = propagated_read_memlet
-        for repo, repo_moredata in [(loop.certain_writes, loop._certain_writes_moredata),
-                                    (loop.possible_writes, loop._possible_writes_moredata)]:
-            for dat in repo_moredata.keys():
-                write_memlet = repo_moredata[dat].memlet
+                initial_memlet = Memlet()
+                initial_memlet.data = dat
+                initial_memlet.subset = repo[dat].subset
+                initial_memlet.dynamic = repo[dat].dynamic
+                initial_memlet.volume = repo[dat].volume
+                #if dat in loop_carry_dependencies and read_memlet in loop_carry_dependencies[dat]:
+                #    #dep_write = loop_carry_deps[read_memlet]
+                #    #diff = subsets.difference(read.subset, dep_write.subset)
+                #    #if isinstance(diff, subsets.SubsetUnion):
+                #    #    diff = diff.to_bounding_box_subset()
+                #    #tgt_expr = symbolic.pystr_to_symbolic(itvar) - loop_range.ranges[0][-1]
+                #    #for i in range(diff.dims()):
+                #    #    dim = diff.dim_to_string(i)
+                #    #    ...
+                #    ## Check if the remaining read subset is only in the direction opposing the loop iteration. If
+                #    #diff.__getitem__(0)
+                #    propagated_read_memlet = propagate_subset([read_memlet], desc, [itvar], loop_range,
+                #                                              defined_variables, use_dst=False)
+                #    repo[dat] = propagated_read_memlet
+                #    repo_moredata[dat].memlet = propagated_read_memlet
+                #else:
+                propagated_read_memlet = propagate_subset([initial_memlet], desc, [itvar], loop_range,
+                                                          defined_variables, use_dst=False)
+                repo[dat].subset = propagated_read_memlet.subset
+                repo[dat].dynamic = propagated_read_memlet.dynamic
+                repo[dat].volume = propagated_read_memlet.volume
+        for repo in [loop.certain_writes, loop.possible_writes]:
+            for dat in repo.keys():
                 desc = loop.sdfg.data(dat)
-                propagated_write_memlet = propagate_subset([write_memlet], desc, [itvar], loop_range, defined_variables,
-                                                           use_dst=True)
-                repo[dat] = propagated_write_memlet
-                repo_moredata[dat].memlet = propagated_write_memlet
+                initial_memlet = Memlet()
+                initial_memlet.data = dat
+                initial_memlet.subset = repo[dat].subset
+                initial_memlet.dynamic = repo[dat].dynamic
+                initial_memlet.volume = repo[dat].volume
+                propagated_write_memlet = propagate_subset([initial_memlet], desc, [itvar], loop_range,
+                                                           defined_variables, use_dst=True)
+                repo[dat].subset = propagated_write_memlet.subset
+                repo[dat].dynamic = propagated_write_memlet.dynamic
+                repo[dat].volume = propagated_write_memlet.volume
 
-        result[loop] = (loop._certain_reads_moredata, loop._possible_reads_moredata,
-                        loop._certain_writes_moredata, loop._possible_writes_moredata)
+        result[loop] = (loop.certain_reads, loop.possible_reads, loop.certain_writes, loop.possible_writes)
 
     def _propagate_cfg(self, cfg: ControlFlowRegion, result: MemletPropResultT) -> None:
         cfg.possible_reads = {}
         cfg.possible_writes = {}
         cfg.certain_reads = {}
         cfg.certain_writes = {}
-        cfg._possible_reads_moredata = {}
-        cfg._possible_writes_moredata = {}
-        cfg._certain_reads_moredata = {}
-        cfg._certain_writes_moredata = {}
 
         alldoms = cfg_analysis.all_dominators(cfg)
         allpostdom = cfg_analysis.all_post_dominators(cfg)
@@ -715,71 +732,49 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     covered = False
                     if (read_memlet.data not in nd.certain_writes
                             or not nd.certain_writes[read_memlet.data].subset.covers_precise(read_memlet.subset)):
-                        repos = [(nd.possible_reads, nd._possible_reads_moredata)]
+                        access_entry = GlobalDepAccessEntry(node_id=None, edge_id=cfg.edge_id(oedge))
+                        repos = [nd.possible_reads]
                         if odeg == 1:
-                            repos.append((nd.certain_reads, nd._certain_reads_moredata))
-                        for repo, repo_moredata in repos:
+                            repos.append(nd.certain_reads)
+                        for repo in repos:
                             if read_memlet.data in repo:
-                                existing_memlet: Memlet = repo[read_memlet.data]
-                                if isinstance(existing_memlet.subset, subsets.SubsetUnion):
-                                    existing_memlet.subset.union(read_memlet.subset)
+                                existing_entry = repo[read_memlet.data]
+                                if isinstance(existing_entry.subset, subsets.SubsetUnion):
+                                    existing_entry.subset.union(read_memlet.subset)
                                 else:
                                     subset = subsets.SubsetUnion(read_memlet.subset)
-                                    subset.union(existing_memlet.subset)
-                                    existing_memlet.subset = subset
+                                    subset.union(existing_entry.subset)
+                                    existing_entry.subset = subset
+                                existing_entry.accesses.append(access_entry)
                             else:
-                                repo[read_memlet.data] = read_memlet
-                            if read_memlet.data in repo_moredata:
-                                existing_entry = repo_moredata[read_memlet.data]
-                                if isinstance(existing_entry.memlet.subset, subsets.SubsetUnion):
-                                    existing_entry.memlet.subset.union(read_memlet.subset)
-                                else:
-                                    subset = subsets.SubsetUnion(read_memlet.subset)
-                                    subset.union(existing_entry.memlet.subset)
-                                    existing_entry.memlet.subset = subset
-                                existing_entry.accesses.append(oedge)
-                            else:
-                                repo_moredata[read_memlet.data] = GlobalDepDataRecordT(memlet=read_memlet,
-                                                                                       accesses=[oedge])
-            for repo, repo_moredata, cfg_repo, cfg_repo_moredata in [
-                (nd.possible_reads, nd._possible_reads_moredata, cfg.possible_reads, cfg._possible_reads_moredata),
-                (nd.certain_reads, nd._certain_reads_moredata, cfg.certain_reads, cfg._certain_reads_moredata)
-            ]:
+                                repo[read_memlet.data] = GlobalDepDataRecord(subset=read_memlet.subset,
+                                                                              dynamic=read_memlet.dynamic,
+                                                                              volume=read_memlet.volume,
+                                                                              accesses=[access_entry])
+            for repo, cfg_repo in [(nd.possible_reads, cfg.possible_reads), (nd.certain_reads, cfg.certain_reads)]:
                 for read_data in repo:
-                    read_memlet: Memlet = repo[read_data]
+                    read_entry = repo[read_data]
                     covered = False
                     for dom in alldoms[nd]:
                         if read_data in dom.certain_writes:
-                            write_memlet: Memlet = dom.certain_writes[read_data]
-                            if write_memlet.subset.covers_precise(read_memlet.subset):
+                            write_entry = dom.certain_writes[read_data]
+                            if write_entry.subset.covers_precise(read_entry.subset):
                                 covered = True
                                 break
                     if not covered:
+                        access_entry = GlobalDepAccessEntry(node_id=cfg.node_id(nd), edge_id=None)
                         if read_data in cfg_repo:
-                            existing_memlet: Memlet = cfg_repo[read_data]
-                            if isinstance(existing_memlet.subset, subsets.SubsetUnion):
-                                existing_memlet.subset.union(read_memlet.subset)
+                            existing_entry = cfg_repo[read_data]
+                            if isinstance(existing_entry.subset, subsets.SubsetUnion):
+                                existing_entry.subset.union(read_entry.subset)
                             else:
-                                subset = subsets.SubsetUnion(read_memlet.subset)
-                                subset.union(existing_memlet.subset)
-                                existing_memlet.subset = subset
+                                subset = subsets.SubsetUnion(read_entry.subset)
+                                subset.union(existing_entry.subset)
+                                existing_entry.subset = subset
+                            existing_entry.accesses.append(access_entry)
                         else:
-                            cfg_repo[read_data] = copy.deepcopy(read_memlet)
-                        if read_data in cfg_repo_moredata:
-                            existing_entry = cfg_repo_moredata[read_data]
-                            if isinstance(existing_entry.memlet.subset, subsets.SubsetUnion):
-                                existing_entry.memlet.subset.union(read_memlet.subset)
-                            else:
-                                subset = subsets.SubsetUnion(read_memlet.subset)
-                                subset.union(existing_entry.memlet.subset)
-                                existing_entry.memlet.subset = subset
-                            existing_entry.accesses.extend(repo_moredata[read_data].accesses)
-                        else:
-                            cfg_repo_moredata[read_data] = copy.deepcopy(repo_moredata[read_data])
-                            for i, access in enumerate(cfg_repo_moredata[read_data].accesses):
-                                o_access = repo_moredata[read_data].accesses[i]
-                                if isinstance(access, tuple):
-                                    access[1].guid = o_access[1].guid
+                            cfg_repo[read_data] = copy.deepcopy(read_entry)
+                            cfg_repo[read_data].accesses = [access_entry]
 
         # For each node in the CFG, check what writes are covered by exactly covering writes in a postdominating node.
         # If such a postdominating write is found, the write does not leave the CFG, and thus is not counted as a write
@@ -789,66 +784,49 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 covered = False
                 for postdom in allpostdom[nd]:
                     if cont in postdom.certain_writes:
-                        write_memlet: Memlet = postdom.certain_writes[cont]
-                        if write_memlet.subset.covers_precise(nd.possible_writes[cont].subset):
+                        write_entry = postdom.certain_writes[cont]
+                        if write_entry.subset.covers_precise(nd.possible_writes[cont].subset):
                             covered = True
                             break
                 if not covered:
+                    access_entry = GlobalDepAccessEntry(node_id=cfg.node_id(nd), edge_id=None)
                     if cont in cfg.possible_writes:
-                        union = subsets.SubsetUnion(cfg.possible_writes[cont].subset)
-                        union.union(nd.possible_writes[cont].subset)
-                        cfg.possible_writes[cont] = Memlet(data=cont, subset=union)
-                    else:
-                        cfg.possible_writes[cont] = copy.deepcopy(nd.possible_writes[cont])
-                    if cont in cfg._possible_writes_moredata:
-                        existing_entry = cfg._possible_writes_moredata[cont]
-                        if isinstance(existing_entry.memlet.subset, subsets.SubsetUnion):
-                            existing_entry.memlet.subset.union(nd.possible_writes[cont].subset)
+                        existing_entry = cfg.possible_writes[cont]
+                        if isinstance(existing_entry.subset, subsets.SubsetUnion):
+                            existing_entry.subset.union(nd.possible_writes[cont].subset)
                         else:
                             subset = subsets.SubsetUnion(nd.possible_writes[cont].subset)
-                            subset.union(existing_entry.memlet.subset)
-                            existing_entry.memlet.subset = subset
-                        existing_entry.accesses.extend(nd._possible_writes_moredata[cont].accesses)
+                            subset.union(existing_entry.subset)
+                            existing_entry.subset = subset
+                        existing_entry.accesses.append(access_entry)
                     else:
-                        cfg._possible_writes_moredata[cont] = copy.deepcopy(nd._possible_writes_moredata[cont])
-                        for i, access in enumerate(cfg._possible_writes_moredata[cont].accesses):
-                            o_access = nd._possible_writes_moredata[cont].accesses[i]
-                            if isinstance(access, tuple):
-                                access[1].guid = o_access[1].guid
+                        cfg.possible_writes[cont] = copy.deepcopy(nd.possible_writes[cont])
+                        cfg.possible_writes[cont].accesses = [access_entry]
+
             for cont in nd.certain_writes:
                 covered = False
                 for postdom in allpostdom[nd]:
                     if cont in postdom.certain_writes:
-                        write_memlet: Memlet = postdom.certain_writes[cont]
-                        if write_memlet.subset.covers_precise(nd.certain_writes[cont].subset):
+                        write_entry = postdom.certain_writes[cont]
+                        if write_entry.subset.covers_precise(nd.certain_writes[cont].subset):
                             covered = True
                             break
                 if not covered:
+                    access_entry = GlobalDepAccessEntry(node_id=cfg.node_id(nd), edge_id=None)
                     if cont in cfg.certain_writes:
-                        union = subsets.SubsetUnion(cfg.certain_writes[cont].subset)
-                        union.union(nd.certain_writes[cont].subset)
-                        cfg.certain_writes[cont] = Memlet(data=cont, subset=union)
-                    else:
-                        cfg.certain_writes[cont] = copy.deepcopy(nd.certain_writes[cont])
-                    if cont in cfg._certain_writes_moredata:
-                        existing_entry = cfg._certain_writes_moredata[cont]
-                        if isinstance(existing_entry.memlet.subset, subsets.SubsetUnion):
-                            existing_entry.memlet.subset.union(nd.certain_writes[cont].subset)
+                        existing_entry = cfg.certain_writes[cont]
+                        if isinstance(existing_entry.subset, subsets.SubsetUnion):
+                            existing_entry.subset.union(nd.certain_writes[cont].subset)
                         else:
                             subset = subsets.SubsetUnion(nd.certain_writes[cont].subset)
-                            subset.union(existing_entry.memlet.subset)
-                            existing_entry.memlet.subset = subset
-                        existing_entry.accesses.extend(nd._certain_writes_moredata[cont].accesses)
+                            subset.union(existing_entry.subset)
+                            existing_entry.subset = subset
+                        existing_entry.accesses.append(access_entry)
                     else:
-                        cfg._certain_writes_moredata[cont] = copy.deepcopy(nd._certain_writes_moredata[cont])
-                        for i, access in enumerate(cfg._certain_writes_moredata[cont].accesses):
-                            o_access = nd._certain_writes_moredata[cont].accesses[i]
-                            if isinstance(access, tuple):
-                                access[1].guid = o_access[1].guid
+                        cfg.certain_writes[cont] = copy.deepcopy(nd.certain_writes[cont])
+                        cfg.certain_writes[cont].accesses = [access_entry]
 
-        if isinstance(cfg, ControlFlowBlock):
-            result[cfg] = (cfg._certain_reads_moredata, cfg._possible_reads_moredata,
-                           cfg._certain_writes_moredata, cfg._possible_writes_moredata)
+        result[cfg] = (cfg.certain_reads, cfg.possible_reads, cfg.certain_writes, cfg.possible_writes)
 
     def apply(self, region: ControlFlowRegion, _) -> Optional[MemletPropResultT]:
         result: MemletPropResultT = {}

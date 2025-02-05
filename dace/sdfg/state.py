@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import ast
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, TypedDict, Union,
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
 
 import dace
@@ -22,11 +22,11 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty,
-                             SymbolicProperty, CodeProperty, make_properties)
+from dace.properties import (CodeBlock, DataProperty, DebugInfoProperty, DictProperty, EnumProperty, ListProperty,
+                             Property, SubsetProperty, SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
-                             generate_element_id)
+from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
+                             OrderedDiGraph, Edge, generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -1190,13 +1190,40 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 block.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
 
 
-@dataclass
-class GlobalDepDataRecordT():
-    memlet: mm.Memlet
-    accesses: List[Tuple[MultiConnectorEdge[mm.Memlet], nd.AccessNode]]
+@make_properties
+@dataclass(unsafe_hash=True)
+class GlobalDepAccessEntry:
 
-    def __hash__(self):
-        return hash(id(self))
+    node_id: int = Property(dtype=int, allow_none=True,
+                            desc=('ID of the node describing the access (access node, or CFG block). ' +
+                                  'None if the access is on an interstate edge or meta access.'))
+    edge_id: int = Property(dtype=int, allow_none=True,
+                            desc='ID of the edge for the access. None if the access node is a CFG block.')
+
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {
+            'type': 'GlobalDepAccessEntry',
+            **props
+        }
+
+
+@make_properties
+@dataclass(unsafe_hash=True)
+class GlobalDepDataRecord:
+
+    subset: Subset = SubsetProperty(desc='Subset of the data involved in the dependency entry', allow_none=True)
+    dynamic: bool = Property(dtype=bool, default=False)
+    volume: symbolic.SymExpr = SymbolicProperty(default=0)
+    accesses: List[GlobalDepAccessEntry] = ListProperty(element_type=GlobalDepAccessEntry,
+                                                        desc='Accesses involved in this dependency')
+
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {
+            'type': 'GlobalDepDataRecord',
+            **props
+        }
 
 
 @make_properties
@@ -1222,15 +1249,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     _sdfg: Optional['SDFG'] = None
     _parent_graph: Optional['ControlFlowRegion'] = None
 
-    certain_reads = DictProperty(key_type=str, value_type=mm.Memlet)
-    possible_reads = DictProperty(key_type=str, value_type=mm.Memlet)
-    certain_writes = DictProperty(key_type=str, value_type=mm.Memlet)
-    possible_writes = DictProperty(key_type=str, value_type=mm.Memlet)
-
-    _certain_reads_moredata: Dict[str, GlobalDepDataRecordT] = {}
-    _possible_reads_moredata: Dict[str, GlobalDepDataRecordT] = {}
-    _certain_writes_moredata: Dict[str, GlobalDepDataRecordT] = {}
-    _possible_writes_moredata: Dict[str, GlobalDepDataRecordT] = {}
+    certain_reads: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
+    possible_reads: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
+    certain_writes: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
+    possible_writes: Dict[str, GlobalDepDataRecord] = DictProperty(key_type=str, value_type=GlobalDepDataRecord)
 
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
@@ -1246,10 +1268,6 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.possible_reads = {}
         self.certain_writes = {}
         self.possible_writes = {}
-        self._certain_reads_moredata = {}
-        self._possible_reads_moredata = {}
-        self._certain_writes_moredata = {}
-        self._possible_writes_moredata = {}
 
         self.guid = generate_element_id(self)
 
@@ -3183,7 +3201,7 @@ class LoopRegion(ControlFlowRegion):
                                        'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
 
-    _carry_dependencies_moredata: Dict[str, Dict[GlobalDepDataRecordT, GlobalDepDataRecordT]] = {}
+    _carry_dependencies_moredata: Dict[str, Dict[GlobalDepDataRecord, GlobalDepDataRecord]]
 
     def __init__(self,
                  label: str,
@@ -3223,6 +3241,8 @@ class LoopRegion(ControlFlowRegion):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
         self.update_before_condition = update_before_condition
+
+        self._carry_dependencies_moredata = {}
 
     def inline(self, lower_returns: bool = False) -> Tuple[bool, Any]:
         """
