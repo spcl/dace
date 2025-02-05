@@ -3544,8 +3544,8 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
 
                 var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
 
-                if var.type == 'VOID':
-                    raise NeedsTypeInferenceException(node.rval.name.name, node.line_number)
+                #if var.type == 'VOID':
+                #    raise NeedsTypeInferenceException(node.rval.name.name, node.line_number)
 
                 if var.sizes is None or len(var.sizes) == 0:
                     return
