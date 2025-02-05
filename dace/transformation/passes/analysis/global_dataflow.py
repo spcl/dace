@@ -1,19 +1,20 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Any, Dict, Optional, Set
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 from dace import properties
 from dace import transformation
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
-from dace.subsets import SubsetUnion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.propagation import MemletPropagation, MemletPropResultT
 
 
+@dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class BuildGlobalDataflowProxyGraph(ppl.Pass):
@@ -22,6 +23,8 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
     """
 
     CATEGORY: str = 'Analysis'
+
+    with_transients = properties.Property(dtype=bool, default=False)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -51,28 +54,34 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
                     if isinstance(leaf.src, nd.AccessNode):
                         result.add_edge(leaf.src, leaf.src_conn, ie.dst, ie.dst_conn, ie.data)
                     else:
-                        for prev_ie in state.in_edges(leaf.src):
-                            prev_mtree = state.memlet_tree(prev_ie)
-                            t_edge = prev_mtree.root().edge
-                            if t_edge.data.is_empty():
-                                continue
-                            t_memlet = Memlet()
-                            t_memlet.data = t_edge.data.data
-                            t_memlet.subset = t_edge.data.subset
-                            t_memlet.other_subset = (ie.data.subset if ie.data.other_subset is None
-                                                     else ie.data.other_subset)
-                            if not isinstance(t_edge.src, nd.AccessNode):
+                        prev_iedges = state.in_edges(leaf.src)
+                        if len(prev_iedges) > 0:
+                            for prev_ie in prev_iedges:
+                                prev_mtree = state.memlet_tree(prev_ie)
+                                t_edge = prev_mtree.root().edge
                                 if t_edge.data.is_empty():
-                                    successor = state.successors(t_edge.src)
-                                    if successor:
-                                        for succ in successor:
-                                            result.add_edge(succ, None, ie.dst, ie.dst_conn, t_memlet)
-                                    elif ie.dst not in result:
-                                        result.add_node(ie.dst)
+                                    continue
+                                t_memlet = Memlet()
+                                t_memlet.data = t_edge.data.data
+                                t_memlet.subset = t_edge.data.subset
+                                t_memlet.other_subset = (ie.data.subset if ie.data.other_subset is None
+                                                        else ie.data.other_subset)
+                                if not isinstance(t_edge.src, nd.AccessNode):
+                                    if t_edge.data.is_empty():
+                                        successor = state.successors(t_edge.src)
+                                        if successor:
+                                            for succ in successor:
+                                                result.add_edge(succ, None, ie.dst, ie.dst_conn, t_memlet)
+                                        elif ie.dst not in result:
+                                            result.add_node(ie.dst)
+                                    else:
+                                        ...
                                 else:
-                                    ...
-                            else:
-                                result.add_edge(t_edge.src, t_edge.src_conn, ie.dst, ie.dst_conn, t_memlet)
+                                    result.add_edge(t_edge.src, t_edge.src_conn, ie.dst, ie.dst_conn, t_memlet)
+                        else:
+                            # Originates from a tasklet or something similar with no inputs - so a simple access node
+                            # will do the trick for now.
+                            result.add_node(dn)
 
     def _connect_block_backwards(self, block: ControlFlowBlock, result: SDFGState,
                                  start: Optional[ControlFlowBlock] = None,
@@ -94,11 +103,10 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
             if len(predecessors) == 0:
                 break
             pivot = predecessors[0]
-            for read_data in block._possible_reads_moredata:
-                covered_subset = None
-                if read_data in pivot._possible_writes_moredata:
-                    read_entry = block._possible_reads_moredata[read_data]
-                    write_entry = pivot._possible_writes_moredata[read_data]
+            for read_data in block._certain_reads_moredata:
+                if read_data in pivot._certain_writes_moredata:
+                    read_entry = block._certain_reads_moredata[read_data]
+                    write_entry = pivot._certain_writes_moredata[read_data]
                     if read_entry.memlet.subset.intersects(write_entry.memlet.subset):
                         if len(read_entry.accesses) > 1 or len(write_entry.accesses) > 1:
                             ...
@@ -115,20 +123,54 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
                                 if use_conditional:
                                     # Hack: Add some WCR to make it appear dashed.
                                     target_memlet.wcr = 'lambda a, b: a + b'
-                                result.add_edge(write_access[1], None, read_access[1], None, target_memlet)
-                        uncond = read_data in block.certain_reads and read_data in pivot.certain_writes
+                                src = result.node_by_guid(write_access[1].guid)
+                                if src is None:
+                                    result.add_node(write_access[1])
+                                    src = write_access[1]
+                                dst = result.node_by_guid(read_access[1].guid)
+                                if dst is None:
+                                    result.add_node(read_access[1])
+                                    dst = read_access[1]
+                                result.add_edge(src, None, dst, None, target_memlet)
+                elif read_data in pivot._possible_writes_moredata:
+                    read_entry = block._certain_reads_moredata[read_data]
+                    write_entry = pivot._possible_writes_moredata[read_data]
+                    if read_entry.memlet.subset.intersects(write_entry.memlet.subset):
+                        if len(read_entry.accesses) > 1 or len(write_entry.accesses) > 1:
+                            ...
+                        for read_access in read_entry.accesses:
+                            if not isinstance(read_access, tuple) or not isinstance(read_access[1], nd.AccessNode):
+                                ...
+                            for write_access in write_entry.accesses:
+                                if not isinstance(write_access, tuple) or not isinstance(write_access[1], nd.AccessNode):
+                                    ...
+                                target_memlet = Memlet()
+                                target_memlet.data = read_data
+                                target_memlet.subset = write_access[0].data.subset
+                                target_memlet.other_subset = read_access[0].data.subset
+                                # Force conditional
+                                target_memlet.wcr = 'lambda a, b: a + b'
+                                src = result.node_by_guid(write_access[1].guid)
+                                if src is None:
+                                    result.add_node(write_access[1])
+                                    src = write_access[1]
+                                dst = result.node_by_guid(read_access[1].guid)
+                                if dst is None:
+                                    result.add_node(read_access[1])
+                                    dst = read_access[1]
+                                result.add_edge(src, None, dst, None, target_memlet)
 
     def _process_conditional(self, conditional: ConditionalBlock, result: SDFGState,
                              global_prop: Dict[int, MemletPropResultT]) -> None:
         for _, branch in conditional.branches:
             self._process_cfg(branch, result, global_prop)
 
-            if branch._possible_reads_moredata:
+            if branch._certain_reads_moredata:
                 self._connect_block_backwards(branch, result, start=conditional, use_conditional=True)
 
     def _process_loop(self, loop: LoopRegion, result: SDFGState, global_prop: Dict[int, MemletPropResultT]) -> None:
         self._process_cfg(loop, result, global_prop)
-        loop_carry_deps = loop_analysis.get_loop_carry_dependencies(loop)
+        loop_carry_deps = loop_analysis.get_loop_carry_dependencies(loop, certain_only=True)
         if loop_carry_deps:
             for input_dep in loop_carry_deps.keys():
                 output_dep = loop_carry_deps[input_dep]
@@ -144,7 +186,15 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
                         target_memlet.data = input_dep.memlet.data
                         target_memlet.subset = write_access[0].data.subset
                         target_memlet.other_subset = read_access[0].data.subset
-                        result.add_edge(write_access[1], None, read_access[1], None, target_memlet)
+                        src = result.node_by_guid(write_access[1].guid)
+                        if src is None:
+                            result.add_node(write_access[1])
+                            src = write_access[1]
+                        dst = result.node_by_guid(read_access[1].guid)
+                        if dst is None:
+                            result.add_node(read_access[1])
+                            dst = read_access[1]
+                        result.add_edge(src, None, dst, None, target_memlet)
 
     def _process_cfg(self, cfg: ControlFlowRegion, result: SDFGState,
                      global_prop: Dict[int, MemletPropResultT]) -> None:
@@ -160,7 +210,7 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
             else:
                 ...
 
-            if block._possible_reads_moredata:
+            if block._certain_reads_moredata:
                 self._connect_block_backwards(block, result)
 
     def _process_sdfg(self, sdfg: SDFG, result: SDFGState, global_prop: Dict[int, MemletPropResultT]) -> None:
@@ -186,4 +236,33 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
 
         self._process_sdfg(sdfg, main_state, propagation_results)
 
+        if not self.with_transients:
+            self._filter_non_transients_out(main_state)
+
         return result
+
+    def _filter_non_transients_out(self, result: SDFGState) -> None:
+        for dn in result.data_nodes():
+            if dn.desc(result.sdfg).transient:
+                # First, remove self edges.
+                for e in result.all_edges(dn):
+                    if e.src is e.dst:
+                        result.remove_edge(e)
+                # Second, connect predecessors to successors, adjusting subsets and data for memlets accordingly.
+                for ie in result.in_edges(dn):
+                    for oe in result.out_edges(dn):
+                        target_memlet = Memlet()
+                        target_memlet.data = ie.src.data
+                        if ie.data.data == dn.data and ie.data.other_subset is not None:
+                            target_memlet.subset = ie.data.other_subset
+                        else:
+                            target_memlet.subset = ie.data.subset
+                        if oe.data.data == dn.data and oe.data.other_subset is not None:
+                            target_memlet.other_subset = oe.data.other_subset
+                        else:
+                            target_memlet.other_subset = oe.data.subset
+                        if len(result.edges_between(ie.src, oe.dst)) > 0:
+                            ...
+                        else:
+                            result.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, target_memlet)
+                result.remove_node(dn)
