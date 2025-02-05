@@ -634,6 +634,7 @@ class SDFG(ControlFlowRegion):
         if 'start_block' in json_obj:
             ret._start_block = json_obj['start_block']
 
+        ret.reset_cfg_list()
         return ret
 
     def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
