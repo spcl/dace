@@ -198,10 +198,42 @@ end subroutine main
     for f_res, p_res in zip(res[1:4], py_res):
         assert abs(f_res - p_res) < 10**-9
 
+def test_fortran_frontend_elemental_ecrad_bug():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(ng_var_114, od_var_115, trans_dir_dir_var_119)
+  INTEGER, INTENT(IN) :: ng_var_114
+  REAL(KIND = 8), INTENT(IN), DIMENSION(ng_var_114) :: od_var_115
+  REAL(KIND = 8), INTENT(OUT), DIMENSION(ng_var_114) :: trans_dir_dir_var_119
+  REAL(KIND = 8) :: mu0
+
+  mu0 = 3.14
+
+  trans_dir_dir_var_119 = MAX(- MAX(od_var_115 * (1.0D0 / mu0), 0.0D0), - 1000.0D0)
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=True)
+    sdfg.simplify()
+    sdfg.compile()
+
+    size = 5
+
+    arg_in = np.full([size], 42, order="F", dtype=np.float64)
+    arg_out = np.full([size], 0, order="F", dtype=np.float64)
+
+    mu0 = 3.14
+
+    for i in range(size):
+        arg_in[i] = i + 1
+
+    sdfg(sym_ng_var_114 = size, ng_var_114=size, od_var_115=arg_in, trans_dir_dir_var_119=arg_out)
+
+    assert np.allclose(arg_out, np.maximum(-np.maximum(arg_in * 1.0 / mu0, 0.0), -1000.0))
+
 if __name__ == "__main__":
-    test_fortran_frontend_elemental_exp()
-    test_fortran_frontend_elemental_exp_pardecl()
-    test_fortran_frontend_elemental_exp_subset()
-    test_fortran_frontend_elemental_exp_struct()
-    test_fortran_frontend_elemental_exp_subset_hoist()
-    test_fortran_frontend_elemental_exp_complex()
+    #test_fortran_frontend_elemental_exp()
+    #test_fortran_frontend_elemental_exp_pardecl()
+    #test_fortran_frontend_elemental_exp_subset()
+    #test_fortran_frontend_elemental_exp_struct()
+    #test_fortran_frontend_elemental_exp_subset_hoist()
+    #test_fortran_frontend_elemental_exp_complex()
+    test_fortran_frontend_elemental_ecrad_bug()

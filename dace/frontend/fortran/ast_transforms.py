@@ -16,6 +16,13 @@ from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes
     match_callsite_args_to_function_args
 
 
+class NeedsTypeInferenceException(BaseException):
+
+    def __init__(self, func_name, line_number):
+
+        self.line_number = line_number
+        self.func_name = func_name
+
 class Structure:
 
     def __init__(self, name: str):
@@ -3536,6 +3543,10 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
             if isinstance(node.lval, ast_internal_classes.Name_Node):
 
                 var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
+
+                if var.type == 'VOID':
+                    raise NeedsTypeInferenceException(node.rval.name.name, node.line_number)
+
                 if var.sizes is None or len(var.sizes) == 0:
                     return
 

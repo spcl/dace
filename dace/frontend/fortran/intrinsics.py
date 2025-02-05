@@ -9,7 +9,7 @@ from numpy import array_repr
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
-    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder
+    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, NeedsTypeInferenceException
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes, mywalk
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
@@ -19,13 +19,6 @@ from dace.sdfg.graph import OrderedDiGraph
 from dace.transformation import transformation as xf
 
 FASTNode = Any
-
-class NeedsTypeInferenceException(BaseException):
-
-    def __init__(self, func_name, line_number):
-
-        self.line_number = line_number
-        self.func_name = func_name
 
 class IntrinsicTransformation:
 
@@ -1648,12 +1641,16 @@ class MathFunctions(IntrinsicTransformation):
 
     @staticmethod
     def one_to_one_size(node: ast_internal_classes.Call_Expr_Node, sizes: List[ast_internal_classes.FNode]):
-        assert len(sizes) == 1
         return sizes[0]
 
     INTRINSIC_SIZE_FUNCTIONS = {
         "TRANSPOSE": IntrinsicSDFGTransformation.transpose_size,
         "MATMUL": IntrinsicSDFGTransformation.matmul_size,
+        "EXP": one_to_one_size.__func__,
+        "MAX": one_to_one_size.__func__,
+        "MIN": one_to_one_size.__func__,
+        "SQRT": one_to_one_size.__func__,
+        "LOG": one_to_one_size.__func__,
         "EXP": one_to_one_size.__func__,
     }
 
@@ -1799,9 +1796,18 @@ class MathFunctions(IntrinsicTransformation):
 
         sizes = []
         for arg in node.args:
-            sizes.append(arg.sizes)
 
+            if isinstance(arg, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Real_Literal_Node)):
+                sizes.append(1)
+            else:
+                sizes.append(arg.sizes)
+
+        print(sizes)
         sizes = size_func(node, sizes)
+        print(sizes)
+
+        if isinstance(sizes, ast_internal_classes.Int_Literal_Node):
+            return sizes, [1], return_type
 
         # FIXME: copy-paste from code above; we used to do this in intrinsics, we should now connect
         # to type infernece when possible
@@ -1818,7 +1824,10 @@ class MathFunctions(IntrinsicTransformation):
             else:
                 return_type = replacement_rule.return_type
 
-        return sizes, [1] * len(sizes), return_type
+        if isinstance(sizes, list):
+            return sizes, [1] * len(sizes), return_type
+        else:
+            return [], [1], return_type
 
     @staticmethod
     def replacable(func_name: str) -> bool:
@@ -1878,6 +1887,7 @@ class FortranIntrinsics:
         return FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION
 
     def replace_function_name(self, node: Union[FASTNode, ast_internal_classes.Name_Node]) -> ast_internal_classes.Name_Node:
+
         if isinstance(node, ast_internal_classes.Name_Node):
             func_name = node.name
         else:
