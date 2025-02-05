@@ -1564,11 +1564,29 @@ class AST_translator:
                                                             placeholders_offsets=self.placeholders_offsets,
                                                             rename_dict=self.replace_names).write_code(
                         start)
+                    sym_text_start = sym.pystr_to_symbolic(text_start)
+                    repl_dict = {}
+                    for token in sym_text_start.free_symbols:
+                        if str(token) in sdfg.arrays:
+                            sym_token = f"sym_{token}"
+                            if not sym_token in sdfg.symbols:
+                                raise NotImplementedError("Symbol not found in SDFG")
+                            repl_dict[token] = sym_token
+                    text_start = str(sym_text_start.subs(repl_dict))
                     text_stop = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
                                                             placeholders=self.placeholders,
                                                             placeholders_offsets=self.placeholders_offsets,
                                                             rename_dict=self.replace_names).write_code(
                         stop)
+                    sym_text_stop = sym.pystr_to_symbolic(text_stop)
+                    repl_dict = {}
+                    for token in sym_text_stop.free_symbols:
+                        if str(token) in sdfg.arrays:
+                            sym_token = f"sym_{token}"
+                            if not sym_token in sdfg.symbols:
+                                raise NotImplementedError("Symbol not found in SDFG")
+                            repl_dict[token] = sym_token
+                    text_stop = str(sym_text_stop.subs(repl_dict))
                     symb_size = sym.pystr_to_symbolic(text_stop + " - ( " + text_start + " )+1")
                     shape.append(symb_size)
                     mysize = mysize * symb_size
