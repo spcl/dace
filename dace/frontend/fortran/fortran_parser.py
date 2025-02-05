@@ -2869,24 +2869,24 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     prior_exception: Optional[NeedsTypeInferenceException] = None
-    while True:
-        try:
-            program = ast_transforms.ElementalIntrinsicExpander(
+    # while True:
+    #     try:
+    program = ast_transforms.ElementalIntrinsicExpander(
                 ast_transforms.FindFunctionAndSubroutines.from_node(program).names,
                 program
             ).visit(program)
-            break
-        except NeedsTypeInferenceException as e:
+    #     break
+    # except NeedsTypeInferenceException as e:
 
-            if prior_exception is not None:
-                if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
-                    print("Running additional type inference didn't help! VOID type in the same place.")
-                    raise RuntimeError()
-            else:
-                prior_exception = e
-            print("Running additional type inference")
-            # FIXME: optimize func
-            program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
+    #     if prior_exception is not None:
+    #         if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
+    #             print("Running additional type inference didn't help! VOID type in the same place.")
+    #             #raise RuntimeError()
+    #     else:
+    #         prior_exception = e
+    #     print("Running additional type inference")
+    #     # FIXME: optimize func
+    #     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     prior_exception: Optional[NeedsTypeInferenceException] = None
     for transformation in own_ast.fortran_intrinsics().transformations():
