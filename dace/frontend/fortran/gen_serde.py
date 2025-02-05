@@ -331,6 +331,13 @@ void deserialize(bool* x, std::istream& s) {{
                 continue
             array_map[(f"{z.type}", z.rank)] = (z.name, z.shape)
 
+        def __strip_last_int(x: str) -> str:
+            return '_'.join(x.split('_')[:-1])
+        all_sa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
+                                       if z.startswith("__f2dace_SA_")}
+        all_soa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
+                                       if z.startswith("__f2dace_SOA_")}
+
         f90ops: List[str] = []
         cppops: List[str] = []
         for z in iterate_over_public_components(dt):
@@ -398,13 +405,22 @@ if (yep) {{  // BEGINING IF
                     f90ops.append(f"s = add_line(s, serialize(x%{z.name}))")
                     assert '***' not in sdfg_structs[dt.name][z.name]
                     ptrptr = '**' in sdfg_structs[dt.name][z.name]
+                    if z.alloc:
+                        sa_vars = [all_sa_vars[f"__f2dace_SA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
+                        sa_vars = '\n'.join([f"x->{v} = m.size[dim];" for dim, v in enumerate(sa_vars)])
+                        soa_vars = [all_soa_vars[f"__f2dace_SOA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
+                        soa_vars = '\n'.join([f"x->{v} = m.lbound[dim];" for dim, v in enumerate(soa_vars)])
+                    else:
+                        sa_vars, soa_vars = '', ''
                     if ptrptr:
                         cppops.append(f"""
 m = read_array_meta(s);
+{sa_vars}
+{soa_vars}
 read_line(s);  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
-x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
+x->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
 for (int i=0; i<m.volume(); ++i) {{
   x->{z.name}[i] = new std::remove_pointer<std::remove_reference<decltype(x->{z.name}[i])>::type>::type;
   deserialize(x->{z.name}[i], s);
