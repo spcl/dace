@@ -22,6 +22,41 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
     proto += "#include <dace/dace.h>\n"
+
+    #################################
+    # Custom types
+    datatypes = set()
+    # Types of this SDFG
+    for _, arrname, arr in sdfg.arrays_recursive():
+        if arr is not None:
+            datatypes.add(arr.dtype)
+
+    emitted = set()
+
+    def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool, output: str) -> (bool, str):
+        if isinstance(dtype, dtypes.pointer):
+            wrote_something, output = _emit_definitions(dtype._typeclass, wrote_something, output)
+        elif isinstance(dtype, dtypes.struct):
+            for field in dtype.fields.values():
+                wrote_something, output = _emit_definitions(field, wrote_something, output)
+        if hasattr(dtype, 'emit_definition'):
+            if not wrote_something:
+                output += "\n"
+            if dtype not in emitted:
+                output += dtype.emit_definition()
+                output += "\n"
+                wrote_something = True
+                emitted.add(dtype)
+        return wrote_something, output
+
+    # Emit unique definitions
+    wrote_something = False
+    for typ in datatypes:
+        wrote_something, proto = _emit_definitions(typ, wrote_something, output = proto)
+    if wrote_something:
+        proto += "\n"
+    #################################
+
     init_params = (sdfg.name, sdfg.name, sdfg.init_signature(free_symbols=frame.free_symbols(sdfg)))
     call_params = sdfg.signature(with_types=True, for_call=False, arglist=frame.arglist)
     if len(call_params) > 0:
