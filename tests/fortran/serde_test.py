@@ -106,8 +106,7 @@ end subroutine f2
         # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
         # the serialization is as expected.
         ast = parse_and_improve({'serde.f90': serde_code.f90_serializer, 'main.f90': ast.tofortran()})
-        code = ast.tofortran()
-        SourceCodeBuilder().add_file(code).run_with_gfortran()
+        SourceCodeBuilder().add_file(ast.tofortran()).run_with_gfortran()
 
         got = Path(s_data.name).read_text().strip()
         # TODO: Get rid of unwanted whitespaces in the generated fortran code.
@@ -198,3 +197,21 @@ F
 F
 """.strip()
         assert want == got
+
+        cpp_code = f"""
+{serde_code.cpp_deserializer}
+
+#include <fstream>
+#include <iostream>
+
+int main() {{
+  std::ifstream data("{s_data.name}");
+
+  t x;
+  serde::deserialize(&x, data);
+  std::cout << x.name->w[0]->a << std::endl;
+
+  return EXIT_SUCCESS;
+}}
+"""
+        SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()

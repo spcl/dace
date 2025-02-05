@@ -276,31 +276,42 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
                                                     if isinstance(v, dace.data.Structure)}
     sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
                                                                  for k, v in sdfg_structs.items()}
+
+    def _real_ctype(v: dace.data.Data):
+        if isinstance(v, dace.data.Scalar):
+            return f"{v.ctype}"
+        elif isinstance(v, dace.data.Array):
+            return f"{v.ctype}*"
+        elif isinstance(v, dace.data.Structure):
+            return f"{v.ctype}"
+        else:
+            raise NotImplementedError
+
     sdfg_structs: Dict[str, Dict[str, str]] = {
-        k: {kk: f"{vv.ctype}{'' if isinstance(vv, dace.data.Scalar) else '*'}" for kk, vv in v}
+        k: {kk: _real_ctype(vv) for kk, vv in v}
         for k, v in sdfg_structs.items()}
     deserializer_fns: List[str] = [f"""
-void deserialize(float* x, std::istringstream& s) {{
-    s >> *x;
+void deserialize(float* x, std::istream& s) {{
+    read_scalar(*x, s);
 }}
-void deserialize(double* x, std::istringstream& s) {{
-    s >> *x;
+void deserialize(double* x, std::istream& s) {{
+    read_scalar(*x, s);
 }}
-void deserialize(long double* x, std::istringstream& s) {{
-    s >> *x;
+void deserialize(long double* x, std::istream& s) {{
+    read_scalar(*x, s);
 }}
-void deserialize(int* x, std::istringstream& s) {{
-    s >> *x;
+void deserialize(int* x, std::istream& s) {{
+    read_scalar(*x, s);
 }}
-void deserialize(long* x, std::istringstream& s) {{
-    s >> *x;
+void deserialize(long* x, std::istream& s) {{
+    read_scalar(*x, s);
 }}
-void deserialize(long long* x, std::istringstream& s) {{
-    s >> *x;
+void deserialize(long long* x, std::istream& s) {{
+    read_scalar(*x, s);
 }}
-void deserialize(bool* x, std::istringstream& s) {{
+void deserialize(bool* x, std::istream& s) {{
     char c;
-    s >> c;
+    read_scalar(c, s);
     assert (c == 'T' or c == 'F');
     *x = (c == 'T');
 }}
@@ -327,7 +338,7 @@ void deserialize(bool* x, std::istringstream& s) {{
                 # The component is not present in the final SDFG, so we don't care for it.
                 continue
             f90ops.append(f"s = add_line(s , '# {z.name}')")
-            cppops.append(f"s.getline(bin, 100);  // Should contain '# {z.name}'")
+            cppops.append(f"read_line(s);  // Should contain '# {z.name}'")
 
             # This is some intermediate calculation for F90 code, but no actual code is generated here (i.e., in ops).
             if z.rank:
@@ -365,7 +376,7 @@ s = add_line(s, serialize(associated(x%{z.name})))""")
                 # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes, we will
                 #  only populate this when it points to a different component of the same structure.
                 cppops.append(f"""
-s.getline(bin, 100);  // Should contain '# assoc'
+read_line(s);  // Should contain '# assoc'
 deserialize(&yep, s);
 """)
                 # TODO: Currenly we do nothing but this is the flag of associated values, so `nullptr` anyway.
@@ -378,15 +389,31 @@ s = add_line(s, serialize(allocated(x%{z.name})))
 if (allocated(x%{z.name})) then
 """)
                     cppops.append(f"""
-s.getline(bin, 100);  // Should contain '# alloc'
+read_line(s);  // Should contain '# alloc'
 deserialize(&yep, s);
 if (yep) {{  // BEGINING IF
 """)
                 if z.rank:
                     f90ops.extend(generate_array_meta(f"x%{z.name}", z.rank))
                     f90ops.append(f"s = add_line(s, serialize(x%{z.name}))")
-                    cppops.append(f"""
+                    assert '***' not in sdfg_structs[dt.name][z.name]
+                    ptrptr = '**' in sdfg_structs[dt.name][z.name]
+                    if ptrptr:
+                        cppops.append(f"""
 m = read_array_meta(s);
+read_line(s);  // Should contain '# entries'
+// We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
+// as us).
+x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
+for (int i=0; i<m.volume(); ++i) {{
+  x->{z.name}[i] = new std::remove_pointer<std::remove_reference<decltype(x->{z.name}[i])>::type>::type;
+  deserialize(x->{z.name}[i], s);
+}}
+""")
+                    else:
+                        cppops.append(f"""
+m = read_array_meta(s);
+read_line(s);  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
 x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
@@ -394,11 +421,16 @@ for (int i=0; i<m.volume(); ++i) {{
   deserialize(&(x->{z.name}[i]), s);
 }}
 """)
-                else:
+                elif '*' in sdfg_structs[dt.name][z.name]:
                     f90ops.append(f"s = add_line(s, serialize(x%{z.name}))")
                     cppops.append(f"""
 x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type;
 deserialize(x->{z.name}, s);
+""")
+                else:
+                    f90ops.append(f"s = add_line(s, serialize(x%{z.name}))")
+                    cppops.append(f"""
+deserialize(&(x->{z.name}), s);
 """)
 
                 if z.alloc:
@@ -424,7 +456,7 @@ end function {dt.name}_2s
         # Conclude the deserializer of the type.
         cppops: str = '\n'.join(cppops)
         deserializer_fns.append(f"""
-void deserialize({dt.name}* x, std::istringstream& s) {{
+void deserialize({dt.name}* x, std::istream& s) {{
     bool yep;
     char bin[101];  // We are assuming that our comment lines won't be too long
     array_meta m;
@@ -457,7 +489,8 @@ struct {name} {{
 #define __DACE_SERDE__
 
 #include <cassert>
-#include <sstream>
+#include <istream>
+#include <iostream>
 
 // Forward declarations of structs.
 {forward_decls}
@@ -473,21 +506,37 @@ namespace serde {{
       int volume() const {{  return std::reduce(size.begin(), size.end(), 1, std::multiplies<int>()) ; }}
     }};
 
-    array_meta read_array_meta(std::istringstream& s) {{
+    void scroll_space(std::istream& s) {{
+        while (!s.eof() && isspace(s.peek())) s.get();
+    }}
+
+    void read_line(std::istream& s) {{
+        if (s.eof()) return;
+        scroll_space(s);
+        char bin[101];
+        s.getline(bin, 100);
+    }}
+
+    template<typename T>
+    void read_scalar(T& x, std::istream& s) {{
+        if (s.eof()) return;
+        scroll_space(s);
+        s >> x;
+    }}
+
+    array_meta read_array_meta(std::istream& s) {{
         array_meta m;
-        bool yep;
-        char bin[101];  // We are assuming that our comment lines won't be too long
-        s.getline(bin, 100);  // Should contain '# rank'
-        s >> m.rank;
+        read_line(s);  // Should contain '# rank'
+        read_scalar(m.rank, s);
         m.size.resize(m.rank);
         m.lbound.resize(m.rank);
-        s.getline(bin, 100);  // Should contain '# size'
+        read_line(s);  // Should contain '# size'
         for (int i=0; i<m.rank; ++i) {{
-          s >> m.size[i];
+            read_scalar(m.size[i], s);
         }}
-        s.getline(bin, 100);  // Should contain '# lbound'
+        read_line(s);  // Should contain '# lbound'
         for (int i=0; i<m.rank; ++i) {{
-          s >> m.lbound[i];
+            read_scalar(m.lbound[i], s);
         }}
         return m;
     }}
