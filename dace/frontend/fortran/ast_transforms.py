@@ -2009,12 +2009,7 @@ class WhileConditionExtractor(NodeTransformer):
         for child in node.execution:
 
             if isinstance(child, ast_internal_classes.While_Stmt_Node):
-                if isinstance(child.cond, ast_internal_classes.BinOp_Node):
-                    if child.cond.op == "==" and isinstance(child.cond.rval, ast_internal_classes.Int_Literal_Node):
-                       if isinstance(child.cond.lval, ast_internal_classes.Name_Node):
-                           if child.cond.lval.name=="jb_var_1001":
-                               newbody.append(child)
-                               continue 
+                
                     
                 old_cond = child.cond
                 newbody.append(
@@ -2025,7 +2020,7 @@ class WhileConditionExtractor(NodeTransformer):
                 newbody.append(ast_internal_classes.BinOp_Node(
                     lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
                     op="=",
-                    rval=old_cond,
+                    rval=copy.deepcopy(old_cond),
                     line_number=child.line_number,
                     parent=child.parent))
                 newcond = ast_internal_classes.BinOp_Node(
@@ -2037,7 +2032,7 @@ class WhileConditionExtractor(NodeTransformer):
                 newwhilebody.execution.append(ast_internal_classes.BinOp_Node(
                     lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
                     op="=",
-                    rval=old_cond,
+                    rval=copy.deepcopy(old_cond),
                     line_number=child.line_number,
                     parent=child.parent))
                 
