@@ -54,7 +54,7 @@ contains
     character(len=*), intent(in) :: x
     character(len=:), allocatable :: s
     allocate(character(len = len(x) + 1)::s)
-    write (s, *) trim(x)
+    write (s, '(g0)') trim(x)
     s = trim(s)
   end function character_2s
 end module serde
@@ -76,7 +76,7 @@ function {fn_name}(x) result(s)
   {typ}{kind}, intent(in) :: x
   character(len=:), allocatable :: s
   allocate (character(len=50) :: s)
-  write (s, *) x
+  write (s, '(g0)') x
   s = trim(s)
 end function {fn_name}
 """))

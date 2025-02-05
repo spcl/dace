@@ -2693,7 +2693,8 @@ class ParseConfig:
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
         self.entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
-                             for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
+                             for c in walk(ast, ENTRY_POINT_OBJECT_CLASSES)
+                             if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
 
 
 def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
