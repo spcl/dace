@@ -407,9 +407,9 @@ if (yep) {{  // BEGINING IF
                     ptrptr = '**' in sdfg_structs[dt.name][z.name]
                     if z.alloc:
                         sa_vars = [all_sa_vars[f"__f2dace_SA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
-                        sa_vars = '\n'.join([f"x->{v} = m.size[dim];" for dim, v in enumerate(sa_vars)])
+                        sa_vars = '\n'.join([f"x->{v} = m.size[{dim}];" for dim, v in enumerate(sa_vars)])
                         soa_vars = [all_soa_vars[f"__f2dace_SOA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
-                        soa_vars = '\n'.join([f"x->{v} = m.lbound[dim];" for dim, v in enumerate(soa_vars)])
+                        soa_vars = '\n'.join([f"x->{v} = m.lbound[{dim}];" for dim, v in enumerate(soa_vars)])
                     else:
                         sa_vars, soa_vars = '', ''
                     if ptrptr:
@@ -429,6 +429,8 @@ for (int i=0; i<m.volume(); ++i) {{
                     else:
                         cppops.append(f"""
 m = read_array_meta(s);
+{sa_vars}
+{soa_vars}
 read_line(s);  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
@@ -492,7 +494,7 @@ void deserialize({dt.name}* x, std::istream& s) {{
 
     # Conclude the deserializer code.
     forward_decls: str = '\n'.join(f"struct {k};" for k in sdfg_structs.keys())
-    struct_defs: Dict[str, str] = {k: '\n'.join(f"{typ} {comp};" for comp, typ in sorted(v.items()))
+    struct_defs: Dict[str, str] = {k: '\n'.join(f"{typ} {comp} = {{}};" for comp, typ in sorted(v.items()))
                                    for k, v in sdfg_structs.items()}
     struct_defs: str = '\n'.join(f"""
 struct {name} {{

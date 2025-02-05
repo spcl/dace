@@ -209,9 +209,22 @@ int main() {{
 
   t x;
   serde::deserialize(&x, data);
-  std::cout << x.name->w[0]->a << std::endl;
+  std::cout << "a: " << x.name->w[0]->a << std::endl;
+  std::cout << "alloc(aaz): " << (x.name->w[0]->aaz ? "yes" : "no") << std::endl;
+  std::cout << "alloc(bbz): " << (x.name->w[0]->bbz ? "yes" : "no") << std::endl;
+  std::cout << "volume(bbz): " \
+            << x.name->w[0]->__f2dace_SA_bbz_d_0_s_4 * x.name->w[0]->__f2dace_SA_bbz_d_1_s_5 << std::endl;
 
   return EXIT_SUCCESS;
 }}
 """
-        SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
+        # with open('/Users/pmz/gitspace/tmpdace/dace/dace/frontend/fortran/conf_files/serde.cc', 'w') as f:
+        #     f.write(cpp_code)
+        # print(Path(s_data.name).read_text())
+        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
+        assert output.strip() == f"""
+a: 42
+alloc(aaz): no
+alloc(bbz): yes
+volume(bbz): 4
+""".strip()
