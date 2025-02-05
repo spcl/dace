@@ -173,7 +173,7 @@ T
 # cCP
 # assoc
 T
-=> x%cC(:           5))
+=> missing
 # d
 T
 # dD
