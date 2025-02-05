@@ -450,8 +450,11 @@ class StateFusion(transformation.MultiStateTransformation):
                         for outnode in fused_cc.first_output_nodes:
                             if outnode.data != inpnode.data:
                                 continue
-                            if StateFusion.memlets_intersect(first_state, [outnode], False, second_state, [inpnode],
-                                                             True):
+                            # Check if the memlets intersect. If the accesses are to structures, consider them as
+                            # intersecting regardless of the actual memlet accesses.
+                            if (isinstance(outnode.desc(sdfg), dt.Structure) or
+                                StateFusion.memlets_intersect(first_state, [outnode], False, second_state, [inpnode],
+                                                              True)):
                                 # If found more than once, either there is a
                                 # path from one to another or it is ambiguous
                                 if found is not None:
@@ -573,7 +576,8 @@ class StateFusion(transformation.MultiStateTransformation):
             else:
                 # Choose first candidate that intersects memlets
                 for cand in candidates:
-                    if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                    if (isinstance(cand.desc(sdfg), dt.Structure) or
+                        StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True)):
                         n = cand
                         break
                 else:
