@@ -228,9 +228,6 @@ int main() {{
   return EXIT_SUCCESS;
 }}
 """
-        # with open('/Users/pmz/gitspace/tmpdace/dace/dace/frontend/fortran/conf_files/serde.cc', 'w') as f:
-        #     f.write(cpp_code)
-        # print(Path(s_data.name).read_text())
         output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
         assert output.strip() == f"""
 a: 42
