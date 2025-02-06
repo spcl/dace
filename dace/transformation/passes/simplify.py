@@ -123,6 +123,9 @@ class SimplifyPass(ppl.FixedPointPipeline):
                               '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                               'for more information.')
                 return None
+        
+        if self.verbose:
+            print(f'Applying {p.__class__.__name__}...')
 
         if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
             ret: Dict[int, Any] = {}
