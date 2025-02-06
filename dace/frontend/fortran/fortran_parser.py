@@ -3038,6 +3038,7 @@ def create_sdfg_from_string(source_string: str, sdfg_name: str, normalize_offset
     return create_singular_sdfg_from_string(source_string, f"{sdfg_name}_function", normalize_offsets)
 
 
+
 def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.DiGraph:
     """
     Compute a dependency graph among all the top level objects in the program.
