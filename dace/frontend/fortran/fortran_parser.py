@@ -2695,6 +2695,7 @@ class ParseConfig:
         self.entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
                              for c in walk(ast, ENTRY_POINT_OBJECT_CLASSES)
                              if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
+        self.do_not_prune = list({x for x in self.entry_points + self.do_not_prune})
 
 
 def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
