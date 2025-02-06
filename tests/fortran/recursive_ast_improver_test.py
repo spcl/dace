@@ -10,7 +10,6 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 def parse_and_improve(sources: Dict[str, str]):
     parser = ParserFactory().create(std="f2008")
-    assert 'main.f90' in sources
     ast = construct_full_ast(sources, parser)
     assert isinstance(ast, Program)
     return ast
@@ -168,7 +167,7 @@ contains
     end function fun2
   end subroutine fun
 end module lib
-""").add_file("""
+
 program main
   use lib, only: fun
   implicit none
@@ -282,7 +281,7 @@ contains
     fun2 = fun()
   end function fun2
 end module lib
-""").add_file("""
+
 program main
   use lib
   use lib, only: fun2
@@ -344,7 +343,7 @@ contains
     d(2) = 5.5
   end subroutine fun
 end module lib
-""").add_file("""
+
 program main
   use lib
   implicit none
@@ -390,7 +389,7 @@ contains
     d(2) = 5.5
   end subroutine fun
 end module lib
-""").add_file("""
+
 module lib_indirect
   use lib
 contains
@@ -400,7 +399,7 @@ contains
     call fun(d)
   end subroutine fun_indirect
 end module lib_indirect
-""").add_file("""
+
 program main
   use lib_indirect, only: fun_indirect
   implicit none
@@ -453,7 +452,7 @@ contains
     fun = 5.5
   end function fun
 end module lib
-""").add_file("""
+
 program main
   use lib
   implicit none
@@ -505,7 +504,7 @@ contains
     fun = 5.5
   end function fun
 end module lib
-""").add_file("""
+
 module lib_indirect
   use lib, only: fun
   implicit none
@@ -519,7 +518,7 @@ contains
     fun2 = 4.2
   end function fun2
 end module lib_indirect
-""").add_file("""
+
 program main
   use lib_indirect, only : fun, fun2
   implicit none

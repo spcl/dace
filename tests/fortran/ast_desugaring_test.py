@@ -10,14 +10,13 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, deconstuct_goto_statements, SPEC, remove_access_and_bind_statements, \
-    identifier_specs, alias_specs
+    identifier_specs, alias_specs, consolidate_uses
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[SPEC]] = None):
     parser = ParserFactory().create(std="f2008")
-    assert 'main.f90' in sources
     ast = construct_full_ast(sources, parser, entry_points=entry_points)
     ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
@@ -67,7 +66,7 @@ contains
     a = area(this, 1.0)
   end subroutine get_area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -151,7 +150,7 @@ contains
     get_area = m*side*side
   end function get_area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -221,7 +220,7 @@ contains
     area = m*this%side*this%side
   end function area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -281,7 +280,7 @@ contains
     area = m*this%side*this%side
   end function area
 end module lib_1
-""").add_file("""
+
 module lib_2
   implicit none
   type Circle
@@ -297,7 +296,7 @@ contains
     area = m*this%rad*this%rad
   end function area
 end module lib_2
-""").add_file("""
+
 subroutine main
   use lib_1, only: Square
   use lib_2, only: Circle
@@ -387,7 +386,7 @@ contains
     area_integer = m*this%side*this%side
   end function area_integer
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square
   implicit none
@@ -458,7 +457,7 @@ contains
     area = m*this%side*this%side
   end function area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square, area
   implicit none
@@ -521,7 +520,7 @@ contains
     perim = m * sum(this%sides)
   end function perim
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square, perim
   implicit none
@@ -591,7 +590,7 @@ contains
     perim = m * sum(this%sides)
   end function perim
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: Square, perim
   implicit none
@@ -660,12 +659,12 @@ contains
     perim = m * sum(this%sides)
   end function perim
 end module lib
-""").add_file("""
+
 module lib2
   use lib
   implicit none
 end module lib2
-""").add_file("""
+
 subroutine main
   use lib2, only: Square, perim
   implicit none
@@ -716,6 +715,52 @@ SUBROUTINE main
   a = perim(s, 1.0)
   a = perim_deconproc_0(s, 1.0)
 END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_uses_with_renames():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  integer, parameter :: pi4 = 9
+  integer, parameter :: i4 = selected_int_kind(pi4)  ! `i4` will be const-evaluated to 4
+end module lib
+
+module main
+contains
+  subroutine fun(d)
+    use lib, only: ik4 => i4  ! After const-evaluation, will be redundant.
+    integer(ik4) :: i  ! `ik4` will also be const-evaluated to 4
+    real, intent(out) :: d(2)
+    i = 4
+    d(2) = 5.5 + i
+  end subroutine fun
+end module main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+
+    # A constant-evaluation will pin the constant values.
+    ast = const_eval_nodes(ast)
+    # A use-consolidation will remove the now-redundant use.
+    ast = consolidate_uses(ast)
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: pi4 = 9
+  INTEGER, PARAMETER :: i4 = 4
+END MODULE lib
+MODULE main
+  CONTAINS
+  SUBROUTINE fun(d)
+    INTEGER(KIND = 4) :: i
+    REAL, INTENT(OUT) :: d(2)
+    i = 4
+    d(2) = 5.5 + i
+  END SUBROUTINE fun
+END MODULE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
@@ -773,7 +818,7 @@ contains
     real_fun = 1.0
   end function real_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun
   implicit none
@@ -831,7 +876,7 @@ contains
     a = 1.0
   end subroutine not_real_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun, not_fun
   implicit none
@@ -882,7 +927,7 @@ module lib
     end subroutine fun
   end interface
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: no_fun => fun
   implicit none
@@ -942,7 +987,7 @@ contains
     integer_fun = x * 2
   end function integer_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun
   implicit none
@@ -1011,7 +1056,7 @@ contains
     end if
   end function real_fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: fun
   implicit none
@@ -1089,7 +1134,7 @@ contains
     m = this%val(1, 1)
   end subroutine copy_matrix
 end module lib
-""").add_file("""
+
 subroutine main
   use lib, only: T
   implicit none
@@ -1182,7 +1227,7 @@ contains
     area = m*sum(this%sides)
   end function area
 end module lib
-""").add_file("""
+
 subroutine main
   use lib
   use lib, only: perim
@@ -1323,7 +1368,7 @@ contains
     this%b = 5.1
   end subroutine fun
 end module lib
-""").add_file("""
+
 subroutine main
   use lib
   implicit none
@@ -1534,7 +1579,7 @@ contains
     this%b = 5.1
   end subroutine fun
 end module lib
-""").add_file("""
+
 subroutine main(cfg)
   use lib
   implicit none
@@ -1601,7 +1646,7 @@ contains
     this%b = 5.1
   end subroutine fun
 end module lib
-""").add_file("""
+
 subroutine main(cfg)
   use lib
   implicit none
@@ -1666,7 +1711,7 @@ contains
     endif
   end function fun
 end module lib
-""").add_file("""
+
 subroutine main(cfg)
   use lib
   implicit none
@@ -1757,7 +1802,7 @@ contains
     c = 3*fun(.false., kwcond=.false., opt=.true.)*not_fun(.true., kwcond=.true., opt=.true.)
   end subroutine user_2
 end module lib
-""").add_file("""
+
 subroutine main()
   use lib
   implicit none
@@ -1836,7 +1881,7 @@ contains
     what = .true.
   end subroutine update
 end module lib
-""").add_file("""
+
 subroutine main
   use lib
   implicit none
@@ -2121,7 +2166,7 @@ contains
     what = .true.
   end subroutine update
 end module
-""").add_file("""
+
 subroutine main
   use lib
   implicit none
