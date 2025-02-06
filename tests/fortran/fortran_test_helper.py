@@ -278,7 +278,7 @@ class InternalASTMatcher:
         if self.is_type is not None:
             assert isinstance(node, self.is_type)
         if self.has_value is not None:
-            assert node == self.has_value
+            assert node == self.has_value, f"{node} is not the same as {self.has_value}"
         if self.has_empty_attr is not None:
             for key in self.has_empty_attr:
                 assert not hasattr(node, key) or not getattr(node, key), f"{node} is expected to not have key: {key}"
