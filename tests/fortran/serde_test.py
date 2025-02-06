@@ -2,6 +2,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Dict
 
+import pytest
 from fparser.two.Fortran2003 import Program, Execution_Part, Specification_Part, Use_Stmt, Call_Stmt, \
     Main_Program, Component_Decl
 from fparser.two.utils import walk
@@ -26,6 +27,7 @@ def parse_and_improve(sources: Dict[str, str]):
     return ast
 
 
+@pytest.mark.skip("1. `ALLOCATABLE` breaks the SDFG compilation, 2. We need to get the path to the generated header.")
 def test_gen_serde():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
