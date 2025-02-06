@@ -2715,7 +2715,7 @@ ufuncs = dict(
               operator=None,
               inputs=["__in1"],
               outputs=["__out"],
-              code="__out = sign_numpy_2(__in1)" if np.lib.NumpyVersion(np.__version__) >= '2.0.0b1' else "__out = sign(__in1)",
+              code="__out = sign_numpy_2(__in1)" if numpy_version >= '2.0.0' else "__out = sign(__in1)",
               reduce=None,
               initial=np.sign.identity),
     heaviside=dict(name="_numpy_heaviside_",
