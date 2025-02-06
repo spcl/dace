@@ -71,7 +71,21 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Function_S
         assert kind in {4, 8}
     fn_name = f"{typ}{kind or ''}_2s"
     kind = f"(kind={kind})" if kind else ''
-    return Function_Subprogram(get_reader(f"""
+
+    if typ == 'logical':
+        return Function_Subprogram(get_reader(f"""
+function {fn_name}(x) result(s)
+  {typ}{kind}, intent(in) :: x
+  integer :: y
+  character(len=:), allocatable :: s
+  allocate (character(len=50) :: s)
+  y = x
+  write (s, '(g0)') y
+  s = trim(s)
+end function {fn_name}
+"""))
+    else:
+        return Function_Subprogram(get_reader(f"""
 function {fn_name}(x) result(s)
   {typ}{kind}, intent(in) :: x
   character(len=:), allocatable :: s
@@ -109,23 +123,23 @@ def generate_pointer_meta(ptr: str, rank: int, candidates: Dict[str, Tuple]) -> 
         sub_checks: List[str] = []
         for subsc in combinations(range(c_rank), c_rank - rank):
             ops: List[str] = []
-            subsc_str, subsc_str_serialized_ops = [], []
+            subsc_str, subsc_str_serialized = [], []
             for k in range(c_rank):
                 if k not in subsc:
                     subsc_str.append(':')
-                    subsc_str_serialized_ops.append(f"s = s // ':'")
+                    subsc_str_serialized.append(f"':'")
                     continue
                 subsc_str.append(f"kmeta_{k}")
-                subsc_str_serialized_ops.append(f"s = s // serialize(kmeta_{k})")
+                subsc_str_serialized.append(f"serialize(kmeta_{k})")
                 ops.append(f"do kmeta_{k} = lbound({c}, {k + 1}), ubound({c}, {k + 1})")
             end_dos = ['end do'] * len(ops)
             subsc_str = ', '.join(subsc_str)
-            subsc_str_serialized_ops = '\n'.join(subsc_str_serialized_ops)
+            subsc_str_serialized = "// ',' // ".join(subsc_str_serialized)
             ops.append(f"""
 if (associated({ptr}, {c}({subsc_str}))) then
 kmeta = 1
 s = s // "=> {c}("
-{subsc_str_serialized_ops}
+s = s // {subsc_str_serialized}
 s = s // "))" // {NEW_LINE}
 end if
 """)
@@ -134,8 +148,6 @@ end if
         cand_checks.append('\n'.join(sub_checks))
 
     cand_checks: str = '\n'.join(cand_checks)
-    # TODO: We are essentially disabling all slice detection with this line. Enable back when it's performant enough.
-    cand_checks: str = ''
     return f"""
 if (associated({ptr})) then
     kmeta = 0
@@ -310,10 +322,7 @@ void deserialize(long long* x, std::istream& s) {{
     read_scalar(*x, s);
 }}
 void deserialize(bool* x, std::istream& s) {{
-    char c;
-    read_scalar(c, s);
-    assert (c == 'T' or c == 'F');
-    *x = (c == 'T');
+    read_scalar(*x, s);
 }}
 """]
     config_injection_fns: List[str] = []
@@ -352,7 +361,7 @@ void deserialize(bool* x, std::istream& s) {{
                 # The component is not present in the final SDFG, so we don't care for it.
                 continue
             f90ops.append(f"s = add_line(s , '# {z.name}')")
-            cppops.append(f"read_line(s);  // Should contain '# {z.name}'")
+            cppops.append(f"""read_line(s, {{"# {z.name}"}});  // Should contain '# {z.name}'""")
 
             # This is some intermediate calculation for F90 code, but no actual code is generated here (i.e., in ops).
             if z.rank:
@@ -390,11 +399,14 @@ s = add_line(s, serialize(associated(x%{z.name})))""")
                 # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes, we will
                 #  only populate this when it points to a different component of the same structure.
                 cppops.append(f"""
-read_line(s);  // Should contain '# assoc'
+read_line(s, {{"# assoc"}});  // Should contain '# assoc'
 deserialize(&yep, s);
 """)
                 # TODO: Currenly we do nothing but this is the flag of associated values, so `nullptr` anyway.
-                cppops.append(f"x->{z.name} = nullptr;")
+                cppops.append(f"""
+read_line(s, {{"=>"}});  // Should contain '=> ...'
+x->{z.name} = nullptr;
+""")
             else:
                 if z.alloc:
                     f90ops.append(f"""
@@ -403,7 +415,7 @@ s = add_line(s, serialize(allocated(x%{z.name})))
 if (allocated(x%{z.name})) then
 """)
                     cppops.append(f"""
-read_line(s);  // Should contain '# alloc'
+read_line(s, {{"# alloc"}});  // Should contain '# alloc'
 deserialize(&yep, s);
 if (yep) {{  // BEGINING IF
 """)
@@ -424,7 +436,7 @@ if (yep) {{  // BEGINING IF
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
-read_line(s);  // Should contain '# entries'
+read_line(s, {{"# entries"}});  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
 x->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
@@ -438,7 +450,7 @@ for (int i=0; i<m.volume(); ++i) {{
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
-read_line(s);  // Should contain '# entries'
+read_line(s, {{"# entries"}});  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
 x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
@@ -483,7 +495,6 @@ end function {dt.name}_2s
         deserializer_fns.append(f"""
 void deserialize({dt.name}* x, std::istream& s) {{
     bool yep;
-    char bin[101];  // We are assuming that our comment lines won't be too long
     array_meta m;
     {cppops}
 }}
@@ -528,6 +539,15 @@ struct {name} {{
 """ for name, comps in struct_defs.items())
     deserializer_fns: str = '\n'.join(deserializer_fns)
     config_injection_fns: str = '\n'.join(config_injection_fns)
+    # TODO: We don't generate our own structure definitions if the header file contains them (which they should). We can
+    #  discard the code to generate them after we are sure that will happen permanently.
+    struct_defs: str = f"""
+// Forward declarations of structs.
+{forward_decls}
+
+// (Re-)definitions of structs.
+{struct_defs}
+"""
     cpp_code = f"""
 #ifndef __DACE_SERDE__
 #define __DACE_SERDE__
@@ -537,11 +557,7 @@ struct {name} {{
 #include <iostream>
 #include <sstream>
 
-// Forward declarations of structs.
-{forward_decls}
-
-// (Re-)definitions of structs.
-{struct_defs}
+#include "{g.name}.h"
 
 namespace serde {{
     struct array_meta {{
@@ -551,15 +567,29 @@ namespace serde {{
       int volume() const {{  return std::reduce(size.begin(), size.end(), 1, std::multiplies<int>()) ; }}
     }};
 
-    void scroll_space(std::istream& s) {{
-        while (!s.eof() && isspace(s.peek())) s.get();
+    std::string scroll_space(std::istream& s) {{
+        std::string out;
+        while (!s.eof() && (!s.peek() || isspace(s.peek()))) {{
+            out += s.get();
+            assert(s.good());
+        }}
+        return out;
     }}
 
-    void read_line(std::istream& s) {{
-        if (s.eof()) return;
+    std::string read_line(std::istream& s, const std::optional<std::string>& should_contain = {{}}) {{
+        if (s.eof()) return "<eof>";
         scroll_space(s);
         char bin[101];
         s.getline(bin, 100);
+        assert(s.good());
+        if (should_contain) {{
+            bool ok = (std::string(bin).find(*should_contain) != std::string::npos);
+            if (!ok) {{
+                std::cerr << "Expected: '" << *should_contain << "'; got: '" << bin << "'" << std::endl;
+                exit(EXIT_FAILURE);
+            }}
+        }}
+        return {{bin}};
     }}
 
     template<typename T>
@@ -569,17 +599,40 @@ namespace serde {{
         s >> x;
     }}
 
+    void read_scalar(float& x, std::istream& s) {{
+        if (s.eof()) return;
+        scroll_space(s);
+        long double y;
+        s >> y;
+        x = y;
+    }}
+
+    void read_scalar(double& x, std::istream& s) {{
+        if (s.eof()) return;
+        scroll_space(s);
+        long double y;
+        s >> y;
+        x = y;
+    }}
+
+    void read_scalar(bool& x, std::istream& s) {{
+        char c;
+        read_scalar(c, s);
+        assert (c == '1' or c == '0');
+        x = (c == '1');
+    }}
+
     array_meta read_array_meta(std::istream& s) {{
         array_meta m;
-        read_line(s);  // Should contain '# rank'
+        read_line(s, {{"# rank"}});  // Should contain '# rank'
         read_scalar(m.rank, s);
         m.size.resize(m.rank);
         m.lbound.resize(m.rank);
-        read_line(s);  // Should contain '# size'
+        read_line(s, {{"# size"}});  // Should contain '# size'
         for (int i=0; i<m.rank; ++i) {{
             read_scalar(m.size[i], s);
         }}
-        read_line(s);  // Should contain '# lbound'
+        read_line(s, {{"# lbound"}});  // Should contain '# lbound'
         for (int i=0; i<m.rank; ++i) {{
             read_scalar(m.lbound[i], s);
         }}

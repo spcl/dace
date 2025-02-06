@@ -145,7 +145,7 @@ end subroutine f2
 4
 # aaz
 # alloc
-F
+0
 # b
 2.00000000
 # bb
@@ -161,7 +161,7 @@ F
 5.00000000
 # bbz
 # alloc
-T
+1
 # rank
 2
 # size
@@ -192,7 +192,7 @@ T
 6.0000000000000000
 6.0000000000000000
 # d
-T
+1
 # dd
 # rank
 1
@@ -201,9 +201,9 @@ T
 # lbound
 1
 # entries
-F
-F
-F
+0
+0
+0
 """.strip()
         assert want == got
 
