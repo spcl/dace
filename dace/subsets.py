@@ -1164,6 +1164,7 @@ class Indices(Subset):
             return self
         return None
 
+@dace.serialize.serializable
 class SubsetUnion(Subset):
     """
     Wrapper subset type that stores multiple Subsets in a list.

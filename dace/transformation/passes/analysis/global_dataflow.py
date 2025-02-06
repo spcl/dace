@@ -1,14 +1,19 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import ast
+import copy
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
-from dace import properties
+from typing import Any, Dict, List, Optional, Set
+from dace import data as dt
+from dace import dtypes, properties
 from dace import transformation
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState
+from dace.sdfg.sdfg import SDFG, memlets_in_ast
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, GlobalDepDataRecord, LoopRegion,
+                             ReturnBlock, SDFGState)
+from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.propagation import MemletPropagation, MemletPropResultT
@@ -266,3 +271,203 @@ class BuildGlobalDataflowProxyGraph(ppl.Pass):
                         else:
                             result.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, target_memlet)
                 result.remove_node(dn)
+
+
+@dataclass(unsafe_hash=True)
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class BuildLayeredDataflowGraphs(ppl.Pass):
+    """
+    TODO
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    with_transients = properties.Property(dtype=bool, default=True)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If access nodes were modified, reapply
+        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.CFG
+
+    def _process_cfg(self, cfg: ControlFlowRegion) -> SDFG:
+        proxy_graph = SDFG('DataflowProxy_' + cfg.label)
+        graph = proxy_graph.add_state(is_start_block=True)
+        sdfg = cfg.sdfg
+        arrays_and_symbols = copy.deepcopy(sdfg.arrays)
+        for k, v in sdfg.symbols.items():
+            arrays_and_symbols[k] = v
+
+        def add_container_if_not_exists(cont: str):
+            if '.' in cont:
+                root_container = cont.split('.')[0]
+                if root_container not in proxy_graph.arrays:
+                    proxy_graph.add_datadesc(root_container, sdfg.arrays[root_container])
+            elif cont not in proxy_graph.arrays:
+                if cont in sdfg.symbols:
+                    if cont not in proxy_graph.symbols:
+                        proxy_graph.add_symbol(cont, sdfg.symbols[cont])
+                elif cont in sdfg.arrays:
+                    proxy_graph.add_datadesc(cont, sdfg.arrays[cont])
+                else:
+                    if cont not in proxy_graph.symbols:
+                        # TODO: needs a better solution for the datatype.
+                        proxy_graph.add_symbol(cont, dtypes.int32)
+
+        def process_read(read_container: str, repo: Dict[str, GlobalDepDataRecord],
+                         read_nodes: Dict[str, nd.AccessNode], tasklet: nd.Tasklet, certain: bool = True):
+            add_container_if_not_exists(read_container)
+            if read_container not in read_nodes:
+                read_nodes[read_container] = graph.add_access(read_container)
+
+            read_memlet = Memlet()
+            read_memlet.data = read_container
+            if repo is not None:
+                read_memlet.subset = repo[read_container].subset
+                read_memlet.dynamic = repo[read_container].dynamic
+                read_memlet.volume = repo[read_container].volume
+            else:
+                read_memlet.subset = Range.from_string('0')
+                read_memlet.dynamic = False
+                read_memlet.volume = 1
+            if not certain:
+                read_memlet.wcr = 'lambda a: a'
+            graph.add_edge(read_nodes[read_container], None, tasklet, read_container, read_memlet)
+
+        def process_write(write_container: str, repo: Dict[str, GlobalDepDataRecord],
+                          write_nodes: Dict[str, nd.AccessNode], tasklet: nd.Tasklet, certain: bool = True):
+            add_container_if_not_exists(write_container)
+            if write_container not in write_nodes:
+                write_nodes[write_container] = graph.add_access(write_container)
+
+            write_memlet = Memlet()
+            write_memlet.data = write_container
+            if repo is not None:
+                write_memlet.subset = repo[write_container].subset
+                write_memlet.dynamic = repo[write_container].dynamic
+                write_memlet.volume = repo[write_container].volume
+            else:
+                write_memlet.subset = Range.from_string('0')
+                write_memlet.dynamic = False
+                write_memlet.volume = 1
+            if not certain:
+                write_memlet.wcr = 'lambda a: a'
+            graph.add_edge(tasklet, write_container, write_nodes[write_container], None, write_memlet)
+
+        available_read_nodes = {}
+
+        for block in cfg_analysis.blockorder_topological_sort(cfg, recursive=False, ignore_nonstate_blocks=False):
+            all_inputs = set(block.certain_reads.keys()).union(set(block.possible_reads.keys()))
+            all_outputs = set(block.certain_writes.keys()).union(set(block.possible_writes.keys()))
+            symbol_reads = set()
+            if isinstance(block, LoopRegion):
+                ignore_sym = set([block.loop_variable])
+                symbol_reads |= block.loop_condition.get_free_symbols(ignore_sym)
+                if block.init_statement:
+                    symbol_reads |= block.init_statement.get_free_symbols(ignore_sym)
+                if block.update_statement:
+                    symbol_reads |= block.update_statement.get_free_symbols(ignore_sym)
+            elif isinstance(block, ConditionalBlock):
+                for cond, _ in block.branches:
+                    if cond is not None:
+                        symbol_reads |= cond.get_free_symbols()
+            all_inputs.update(symbol_reads)
+            if len(all_inputs) > 0 or len(all_outputs) > 0:
+                # Abuse the tasklet code for the GUID of the corresponding block.
+                tasklet = graph.add_tasklet(block.label, all_inputs, all_outputs, block.guid, dtypes.Language.CPP)
+
+                read_nodes = {}
+                for k, v in available_read_nodes.items():
+                    read_nodes[k] = v
+                write_nodes = {}
+                for read_container in block.certain_reads.keys():
+                    process_read(read_container, block.certain_reads, read_nodes, tasklet)
+                for read_container in block.possible_reads.keys():
+                    if read_container in block.certain_reads:
+                        continue
+                    process_read(read_container, block.possible_reads, read_nodes, tasklet, False)
+                for write_container in block.certain_writes.keys():
+                    process_write(write_container, block.certain_writes, write_nodes, tasklet)
+                for write_container in block.possible_writes.keys():
+                    if write_container in block.certain_writes:
+                        continue
+                    process_write(write_container, block.possible_writes, write_nodes, tasklet, False)
+
+                if isinstance(block, LoopRegion):
+                    ignore_sym = set([block.loop_variable])
+                    for sym in block.loop_condition.get_free_symbols(ignore_sym):
+                        process_read(sym, None, read_nodes, tasklet)
+                    if block.init_statement:
+                        for sym in block.init_statement.get_free_symbols(ignore_sym):
+                            process_read(sym, None, read_nodes, tasklet)
+                    if block.update_statement:
+                        certain = block.update_before_condition
+                        for sym in block.update_statement.get_free_symbols(ignore_sym):
+                            process_read(sym, None, read_nodes, tasklet, certain)
+                elif isinstance(block, ConditionalBlock):
+                    for i, (cond, _) in enumerate(block.branches):
+                        if cond is not None:
+                            certain = i == 0
+                            for sym in cond.get_free_symbols():
+                                process_read(sym, None, read_nodes, tasklet, certain)
+
+                for k, v in read_nodes.items():
+                    available_read_nodes[k] = v
+                for k, v in write_nodes.items():
+                    available_read_nodes[k] = v
+
+                if isinstance(block, LoopRegion):
+                    # Annotate loop carry dependencies.
+                    carry_deps = loop_analysis.get_loop_carry_dependencies(block)
+                    for dat in carry_deps:
+                        for dep_read, dep_write in carry_deps[dat]:
+                            target_memlet = Memlet(data=dat, subset=dep_write.subset, other_subset=dep_read.subset,
+                                                   volume=dep_read.volume, dynamic=dep_read.dynamic)
+                            graph.add_edge(write_nodes[dat], None, read_nodes[dat], None, target_memlet)
+
+            edge_read_nodes = {}
+            for k, v in available_read_nodes.items():
+                edge_read_nodes[k] = v
+            edge_write_nodes = {}
+            for oedge in cfg.out_edges(block):
+                uncond = oedge.data.is_unconditional()
+                reads: List[Memlet] = []
+                writes: List[str] = []
+                if not uncond:
+                    for read_memlet in memlets_in_ast(oedge.data.condition.code[0], arrays_and_symbols):
+                        reads.append(read_memlet)
+                for k, v in oedge.data.assignments.items():
+                    for read_memlet in memlets_in_ast(ast.parse(v), arrays_and_symbols):
+                        reads.append(read_memlet)
+                    writes.append(k)
+                if len(reads) > 0 or len(writes) > 0:
+                    # Abuse the tasklet code for the GUID of the corresponding interstate edge.
+                    tasklet = graph.add_tasklet('isedge_' + oedge.data.label, {}, {},
+                                                oedge.data.guid, dtypes.Language.CPP)
+                    for read in reads:
+                        if read.data not in tasklet.in_connectors:
+                            tasklet.add_in_connector(read.data)
+                        process_read(read.data, None, edge_read_nodes, tasklet, uncond)
+                    for write in writes:
+                        if write not in tasklet.out_connectors:
+                            tasklet.add_out_connector(write)
+                        process_write(write, None, edge_write_nodes, tasklet, uncond)
+            for k, v in edge_read_nodes.items():
+                available_read_nodes[k] = v
+            for k, v in edge_write_nodes.items():
+                available_read_nodes[k] = v
+
+        return proxy_graph
+
+    def apply_pass(self, sdfg, pipeline_results) -> Dict[int, SDFG]:
+        result = {}
+
+        sdfg.reset_cfg_list()
+        for cfg in sdfg.all_control_flow_regions(recursive=True):
+            if isinstance(cfg, ConditionalBlock):
+                continue
+            result[cfg.cfg_id] = self._process_cfg(cfg)
+
+        return result

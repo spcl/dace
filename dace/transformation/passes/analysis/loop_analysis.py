@@ -3,7 +3,7 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 from dace.frontend.python import astutils
 
 import sympy
@@ -117,24 +117,26 @@ def _loop_read_intersects_loop_write(loop: LoopRegion, write_subset: Union[Subse
     offset_write = write_subset.offset_new(offset_list, True)
     return intersects(offset_write, read_subset)
 
-def get_loop_carry_dependencies(loop: LoopRegion,
-                                certain_only: bool = False) -> Optional[Dict[GlobalDepDataRecord, GlobalDepDataRecord]]:
+
+def get_loop_carry_dependencies(
+        loop: LoopRegion,
+        certain_only: bool = False) -> Optional[Dict[str, List[Tuple[GlobalDepDataRecord, GlobalDepDataRecord]]]]:
     """
     Compute loop carry dependencies.
     :return: A dictionary mapping loop reads to writes in the same loop, from which they may carry a RAW dependency.
              None if the loop cannot be analyzed.
     """
     update_assignment = None
-    raw_deps: Dict[GlobalDepDataRecord, GlobalDepDataRecord] = dict()
-    read_repo = loop._certain_reads_moredata if certain_only else loop._possible_reads_moredata
-    write_repo = loop._certain_writes_moredata if certain_only else loop._possible_writes_moredata
+    raw_deps: Dict[str, List[Tuple[GlobalDepDataRecord, GlobalDepDataRecord]]] = dict()
+    read_repo = loop.certain_reads if certain_only else loop.possible_reads
+    write_repo = loop.certain_writes if certain_only else loop.possible_writes
     for data in read_repo:
         if not data in write_repo:
             continue
 
         input = read_repo[data]
-        read_subset = input.memlet.src_subset or input.memlet.subset
-        if loop.loop_variable and loop.loop_variable in input.memlet.free_symbols:
+        read_subset = input.subset
+        if loop.loop_variable and loop.loop_variable in input.subset.free_symbols:
             # If the iteration variable is involved in an access, we need to first offset it by the loop
             # stride and then check for an overlap/intersection. If one is found after offsetting, there
             # is a RAW loop carry dependency.
@@ -145,16 +147,27 @@ def get_loop_carry_dependencies(loop: LoopRegion,
                 if update_assignment is None:
                     return None
 
-            if isinstance(output.memlet.subset, SubsetUnion):
-                if any([_loop_read_intersects_loop_write(loop, s, read_subset, update_assignment)
-                        for s in output.memlet.subset.subset_list]):
-                    raw_deps[input] = output
-            elif _loop_read_intersects_loop_write(loop, output.memlet.subset, read_subset, update_assignment):
-                raw_deps[input] = output
+            if isinstance(output.subset, SubsetUnion):
+                if any([
+                        _loop_read_intersects_loop_write(loop, s, read_subset, update_assignment)
+                        for s in output.subset.subset_list
+                ]):
+                    if data in raw_deps:
+                        raw_deps[data].append((input, output))
+                    else:
+                        raw_deps[data] = [(input, output)]
+            elif _loop_read_intersects_loop_write(loop, output.subset, read_subset, update_assignment):
+                if data in raw_deps:
+                    raw_deps[data].append((input, output))
+                else:
+                    raw_deps[data] = [(input, output)]
         else:
             # Check for basic overlaps/intersections in RAW loop carry dependencies, when there is no
             # iteration variable involved.
             output = write_repo[data]
-            if intersects(output.memlet.subset, read_subset):
-                raw_deps[input] = output
+            if intersects(output.subset, read_subset):
+                if data in raw_deps:
+                    raw_deps[data].append((input, output))
+                else:
+                    raw_deps[data] = [(input, output)]
     return raw_deps

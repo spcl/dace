@@ -2,22 +2,23 @@
 
 from collections import OrderedDict, defaultdict, deque
 import copy
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import networkx as nx
 import sympy
 
 from dace import data as dt
-from dace import properties, symbolic, subsets
+from dace import properties, symbolic, subsets, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.graph import Edge, MultiConnectorEdge
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import align_memlet, propagate_memlet, propagate_subset
 from dace.sdfg.scope import ScopeTree
-from dace.sdfg.sdfg import SDFG, InterstateEdge, memlets_in_ast
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, GlobalDepAccessEntry, GlobalDepDataRecord, LoopRegion,
-                             SDFGState)
+from dace.sdfg.sdfg import SDFG, memlets_in_ast
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, GlobalDepAccessEntry,
+                             GlobalDepDataRecord, LoopRegion, SDFGState)
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.helpers import unsqueeze_memlet
@@ -198,6 +199,8 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
     """
 
     CATEGORY: str = 'Analysis'
+
+    shared_transients: Dict[int, Set[str]] = None
 
     def __init__(self) -> None:
         super().__init__()
@@ -439,6 +442,16 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         state.possible_writes = {}
         for data in writes:
             if len(writes[data]) > 0:
+                # Any write to a container where the allocation lifetime does not go beyond this state is not
+                # propagated any further since it will not be visible outside.
+                desc = state.sdfg.arrays[data]
+                if desc.transient:
+                    if desc.lifetime == dtypes.AllocationLifetime.State:
+                        continue
+                    elif (desc.lifetime == dtypes.AllocationLifetime.Scope and
+                          data not in self.shared_transients[state.sdfg.cfg_id]):
+                        continue
+
                 subset = None
                 volume = None
                 is_dynamic = False
@@ -553,8 +566,8 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             if cond is not None:
                 read_memlets = memlets_in_ast(cond.code[0], conditional.sdfg.arrays)
                 for read_memlet in read_memlets:
-                    add_memlet(read_memlet.data, read_memlet.src_subset or read_memlet.subset,
-                               conditional.possible_reads, False,
+                    add_memlet(read_memlet.data, read_memlet.src_subset or read_memlet.subset, read_memlet.dynamic,
+                               read_memlet.volume, conditional.possible_reads, False,
                                [GlobalDepAccessEntry(node_id=conditional.block_id, edge_id=None)])
             else:
                 has_else = True
@@ -726,16 +739,17 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             # For each node, also determine possible reads from interstate edges. For this, any read from any outgoing
             # interstate edge is counted as a possible read. The only time it is NOT counted as a read, is when there
             # is a certain write in the block itself tha covers the read.
+            interstate_edge_possible_reads: Dict[str, GlobalDepDataRecord] = {}
+            interstate_edge_certain_reads: Dict[str, GlobalDepDataRecord] = {}
             odeg = cfg.out_degree(nd)
             for oedge in cfg.out_edges(nd):
                 for read_memlet in oedge.data.get_read_memlets(cfg.sdfg.arrays):
-                    covered = False
                     if (read_memlet.data not in nd.certain_writes
                             or not nd.certain_writes[read_memlet.data].subset.covers_precise(read_memlet.subset)):
                         access_entry = GlobalDepAccessEntry(node_id=None, edge_id=cfg.edge_id(oedge))
-                        repos = [nd.possible_reads]
-                        if odeg == 1:
-                            repos.append(nd.certain_reads)
+                        repos = [interstate_edge_possible_reads]
+                        if odeg == 1 and oedge.data.is_unconditional():
+                            repos.append(interstate_edge_certain_reads)
                         for repo in repos:
                             if read_memlet.data in repo:
                                 existing_entry = repo[read_memlet.data]
@@ -748,10 +762,13 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                                 existing_entry.accesses.append(access_entry)
                             else:
                                 repo[read_memlet.data] = GlobalDepDataRecord(subset=read_memlet.subset,
-                                                                              dynamic=read_memlet.dynamic,
-                                                                              volume=read_memlet.volume,
-                                                                              accesses=[access_entry])
-            for repo, cfg_repo in [(nd.possible_reads, cfg.possible_reads), (nd.certain_reads, cfg.certain_reads)]:
+                                                                            dynamic=read_memlet.dynamic,
+                                                                            volume=read_memlet.volume,
+                                                                            accesses=[access_entry])
+            for repo, cfg_repo in [
+                (nd.possible_reads, cfg.possible_reads), (nd.certain_reads, cfg.certain_reads),
+                (interstate_edge_possible_reads, cfg.possible_reads), (interstate_edge_certain_reads, cfg.certain_reads)
+            ]:
                 for read_data in repo:
                     read_entry = repo[read_data]
                     covered = False
@@ -829,6 +846,11 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         result[cfg] = (cfg.certain_reads, cfg.possible_reads, cfg.certain_writes, cfg.possible_writes)
 
     def apply(self, region: ControlFlowRegion, _) -> Optional[MemletPropResultT]:
+        if self.shared_transients is None:
+            self.shared_transients = {}
+        if region.sdfg.cfg_id not in self.shared_transients:
+            self.shared_transients[region.sdfg.cfg_id] = region.sdfg.shared_transients()
+
         result: MemletPropResultT = {}
 
         for nd in region.nodes():

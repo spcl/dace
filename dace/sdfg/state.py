@@ -1190,8 +1190,8 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 block.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
 
 
-@make_properties
 @dataclass(unsafe_hash=True)
+@make_properties
 class GlobalDepAccessEntry:
 
     node_id: int = Property(dtype=int, allow_none=True,
@@ -1200,6 +1200,10 @@ class GlobalDepAccessEntry:
     edge_id: int = Property(dtype=int, allow_none=True,
                             desc='ID of the edge for the access. None if the access node is a CFG block.')
 
+    def __init__(self, node_id: int = None, edge_id: int = None):
+        self.node_id = node_id
+        self.edge_id = edge_id
+
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
         return {
@@ -1207,9 +1211,16 @@ class GlobalDepAccessEntry:
             **props
         }
 
+    @staticmethod
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'GlobalDepAccessEntry':
+        ret = GlobalDepAccessEntry()
+        context = context or {}
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'type'})
+        return ret
 
-@make_properties
+
 @dataclass(unsafe_hash=True)
+@make_properties
 class GlobalDepDataRecord:
 
     subset: Subset = SubsetProperty(desc='Subset of the data involved in the dependency entry', allow_none=True)
@@ -1217,6 +1228,20 @@ class GlobalDepDataRecord:
     volume: symbolic.SymExpr = SymbolicProperty(default=0)
     accesses: List[GlobalDepAccessEntry] = ListProperty(element_type=GlobalDepAccessEntry,
                                                         desc='Accesses involved in this dependency')
+
+    def __init__(self, subset: Subset = None, dynamic: bool = False, volume: symbolic.SymExpr = 0,
+                 accesses: List[GlobalDepAccessEntry] = None):
+        self.subset = subset
+        self.dynamic = dynamic
+        self.volume = volume
+        self.accesses = accesses if accesses is not None else []
+
+    @staticmethod
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'GlobalDepDataRecord':
+        ret = GlobalDepDataRecord()
+        context = context or {}
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'type'})
+        return ret
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
