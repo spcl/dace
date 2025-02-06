@@ -3537,7 +3537,8 @@ def create_sdfg_from_fortran_file_with_options(
                 sdfg_path=sdfgs_dir,
                 # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
                 # subroutine_used_names=arg_pruner.used_in_all_functions,
-                normalize_offsets=normalize_offsets
+                normalize_offsets=normalize_offsets,
+                do_not_make_internal_variables_argument=True,
             )
             sdfg = SDFG(j.name.name)
             ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
