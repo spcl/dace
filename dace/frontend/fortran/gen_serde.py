@@ -180,6 +180,7 @@ function {tag}_2s{rank}(a) result(s)
   s = ""  ! Start with an empty string.
   s = add_line(s, "# entries")
   {loop}
+  if (len(s) > 0) s = s(:len(s)-1)  ! Remove the trailing new line.
 end function {tag}_2s{rank}
 """.strip()))
 
@@ -485,6 +486,7 @@ function {dt.name}_2s(x) result(s)
   integer :: kmeta, {kmetas}
   s = ""  ! Start with an empty string.
   {f90ops}
+  if (len(s) > 0) s = s(:len(s)-1)  ! Remove the trailing new line.
 end function {dt.name}_2s
 """.strip()))
         proc_names.append(f"{dt.name}_2s")

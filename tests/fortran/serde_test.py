@@ -120,8 +120,6 @@ end subroutine f2
         SourceCodeBuilder().add_file(ast.tofortran()).run_with_gfortran()
 
         got = Path(s_data.name).read_text().strip()
-        # TODO: Get rid of unwanted whitespaces in the generated fortran code.
-        got = '\n'.join(l.strip() for l in got.split('\n') if l.strip())
         want = """
 # name
 # w
