@@ -26,8 +26,7 @@ from dace.symbolic import pystr_to_symbolic, issymbolic, inequal_symbols
 import numpy as np
 import sympy as sp
 
-numpy_version = int(np.version.version.split('.')[0])
-numpy_minor_version = int(np.version.version.split('.')[1])
+numpy_version = np.lib.NumpyVersion(np.__version__)
 
 Size = Union[int, dace.symbolic.symbol]
 Shape = Sequence[Size]
@@ -1737,8 +1736,7 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
         elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
               and coarse_types[0] == 3):
             raise TypeError("ufunc '{}' not supported for complex input".format(operator))
-        elif (operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and
-                not (numpy_version > 1 and numpy_minor_version > 0)):
+        elif operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and numpy_version < '2.1.0':
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
         elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt', 'Trigonometric', 'Angles', 'FpBoolean',
@@ -1822,7 +1820,7 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
                 result_type = dace.float64
             # All other arithmetic operators and cases of the above operators
             else:
-                if numpy_version >= 2:
+                if numpy_version >= '2.0.0':
                     result_type = _np_result_type(dtypes_for_result_np2)
                 else:
                     result_type = _np_result_type(dtypes_for_result)

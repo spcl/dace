@@ -38,7 +38,7 @@ from dace.symbolic import pystr_to_symbolic, inequal_symbols
 import numpy
 import sympy
 
-numpy_version = int(numpy.version.version.split('.')[0])
+numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
@@ -4920,9 +4920,9 @@ class ProgramVisitor(ExtNodeVisitor):
         return node.n
 
     def visit_Constant(self, node: ast.Constant):
-        if isinstance(node.value, bool) and numpy_version < 2:
+        if isinstance(node.value, bool) and numpy_version < '2.0.0':
             return dace.bool_(node.value)
-        if isinstance(node.value, (int, float, complex)) and numpy_version < 2:
+        if isinstance(node.value, (int, float, complex)) and numpy_version < '2.0.0':
             return dtypes.dtype_to_typeclass(type(node.value))(node.value)
         if isinstance(node.value, (str, bytes)):
             return StringLiteral(node.value)
