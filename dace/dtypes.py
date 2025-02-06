@@ -7,7 +7,7 @@ import numpy
 import re
 from collections import OrderedDict
 from functools import wraps
-from typing import Any
+from typing import Any, List
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -880,12 +880,13 @@ class struct(typeclass):
         return numpy.dtype(self.as_ctypes())
 
     def emit_definition(self):
-        return """struct {name} {{
-{typ}
-}};""".format(
-            name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in sorted(self._data.items())]),
-        )
+        comps: List[str] = [f"{t.ctype} {tname} = {{}};" for tname, t in sorted(self._data.items())]
+        comps: str = '\n'.join(comps)
+        return f"""
+struct {self.name} {{
+    {comps}
+}};
+"""
 
 
 class pyobject(opaque):
