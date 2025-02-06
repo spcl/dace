@@ -29,7 +29,7 @@ def test_not():
     B = np.zeros((5, 5), dtype=np.int64).astype(np.bool_)
     regression = np.logical_not(A)
     nottest(A, B)
-    if np.lib.NumpyVersion(np.__version__) >= '2.0.0b1':
+    if np.lib.NumpyVersion(np.__version__) >= '2.0.0':
         assert np.all(B == regression)
     else:
         assert np.alltrue(B == regression)
