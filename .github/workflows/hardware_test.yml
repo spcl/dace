@@ -21,5 +21,5 @@ jobs:
       run: |
         # Due to an internal bug in the Xilinx tools, where the current datetime is passed as an integer
         # and overflowed in the year 2022, run the RTL FPGA tests pretending like it's January 1st 2021.
-        faketime -f "@2021-01-01 00:00:00" pytest -n auto --tb=short -m "rtl_hardware"
+        faketime -f "@2021-01-01 00:00:00" pytest -n auto --tb=short -m "rtl_hardware" tests/
         killall -9 xsim xsimk || true

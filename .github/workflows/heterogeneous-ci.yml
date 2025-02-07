@@ -44,7 +44,7 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=unique
-        pytest --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi or datainstrument"
+        pytest --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi or datainstrument" tests/
 
     - name: Run MPI tests
       run: |
@@ -82,11 +82,11 @@ jobs:
       run: |
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         source ~/.venv/bin/activate # activate venv
-        coverage combine . */; coverage report; coverage xml
-        reachable=0
-        ping -W 2 -c 1 codecov.io || reachable=$?
-        if [ $reachable -eq 0 ]; then
-          ./codecov
-        else
-          echo "Codecov.io is unreachable"
-        fi
+        #coverage combine . */; coverage report; coverage xml
+        #reachable=0
+        #ping -W 2 -c 1 codecov.io || reachable=$?
+        #if [ $reachable -eq 0 ]; then
+        #  ./codecov
+        #else
+        #  echo "Codecov.io is unreachable"
+        #fi
