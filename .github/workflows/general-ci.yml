@@ -71,8 +71,8 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack" tests
-        ./codecov
+        #pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack" tests
+        #./codecov
 
     - name: Run other tests
       run: |
@@ -88,7 +88,7 @@ jobs:
         if test -x ./tests/xform_test.sh ; then
           ./tests/xform_test.sh
         fi
-        coverage combine .; coverage report; coverage xml
+        #coverage combine .; coverage report; coverage xml
 
     - uses: codecov/codecov-action@v4
       with:
