@@ -13,7 +13,7 @@ NOTEBOOK_PATHS = [
 def test_notebook_exec(notebook):
     with open(notebook) as f:
         nb = nbformat.read(f, as_version=4)
-        ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+        ep = ExecutePreprocessor(timeout=600)
         try:
             assert ep.preprocess(nb) is not None, f"Got empty notebook for {notebook}"
         except Exception:
