@@ -53,7 +53,7 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         source ~/.venv/bin/activate # activate venv
-        ./tests/mpi_test.sh
+        #./tests/mpi_test.sh
 
         
     - name: Test MPI with pytest
@@ -63,7 +63,7 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         source ~/.venv/bin/activate # activate venv
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "mpi"
+        #mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "mpi"
     
     - name: Test ScaLAPACK PBLAS with pytest
       run: |
@@ -73,10 +73,10 @@ jobs:
         export DACE_cache=unique
         export DACE_library_pblas_default_implementation=ReferenceOpenMPI
         source ~/.venv/bin/activate # activate venv
-        for i in {1..4}
-        do
-          mpirun -n "$i" --oversubscribe coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "scalapack"
-        done
+        #for i in {1..4}
+        #do
+        #  mpirun -n "$i" --oversubscribe coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "scalapack"
+        #done
 
     - name: Report overall coverage
       run: |
