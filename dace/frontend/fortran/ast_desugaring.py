@@ -214,10 +214,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
         # If we are in a data-ref then we need to get to the root.
         while isinstance(par.parent, Data_Ref):
             par = par.parent
-        while isinstance(par, Data_Ref):
-            # TODO: Add ref.
-            par, _ = par.children[0], par.children[1:]
-        if isinstance(par, (Part_Ref, Data_Pointer_Object)):
+        while isinstance(par, (Data_Ref, Part_Ref, Data_Pointer_Object)):
             # TODO: Add ref.
             par, _ = par.children[0], par.children[1:]
         assert isinstance(par, Name)
@@ -1600,7 +1597,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
-    survivors: Set[SPEC] = set()
+    survivors: Set[SPEC] = set(keepers)
     keepers = [alias_map[k] for k in keepers]
     assert all(isinstance(k, PRUNABLE_OBJECT_CLASSES) for k in keepers)
 
@@ -3034,7 +3031,9 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
             if not sp_part:
                 rest, end_mod = box.children[:-1], box.children[-1]
                 assert isinstance(end_mod, End_Module_Stmt)
-                sp_part = Module_Subprogram_Part('contains')
+                # TODO: FParser bug; A simple `Module_Subprogram_Part('contains') should work, but doesn't;
+                #  hence the surgery.
+                sp_part = Module(get_reader('module m\ncontains\nend module m')).children[1]
                 set_children(box, rest + [sp_part, end_mod])
             box = sp_part
         else:

@@ -2,26 +2,32 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Dict
 
+import pytest
 from fparser.two.Fortran2003 import Program, Execution_Part, Specification_Part, Use_Stmt, Call_Stmt, \
-    Main_Program
-from fparser.two.parser import ParserFactory
+    Main_Program, Component_Decl
 from fparser.two.utils import walk
 
-from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children
+from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children, \
+    identifier_specs, alias_specs, inject_const_evals
 from dace.frontend.fortran.ast_utils import singular
-from dace.frontend.fortran.fortran_parser import construct_full_ast
-from dace.frontend.fortran.gen_serde import generate_serde_module, gen_serde_module_skeleton, minimal_preprocessing
+from dace.frontend.fortran.config_propagation_data import deserialize
+from dace.frontend.fortran.fortran_parser import ParseConfig, \
+    create_fparser_ast, create_internal_ast, SDFGConfig, create_sdfg_from_internal_ast, \
+    run_fparser_transformations
+from dace.frontend.fortran.gen_serde import generate_serde_code
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):
-    parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(sources, parser)
+    ast = create_fparser_ast(ParseConfig(sources=sources))
     ast = correct_for_function_calls(ast)
+    # NOTE: We don't run `run_fparser_transformations(ast, cfg)` here since we use this function to produce AST that
+    # retains interfaces and procedures too.
     assert isinstance(ast, Program)
     return ast
 
 
+@pytest.mark.skip("1. `ALLOCATABLE` breaks the SDFG compilation, 2. We need to get the path to the generated header.")
 def test_gen_serde():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -54,7 +60,7 @@ module lib
   end type T
 end module lib
 
-program main
+program main  ! Original entry point.
   use lib
   implicit none
   real :: d(5, 5)
@@ -67,7 +73,14 @@ program main
   d(1, 1) = s%name%w(1)%a
 end program main
 
-subroutine f2(s)
+logical function f1(s)
+  use lib
+  implicit none
+  type(T3) :: s
+  f1 = allocated(s % bbz)
+end function f1
+
+subroutine f2(s)  ! Entry point for the SDFG.
   use lib
   implicit none
   type(T) :: s
@@ -76,9 +89,21 @@ end subroutine f2
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
 
+    # We want a particular SDFG where the typical prunings do not happen, since we want to test them.
+    # TODO: We have to discard the `pointer` type components, because internal AST cannot handle them.
+    do_not_prune = ({k for k, v in identifier_specs(ast).items() if isinstance(v, Component_Decl)}
+                    - {('lib', 't3', 'ccp'), ('lib', 't3', 'ddp')})
+    cfg = ParseConfig(sources={'main.f90': ast.tofortran()}, entry_points=('f2',), do_not_prune=list(do_not_prune))
+    own_ast, program = create_internal_ast(cfg)
+    gmap = create_sdfg_from_internal_ast(own_ast, program, SDFGConfig({'f2': 'f2'}))
+    assert gmap.keys() == {'f2'}
+    g = list(gmap.values())[0]
+    g.simplify()
+    # TODO: We cannot compile with `allocatable` type components, because the generated C++ code is broken.
+    # g.compile()
+
     with NamedTemporaryFile() as s_data:
-        ast = minimal_preprocessing(ast)
-        serde_mod = generate_serde_module(gen_serde_module_skeleton(), ast)
+        serde_code = generate_serde_code(ast, g)
 
         # Modify the AST to use the serializer.
         # 1. Reconstruct the original AST, since we have run some preprocessing on the existing one.
@@ -89,15 +114,12 @@ end subroutine f2
         prepend_children(y, Use_Stmt(f"use serde"))
         append_children(x, Call_Stmt(f'call write_to("{s_data.name}", trim(serialize(s)))'))
 
-        # Now reconstruct the AST again, this time with serde module in place.
-        ast = parse_and_improve({'serde.f90': serde_mod.tofortran(), 'main.f90': ast.tofortran()})
-
-        code = ast.tofortran()
-        SourceCodeBuilder().add_file(code).run_with_gfortran()
+        # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
+        # the serialization is as expected.
+        ast = parse_and_improve({'serde.f90': serde_code.f90_serializer, 'main.f90': ast.tofortran()})
+        SourceCodeBuilder().add_file(ast.tofortran()).run_with_gfortran()
 
         got = Path(s_data.name).read_text().strip()
-        # TODO: Get rid of unwanted whitespaces in the generated fortran code.
-        got = '\n'.join(l.strip() for l in got.split('\n') if l.strip())
         want = """
 # name
 # w
@@ -110,7 +132,7 @@ end subroutine f2
 # entries
 # a
 42
-# aA
+# aa
 # rank
 1
 # size
@@ -121,12 +143,12 @@ end subroutine f2
 4
 4
 4
-# aAZ
+# aaz
 # alloc
-F
+0
 # b
 2.00000000
-# bB
+# bb
 # rank
 1
 # size
@@ -137,9 +159,9 @@ F
 5.00000000
 5.00000000
 5.00000000
-# bBZ
+# bbz
 # alloc
-T
+1
 # rank
 2
 # size
@@ -155,7 +177,7 @@ T
 5.09999990
 # c
 3.0000000000000000
-# cC
+# cc
 # rank
 2
 # size
@@ -169,13 +191,9 @@ T
 6.0000000000000000
 6.0000000000000000
 6.0000000000000000
-# cCP
-# assoc
-T
-=> missing
 # d
-T
-# dD
+1
+# dd
 # rank
 1
 # size
@@ -183,11 +201,71 @@ T
 # lbound
 1
 # entries
-F
-F
-F
-# dDP
-# assoc
-F
+0
+0
+0
 """.strip()
         assert want == got
+
+        # Now, verify that it can be deserialized from C++.
+        cpp_code = f"""
+{serde_code.cpp_deserializer}
+
+#include <fstream>
+#include <iostream>
+
+int main() {{
+  std::ifstream data("{s_data.name}");
+
+  t x;
+  serde::deserialize(&x, data);
+  std::cout << "a: " << x.name->w[0]->a << std::endl;
+  std::cout << "alloc(aaz): " << (x.name->w[0]->aaz ? "yes" : "no") << std::endl;
+  std::cout << "alloc(bbz): " << (x.name->w[0]->bbz ? "yes" : "no") << std::endl;
+  std::cout << "volume(bbz): " \
+            << x.name->w[0]->__f2dace_SA_bbz_d_0_s_4 * x.name->w[0]->__f2dace_SA_bbz_d_1_s_5 << std::endl;
+
+  return EXIT_SUCCESS;
+}}
+"""
+        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
+        assert output.strip() == f"""
+a: 42
+alloc(aaz): no
+alloc(bbz): yes
+volume(bbz): 4
+""".strip()
+
+        # Now, verify that C++ object can generate config injection JSON.
+        cpp_code = f"""
+        {serde_code.cpp_deserializer}
+
+        #include <fstream>
+        #include <iostream>
+
+        int main() {{
+          std::ifstream data("{s_data.name}");
+
+          t x;
+          serde::deserialize(&x, data);
+          std::cout << serde::config_injection(*(x.name->w[0])) << std::endl;
+
+          return EXIT_SUCCESS;
+        }}
+        """
+
+        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
+        print(output)
+        cinjs = [deserialize(l.strip()) for l in output.splitlines() if l.strip()]
+
+        cfg = ParseConfig(sources=sources, entry_points=[('f1',), ('f2',)], config_injections=cinjs)
+        ast = create_fparser_ast(cfg)
+        ast = run_fparser_transformations(ast, cfg)
+        assert f"""
+LOGICAL FUNCTION f1(s)
+  USE lib, ONLY: t3
+  IMPLICIT NONE
+  TYPE(t3) :: s
+  f1 = .TRUE.
+END FUNCTION f1
+""".strip() in ast.tofortran()

@@ -65,13 +65,12 @@ class SourceCodeBuilder:
                 raise e
 
     def run_with_gfortran(self) -> str:
-        """Assert that it all compiles with `gfortran`."""
+        """Compile and execute the program with `gfortran`."""
         with TemporaryDirectory() as td:
             # Create temporary Fortran source-file structure.
             for fname, content in self.sources.items():
                 with open(path.join(td, fname), 'w') as f:
                     f.write(content)
-            # Run `gfortran -Wall` to verify that it compiles.
             # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
             cmd = ['gfortran', '-Wall', '-fPIC', *self.sources.keys()]
 
@@ -82,6 +81,26 @@ class SourceCodeBuilder:
                 return result.stdout.decode()
             except subprocess.CalledProcessError as e:
                 print("Fortran running failed!")
+                print(e.stderr.decode())
+                raise e
+
+    def run_with_gcc(self) -> str:
+        """Compile and execute the program with `g++`."""
+        with TemporaryDirectory() as td:
+            # Create temporary Fortran source-file structure.
+            for fname, content in self.sources.items():
+                with open(path.join(td, fname), 'w') as f:
+                    f.write(content)
+            # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
+            cmd = ['g++', '-Wall', '-fPIC', '-std=c++17', *self.sources.keys()]
+
+            try:
+                subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
+                result = subprocess.run(path.join(td, 'a.out'), cwd=td, capture_output=True)
+                result.check_returncode()
+                return result.stdout.decode()
+            except subprocess.CalledProcessError as e:
+                print("C++ running failed!")
                 print(e.stderr.decode())
                 raise e
 
@@ -259,7 +278,7 @@ class InternalASTMatcher:
         if self.is_type is not None:
             assert isinstance(node, self.is_type)
         if self.has_value is not None:
-            assert node == self.has_value
+            assert node == self.has_value, f"{node} is not the same as {self.has_value}"
         if self.has_empty_attr is not None:
             for key in self.has_empty_attr:
                 assert not hasattr(node, key) or not getattr(node, key), f"{node} is expected to not have key: {key}"
