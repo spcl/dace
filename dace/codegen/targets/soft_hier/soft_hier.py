@@ -104,6 +104,9 @@ class SoftHierCodeGen(TargetCodeGenerator):
         # Register dispatchers
         self._cpu_codegen = dispatcher.get_generic_node_dispatcher()
 
+        # Stream name mapping
+        self._stream_name_map: Dict[str, str] = {}
+
         # Register additional SoftHier dispatchers
         dispatcher.register_map_dispatcher(dtypes.SOFTHIER_SCHEDULES, self)
 
@@ -163,8 +166,8 @@ class SoftHierCodeGen(TargetCodeGenerator):
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         from dace.transformation.dataflow import CopyToMap
         for e, state in list(sdfg.all_edges_recursive()):
-            nsdfg = state.parent
             if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
+                nsdfg = state.parent
                 if (e.src.desc(nsdfg).storage == dtypes.StorageType.SoftHier_HBM
                         and e.dst.desc(nsdfg).storage == dtypes.StorageType.SoftHier_HBM):
                     copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
@@ -198,6 +201,32 @@ class SoftHierCodeGen(TargetCodeGenerator):
                         CopyToMap.apply_to(nsdfg, save=False, annotate=False, a=e.src, b=e.dst)
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
+        
+        for node, parent in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.AccessNode):
+                desc_stream = node.desc(parent)
+                if isinstance(desc_stream, dt.Stream) and desc_stream.storage == dtypes.StorageType.SoftHier_TCDM:
+                    for edge in parent.out_edges(node):
+                        if isinstance(edge.dst, nodes.AccessNode):
+                            desc_dst = edge.dst.desc(parent)
+                            if isinstance(desc_dst, dt.Array) and desc_dst.storage == dtypes.StorageType.SoftHier_TCDM:
+                                self._stream_name_map[node.data] = f"{edge.dst.data}"
+                                # print(f"SoftHier: Stream {node.data} mapped to { self._stream_name_map[node.data]}")
+                                break
+
+                    for edge in parent.in_edges(node):
+                        if isinstance(edge.src, nodes.AccessNode):
+                            desc_src = edge.src.desc(parent)
+                            if isinstance(desc_src, dt.Array) and desc_src.storage == dtypes.StorageType.SoftHier_TCDM:
+                                if node.data in self._stream_name_map:
+                                    if self._stream_name_map[node.data] != edge.src.data:
+                                        raise ValueError(f"Stream {node.data} already mapped to {self._stream_name_map[node.data]}")
+                                else:
+                                    self._stream_name_map[node.data] = f"{edge.src.data}"
+                                    # print(f"SoftHier: Stream {node.data} mapped to { self._stream_name_map[node.data]}")
+                                    break
+
+
 
         # Annotate SoftHier streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
@@ -571,13 +600,13 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             result_alloc.write(f"{dataname} = {self.tcdm_offset};\n")
             if node.setzero:
                 result_alloc.write('// DACE_ACL_CHECK(aclrtMemset(%s, 0, %s));\n' % ( dataname, arrsize_malloc))
-                # result_alloc.write(f'''
-                #     if(flex_is_dm_core())
-                #     {{
-                #         flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
-                #         flex_dma_async_wait_all();
-                #     }}
-                # ''')
+                result_alloc.write(f'''
+                    if(flex_is_dm_core())
+                    {{
+                        flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
+                        flex_dma_async_wait_all();
+                    }}
+                ''')
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
             self.tcdm_offset += total_size
@@ -592,65 +621,60 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         dataname = node.data
         allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
-        if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            fmtargs = {
-                'name': allocname,  # TODO: Handle persistent streams
-                'allocname': allocname,
-                'type': nodedesc.dtype.ctype,
-                'is_pow2': sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
-                'location': '%s_%s_%s' % (cfg.cfg_id, state_id, dfg.node_id(node))
-            }
-
-            ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
+        result_decl = StringIO()
+        result_alloc = StringIO()   
+        if nodedesc.storage == dtypes.StorageType.SoftHier_TCDM:
+            ctypedef = 'dace::SoftHierTCDMStream<%s>' % nodedesc.dtype.ctype
             self._dispatcher.defined_vars.add(allocname, DefinedType.Stream, ctypedef)
+            array_name = self._stream_name_map[dataname]
+            node_to_allocate = None
+            node_desc_to_allocate = None
+            for n, parent in sdfg.all_nodes_recursive():
+                if isinstance(n, nodes.AccessNode) and n.data == array_name:
+                    node_to_allocate = n
+                    node_to_allocate_desc = n.desc(parent)
+                    break
+            if node_to_allocate is None:
+                raise ValueError(f"Stream {dataname} mapped to array {array_name} not found")
+            try:
+                self._dispatcher.defined_vars.get(array_name)
+                return
+            except KeyError:
+                pass  # The variable was not defined, we can continue
 
-            if is_array_stream_view(sdfg, dfg, node):
-                edges = dfg.out_edges(node)
-                if len(edges) > 1:
-                    raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
+            # Check if array is already declared
+            declared = False
+            try:
+                self._dispatcher.declared_arrays.get(array_name)
+                declared = True  # Array was already declared in this or upper scopes
+            except KeyError:  # Array not declared yet
+                pass
 
-                fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
-                    sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
+            
+            write_type = 'uint32_t'
+            shape = node_to_allocate_desc.shape
+            arrsize = prod(shape)
+            if not declared:
+                result_decl.write('%s %s;\n' % (write_type, array_name))
+            self._dispatcher.defined_vars.add(array_name, DefinedType.Pointer, ctypedef)
+            data_size = node_to_allocate_desc.dtype.bytes  # Number of bytes per element
+            total_size = arrsize * data_size  # Total size in bytes
+            # Strides are left to the user's discretion
+            # result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' %
+            #                     ( dataname, arrsize_malloc))
+            result_alloc.write(f"{array_name} = {self.tcdm_offset};\n")
+            self.tcdm_offset += total_size
+            if node_to_allocate.setzero:
+                result_alloc.write(f'''
+                    if(flex_is_dm_core())
+                    {{
+                        flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
+                        flex_dma_async_wait_all();
+                    }}
+                ''')
+        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
+        allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
 
-                # Assuming 1D subset of sink/src
-                # sym2cpp(edges[0].data.subset[-1])
-                fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
-
-                # (important) Ensure GPU array is allocated before the stream
-                datanode = dfg.out_edges(node)[0].dst
-                sinkdesc = sdfg.arrays[datanode.data]
-                self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, datanode, sinkdesc, function_stream,
-                                                   allocation_stream)
-
-                function_stream.write(
-                    'DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
-                    .format(**fmtargs), cfg, state_id, node)
-                self._globalcode.write(
-                    """
-DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
-void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result) {{
-    result = dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
-}}""".format(**fmtargs), cfg, state_id, node)
-                declaration_stream.write('dace::GPUStream<{type}, {is_pow2}> {name};'.format(**fmtargs), cfg, state_id,
-                                         node)
-                allocation_stream.write('__dace_alloc_{location}({ptr}, {size}, {allocname});'.format(**fmtargs), cfg,
-                                        state_id, node)
-            else:
-                fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
-
-                function_stream.write(
-                    'DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
-                    .format(**fmtargs), cfg, state_id, node)
-                self._globalcode.write(
-                    """
-DACE_EXPORTED void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>& result);
-void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>& result) {{
-    result = dace::AllocGPUStream<{type}, {is_pow2}>({size});
-}}""".format(**fmtargs), cfg, state_id, node)
-                declaration_stream.write('dace::GPUStream<{type}, {is_pow2}> {name};'.format(**fmtargs), cfg, state_id,
-                                         node)
-                allocation_stream.write('__dace_alloc_{location}({size}, {allocname});'.format(**fmtargs), cfg,
-                                        state_id, node)
 
     def deallocate_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -853,191 +877,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         else:
             raise LookupError('Memlet does not point to any of the nodes')
 
+        if (isinstance(src_node, nodes.AccessNode)):
+            src_node_desc = sdfg.arrays[src_node.data]
+        if (isinstance(dst_node, nodes.AccessNode)):
+            dst_node_desc = sdfg.arrays[dst_node.data]
+
+
         if (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
                 and not SoftHierCodeGen._in_device_code
                 and (src_storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]
                      or dst_storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned])
                 and not (src_storage in cpu_storage_types and dst_storage in cpu_storage_types)):
-            src_location = 'Device' if src_storage == dtypes.StorageType.GPU_Global else 'Host'
-            dst_location = 'Device' if dst_storage == dtypes.StorageType.GPU_Global else 'Host'
-
-            # Corner case: A stream is writing to an array
-            if (isinstance(sdfg.arrays[src_node.data], dt.Stream) and isinstance(sdfg.arrays[dst_node.data],
-                                                                                 (dt.Scalar, dt.Array))):
-                return  # Do nothing (handled by ArrayStreamView)
-
-            syncwith = {}  # Dictionary of {stream: event}
-            is_sync = False
-            max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
-
-            if hasattr(src_node, '_cuda_stream'):
-                cudastream = src_node._cuda_stream
-                if not hasattr(dst_node, '_cuda_stream'):
-                    # Copy after which data is needed by the host
-                    is_sync = True
-                elif dst_node._cuda_stream != src_node._cuda_stream:
-                    syncwith[dst_node._cuda_stream] = getattr(edge, '_cuda_event', None)
-                else:
-                    pass  # Otherwise, no need to synchronize
-            elif hasattr(dst_node, '_cuda_stream'):
-                cudastream = dst_node._cuda_stream
-            else:
-                if max_streams >= 0:
-                    print('WARNING: Undefined stream, reverting to default')
-                if dst_location == 'Host':
-                    is_sync = True
-                cudastream = 'nullptr'
-
-            # Handle case of impending kernel/tasklet on another stream
-            if max_streams >= 0:
-                for e in state_dfg.out_edges(dst_node):
-                    if isinstance(e.dst, nodes.AccessNode):
-                        continue
-                    if not hasattr(e.dst, '_cuda_stream'):
-                        is_sync = True
-                    elif not hasattr(e, '_cuda_event'):
-                        is_sync = True
-                    elif e.dst._cuda_stream != cudastream:
-                        syncwith[e.dst._cuda_stream] = e._cuda_event
-
-                if cudastream != 'nullptr':
-                    cudastream = '__state->gpu_context->streams[%d]' % cudastream
-
-            if memlet.wcr is not None:
-                raise NotImplementedError('Accumulate %s to %s not implemented' % (src_location, dst_location))
-            #############################
-
-            # Obtain copy information
-            copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, self._cpu_codegen._packed_types))
-            dims = len(copy_shape)
-
-            dtype = dst_node.desc(sdfg).dtype
-
-            # Handle unsupported copy types
-            if dims == 2 and (src_strides[-1] != 1 or dst_strides[-1] != 1):
-                # NOTE: Special case of continuous copy
-                # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
-                # with copy shape [I, J] and strides [J*K, K], [J, 1]
-                try:
-                    is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
-                    is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
-                except (TypeError, ValueError):
-                    is_src_cont = False
-                    is_dst_cont = False
-                if is_src_cont and is_dst_cont:
-                    dims = 1
-                    copy_shape = [copy_shape[0] * copy_shape[1]]
-                    src_strides = [src_strides[1]]
-                    dst_strides = [dst_strides[1]]
-                else:
-                    raise NotImplementedError('2D copy only supported with one stride')
-
-            # Currently we only support ND copies when they can be represented
-            # as a 1D copy or as a 2D strided copy
-            if dims > 2:
-                if src_strides[-1] != 1 or dst_strides[-1] != 1:
-                    raise NotImplementedError(
-                        'GPU copies are not supported for N-dimensions if they cannot be represented by a strided copy\n'
-                        f'  Nodes: src {src_node} ({src_storage}), dst {dst_node}({dst_storage})\n'
-                        f'  Strides: src {src_strides}, dst {dst_strides}')
-                else:
-                    # Write for-loop headers
-                    for d in range(dims - 2):
-                        callsite_stream.write(f"for (int __copyidx{d} = 0; "
-                                              f"__copyidx{d} < {copy_shape[d]};"
-                                              f"++__copyidx{d}) {{")
-                    # Write Memcopy2DAsync
-                    current_src_expr = src_expr + " + " + " + ".join(
-                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s)) for d, s in enumerate(src_strides[:-2])])
-                    current_dst_expr = dst_expr + " + " + "+ ".join(
-                        ["(__copyidx{} * ({}))".format(d, sym2cpp(s)) for d, s in enumerate(dst_strides[:-2])])
-                    callsite_stream.write(
-                        'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
-                        (self.backend, current_dst_expr,
-                         _topy(dst_strides[-2]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, current_src_expr,
-                         sym2cpp(src_strides[-2]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
-                         sym2cpp(copy_shape[-1]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                         sym2cpp(copy_shape[-2]), self.backend, src_location, dst_location, cudastream), cfg, state_id,
-                        [src_node, dst_node])
-                    # Write for-loop footers
-                    for d in range(dims - 2):
-                        callsite_stream.write("}")
-
-            if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
-                copysize = ' * '.join(_topy(copy_shape))
-                array_length = copysize
-                copysize += ' * sizeof(%s)' % dtype.ctype
-
-                callsite_stream.write(
-                    'DACE_GPU_CHECK(%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
-                    (self.backend, dst_expr, src_expr, copysize, self.backend, src_location, dst_location, cudastream),
-                    cfg, state_id, [src_node, dst_node])
-                node_dtype = dst_node.desc(sdfg).dtype
-                if issubclass(node_dtype.type, ctypes.Structure):
-                    callsite_stream.write('for (size_t __idx = 0; __idx < {arrlen}; ++__idx) '
-                                          '{{'.format(arrlen=array_length))
-                    # TODO: Study further when tackling Structures on GPU.
-                    for field_name, field_type in node_dtype._typeclass.fields.items():
-                        if isinstance(field_type, dtypes.pointer):
-                            tclass = field_type.type
-
-                            length = node_dtype._typeclass._length[field_name]
-                            size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
-                            callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
-                                                  '{sz}));'.format(dst=str(dst_node),
-                                                                   fname=field_name,
-                                                                   sz=size,
-                                                                   backend=self.backend))
-                            callsite_stream.write(
-                                'DACE_GPU_CHECK({backend}MemcpyAsync({dst}[__idx].{fname}, '
-                                '{src}[__idx].{fname}, {sz}, '
-                                '{backend}Memcpy{sloc}To{dloc}, {stream}));'.format(dst=str(dst_node),
-                                                                                    src=str(src_node),
-                                                                                    fname=field_name,
-                                                                                    sz=size,
-                                                                                    sloc=src_location,
-                                                                                    dloc=dst_location,
-                                                                                    stream=cudastream,
-                                                                                    backend=self.backend), cfg,
-                                state_id, [src_node, dst_node])
-                    callsite_stream.write('}')
-            elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
-                callsite_stream.write(
-                    'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
-                    (self.backend, dst_expr, _topy(dst_strides[0]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                     src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
-                     'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, sym2cpp(
-                         copy_shape[0]), self.backend, src_location, dst_location, cudastream), cfg, state_id,
-                    [src_node, dst_node])
-            elif dims == 2:
-                callsite_stream.write(
-                    'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
-                    (self.backend, dst_expr, _topy(dst_strides[0]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                     src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
-                     sym2cpp(copy_shape[1]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, sym2cpp(
-                         copy_shape[0]), self.backend, src_location, dst_location, cudastream), cfg, state_id,
-                    [src_node, dst_node])
-
-            # Post-copy synchronization
-            if is_sync:
-                # Synchronize with host (done at destination)
-                pass
-            else:
-                # Synchronize with other streams as necessary
-                for streamid, event in syncwith.items():
-                    syncstream = '__state->gpu_context->streams[%d]' % streamid
-                    callsite_stream.write(
-                        '''
-    DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
-    DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));
-                    '''.format(ev=event, src_stream=cudastream, dst_stream=syncstream, backend=self.backend), cfg,
-                        state_id, [src_node, dst_node])
-
-            self._emit_sync(callsite_stream)
-
+            pass
         # Copy within the SoftHier storage
-        elif (src_storage in soft_hier_storage_types and dst_storage in soft_hier_storage_types):
+        elif (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode) 
+              and src_storage in soft_hier_storage_types and dst_storage in soft_hier_storage_types
+              and isinstance(src_node_desc, dt.Array) and isinstance(dst_node_desc, dt.Array)):
             state = state_dfg
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
@@ -1198,21 +1053,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         block_height = length_0
                         callsite_stream.write(f"const int tile_width = {src_name}_tile_width;")
                         callsite_stream.write(f"const int tile_height = {src_name}_tile_height;")
-                        
-                        # callsite_stream.write(f"const int row_start_offset = 0;")
-                        # callsite_stream.write(f"const int col_start_offset = 0;")
-                        
                         callsite_stream.write(f"const int row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
                         callsite_stream.write(f"const int col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
-                        # callsite_stream.write(f"const int row_start = {row_start};")
-                        # callsite_stream.write(f"const int col_start = {col_start};")
                         callsite_stream.write(f"const int col_start_temp = {col_start} + col_start_offset;")
                         callsite_stream.write(f"const int col_start = col_start_temp % {src_name}_width;")
                         callsite_stream.write(f"const int row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
-                        
-
-                        
-
                         callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
                         callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
                         callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
@@ -1226,10 +1071,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
                         callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
                         callsite_stream.write(f"const int block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
-                        # callsite_stream.write(f"if (flex_is_dm_core() && flex_get_cluster_id() == 0)")
-                        # callsite_stream.write("{")
-                        # callsite_stream.write(f"printf(\"block_addr = %x\\n\", block_addr);")
-                        # callsite_stream.write("}")
                         funcname = "flex_dma_async_1d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
@@ -1273,8 +1114,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                 args=', '.join([f'local({dst_expr})'] + 
                                             [f'local({src_expr})'] + 
                                             [f'{length_1}*{data_size}'] +
-                                            [f'{src_strides[0]}*{data_size}'] +
                                             [f'{dst_strides[0]}*{data_size}'] +
+                                            [f'{src_strides[0]}*{data_size}'] +
                                             [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
                         )
                         if is_sync:
@@ -1377,6 +1218,159 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     raise NotImplementedError(
                         f"Unimplemented copy type: {src_storage} -> {dst_storage}"
                     )
+        elif (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode) 
+              and src_storage in soft_hier_storage_types and dst_storage in soft_hier_storage_types
+              and (isinstance(src_node_desc, dt.Stream) or isinstance(dst_node_desc, dt.Stream))):
+            
+            if isinstance(src_node_desc, dt.Stream):
+                pass
+            else:
+                state = state_dfg
+                is_sync = False
+                # check whether the dst node has a out edge
+                if len(state.out_edges(dst_node)) > 0:
+                    is_sync = True
+                if len(state.in_edges(src_node)) > 0:
+                    is_sync = True
+                copy_shape = edge.data.subset.size_exact()
+                dims = len(copy_shape)
+                callsite_stream.write(f'// copy_memory: {src_node} -> {dst_node}')
+                callsite_stream.write(f'// is_sync = {is_sync}')
+                self._has_async_dma = (not is_sync) or self._has_async_dma
+                if vconn:
+                # Rm. IN_
+                    dst_name = vconn[3:]
+                elif isinstance(v, nodes.AccessNode):
+                    dst_name = v.data
+                subset: subsets.Range = memlet.subset
+                if uconn:
+                    # Rm. OUT_
+                    src_name = uconn[4:]
+                elif isinstance(u, nodes.AccessNode):
+                    src_name = u.data
+                data_size = src_node_desc.dtype.bytes
+                # print(f"subset = {subset}") 
+
+                src_subset = memlet.get_src_subset(edge, state)        
+                is_src_write = not memlet._is_data_src
+                src_expr = cpp.copy_expr(self._dispatcher,
+                             sdfg,
+                             src_node.data,
+                             memlet,
+                             is_write=is_src_write,
+                             offset=src_subset,
+                             relative_offset=False)
+                if src_expr != src_name:
+                    src_expr = src_expr + "*" + f"{data_size}"
+                dst_subset = memlet.get_dst_subset(edge, state)
+                pos_x_range = subsets.Range(dst_subset[0:1])
+                pos_x = pos_x_range.at([0],[1])
+                pos_y_range = subsets.Range(dst_subset[1:2])
+                pos_y = pos_y_range.at([0],[1])
+
+                pos_x = sym2cpp(pos_x)
+                pos_y = sym2cpp(pos_y)
+                # print(f"pos_x = {pos_x}, pos_y = {pos_y}")
+                dst_subset = subsets.Range(dst_subset[2:])
+                dst_expr = sym2cpp(dst_subset.at([0,0,0],[1,1,1]))
+                dst_size = dst_subset.num_elements() * data_size
+                
+                dst_expr = self._stream_name_map[dst_node.data] + "+" + dst_expr + " * " + str(dst_size)
+                if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
+                    callsite_stream.write("if (flex_is_dm_core())")
+                    callsite_stream.write("{")
+                    callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), local({src_expr}), {dst_size});")
+                    if is_sync:
+                        callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}")
+
+                elif src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
+                    name = memlet.data
+                    nodedesc = sdfg.arrays[name]
+                    if dims == 1:
+                        beg, end, step = subset.ranges[0]
+                        length = (end + 1) - beg
+                        callsite_stream.write("if (flex_is_dm_core())")
+                        callsite_stream.write("{")
+                        callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), hbm({src_expr}), {length * data_size});")
+                        if is_sync:
+                            callsite_stream.write("flex_dma_async_wait_all();")
+                        callsite_stream.write("}")
+                    elif dims == 2:
+                        beg, end, step = subset.ranges[0]
+                        length_0 = (end + 1) - beg
+                        beg, end, step = subset.ranges[1]
+                        length_1 = (end + 1) - beg
+                        if nodedesc.is_hbm_interleaved:
+                            callsite_stream.write("if (flex_is_dm_core())")
+                            callsite_stream.write("{")
+                            s = subsets.Indices(memlet.src_subset)
+                            hbm_width = nodedesc.shape[1]
+                            hbm_height = nodedesc.shape[0]
+                            row_start = s[0][0]
+                            col_start = s[1][0]
+                            height_split = nodedesc.hbm_split_scheme[0]
+                            width_split = nodedesc.hbm_split_scheme[1]
+                            channel_start = nodedesc.hbm_placement_scheme[0]
+                            channel_end = nodedesc.hbm_placement_scheme[1]
+                            channel_stride = nodedesc.hbm_placement_scheme[2]
+                            num_channels = channel_end - channel_start + 1
+                            block_width = length_1
+                            block_height = length_0
+                            callsite_stream.write(f"const int tile_width = {src_name}_tile_width;")
+                            callsite_stream.write(f"const int tile_height = {src_name}_tile_height;")
+                            callsite_stream.write(f"const int row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
+                            callsite_stream.write(f"const int col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
+                            callsite_stream.write(f"const int col_start_temp = {col_start} + col_start_offset;")
+                            callsite_stream.write(f"const int col_start = col_start_temp % {src_name}_width;")
+                            callsite_stream.write(f"const int row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
+                            callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
+                            callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
+                            callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
+                            callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
+                            callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
+                            callsite_stream.write(f"const int channel_id = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                            callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+                            callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
+                            callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
+                            callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
+                            callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+                            callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+                            callsite_stream.write(f"const int block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                            funcname = "flex_dma_async_1d"
+                            callsite_stream.write(('    {func}({args});').format(
+                                    func=funcname,
+                                    args=', '.join([f'remote_xy({pos_x},{pos_y},{dst_expr})']+ 
+                                                [f'hbm_addr(block_addr)'] + 
+                                                [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                            )
+                            if is_sync:
+                                callsite_stream.write("flex_dma_async_wait_all();")
+                            callsite_stream.write("}")
+                        else: # not interleaved
+                            src_strides = src_subset.absolute_strides(src_node_desc.strides)
+                            dst_strides = dst_node_desc.strides[-dims:]
+                            callsite_stream.write("if (flex_is_dm_core())")
+                            callsite_stream.write("{")
+                            funcname = "flex_dma_async_2d"
+                            callsite_stream.write(('    {func}({args});').format(
+                                    func=funcname,
+                                    args=', '.join([f'remote_xy({pos_x},{pos_y},{dst_expr})'] + 
+                                                [f'hbm_addr({src_expr})'] + 
+                                                [f'{length_1}*{data_size}'] +
+                                                [f'{dst_strides[0]}*{data_size}'] +
+                                                [f'{src_strides[0]}*{data_size}'] +
+                                                [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                            )
+                            if is_sync:
+                                callsite_stream.write("flex_dma_async_wait_all();")
+                            callsite_stream.write("}")
+                    else:
+                        raise NotImplementedError(
+                            f"Not Implemented Dim > 2: {src_storage} -> {dst_storage}"
+                        )
+                if is_sync:
+                    callsite_stream.write("flex_intra_cluster_sync();")
         else:
             print(
                 sdfg,
@@ -2720,6 +2714,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             # if there is a memlet path for src_node, then is_sync = True
             if len(state_dfg.in_edges(src_node)) > 0:
                 is_sync = True
+                for e in state_dfg.in_edges(src_node):
+                    if isinstance(e.src, nodes.AccessNode):
+                        desc = sdfg.arrays[e.src.data]
+                        if isinstance(desc, dace.data.Stream):
+                            is_sync = False
+                            break
+                        
+                
             if edge.dst_conn:  # Not (None or "")
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
