@@ -168,9 +168,6 @@ class CanonTransformer(transformation.SingleStateTransformation):
                     init_stream = f"s_{transient}"
                     init_edge = copy.deepcopy(edge)
                     init_edge.data.other_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] + list(init_edge.data.other_subset))
-                    if transient == "local_A": 
-                        new_expr = f"({gi}+{gj}) % {NPE}"
-                        init_edge.data.subset = subsets.Range([(0, desc.shape[0]-1, 1), (0, desc.shape[1]-1, 1)])
                     init_src_node = init_state.add_access(init_src)
                     init_dst_node = init_state.add_access(init_stream)
                     init_state.add_edge(init_src_node, None, init_dst_node, None, memlet=init_edge.data)          
