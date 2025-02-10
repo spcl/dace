@@ -2916,15 +2916,17 @@ def inject_const_evals(ast: Program,
 
         # Validations.
         if item.scope_spec:
-            assert item.scope_spec in alias_map
+            if item.scope_spec not in alias_map:
+                print(f"{item}/{item.scope_spec} does not refer to a valid object; moving on...", file=sys.stderr)
+                continue
         if isinstance(item, ConstTypeInjection):
-            assert item.type_spec in alias_map
-            tdef = alias_map[item.type_spec].parent
-            assert isinstance(tdef, Derived_Type_Def)
+            if item.type_spec not in alias_map or not isinstance(alias_map[item.type_spec].parent, Derived_Type_Def):
+                print(f"{item}/{item.type_spec} does not refer to a valid type; moving on...", file=sys.stderr)
+                continue
         elif isinstance(item, ConstInstanceInjection):
-            assert item.root_spec in alias_map
-            rdef = alias_map[item.root_spec]
-            assert isinstance(rdef, Entity_Decl)
+            if item.root_spec not in alias_map or not isinstance(alias_map[item.root_spec], Entity_Decl):
+                print(f"{item}/{item.root_spec} does not refer to a valid object; moving on...", file=sys.stderr)
+                continue
 
     for scope_spec, items in items_by_scopes.items():
         if scope_spec == TOPLEVEL_SPEC:
