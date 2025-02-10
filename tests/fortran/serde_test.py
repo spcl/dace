@@ -6,6 +6,8 @@ from fparser.two.Fortran2003 import Program, Execution_Part, Specification_Part,
     Main_Program, Component_Decl
 from fparser.two.utils import walk
 
+import dace
+from dace.config import Config
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children, \
     identifier_specs
 from dace.frontend.fortran.ast_utils import singular
@@ -24,6 +26,19 @@ def parse_and_improve(sources: Dict[str, str]):
     # retains interfaces and procedures too.
     assert isinstance(ast, Program)
     return ast
+
+
+def run_main_cpp(cpp_code: str, root_dir: str, libname: str) -> str:
+    DACE_ROOT = Path(dace.__file__).parent
+    return SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc([
+        *Config.get_default('compiler', 'cpu', 'args').split(),
+        f"-std=c++17",
+        f"-I{root_dir}/include",
+        f"-I{DACE_ROOT}/runtime/include/",
+        f"-L{root_dir}/build",
+        f"-l{libname}",
+        f"-Wl,-rpath,{root_dir}/build",
+    ])
 
 
 def test_gen_serde():
@@ -222,13 +237,7 @@ int main() {{
     return __dace_exit_f2(h);
 }}
 """
-        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc([
-            f"-I{t_dir}/include",
-            f"-I/Users/pmz/gitspace/tmpdace/dace/dace/runtime/include/",
-            f"-L{t_dir}/build",
-            f"-l{g.name}",
-            f"-Wl,-rpath,{t_dir}/build",
-        ])
+        output = run_main_cpp(cpp_code, t_dir, g.name)
         assert output.strip() == (f"""
 # name
 # w
@@ -325,13 +334,7 @@ int main() {{
     return EXIT_SUCCESS;
 }}
 """
-        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc([
-            f"-I{t_dir}/include",
-            f"-I/Users/pmz/gitspace/tmpdace/dace/dace/runtime/include/",
-            f"-L{t_dir}/build",
-            f"-l{g.name}",
-            f"-Wl,-rpath,{t_dir}/build",
-        ])
+        output = run_main_cpp(cpp_code, t_dir, g.name)
         cinjs = [deserialize(l.strip()) for l in output.splitlines() if l.strip()]
 
         cfg = ParseConfig(sources=sources, entry_points=[('f1',), ('f2',)], config_injections=cinjs)
