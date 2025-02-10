@@ -2449,7 +2449,10 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
-        if k in keepers or k in entry_point_args:
+        if k[-1].lower() not in KEYWORDS_TO_AVOID and k in entry_point_args:
+            # Keep the entry point arguments if possible.
+            continue
+        if k in keepers:
             # Specific variable instances requested to keep.
             continue
         if k[-1] in keepers:
