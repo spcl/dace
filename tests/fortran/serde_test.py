@@ -1,14 +1,13 @@
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Dict
 
-import pytest
 from fparser.two.Fortran2003 import Program, Execution_Part, Specification_Part, Use_Stmt, Call_Stmt, \
     Main_Program, Component_Decl
 from fparser.two.utils import walk
 
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children, \
-    identifier_specs, alias_specs, inject_const_evals
+    identifier_specs
 from dace.frontend.fortran.ast_utils import singular
 from dace.frontend.fortran.config_propagation_data import deserialize
 from dace.frontend.fortran.fortran_parser import ParseConfig, \
@@ -27,7 +26,6 @@ def parse_and_improve(sources: Dict[str, str]):
     return ast
 
 
-@pytest.mark.skip("1. `ALLOCATABLE` breaks the SDFG compilation, 2. We need to get the path to the generated header.")
 def test_gen_serde():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -52,7 +50,7 @@ module lib
   end type T3
 
   type T2
-    type(T3) :: w(1)
+    type(T3) :: w  ! TODO: How to make `w` work?
   end type T2
 
   type T
@@ -65,12 +63,13 @@ program main  ! Original entry point.
   implicit none
   real :: d(5, 5)
   type(T), target :: s
-  allocate(s%name%w(1)%bBZ(2,2))
-  s%name%w(1)%bBZ = 5.1
-  s%name%w(1)%cCP => s%name%w(1)%cC(:, 5)
+  s%name%w%a = 0
+  allocate(s%name%w%bBZ(2,2))
+  s%name%w%bBZ = 5.1
+  s%name%w%cCP => s%name%w%cC(:, 5)
   call f2(s)
   ! TODO: Find a way to use generic functions to serialize arbitrary types.
-  d(1, 1) = s%name%w(1)%a
+  d(1, 1) = s%name%w%a
 end program main
 
 logical function f1(s)
@@ -84,7 +83,7 @@ subroutine f2(s)  ! Entry point for the SDFG.
   use lib
   implicit none
   type(T) :: s
-  s%name%w(1)%a = 42
+  s%name%w%a = s%name%w%a + 42
 end subroutine f2
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -99,10 +98,11 @@ end subroutine f2
     assert gmap.keys() == {'f2'}
     g = list(gmap.values())[0]
     g.simplify()
-    # TODO: We cannot compile with `allocatable` type components, because the generated C++ code is broken.
-    # g.compile()
 
-    with NamedTemporaryFile() as s_data:
+    with TemporaryDirectory() as t_dir, NamedTemporaryFile() as s_data:
+        # TODO: We cannot compile with `allocatable` type components, because the generated C++ code is broken.
+        g.build_folder = t_dir
+        g.compile()
         serde_code = generate_serde_code(ast, g)
 
         # Modify the AST to use the serializer.
@@ -123,13 +123,6 @@ end subroutine f2
         want = """
 # name
 # w
-# rank
-1
-# size
-1
-# lbound
-1
-# entries
 # a
 42
 # aa
@@ -207,55 +200,138 @@ end subroutine f2
 """.strip()
         assert want == got
 
-        # Now, verify that it can be deserialized from C++.
+        # Now, verify that it can be deserialized from C++ by re-serializing and comparing.
         cpp_code = f"""
-{serde_code.cpp_deserializer}
+{serde_code.cpp_serde}
+#include "{g.name}.h"
 
 #include <fstream>
 #include <iostream>
 
 int main() {{
-  std::ifstream data("{s_data.name}");
+    std::ifstream data("{s_data.name}");
 
-  t x;
-  serde::deserialize(&x, data);
-  std::cout << "a: " << x.name->w[0]->a << std::endl;
-  std::cout << "alloc(aaz): " << (x.name->w[0]->aaz ? "yes" : "no") << std::endl;
-  std::cout << "alloc(bbz): " << (x.name->w[0]->bbz ? "yes" : "no") << std::endl;
-  std::cout << "volume(bbz): " \
-            << x.name->w[0]->__f2dace_SA_bbz_d_0_s_4 * x.name->w[0]->__f2dace_SA_bbz_d_1_s_5 << std::endl;
+    t x;
+    serde::deserialize(&x, data);
 
-  return EXIT_SUCCESS;
+    auto* h = __dace_init_f2(&x);
+    __program_f2(h, &x);
+
+    std::cout << serde::serialize(&x) << std::endl;
+
+    return __dace_exit_f2(h);
 }}
 """
-        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
-        assert output.strip() == f"""
-a: 42
-alloc(aaz): no
-alloc(bbz): yes
-volume(bbz): 4
-""".strip()
+        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc([
+            f"-I{t_dir}/include",
+            f"-I/Users/pmz/gitspace/tmpdace/dace/dace/runtime/include/",
+            f"-L{t_dir}/build",
+            f"-l{g.name}",
+            f"-Wl,-rpath,{t_dir}/build",
+        ])
+        assert output.strip() == (f"""
+# name
+# w
+# a
+84
+# aa
+# rank
+1
+# size
+3
+# lbound
+1
+# entries
+4
+4
+4
+# aaz
+# alloc
+0
+# b
+2.000000
+# bb
+# rank
+1
+# size
+3
+# lbound
+3
+# entries
+5.000000
+5.000000
+5.000000
+# bbz
+# alloc
+1
+# rank
+2
+# size
+2
+2
+# lbound
+1
+1
+# entries
+5.100000
+5.100000
+5.100000
+5.100000
+# c
+3.000000
+# cc
+# rank
+2
+# size
+2
+2
+# lbound
+3
+5
+# entries
+6.000000
+6.000000
+6.000000
+6.000000
+# d
+1
+# dd
+# rank
+1
+# size
+3
+# lbound
+1
+# entries
+0
+0
+0
+""").strip()
 
         # Now, verify that C++ object can generate config injection JSON.
         cpp_code = f"""
-        {serde_code.cpp_deserializer}
+{serde_code.cpp_serde}
 
-        #include <fstream>
-        #include <iostream>
+#include <fstream>
+#include <iostream>
 
-        int main() {{
-          std::ifstream data("{s_data.name}");
+int main() {{
+    std::ifstream data("{s_data.name}");
 
-          t x;
-          serde::deserialize(&x, data);
-          std::cout << serde::config_injection(*(x.name->w[0])) << std::endl;
+    t x;
+    serde::deserialize(&x, data);
+    std::cout << serde::config_injection(*(x.name->w)) << std::endl;
 
-          return EXIT_SUCCESS;
-        }}
-        """
-
-        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc()
-        print(output)
+    return EXIT_SUCCESS;
+}}
+"""
+        output = SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc([
+            f"-I{t_dir}/include",
+            f"-I/Users/pmz/gitspace/tmpdace/dace/dace/runtime/include/",
+            f"-L{t_dir}/build",
+            f"-l{g.name}",
+            f"-Wl,-rpath,{t_dir}/build",
+        ])
         cinjs = [deserialize(l.strip()) for l in output.splitlines() if l.strip()]
 
         cfg = ParseConfig(sources=sources, entry_points=[('f1',), ('f2',)], config_injections=cinjs)
