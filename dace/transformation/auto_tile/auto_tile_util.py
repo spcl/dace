@@ -148,8 +148,8 @@ def solve(expr, defined_symbols):
 def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any], repeats=3, warmups=1,
                          dev_type=dace.dtypes.ScheduleType.GPU_Device,
                          instr_type=dace.dtypes.InstrumentationType.GPU_Events):
-    assert len(kernel_sdfg.nodes()) == 1
-    kernel_state = kernel_sdfg.nodes()[0]
+    assert len(kernel_sdfg.states()) == 1
+    kernel_state = kernel_sdfg.states()[0]
 
     for node in kernel_state.nodes():
         if (
@@ -216,7 +216,7 @@ def percentage_bandwidth(time, mem_accessed, peak_bandwidh):
 
 
 def convert_inputs_to_gpu_storage(kernel_sdfg: SDFG):
-    for state in kernel_sdfg.nodes():
+    for state in kernel_sdfg.states():
         for node in state.nodes():
             if (
                 isinstance(node, dace.nodes.MapEntry)
@@ -240,7 +240,7 @@ def convert_inputs_to_gpu_storage(kernel_sdfg: SDFG):
 
 def set_transient(kernel_sdfg: SDFG):
     input_output_arrs = []
-    for state in kernel_sdfg.nodes():
+    for state in kernel_sdfg.states():
         for node in state.nodes():
             if (
                 isinstance(node, dace.nodes.MapEntry)

@@ -4,6 +4,7 @@
 
 
 from typing import List, Set, Union
+from dace.data import Property
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties
@@ -22,7 +23,7 @@ from dace.sdfg.analysis.cutout import SDFGCutout
 @make_properties
 class RemainderLoop(transformation.SingleStateTransformation):
     inner_work_map_entry = transformation.PatternNode(nodes.MapEntry)
-
+    tblock_type = Property(dtype=dtypes.ScheduleType, default=dtypes.ScheduleType.GPU_ThreadBlock, allow_none=False)
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.inner_work_map_entry)]
@@ -67,7 +68,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
         while map_entry:
             dev_entry = map_entry
             map_entry = state.entry_node(map_entry)
-        assert (dev_entry.map.schedule == dtypes.ScheduleType.GPU_Device)
+        #assert (dev_entry.map.schedule == dtypes.ScheduleType.GPU_Device)
 
         # 0. Sort memory-moved array into groups
         access_groups = list()
@@ -152,7 +153,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                     symbols_to_ensure_in_scope.add(str(symbol))
 
         thread_block_map_entry = [v for v in state.all_nodes_between(dev_entry, state.exit_node(dev_entry)) if isinstance(
-            v, nodes.MapEntry) and v.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
+            v, nodes.MapEntry) and v.schedule == self.tblock_type]
         assert(len(thread_block_map_entry) == 1)
 
         for param in thread_block_map_entry[0].map.params:

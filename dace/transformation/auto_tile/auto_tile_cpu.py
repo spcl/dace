@@ -5,8 +5,7 @@ from pathlib import Path
 import shutil
 from typing import Dict, List, Tuple, Type, Any, Union
 
-
-import cupy
+import numpy as np
 import dace
 from dace.transformation.auto_tile import auto_tile_util
 from dace.transformation.auto_tile.add_compute_element_map import AddComputeElementBlockMap
@@ -28,13 +27,16 @@ def clean_cache():
 
 
 def copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry):
+
     nn = []
     for n in state.bfs_nodes(scope_entry):
         if n == state.exit_node(scope_entry):
+            nn.append(n)
             break
         nn.append(n)
 
     cut_sdfg = SDFGCutout.singlestate_cutout(state, *nn)
+    print("BBB")
     return cut_sdfg
 
 
@@ -133,12 +135,17 @@ def _tile(
     if not re_apply:
         raise NotImplementedError("Not re-applying is not implemeneted for tiling yet")
 
+    print("a")
+
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
+        print("b")
         _kernel_sdfg = copy_sub_scope(state, entry)
+        print("bb")
         _kernel_sdfg.name = f"{sdfg.name}_auto_tiled_{call_id}"
         auto_tile_util.set_transient(_kernel_sdfg)
-        _kernel_state = _kernel_sdfg.nodes()[0]
+        _kernel_state = _kernel_sdfg.states()[0]
+        print("c")
         _kernel_entry = find_node_in_state_by_cond(
             _kernel_state,
             lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
@@ -162,7 +169,7 @@ def _tile(
         assert _kernel_sdfg is not None
 
         """
-        for cfg in _kernel_sdfg.nodes():
+        for cfg in _kernel_sdfg.states():
             for n in cfg.nodes():
                 if (isinstance(n, dace.nodes.MapEntry)
                     and n.map.schedule == dace.dtypes.ScheduleType.Default
@@ -181,7 +188,7 @@ def _tile(
         )
 
         """
-        for cfg in _kernel_sdfg.nodes():
+        for cfg in _kernel_sdfg.states():
             for n in cfg.nodes():
                 if (isinstance(n, dace.nodes.MapEntry)
                     and n.map.schedule == dace.dtypes.ScheduleType.CPU_Multicore
@@ -235,11 +242,13 @@ def _tile(
             thread_block_param,
             apply_remainder_loop_param,
         ) = current_config
+        if verbose:
+            print("Current config:", current_config)
 
         if work_on_copy:
             kernel_sdfg = copy.deepcopy(_kernel_sdfg)
             kernel_sdfg.name = f"{kernel_sdfg.name}_c{i}"
-            kernel_sdfg_nodes = kernel_sdfg.nodes()
+            kernel_sdfg_nodes = kernel_sdfg.states()
             if len(kernel_sdfg_nodes) != 1:
                 raise Exception("Extracted kernel should have only one state")
             kernel_state = kernel_sdfg_nodes[0]
@@ -406,7 +415,7 @@ def _tile(
             first_inner_work_map = find_node_by_cond(
                 kernel_state,
                 thread_block_map_entry,
-                lambda n: isinstance(n, dace.nodes.MapEntry)
+                lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                 and n.map.label.startswith("InnerWorkMap"),
             )
             if len(work_maps) > 0:
@@ -419,13 +428,16 @@ def _tile(
                 thread_coarsened_map = find_node_by_cond(
                     kernel_state,
                     thread_block_map_entry,
-                    lambda n: isinstance(n, dace.nodes.MapEntry)
+                    lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                     and n.map.label.startswith("ThreadCoarsenedMap"),
                 )
                 RemainderLoop.apply_to(
                     sdfg=kernel_sdfg,
                     verify=True,
                     inner_work_map_entry=thread_coarsened_map,
+                    options={
+                        "tblock_type":dace.dtypes.ScheduleType.CPU_Persistent,
+                    }
                 )
 
         time = None
@@ -433,7 +445,7 @@ def _tile(
             # Check shrmem compile limit
             shr_mem_needed = 0
 
-            for cfg in kernel_sdfg.nodes():
+            for cfg in kernel_sdfg.states():
                 for node in cfg.nodes():
                     if isinstance(node, dace.nodes.MapEntry):
                         if node.map.schedule == dace.dtypes.ScheduleType.Default:
@@ -442,7 +454,7 @@ def _tile(
             def find_next_map(state, n):
                 found_n = False
                 for node in state.nodes():
-                    if found_n and isinstance(node, dace.sdfg.nodes.MapEntry):
+                    if found_n and isinstance(node, dace.sdfg.states.MapEntry):
                         return node
                     if node == n:
                         found_n = True
@@ -480,7 +492,7 @@ def _tile(
         )
             output_from_transformed = copy_inputs_2[output_name]
 
-            are_close = cupy.allclose(
+            are_close = np.allclose(
                 output_from_transformed,
                 output_from_non_transformed,
                 rtol=1e-3,
@@ -528,7 +540,7 @@ def _tile_search(
     auto_tile_util.set_transient(_kernel_sdfg)
     auto_tile_util.convert_inputs_to_gpu_storage(_kernel_sdfg)
     auto_tile_util.set_transient(_kernel_sdfg)
-    _kernel_state = _kernel_sdfg.nodes()[0]
+    _kernel_state = _kernel_sdfg.states()[0]
     _kernel_entry = find_node_in_state_by_cond(
         _kernel_state,
         lambda n: isinstance(n, dace.nodes.MapEntry)
@@ -646,7 +658,7 @@ def _tile_search(
 
         kernel_sdfg = copy.deepcopy(_kernel_sdfg)
         kernel_sdfg.name = f"{kernel_sdfg.name}_c{i}"
-        kernel_sdfg_nodes = kernel_sdfg.nodes()
+        kernel_sdfg_nodes = kernel_sdfg.states()
         if len(kernel_sdfg_nodes) != 1:
             raise Exception("Extracted kernel should have only one state")
         kernel_state = kernel_sdfg_nodes[0]
@@ -786,7 +798,7 @@ def _tile_search(
         )
             output_from_transformed = copy_inputs_2[output_name]
 
-            are_close = cupy.allclose(
+            are_close = np.allclose(
                 output_from_transformed,
                 output_from_non_transformed,
                 rtol=1e-3,

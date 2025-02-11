@@ -766,7 +766,7 @@ def _tile_search(
 # machine_peak_flops_and_bandwidth: Union[Tuple[int, int], None] = None,
 
 
-def auto_tile(
+def auto_tile_gpu(
     sdfg: dace.SDFG,
     exhaustive_search: bool,
     memory_tiling_parameters: List[Tuple[int]],
