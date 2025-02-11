@@ -43,6 +43,9 @@ from pulp import LpMinimize, LpProblem, LpVariable, LpStatus
 import pulp
 from dace.codegen.targets import framecode
 
+# Post AD transformations
+from dace.autodiff.back_to_library_node import backward_gemm_to_library_node, forward_gemm_to_library_node
+
 ReverseNodeReturnType = Tuple[nodes.Node, BackwardResult]
 
 log = logging.getLogger(__name__)
@@ -425,6 +428,11 @@ class BackwardPassGenerator:
                     zero_init[e.data.data] = zinit
                 for e in forward_state.out_edges_by_connector(node, cname):
                     zero_init[e.data.data] = zinit
+
+        # Tranformations to be applied after the backward pass has been generated
+        # 1- Revert MatMul back to a library node
+        forward_gemm_to_library_node(self.sdfg)
+        backward_gemm_to_library_node(self.backward_sdfg)
 
         self._applied = True
         result = BackwardResult(required_grad_names=required_grad_names,
@@ -2337,45 +2345,7 @@ class BackwardPassGenerator:
         assert state in self.reversed_states_map
         # get the backward state for this node
         return self.reversed_states_map[state]
-
-    def _fix_multiple_in_edges_to_connector(self, backward_state: SDFGState, destination_node, target_in_connector):
-        """
-        """
-        # Create a summation tasklet for all the incoming edges
-        inputs = [e.src_conn for e in backward_state.in_edges(destination_node) if e.dst_conn == target_in_connector]
-        outputs = [target_in_connector]
-        code = f"{target_in_connector} = {' + '.join(inputs)}"
-
-        # This function should only be called if there are multiple edges poinitng to the same connector
-        assert len(inputs) > 1
-
-        new_tasklet = backward_state.add_tasklet("avoid_wcr_with_sum", inputs=inputs, outputs=outputs, code=code)
-
-        # Redirect the edges to the tasklet the edges to be connected to the new tasklet
-        i = 0
-        for e in backward_state.in_edges(destination_node):
-            if not e.dst_conn == target_in_connector:
-                continue
-
-            # Save the original memlets for later use
-            save_memlet = e.data
-
-            # Change the data to a temporary
-            name = f"__tmp__avoid_wcr_with_sum_{i}"
-            memlet = Memlet(expr=f"{name}[0]")
-            # Use the same type as the source array for the transient
-            dtype = backward_state.sdfg.arrays[save_memlet.data].dtype
-            scalar_node = backward_state.sdfg.add_array(name=name,
-                                                        shape=[save_memlet.num_accesses],
-                                                        dtype=dtype,
-                                                        transient=True)
-            backward_state.add_edge(e.src, e.src_conn, new_tasklet, e.src_conn, memlet)
-            backward_state.remove_edge(e)
-            i += 1
-
-        # connect the output of the tasklet to the in connector
-        backward_state.add_edge(new_tasklet, target_in_connector, destination_node, target_in_connector, save_memlet)
-
+    
     def _set_wcr_sum_if_needed(self,
                                forward_state: SDFGState,
                                backward_state: SDFGState,
@@ -4430,7 +4400,7 @@ class BackwardPassGenerator:
             # The start of this path should be the forward AccessNode
             assert forward_an is memlet_path[0].src
 
-            # The last edge in the memlet path hsa the connector we want to save
+            # The last edge in the memlet path has the connector we want to save
             edge = memlet_path[-1]
 
         # Add a new AccessNode and array to the forward pass
@@ -4512,6 +4482,20 @@ class BackwardPassGenerator:
         # Add the array descriptor and AccessNode to the forward state
         original_desc = forward_an.desc(forward_state)
 
+        # We make a special case for a memlet of the type A[i, j] in an i, j loop
+        # In this case we only need an array of the same size as the forward node
+        if encolsed and edge.data.data == forward_an.data and len(edge.data.subset) == nb_enclosing_loops:
+            # Check that the memlet subset matches perfectly the order of loop nest
+            # Make sure the subset elements are (i,i,1) and (j,j,1)
+            # Then check if this matches the loop indices
+            if all(str(subset[0]) == loop_param_list[i] and subset[0] == subset[1] and subset[2] == 1 for i, subset in enumerate(edge.data.subset)):
+                # We only use the loop accesses
+                # Both should work since shape[:nb_enclosing_loops] == shape[nb_enclosing_loops:]
+                shape = shape[nb_enclosing_loops:]
+                
+                # We want to build the memlet as if this was not in a a loop
+                nb_enclosing_loops = 0
+                
         new_store_node = forward_state.add_array(
             name=new_store_node_name,
             shape=shape,

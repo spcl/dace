@@ -1,6 +1,7 @@
 import dace
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate, utils as dutils, infer_types
 from dace.libraries.blas.nodes.matmul import MatMul
+from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.standard import Transpose
 import copy
 
@@ -13,14 +14,26 @@ def can_be_applied_forward_gemm_to_library_node(state: SDFGState, nsdfg: dace.no
         return None
     nsdfg_in_edges = state.in_edges(nsdfg)
     if len(nsdfg_in_edges) != 2:
-        return None
+        # There should be two edges to connectors
+        # This is to take into considiration the synchronization edges with empty memlets
+        with_conn = 0
+        for e in nsdfg_in_edges:
+            if e.dst_conn is not None:
+                with_conn += 1
+        if with_conn != 2:  
+            return None
     nsdfg_out_edges = state.out_edges(nsdfg)
     if len(nsdfg_out_edges) != 1:
         return None
     # TODO: patterm matching
     for state in nsdfg.sdfg.states():
-        if ("_MatMult_gemm_initstate" in state.label
-                or "_MatMult_gemv" in state.label) and "reversed" not in state.label:
+        if ("_MatMult_gemm_initstate" in state.label) and "reversed" not in state.label:
+            return state.label
+        if ("_MatMult_gemv" in state.label) and "reversed" not in state.label:
+            return state.label
+        if ("_MatMult_dot" in state.label) and "reversed" not in state.label:
+            return state.label
+        if ("_Dot_" in state.label) and "reversed" not in state.label:
             return state.label
     return None
 
@@ -32,7 +45,7 @@ def forward_gemm_to_library_node(sdfg: SDFG):
     Without additional transformations, this will result in bad performance so we revert back to the library node for now.
     """
     # Iterate through all sdfg states
-    for state in sdfg.nodes():
+    for state in sdfg.all_states():
         # Iterate through all nodes in the state
         for node in state.nodes():
             matmul = can_be_applied_forward_gemm_to_library_node(state, node)
@@ -44,7 +57,6 @@ def forward_gemm_to_library_node(sdfg: SDFG):
 
                     # Get the two inputs to the nested SDFG
                     in_edges = state.in_edges(node)
-                    assert len(in_edges) == 2
                     for e in in_edges:
                         state.add_edge(e.src, e.src_conn, libnode, e.dst_conn, e.data)
                         state.remove_edge(e)
@@ -54,6 +66,29 @@ def forward_gemm_to_library_node(sdfg: SDFG):
                     assert len(out_edges) == 1
                     for e in out_edges:
                         state.add_edge(libnode, e.src_conn, e.dst, e.dst_conn, e.data)
+                        state.remove_edge(e)
+
+                if "_MatMult_dot" in matmul:
+                    # Create the new library node
+                    libnode = MatMul('_MatMult_')
+
+                    # Get the two inputs to the nested SDFG
+                    in_edges = state.in_edges(node)
+                    assert len(in_edges) == 2
+                    for e in in_edges:
+                        if e.dst_conn == "_x":
+                            state.add_edge(e.src, e.src_conn, libnode, "_a", e.data)
+                        elif e.dst_conn == "_y":
+                            state.add_edge(e.src, e.src_conn, libnode, "_b", e.data)
+                        else:
+                            raise ValueError("Inputs don't match for DOT")
+                        state.remove_edge(e)
+
+                    # Get the output of the nested SDFG
+                    out_edges = state.out_edges(node)
+                    assert len(out_edges) == 1
+                    for e in out_edges:
+                        state.add_edge(libnode, "_c", e.dst, e.dst_conn, e.data)
                         state.remove_edge(e)
 
                 if "_MatMult_gemv" in matmul:
@@ -66,12 +101,16 @@ def forward_gemm_to_library_node(sdfg: SDFG):
                     for e in in_edges:
                         if e.dst_conn == "_x":
                             # Get the shape of the input array
-                            shape = sdfg.arrays[e.src.data].shape
+                            assert e.src.data == e.data.data
+                            shape = copy.deepcopy(e.data.subset)
+                            shape.squeeze()
                             assert len(shape) == 1
                             x_input = shape
                         if e.dst_conn == "_A":
                             # Get the shape of the input array
-                            shape = sdfg.arrays[e.src.data].shape
+                            assert e.src.data == e.data.data
+                            shape = copy.deepcopy(e.data.subset)
+                            shape.squeeze()
                             assert len(shape) == 2
                             A_input = shape
 
@@ -87,7 +126,9 @@ def forward_gemm_to_library_node(sdfg: SDFG):
                     for e in in_edges:
                         if e.dst_conn == "_A":
                             # Get the shape of the input array
-                            shape = sdfg.arrays[e.src.data].shape
+                            assert e.src.data == e.data.data
+                            shape = copy.deepcopy(e.data.subset)
+                            shape.squeeze()
                             assert len(shape) == 2
 
                             state.add_edge(e.src, e.src_conn, libnode, new_A_conn, e.data)
@@ -103,6 +144,22 @@ def forward_gemm_to_library_node(sdfg: SDFG):
                     assert len(out_edges) == 1
                     for e in out_edges:
                         state.add_edge(libnode, "_c", e.dst, e.dst_conn, e.data)
+                        state.remove_edge(e)
+                if "_Dot_" in matmul:
+                    # Create the new library node
+                    libnode = Dot('_Dot_')
+
+                    # Get the two inputs to the nested SDFG
+                    in_edges = state.in_edges(node)
+                    for e in in_edges:
+                        state.add_edge(e.src, e.src_conn, libnode, e.dst_conn, e.data)
+                        state.remove_edge(e)
+
+                    # Get the output of the nested SDFG
+                    out_edges = state.out_edges(node)
+                    assert len(out_edges) == 1
+                    for e in out_edges:
+                        state.add_edge(libnode, e.src_conn, e.dst, e.dst_conn, e.data)
                         state.remove_edge(e)
                 # Remove the nested SDFG node
                 state.remove_node(node)
@@ -122,8 +179,11 @@ def can_be_applied_backward_gemm_to_library_node(state: SDFGState, nsdfg: dace.n
         return None
 
     for state in nsdfg.sdfg.states():
-        if ("_MatMult_gemm_initstate" in state.label or "_MatMult_gemv" in state.label) and "reversed" in state.label:
+        if "_MatMult_gemm_initstate" in state.label and "reversed" in state.label:
             return state.label
+        if "_MatMult_gemv" in state.label and "reversed" in state.label:
+            # TODO: need to fix squeezing for this to work
+            return None
     return None
 
 
@@ -134,7 +194,7 @@ def backward_gemm_to_library_node(sdfg: SDFG):
     Without additional transformations, this will result in bad performance so we revert back to the library node for now.
     """
     # Iterate through all sdfg states
-    for state in sdfg.nodes():
+    for state in sdfg.all_states():
         # Iterate through all nodes in the state
         for node in state.nodes():
             # Check if the node is a GEMM node
@@ -154,34 +214,66 @@ def backward_gemm_to_library_node(sdfg: SDFG):
                             transpose_libnode = Transpose("_Transpose_", dtype=sdfg.arrays[e.src.data].dtype)
                             state.add_edge(e.src, e.src_conn, transpose_libnode, "_inp", e.data)
                             # Transpose the memlet data
-                            assert e.data.subset is not None and e.data.subset.dims() == 2
+                            assert e.data.subset is not None
                             new_memlet = copy.deepcopy(e.data)
-                            new_memlet.subset = dace.subsets.Range([new_memlet.subset[1], new_memlet.subset[0]])
-                            if e.dst_conn == "_a":
+                            if e.data.subset.dims() == 2:
+                                new_memlet.subset = dace.subsets.Range([new_memlet.subset[1], new_memlet.subset[0]])
+                                if e.dst_conn == "_a":
 
-                                # Create a new array to contain the transposed matrix
-                                name, _ = sdfg.add_array(
-                                    "_transposed_" + e.src.data,
-                                    [sdfg.arrays[e.src.data].shape[1], sdfg.arrays[e.src.data].shape[0]],
-                                    sdfg.arrays[e.src.data].dtype,
-                                    transient=True)
-                                transposed_node = state.add_access(name)
-                                state.add_edge(transpose_libnode, "_out", transposed_node, None,
-                                               sdfg.make_array_memlet(name))
-                                new_memlet.data = name
-                                state.add_edge(transposed_node, None, matmul_libnode, "_a", new_memlet)
+                                    # Create a new array to contain the transposed matrix
+                                    name, _ = sdfg.add_array(
+                                        "_transposed_1_" + e.src.data,
+                                        [sdfg.arrays[e.src.data].shape[1], sdfg.arrays[e.src.data].shape[0]],
+                                        sdfg.arrays[e.src.data].dtype,
+                                        transient=True)
+                                    transposed_node = state.add_access(name)
+                                    state.add_edge(transpose_libnode, "_out", transposed_node, None,
+                                                sdfg.make_array_memlet(name))
+                                    new_memlet.data = name
+                                    state.add_edge(transposed_node, None, matmul_libnode, "_a", new_memlet)
+                                else:
+                                    # Create a new array to contain the transposed matrix
+                                    name, _ = sdfg.add_array(
+                                        "_transposed_2_" + e.src.data,
+                                        [sdfg.arrays[e.src.data].shape[1], sdfg.arrays[e.src.data].shape[0]],
+                                        sdfg.arrays[e.src.data].dtype,
+                                        transient=True)
+                                    transposed_node = state.add_access(name)
+                                    new_memlet.data = name
+                                    state.add_edge(transpose_libnode, "_out", transposed_node, None,
+                                                sdfg.make_array_memlet(name))
+                                    state.add_edge(transposed_node, None, matmul_libnode2, "_b", new_memlet)
                             else:
-                                # Create a new array to contain the transposed matrix
-                                name, _ = sdfg.add_array(
-                                    "_transposed_" + e.src.data,
-                                    [sdfg.arrays[e.src.data].shape[1], sdfg.arrays[e.src.data].shape[0]],
-                                    sdfg.arrays[e.src.data].dtype,
-                                    transient=True)
-                                transposed_node = state.add_access(name)
-                                new_memlet.data = name
-                                state.add_edge(transpose_libnode, "_out", transposed_node, None,
-                                               sdfg.make_array_memlet(name))
-                                state.add_edge(transposed_node, None, matmul_libnode2, "_b", new_memlet)
+                                assert e.data.subset.dims() == 4
+                                new_memlet.subset = dace.subsets.Range(new_memlet.subset[:2]+[new_memlet.subset[-1], new_memlet.subset[-2]])
+                                if e.dst_conn == "_a":
+
+                                    # Create a new array to contain the transposed matrix
+                                    name, _ = sdfg.add_array(
+                                        "_transposed_3_" + e.src.data,
+                                        [sdfg.arrays[e.src.data].shape[0],sdfg.arrays[e.src.data].shape[1], sdfg.arrays[e.src.data].shape[-1], sdfg.arrays[e.src.data].shape[-2]],
+                                        sdfg.arrays[e.src.data].dtype,
+                                        transient=True)
+                                    transposed_node = state.add_access(name)
+                                    transposition_memlet = copy.deepcopy(new_memlet)
+                                    transposition_memlet.data = name
+                                    state.add_edge(transpose_libnode, "_out", transposed_node, None,
+                                                transposition_memlet)
+                                    new_memlet.data = name
+                                    state.add_edge(transposed_node, None, matmul_libnode, "_a", new_memlet)
+                                else:
+                                    # Create a new array to contain the transposed matrix
+                                    name, _ = sdfg.add_array(
+                                        "_transposed_4_" + e.src.data,
+                                        [sdfg.arrays[e.src.data].shape[0],sdfg.arrays[e.src.data].shape[1], sdfg.arrays[e.src.data].shape[-1], sdfg.arrays[e.src.data].shape[-2]],
+                                        sdfg.arrays[e.src.data].dtype,
+                                        transient=True)
+                                    transposed_node = state.add_access(name)
+                                    new_memlet.data = name
+                                    transposition_memlet = copy.deepcopy(new_memlet)
+                                    state.add_edge(transpose_libnode, "_out", transposed_node, None,
+                                                transposition_memlet)
+                                    state.add_edge(transposed_node, None, matmul_libnode2, "_b", new_memlet)
                         else:
                             state.add_edge(e.src, e.src_conn, matmul_libnode, "_b", copy.deepcopy(e.data))
                             state.add_edge(e.src, e.src_conn, matmul_libnode2, "_a", copy.deepcopy(e.data))
@@ -210,7 +302,9 @@ def backward_gemm_to_library_node(sdfg: SDFG):
                     out_edges = state.out_edges(node)
                     for e in out_edges:
                         if e.src_conn == "gradient__A":
-                            shape = sdfg.arrays[e.data.data].shape
+                            assert e.src.data == e.data.data
+                            shape = copy.deepcopy(e.data.subset)
+                            shape.squeeze()
                             assert len(shape) == 2
                             matrix_output_shape = shape
 
