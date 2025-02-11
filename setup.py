@@ -73,7 +73,7 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy < 2.0', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply',
+          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply',
           'fparser >= 0.1.3', 'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill',
           'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"', 'packaging'
       ] + cmake_requires,
