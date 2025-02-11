@@ -762,6 +762,8 @@ def main():
     argp.add_argument('-i', '--in_src', type=str, required=True, action='append', default=[],
                       help='The files or directories containing Fortran source code (absolute path or relative to CWD).'
                            'Can be repeated to include multiple files and directories.')
+    argp.add_argument('-e', '--entry_points', type=str, required=False, action='append', default=[],
+                      help='The dot-delimited entry points for the SDFG (empty means all possible entry points).')
     argp.add_argument('-g', '--in_sdfg', type=str, required=True, default=None,
                       help='The SDFG file containing the final product of DaCe. We need this to know the structures '
                            'and their members that are present in the end (aftre further pruning etc.)')
@@ -778,7 +780,10 @@ def main():
     print(f"Will be using the SDFG as the deserializer target: {args.in_sdfg}")
     g = SDFG.from_file(args.in_sdfg)
 
-    cfg = ParseConfig(sources=input_f90s)
+    print(f"Will be using the following entry points for pruning (empty means all): {args.entry_points}")
+    entry_points = [tuple(ep.split('.')) for ep in args.entry_points]
+
+    cfg = ParseConfig(sources=input_f90s, entry_points=entry_points)
     ast = create_fparser_ast(cfg)
     ast = run_fparser_transformations(ast, cfg)
     serde_code = generate_serde_code(ast, g)
