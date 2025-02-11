@@ -17,8 +17,10 @@ from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import Base, walk, FortranSyntaxError
 
+import dace
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from dace.frontend.fortran.ast_internal_classes import Program_Node
 import dace.frontend.fortran.ast_transforms as ast_transforms
 from dace import Language as lang
 from dace import SDFG, InterstateEdge, Memlet, pointer, SDFGState
@@ -2729,7 +2731,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 
     iast = ast_components.InternalFortranAst()
     prog = iast.create_ast(ast)
-    assert isinstance(prog, FNode)
+    assert isinstance(prog, Program_Node)
     prog.module_declarations = ast_utils.parse_module_declarations(prog)
     iast.finalize_ast(prog)
     return iast, prog
@@ -2771,7 +2773,10 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast_f90_old, ast_f90_new = None, ast.tofortran()
     while not ast_f90_old or ast_f90_old != ast_f90_new:
         if ast_f90_old:
-            print(f"#(ast_f90_old) = {len(ast_f90_old)} => #(ast_f90_new) = {len(ast_f90_new)}")
+            print(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
+                  f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
+        else:
+            print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
 
         print("FParser Op: Inject configs & prune...")
         ast = inject_const_evals(ast, cfg.config_injections)
@@ -2801,6 +2806,7 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         ast = prune_unused_objects(ast, cfg.do_not_prune)
 
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
+    print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
 
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
