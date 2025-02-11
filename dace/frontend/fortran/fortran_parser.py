@@ -12,11 +12,9 @@ from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 import networkx as nx
 from fparser.api import get_reader
 from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
 from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt
-from fparser.two.parser import ParserFactory as pf, ParserFactory
-from fparser.two.symbol_table import SymbolTable
+from fparser.two.parser import ParserFactory
 from fparser.two.utils import Base, walk, FortranSyntaxError
 
 import dace.frontend.fortran.ast_components as ast_components
@@ -2770,32 +2768,39 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast = deconstuct_goto_statements(ast)
     ast = correct_for_function_calls(ast)
 
-    print("FParser Op: Inject configs & prune...")
-    ast = inject_const_evals(ast, cfg.config_injections)
-    ast = const_eval_nodes(ast)
-    ast = convert_data_statements_into_assignments(ast)
+    ast_f90_old, ast_f90_new = None, ast.tofortran()
+    while not ast_f90_old or ast_f90_old != ast_f90_new:
+        if ast_f90_old:
+            print(f"#(ast_f90_old) = {len(ast_f90_old)} => #(ast_f90_new) = {len(ast_f90_new)}")
 
-    print("FParser Op: Fix global vars & prune...")
-    # Prune things once after fixing global variables.
-    # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
-    ast = make_practically_constant_global_vars_constants(ast)
-    ast = const_eval_nodes(ast)
-    ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.do_not_prune)
+        print("FParser Op: Inject configs & prune...")
+        ast = inject_const_evals(ast, cfg.config_injections)
+        ast = const_eval_nodes(ast)
+        ast = convert_data_statements_into_assignments(ast)
 
-    print("FParser Op: Fix arguments & prune...")
-    # Another round of pruning after fixing the practically constant arguments, just in case.
-    ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
-    ast = const_eval_nodes(ast)
-    ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.do_not_prune)
+        print("FParser Op: Fix global vars & prune...")
+        # Prune things once after fixing global variables.
+        # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
+        ast = make_practically_constant_global_vars_constants(ast)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.do_not_prune)
 
-    print("FParser Op: Fix local vars & prune...")
-    # Another round of pruning after fixing the locally constant variables, just in case.
-    ast = exploit_locally_constant_variables(ast)
-    ast = const_eval_nodes(ast)
-    ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.do_not_prune)
+        print("FParser Op: Fix arguments & prune...")
+        # Another round of pruning after fixing the practically constant arguments, just in case.
+        ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.do_not_prune)
+
+        print("FParser Op: Fix local vars & prune...")
+        # Another round of pruning after fixing the locally constant variables, just in case.
+        ast = exploit_locally_constant_variables(ast)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.do_not_prune)
+
+        ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
 
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
