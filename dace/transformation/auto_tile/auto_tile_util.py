@@ -145,27 +145,29 @@ def solve(expr, defined_symbols):
     return dace.symbolic.simplify(expr)
 
 
-def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any], repeats=3, warmup=1):
+def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any], repeats=3, warmups=1,
+                         dev_type=dace.dtypes.ScheduleType.GPU_Device,
+                         instr_type=dace.dtypes.InstrumentationType.GPU_Events):
     assert len(kernel_sdfg.nodes()) == 1
     kernel_state = kernel_sdfg.nodes()[0]
 
     for node in kernel_state.nodes():
         if (
             isinstance(node, dace.nodes.MapEntry) and
-            node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+            node.map.schedule == dev_type
         ):
-            node.instrument = dace.InstrumentationType.GPU_Events
+            node.instrument = instr_type
 
-    assert warmup >= 0 and repeats > warmup
+    assert warmups
 
     time = 0.0
-    rem_warmup = warmup
+    rem_warmup = warmups
     for i in range(repeats):
         kernel_sdfg(**inputs)
         report = kernel_sdfg.get_latest_report()
         if report is not None:
             report.process_events()
-        # Weird hack, TODO: fix
+            # Weird hack, TODO: fix
             if len(report.durations.values()) == 0:
                 kernel_sdfg.save("/tmp/hackfix.sdfgz")
                 kernel_sdfg = SDFG.from_file("/tmp/hackfix.sdfgz")
@@ -180,9 +182,8 @@ def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any], repea
         time += statistics.median(final_list) if rem_warmup > 0 else 0
         rem_warmup -= 1
 
-    time /= (repeats - warmup)
+    time /= (repeats - warmups)
     return time
-
 
 def run_and_measure_sdfg(kernel_sdfg: CompiledSDFG, inputs : Dict[Type[str], Any], verbose: bool = False):
     time = 0.0

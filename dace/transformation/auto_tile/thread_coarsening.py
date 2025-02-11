@@ -47,6 +47,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 assert v.map.schedule == dtypes.ScheduleType.Sequential
                 inner_sequential_map_entry = v
                 break
+        """
         if inner_sequential_map_entry is None:
             return False
         if inner_sequential_map_entry is not None:
@@ -61,7 +62,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     # only assignment type of tasklets are allowed
                     if len(u.in_connectors) > 0:
                         return False
-
+        """
         return MapTiling.can_be_applied(
             self, state, expr_index=expr_index, sdfg=sdfg, permissive=permissive
         )

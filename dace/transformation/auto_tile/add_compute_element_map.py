@@ -51,7 +51,7 @@ class AddComputeElementBlockMap(transformation.SingleStateTransformation):
         ):
             return False
 
-        if self.schedule_to_add in dace.dtypes.ScheduleType.GPU_ThreadBlock:
+        if self.schedule_to_add in [dace.dtypes.ScheduleType.GPU_ThreadBlock]:
             if len(self.compute_element_group_dims) > 3:
                 return False
             if reduce(self.compute_element_group_dims) > 1024:
