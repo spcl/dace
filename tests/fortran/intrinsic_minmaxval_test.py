@@ -264,12 +264,12 @@ MODULE test_minval
 
     CONTAINS
 
-    SUBROUTINE minval_test_func(input, res)
+    SUBROUTINE minval_test_func(inp, res)
         TYPE(array_container) :: container
-        INTEGER, DIMENSION(7) :: input
+        INTEGER, DIMENSION(7) :: inp
         INTEGER, DIMENSION(4) :: res
 
-        container%data = input
+        container%data = inp
 
         CALL minval_test_func_internal(container, res)
     END SUBROUTINE
@@ -290,16 +290,16 @@ END MODULE
     sdfg.compile()
 
     size = 7
-    input = np.full([size], 0, order="F", dtype=np.int32)
+    inp = np.full([size], 0, order="F", dtype=np.int32)
     for i in range(size):
-        input[i] = i + 1
+        inp[i] = i + 1
     res = np.full([4], 42, order="F", dtype=np.int32)
-    sdfg(input=input, res=res)
+    sdfg(inp=inp, res=res)
 
-    assert res[0] == input[6]
-    assert res[1] == input[6]
-    assert res[2] == input[5]
-    assert res[3] == input[4]
+    assert res[0] == inp[6]
+    assert res[1] == inp[6]
+    assert res[2] == inp[5]
+    assert res[3] == inp[4]
 
 if __name__ == "__main__":
 

@@ -3,7 +3,7 @@ import subprocess
 from dataclasses import dataclass, field
 from os import path
 from tempfile import TemporaryDirectory
-from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection
+from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection, Iterable
 
 import numpy as np
 from fparser.two.Fortran2003 import Name
@@ -22,7 +22,7 @@ class SourceCodeBuilder:
     # compile together, then get a dictionary mapping file names (possibly auto-inferred) to their content.
     sources, main = SourceCodeBuilder().add_file('''
     module lib
-    end end module lib
+    end module lib
     ''').add_file('''
     program main
     use lib
@@ -39,8 +39,10 @@ class SourceCodeBuilder:
         """Add source file contents in the order you'd pass them to `gfortran`."""
         if not name:
             name = SourceCodeBuilder._identify_name(content)
-        key = f"{name}.f90"
-        assert key not in self.sources, f"{key} in {list(self.sources.keys())}: {self.sources[key]}"
+        name, ext = name.rsplit('.', 1) if '.' in name else (name, 'f90')
+        key, COUNTER = f"{name}.{ext}", 0
+        while key in self.sources:
+            key, COUNTER = f"{name}_{COUNTER}.{ext}", COUNTER+1
         self.sources[key] = content
         return self
 
@@ -64,13 +66,12 @@ class SourceCodeBuilder:
                 raise e
 
     def run_with_gfortran(self) -> str:
-        """Assert that it all compiles with `gfortran`."""
+        """Compile and execute the program with `gfortran`."""
         with TemporaryDirectory() as td:
             # Create temporary Fortran source-file structure.
             for fname, content in self.sources.items():
                 with open(path.join(td, fname), 'w') as f:
                     f.write(content)
-            # Run `gfortran -Wall` to verify that it compiles.
             # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
             cmd = ['gfortran', '-Wall', '-fPIC', *self.sources.keys()]
 
@@ -84,6 +85,27 @@ class SourceCodeBuilder:
                 print(e.stderr.decode())
                 raise e
 
+    def run_with_gcc(self, extra_build_args: Optional[Iterable[str]] = None) -> str:
+        """Compile and execute the program with `g++`."""
+        extra_build_args = extra_build_args or tuple()
+        with TemporaryDirectory() as td:
+            # Create temporary Fortran source-file structure.
+            for fname, content in self.sources.items():
+                with open(path.join(td, fname), 'w') as f:
+                    f.write(content)
+            # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
+            cmd = ['g++', '-Wall', '-fPIC', '-std=c++17', *extra_build_args, *self.sources.keys()]
+
+            try:
+                subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
+                result = subprocess.run(path.join(td, 'a.out'), cwd=td, capture_output=True)
+                result.check_returncode()
+                return result.stdout.decode()
+            except subprocess.CalledProcessError as e:
+                print("C++ running failed!")
+                print(e.stderr.decode())
+                raise e
+
     def get(self) -> Tuple[Dict[str, str], Optional[str]]:
         """Get a dictionary mapping file names (possibly auto-inferred) to their content."""
         main = None
@@ -93,20 +115,23 @@ class SourceCodeBuilder:
 
     @staticmethod
     def _identify_name(content: str) -> str:
-        PPAT = re.compile("^.*\\bprogram\\b\\s*\\b(?P<prog>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
+        PPAT = re.compile("^.*\\bprogram\\b\\s*\\b(?P<prog>[a-zA-Z0-9_]*)\\b.*$", re.I | re.M | re.S)
         if PPAT.match(content):
-            return 'main'
+            match = PPAT.search(content)
+            return match.group('prog') or 'main'
         MPAT = re.compile("^.*\\bmodule\\b\\s*\\b(?P<mod>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
         if MPAT.match(content):
             match = MPAT.search(content)
             return match.group('mod')
-        FPAT = re.compile("^.*\\bfunction\\b\\s*\\b(?P<mod>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
+        FPAT = re.compile("^.*\\bfunction\\b\\s*\\b(?P<fn>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
         if FPAT.match(content):
-            return 'main'
-        SPAT = re.compile("^.*\\bsubroutine\\b\\s*\\b(?P<mod>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
+            match = FPAT.search(content)
+            return match.group('fn')
+        SPAT = re.compile("^.*\\bsubroutine\\b\\s*\\b(?P<subr>[a-zA-Z0-9_]+)\\b.*$", re.I | re.M | re.S)
         if SPAT.match(content):
-            return 'main'
-        assert not any(PAT.match(content) for PAT in (PPAT, MPAT, FPAT, SPAT))
+            match = SPAT.search(content)
+            return match.group('subr')
+        raise ValueError(f"Could not find any identifiable object in the content:\n{content}")
 
 
 class FortranASTMatcher:
@@ -255,7 +280,7 @@ class InternalASTMatcher:
         if self.is_type is not None:
             assert isinstance(node, self.is_type)
         if self.has_value is not None:
-            assert node == self.has_value
+            assert node == self.has_value, f"{node} is not the same as {self.has_value}"
         if self.has_empty_attr is not None:
             for key in self.has_empty_attr:
                 assert not hasattr(node, key) or not getattr(node, key), f"{node} is expected to not have key: {key}"

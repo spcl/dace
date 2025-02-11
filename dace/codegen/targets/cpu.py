@@ -1652,7 +1652,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                try:
+                    defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                except KeyError:
+                    defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
                 callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
             else:

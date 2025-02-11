@@ -13,7 +13,7 @@ module lib1
   implicit none
   real :: outside_init = epsilon(1.0)
 end module lib1
-""").add_file("""
+
 module lib2
 contains
   subroutine init_test_function(d)
@@ -23,7 +23,7 @@ contains
     d(2) = 5.5 + bob + outside_init
   end subroutine init_test_function
 end module lib2
-""").add_file("""
+
 subroutine main(d)
   use lib2, only: init_test_function
   implicit none
@@ -49,7 +49,7 @@ module lib1
   implicit none
   real, parameter :: TORUS_MAX_LAT = 4.0/18.0*atan(1.0)
 end module lib1
-""").add_file("""
+
 module lib2
 contains
   subroutine init2_test_function(d)
@@ -58,7 +58,7 @@ contains
     d(2) = 5.5 + TORUS_MAX_LAT
   end subroutine init2_test_function
 end module lib2
-""").add_file("""
+
 subroutine main(d)
   use lib2, only: init2_test_function
   implicit none

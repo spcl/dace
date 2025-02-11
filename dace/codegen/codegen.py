@@ -3,25 +3,28 @@ import functools
 from typing import List
 
 import dace
-from dace import dtypes
 from dace import data
-from dace.sdfg import SDFG
-from dace.codegen.targets import framecode
+from dace import dtypes
 from dace.codegen.codeobject import CodeObject
-from dace.config import Config
-from dace.sdfg import infer_types
-
+from dace.codegen.instrumentation import InstrumentationProvider
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
-
-from dace.codegen.instrumentation import InstrumentationProvider
+from dace.codegen.targets import framecode
+from dace.codegen.targets.cpp import mangle_dace_state_struct_name
+from dace.config import Config
+from dace.sdfg import SDFG
+from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generate a header file for the SDFG """
-    proto = ""
-    proto += "#include <dace/dace.h>\n"
+    proto = f"""
+#ifndef __DACE_CODEGEN_{sdfg.name.upper()}__
+#define __DACE_CODEGEN_{sdfg.name.upper()}__
+
+#include <dace/dace.h>
+"""
 
     #################################
     # Custom types
@@ -57,23 +60,25 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
         proto += "\n"
     #################################
 
-    init_params = (sdfg.name, sdfg.name, sdfg.init_signature(free_symbols=frame.free_symbols(sdfg)))
-    call_params = sdfg.signature(with_types=True, for_call=False, arglist=frame.arglist)
-    if len(call_params) > 0:
-        call_params = ', ' + call_params
-    params = (sdfg.name, sdfg.name, call_params)
-    exit_params = (sdfg.name, sdfg.name)
-    proto += 'typedef void * %sHandle_t;\n' % sdfg.name
-    proto += 'extern "C" %sHandle_t __dace_init_%s(%s);\n' % init_params
-    proto += 'extern "C" int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
-    proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
+    initparams = sdfg.signature(arglist=frame.arglist)
+    params_comma = (', ' + initparams) if initparams else ''
+    proto += f"""
+
+struct {mangle_dace_state_struct_name(sdfg)};  // Forward declaration.
+
+DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams});
+DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state);
+DACE_EXPORTED void __program_{sdfg.name}({mangle_dace_state_struct_name(sdfg.name)} *__state{params_comma});
+
+#endif // __DACE_CODEGEN_{sdfg.name.upper()}__
+"""
     return proto
 
 
 def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generates a C program calling this SDFG. Since we do not
         know the purpose/semantics of the program, we allocate
-        the right types and and guess values for scalars.
+        the right types and guess values for scalars.
     """
     al = frame.arglist
     init_params = sdfg.init_signature(for_call=True, free_symbols=frame.free_symbols(sdfg))

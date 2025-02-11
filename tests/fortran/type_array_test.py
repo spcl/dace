@@ -69,7 +69,7 @@ contains
     my_arr(1, 1) = 42
   end subroutine deepest
 end module lib
-""").add_file("""
+
 subroutine main(d)
   use lib
   implicit none
@@ -114,7 +114,7 @@ contains
     d(1, 1) = my_arr2(1, 1)
   end subroutine deepest
 end module lib
-""").add_file("""
+
 subroutine main(d, p_prog)
   use lib
   implicit none
@@ -173,7 +173,7 @@ contains
     d(1, 1) = my_arr2(1, 1)
   end subroutine deepest
 end module lib
-""").add_file("""
+
 subroutine main(d, p_prog)
   use lib
   implicit none

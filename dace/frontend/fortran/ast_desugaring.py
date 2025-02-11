@@ -214,10 +214,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
         # If we are in a data-ref then we need to get to the root.
         while isinstance(par.parent, Data_Ref):
             par = par.parent
-        while isinstance(par, Data_Ref):
-            # TODO: Add ref.
-            par, _ = par.children[0], par.children[1:]
-        if isinstance(par, (Part_Ref, Data_Pointer_Object)):
+        while isinstance(par, (Data_Ref, Part_Ref, Data_Pointer_Object)):
             # TODO: Add ref.
             par, _ = par.children[0], par.children[1:]
         assert isinstance(par, Name)
@@ -1600,7 +1597,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
-    survivors: Set[SPEC] = set()
+    survivors: Set[SPEC] = set(keepers)
     keepers = [alias_map[k] for k in keepers]
     assert all(isinstance(k, PRUNABLE_OBJECT_CLASSES) for k in keepers)
 
@@ -2416,7 +2413,7 @@ def add_use_to_specification(scdef: SCOPE_OBJECT_TYPES, clause: str):
         prepend_children(specification_part, Use_Stmt(clause))
 
 
-KEYWORDS_TO_AVOID = {k.lower() for k in ('for', 'in', 'beta', 'input')}
+KEYWORDS_TO_AVOID = {k.lower() for k in ('for', 'in', 'beta', 'input', 'this')}
 
 
 def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, SPEC]]) -> Program:
@@ -2452,7 +2449,10 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
-        if k in keepers or k in entry_point_args:
+        if k[-1].lower() not in KEYWORDS_TO_AVOID and k in entry_point_args:
+            # Keep the entry point arguments if possible.
+            continue
+        if k in keepers:
             # Specific variable instances requested to keep.
             continue
         if k[-1] in keepers:
@@ -2919,15 +2919,17 @@ def inject_const_evals(ast: Program,
 
         # Validations.
         if item.scope_spec:
-            assert item.scope_spec in alias_map
+            if item.scope_spec not in alias_map:
+                print(f"{item}/{item.scope_spec} does not refer to a valid object; moving on...", file=sys.stderr)
+                continue
         if isinstance(item, ConstTypeInjection):
-            assert item.type_spec in alias_map
-            tdef = alias_map[item.type_spec].parent
-            assert isinstance(tdef, Derived_Type_Def)
+            if item.type_spec not in alias_map or not isinstance(alias_map[item.type_spec].parent, Derived_Type_Def):
+                print(f"{item}/{item.type_spec} does not refer to a valid type; moving on...", file=sys.stderr)
+                continue
         elif isinstance(item, ConstInstanceInjection):
-            assert item.root_spec in alias_map
-            rdef = alias_map[item.root_spec]
-            assert isinstance(rdef, Entity_Decl)
+            if item.root_spec not in alias_map or not isinstance(alias_map[item.root_spec], Entity_Decl):
+                print(f"{item}/{item.root_spec} does not refer to a valid object; moving on...", file=sys.stderr)
+                continue
 
     for scope_spec, items in items_by_scopes.items():
         if scope_spec == TOPLEVEL_SPEC:
@@ -3034,7 +3036,9 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
             if not sp_part:
                 rest, end_mod = box.children[:-1], box.children[-1]
                 assert isinstance(end_mod, End_Module_Stmt)
-                sp_part = Module_Subprogram_Part('contains')
+                # TODO: FParser bug; A simple `Module_Subprogram_Part('contains') should work, but doesn't;
+                #  hence the surgery.
+                sp_part = Module(get_reader('module m\ncontains\nend module m')).children[1]
                 set_children(box, rest + [sp_part, end_mod])
             box = sp_part
         else:

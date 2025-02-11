@@ -63,7 +63,7 @@ aa(1,1)=res(1,1,1)
 END SUBROUTINE viewlens
                     """
  
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
@@ -154,7 +154,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -207,7 +207,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)

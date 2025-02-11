@@ -1,18 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict
 
 from dace.frontend.fortran.ast_internal_classes import Program_Node, Main_Program_Node, Subroutine_Subprogram_Node, \
     Module_Node, Specification_Part_Node
 from dace.frontend.fortran.ast_transforms import Structures, Structure
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder, InternalASTMatcher as M
-
-
-def construct_internal_ast(sources: Dict[str, str]):
-    assert 'main.f90' in sources
-    cfg = ParseConfig(sources['main.f90'], sources, [])
-    iast, prog = create_internal_ast(cfg)
-    return iast, prog
 
 
 def test_minimal():
@@ -32,7 +24,8 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
+    cfg = ParseConfig(sources=sources)
+    iast, prog = create_internal_ast(cfg)
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
@@ -68,7 +61,8 @@ subroutine not_fun(d, val)
 end subroutine not_fun
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
+    cfg = ParseConfig(sources=sources)
+    iast, prog = create_internal_ast(cfg)
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
@@ -109,7 +103,7 @@ contains
     d(4) = val
   end subroutine not_fun
 end module lib
-""").add_file("""
+
 program main
   use lib
   implicit none
@@ -119,7 +113,8 @@ program main
 end program main
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
+    cfg = ParseConfig(sources=sources)
+    iast, prog = create_internal_ast(cfg)
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
@@ -129,11 +124,11 @@ end program main
             'subroutine_definitions': [
                 M(Subroutine_Subprogram_Node, {
                     'name': M.NAMED('fun'),
-                    'args': [M.NAMED('d_var_0')],
+                    'args': [M.NAMED('d')],
                 }),
                 M(Subroutine_Subprogram_Node, {
                     'name': M.NAMED('not_fun'),
-                    'args': [M.NAMED('d_var_1'), M.NAMED('val')],
+                    'args': [M.NAMED('d'), M.NAMED('val')],
                 }),
             ],
         }, has_empty_attr={'function_definitions', 'interface_blocks'})],
@@ -157,7 +152,8 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
+    cfg = ParseConfig(sources=sources)
+    iast, prog = create_internal_ast(cfg)
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
@@ -193,7 +189,7 @@ contains
     end function fun2
   end subroutine fun
 end module lib
-""").add_file("""
+
 program main
   use lib, only: fun
   implicit none
@@ -203,7 +199,8 @@ program main
 end program main
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
+    cfg = ParseConfig(sources=sources)
+    iast, prog = create_internal_ast(cfg)
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
@@ -213,7 +210,7 @@ end program main
             'subroutine_definitions': [
                 M(Subroutine_Subprogram_Node, {
                     'name': M.NAMED('fun'),
-                    'args': [M.NAMED('d_var_0')],
+                    'args': [M.NAMED('d')],
                 }),
             ],
         }, has_empty_attr={'function_definitions', 'interface_blocks'})],
@@ -245,7 +242,7 @@ module lib
     real :: name
   end type used_type
 end module lib
-""").add_file("""
+
 program main
   implicit none
   real :: d(5, 5)
@@ -260,7 +257,8 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
+    cfg = ParseConfig(sources=sources)
+    iast, prog = create_internal_ast(cfg)
 
     # Verify
     assert not iast.fortran_intrinsics().transformations()
