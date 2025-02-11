@@ -3626,5 +3626,7 @@ def create_sdfg_from_fortran_file_with_options(
             sdfg.validate()
             print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
             sdfg.compile()
+            sdfg=sdfg.from_file(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22full.sdfg"))
+            sdfg.compile()
 
     # return sdfg
