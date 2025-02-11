@@ -560,11 +560,11 @@ def test_fortran_frontend_ranges_noarray2():
                     CALL ranges_noarray_function(input, res)
                     end
 
-                    SUBROUTINE ranges_noarray_function(input, res)
-                    double precision, dimension(7,4) :: input
+                    SUBROUTINE ranges_noarray_function(inp, res)
+                    double precision, dimension(7,4) :: inp
                     double precision, dimension(7,4) :: res
 
-                    res = input
+                    res = inp
 
                     END SUBROUTINE ranges_noarray_function
                     """
@@ -575,14 +575,14 @@ def test_fortran_frontend_ranges_noarray2():
 
     size_x = 7
     size_y = 4
-    input = np.full([size_x, size_y], 0, order="F", dtype=np.float64)
+    inp = np.full([size_x, size_y], 0, order="F", dtype=np.float64)
     for i in range(size_x):
         for j in range(size_y):
-            input[i, j] = i + 2 ** j
+            inp[i, j] = i + 2 ** j
     res = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
-    sdfg(input=input, res=res, outside_init=False)
+    sdfg(inp=inp, res=res, outside_init=False)
 
-    assert np.all(res == input)
+    assert np.all(res == inp)
 
 def test_fortran_frontend_ranges_noarray3():
     """
@@ -596,11 +596,11 @@ def test_fortran_frontend_ranges_noarray3():
                     CALL ranges_noarray_function(input, res)
                     end
 
-                    SUBROUTINE ranges_noarray_function(input, res)
-                    double precision, dimension(7,4) :: input
+                    SUBROUTINE ranges_noarray_function(inp, res)
+                    double precision, dimension(7,4) :: inp
                     double precision, dimension(7,4) :: res
 
-                    res = input(:,:)
+                    res = inp(:,:)
 
                     END SUBROUTINE ranges_noarray_function
                     """
@@ -611,14 +611,14 @@ def test_fortran_frontend_ranges_noarray3():
 
     size_x = 7
     size_y = 4
-    input = np.full([size_x, size_y], 0, order="F", dtype=np.float64)
+    inp = np.full([size_x, size_y], 0, order="F", dtype=np.float64)
     for i in range(size_x):
         for j in range(size_y):
-            input[i, j] = i + 2 ** j
+            inp[i, j] = i + 2 ** j
     res = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
-    sdfg(input=input, res=res, outside_init=False)
+    sdfg(inp=inp, res=res, outside_init=False)
 
-    assert np.all(res == input)
+    assert np.all(res == inp)
 
 
 def test_fortran_frontend_ranges_scalar():
