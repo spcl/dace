@@ -2656,18 +2656,12 @@ class AST_translator:
 
 
 class ParseConfig:
-    def __init__(self,
-                 main: Union[None, Path, str] = None,
-                 sources: Union[None, List[Path], Dict[str, str]] = None,
+    def __init__(self, sources: Union[None, List[Path], Dict[str, str]] = None,
                  includes: Union[None, List[Path], Dict[str, str]] = None,
                  entry_points: Union[None, SPEC, List[SPEC]] = None,
                  config_injections: Optional[List[ConstInjection]] = None,
                  do_not_prune: Union[None, SPEC, List[SPEC]] = None):
         # Make the configs canonical, by processing the various types upfront.
-        if isinstance(main, Path):
-            main = main.read_text()
-        if main:
-            main = FortranStringReader(main)
         if not sources:
             sources: Dict[str, str] = {}
         elif isinstance(sources, list):
@@ -2684,7 +2678,6 @@ class ParseConfig:
             do_not_prune = [do_not_prune]
         do_not_prune = list({x for x in entry_points + do_not_prune})
 
-        self.main = main
         self.sources: Dict[str, str] = sources
         self.includes = includes
         self.entry_points: List[SPEC] = entry_points
@@ -2714,7 +2707,7 @@ def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None, cfg.main)
+    ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None)
     ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
     return ast
@@ -3126,21 +3119,10 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
         return {}
 
 
-def construct_full_ast(sources: Dict[str, str], parser,
-                       entry_points: Optional[Iterable[SPEC]] = None,
-                       main: Optional[FortranStringReader] = None) -> Program:
-
+def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[Iterable[SPEC]] = None) -> Program:
     tops = {}
-
     for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
-        if ctops.keys() & tops.keys():
-            print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
-        tops.update(ctops)
-
-    # TODO: Remove after fixing the tests to not need `cfg.main` anymore.
-    if main:
-        ctops = _get_toplevel_objects(('main.f90', f"{parser(main)}"), parser, sources)
         if ctops.keys() & tops.keys():
             print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
         tops.update(ctops)
