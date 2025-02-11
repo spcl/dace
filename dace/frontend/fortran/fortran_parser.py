@@ -3275,21 +3275,41 @@ def create_sdfg_from_fortran_file_with_options(
     program.placeholders = partial_ast.placeholders
     program.placeholders_offsets = partial_ast.placeholders_offsets
     program.functions_and_subroutines = partial_ast.functions_and_subroutines
-    unordered_modules = program.modules
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     # arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
     # arg_pruner.visit(program)
 
+    # Find the entry points in the internal AST.
+    candidates = []
     for j in program.subroutine_definitions:
-
         if j.execution_part is None:
             continue
+        if (j.name.name,) not in cfg.entry_points:
+            continue
+        candidates.append(j)
+    for i in program.modules:
+        for j in i.subroutine_definitions:
+            if j.execution_part is None:
+                continue
+            if (i.name.name, j.name.name) not in cfg.entry_points:
+                continue
+            candidates.append(j)
+    assert len(candidates) == 1, "Multiple SDFG generation from multiple entry points not supported yet."
 
+    for j in candidates:
         print(f"Building SDFG {j.name.name}")
         startpoint = j
-        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=startpoint, sdfg_path=sdfgs_dir,
-                                  normalize_offsets=normalize_offsets)
+        ast2sdfg = AST_translator(
+            __file__,
+            multiple_sdfgs=False,
+            startpoint=startpoint,
+            sdfg_path=sdfgs_dir,
+            # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
+            # subroutine_used_names=arg_pruner.used_in_all_functions,
+            normalize_offsets=normalize_offsets,
+            do_not_make_internal_variables_argument=True,
+        )
         sdfg = SDFG(j.name.name)
         ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
         ast2sdfg.structures = program.structures
@@ -3298,14 +3318,12 @@ def create_sdfg_from_fortran_file_with_options(
         ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = sdfg
-
         ast2sdfg.translate(program, sdfg, sdfg)
-
-        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz")}')
+        sdfg.validate()
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
-
+        sdfg.validate()
         sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
-
+        sdfg.validate()
         try:
             sdfg.expand_library_nodes()
         except:
@@ -3313,68 +3331,14 @@ def create_sdfg_from_fortran_file_with_options(
             continue
 
         sdfg.validate()
-        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_validated_f.sdfgz")}')
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_f.sdfgz"), compress=True)
-
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg22.sdfgz"), compress=True)
+        sdfg.validate()
         sdfg.simplify(verbose=True)
         print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"), compress=True)
-
-        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22.sdfgz"), compress=True)
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22full.sdfg"), compress=False)
+        sdfg.validate()
+        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
         sdfg.compile()
-
-    for i in program.modules:
-
-        # for path in source_list:
-
-        #    if path.lower().find(i.name.name.lower()) != -1:
-        #        mypath = path
-        #        break
-
-        for j in i.subroutine_definitions:
-            if j.execution_part is None:
-                continue
-            print(f"Building SDFG {j.name.name}")
-            startpoint = j
-            ast2sdfg = AST_translator(
-                __file__,
-                multiple_sdfgs=False,
-                startpoint=startpoint,
-                sdfg_path=sdfgs_dir,
-                # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
-                # subroutine_used_names=arg_pruner.used_in_all_functions,
-                normalize_offsets=normalize_offsets,
-                do_not_make_internal_variables_argument=True,
-            )
-            sdfg = SDFG(j.name.name)
-            ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
-            ast2sdfg.structures = program.structures
-            ast2sdfg.placeholders = program.placeholders
-            ast2sdfg.placeholders_offsets = program.placeholders_offsets
-            ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
-            ast2sdfg.top_level = program
-            ast2sdfg.globalsdfg = sdfg
-            ast2sdfg.translate(program, sdfg, sdfg)
-            sdfg.validate()
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
-            sdfg.validate()
-            sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
-            sdfg.validate()
-            try:
-                sdfg.expand_library_nodes()
-            except:
-                print("Expansion failed for ", sdfg.name)
-                continue
-
-            sdfg.validate()
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg22.sdfgz"), compress=True)
-            sdfg.validate()
-            sdfg.simplify(verbose=True)
-            print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22.sdfgz"), compress=True)
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22full.sdfg"), compress=False)
-            sdfg.validate()
-            print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
-            sdfg.compile()
 
     # return sdfg
