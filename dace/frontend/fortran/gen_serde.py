@@ -21,7 +21,7 @@ from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 NEW_LINE = "new_line('A')"
 
 
-def gen_serde_module_skeleton() -> Module:
+def gen_f90_serde_module_skeleton() -> Module:
     return Module(get_reader("""
 module serde
   implicit none
@@ -96,7 +96,7 @@ end function {fn_name}
 """))
 
 
-def generate_array_meta(arr: str, rank: int) -> List[str]:
+def generate_array_meta_f90(arr: str, rank: int) -> List[str]:
     # Assumes there is `arr` is an array in local scope with rank `rank`.
     # Also assumes there is a serialization sink `s` and an integer `kmeta` that can be used as an iterator.
     return f"""
@@ -113,7 +113,7 @@ end do
 """.strip().split('\n')
 
 
-def generate_pointer_meta(ptr: str, rank: int, candidates: Dict[str, Tuple]) -> List[str]:
+def generate_pointer_meta_f90(ptr: str, rank: int, candidates: Dict[str, Tuple]) -> List[str]:
     # Assumes there is `ptr` is a pointer to an array in local scope with rank `rank`.
     # Also assumes there is a serialization sink `s` and integers `kmeta` and `kmeta_n` that can be used as iterators.
     cand_checks: List[str] = []
@@ -159,7 +159,7 @@ end if
 """.strip().split('\n')
 
 
-def generate_array_serializer(dtyp: str, rank: int, tag: str, use: Optional[str] = None) -> Function_Subprogram:
+def generate_array_serializer_f90(dtyp: str, rank: int, tag: str, use: Optional[str] = None) -> Function_Subprogram:
     iter_vars = ', '.join([f"k{k}" for k in range(1, rank + 1)])
     decls = f"""
 {dtyp}, intent(in) :: a({', '.join([':'] * rank)})
@@ -265,12 +265,12 @@ def iterate_over_public_components(dt: DerivedTypeInfo) \
 @dataclass(frozen=True)
 class SerdeCode:
     f90_serializer: str
-    cpp_deserializer: str
+    cpp_serde: str
 
 
 def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     # F90 Serializer related data structures.
-    f90_mod = gen_serde_module_skeleton()
+    f90_mod = gen_f90_serde_module_skeleton()
     proc_names = []
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
     base_serializers: List[Function_Subprogram] = [
@@ -284,7 +284,7 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     ]
     array_serializers: Dict[Tuple[str, int], Function_Subprogram] = {}
 
-    # C++ Deserializer related data structures.
+    # C++ SerDe related data structures.
     sdfg_structs: Dict[str, dace.data.Structure] = {v.name: v for k, v in g.arrays.items()
                                                     if isinstance(v, dace.data.Structure)}
     sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
@@ -303,7 +303,7 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     sdfg_structs: Dict[str, Dict[str, str]] = {
         k: {kk: _real_ctype(vv) for kk, vv in v}
         for k, v in sdfg_structs.items()}
-    deserializer_fns: List[str] = [f"""
+    cpp_deserializer_fns: List[str] = [f"""
 void deserialize(float* x, std::istream& s) {{
     read_scalar(*x, s);
 }}
@@ -324,6 +324,51 @@ void deserialize(long long* x, std::istream& s) {{
 }}
 void deserialize(bool* x, std::istream& s) {{
     read_scalar(*x, s);
+}}
+"""]
+    cpp_serializer_fns: List[str] = [f"""
+template<typename T>
+void add_line(const T& x, std::ostream& s, bool trailing_newline=true) {{
+    s << x;
+    if (trailing_newline) s << std::endl;
+}}
+void add_line(long long x, std::ostream& s, bool trailing_newline=true) {{
+    s << x;
+    if (trailing_newline) s << std::endl;
+}}
+void add_line(long double x, std::ostream& s, bool trailing_newline=true) {{
+    s << x;
+    if (trailing_newline) s << std::endl;
+}}
+void add_line(bool x, std::ostream& s, bool trailing_newline=true) {{
+    add_line(int(x), s, trailing_newline);
+}}
+template<typename T>
+std::string serialize(const T* x) {{
+    std::stringstream s;
+    add_line(*x, s, false);
+    return s.str();
+}}
+std::string serialize(int x) {{
+    return std::to_string(x);
+}}
+std::string serialize(long x) {{
+    return std::to_string(x);
+}}
+std::string serialize(long long x) {{
+    return std::to_string(x);
+}}
+std::string serialize(float x) {{
+    return std::to_string(x);
+}}
+std::string serialize(double x) {{
+    return std::to_string(x);
+}}
+std::string serialize(long double x) {{
+    return std::to_string(x);
+}}
+std::string serialize(bool x) {{
+    return serialize(int(x));
 }}
 """]
     config_injection_fns: List[str] = []
@@ -355,14 +400,16 @@ void deserialize(bool* x, std::istream& s) {{
             if z.alloc:
                 all_cinjops[f"{z.name}_a"] = ('.'.join(dt.spec), z.name)
 
-        f90ops: List[str] = []
-        cppops: List[str] = []
+        f90_ser_ops: List[str] = []
+        cpp_ser_ops: List[str] = []
+        cpp_deser_ops: List[str] = []
         for z in iterate_over_public_components(dt):
             if z.name not in sdfg_structs[dt.name]:
                 # The component is not present in the final SDFG, so we don't care for it.
                 continue
-            f90ops.append(f"s = add_line(s , '# {z.name}')")
-            cppops.append(f"""read_line(s, {{"# {z.name}"}});  // Should contain '# {z.name}'""")
+            f90_ser_ops.append(f"s = add_line(s , '# {z.name}')")
+            cpp_ser_ops.append(f"""add_line("# {z.name}", s);""")
+            cpp_deser_ops.append(f"""read_line(s, {{"# {z.name}"}});  // Should contain '# {z.name}'""")
 
             # This is some intermediate calculation for F90 code, but no actual code is generated here (i.e., in ops).
             if z.rank:
@@ -385,44 +432,55 @@ void deserialize(bool* x, std::istream& s) {{
                        .replace(')', '')
                        .lower())
                 if (tag, z.rank) not in array_serializers:
-                    array_serializers[(tag, z.rank)] = generate_array_serializer(f"{z.type}", z.rank, tag, use)
+                    array_serializers[(tag, z.rank)] = generate_array_serializer_f90(f"{z.type}", z.rank, tag, use)
 
             if z.ptr:
                 # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes,
                 #  we will only populate this when it points to a different component of the same structure.
-                f90ops.append(f"""
+                f90_ser_ops.append(f"""
 s = add_line(s, '# assoc')
-s = add_line(s, serialize(associated(x%{z.name})))""")
+s = add_line(s, serialize(associated(x%{z.name})))
+""")
+                cpp_ser_ops.append(f"""
+add_line("# assoc", s);
+add_line(serialize(x->{z.name} != nullptr), s);
+""")
                 candidates = {f"x%{v[0]}": v[1].children for k, v in array_map.items()
                               if k[0] == f"{z.type}" and z.rank <= k[1]}
-                f90ops.extend(generate_pointer_meta(f"x%{z.name}", z.rank, candidates))
+                f90_ser_ops.extend(generate_pointer_meta_f90(f"x%{z.name}", z.rank, candidates))
+                cpp_ser_ops.append(f"""add_line("=> missing", s);""")
 
                 # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes, we will
                 #  only populate this when it points to a different component of the same structure.
-                cppops.append(f"""
+                cpp_deser_ops.append(f"""
 read_line(s, {{"# assoc"}});  // Should contain '# assoc'
 deserialize(&yep, s);
 """)
                 # TODO: Currenly we do nothing but this is the flag of associated values, so `nullptr` anyway.
-                cppops.append(f"""
+                cpp_deser_ops.append(f"""
 read_line(s, {{"=>"}});  // Should contain '=> ...'
 x->{z.name} = nullptr;
 """)
             else:
                 if z.alloc:
-                    f90ops.append(f"""
+                    f90_ser_ops.append(f"""
 s = add_line(s, '# alloc')
 s = add_line(s, serialize(allocated(x%{z.name})))
-if (allocated(x%{z.name})) then
+if (allocated(x%{z.name})) then  ! BEGINNING IF
 """)
-                    cppops.append(f"""
+                    cpp_ser_ops.append(f"""
+add_line("# alloc", s);
+add_line(serialize(x->{z.name} != nullptr), s);
+if (x->{z.name}) {{    // BEGINING IF
+""")
+                    cpp_deser_ops.append(f"""
 read_line(s, {{"# alloc"}});  // Should contain '# alloc'
 deserialize(&yep, s);
 if (yep) {{  // BEGINING IF
 """)
                 if z.rank:
-                    f90ops.extend(generate_array_meta(f"x%{z.name}", z.rank))
-                    f90ops.append(f"s = add_line(s, serialize(x%{z.name}))")
+                    f90_ser_ops.extend(generate_array_meta_f90(f"x%{z.name}", z.rank))
+                    f90_ser_ops.append(f"s = add_line(s, serialize(x%{z.name}))")
                     assert '***' not in sdfg_structs[dt.name][z.name]
                     ptrptr = '**' in sdfg_structs[dt.name][z.name]
                     if z.alloc:
@@ -432,8 +490,23 @@ if (yep) {{  // BEGINING IF
                         soa_vars = '\n'.join([f"x->{v} = m.lbound[{dim}];" for dim, v in enumerate(soa_vars)])
                     else:
                         sa_vars, soa_vars = '', ''
+                    cpp_ser_ops.append(f"""
+{{
+    const array_meta& m = ARRAY_META_DICT()[x->{z.name}];
+    add_line("# rank", s);
+    add_line(m.rank, s);
+    add_line("# size", s);
+    for (auto i : m.size) add_line(i, s);
+    add_line("# lbound", s);
+    for (auto i : m.lbound) add_line(i, s);
+    add_line("# entries", s);
+    for (int i=0; i<m.volume(); ++i) {{
+        add_line(serialize(x->{z.name}[i]), s);
+    }}
+}}
+""")
                     if ptrptr:
-                        cppops.append(f"""
+                        cpp_deser_ops.append(f"""
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
@@ -441,13 +514,14 @@ read_line(s, {{"# entries"}});  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
 x->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
+ARRAY_META_DICT()[x->{z.name}] = m;
 for (int i=0; i<m.volume(); ++i) {{
   x->{z.name}[i] = new std::remove_pointer<std::remove_reference<decltype(x->{z.name}[i])>::type>::type;
   deserialize(x->{z.name}[i], s);
 }}
 """)
                     else:
-                        cppops.append(f"""
+                        cpp_deser_ops.append(f"""
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
@@ -455,28 +529,32 @@ read_line(s, {{"# entries"}});  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
 x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
+ARRAY_META_DICT()[x->{z.name}] = m;
 for (int i=0; i<m.volume(); ++i) {{
   deserialize(&(x->{z.name}[i]), s);
 }}
 """)
                 elif '*' in sdfg_structs[dt.name][z.name]:
-                    f90ops.append(f"s = add_line(s, serialize(x%{z.name}))")
-                    cppops.append(f"""
+                    f90_ser_ops.append(f"s = add_line(s, serialize(x%{z.name}))")
+                    cpp_ser_ops.append(f"add_line(serialize(x->{z.name}), s);")
+                    cpp_deser_ops.append(f"""
 x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type;
 deserialize(x->{z.name}, s);
 """)
                 else:
-                    f90ops.append(f"s = add_line(s, serialize(x%{z.name}))")
-                    cppops.append(f"""
+                    f90_ser_ops.append(f"s = add_line(s, serialize(x%{z.name}))")
+                    cpp_ser_ops.append(f"add_line(serialize(x->{z.name}), s);")
+                    cpp_deser_ops.append(f"""
 deserialize(&(x->{z.name}), s);
 """)
 
                 if z.alloc:
-                    f90ops.append("end if")
-                    cppops.append(f"""}} // CONCLUDING IF""")
+                    f90_ser_ops.append("end if  ! CONCLUDING IF")
+                    cpp_ser_ops.append(f"""}}  // CONCLUDING IF""")
+                    cpp_deser_ops.append(f"""}}  // CONCLUDING IF""")
 
-        # Conclude the serializer of the type.
-        f90ops: str = '\n'.join(f90ops)
+        # Conclude the F90 serializer of the type.
+        f90_ser_ops: str = '\n'.join(f90_ser_ops)
         kmetas = ', '.join(f"kmeta_{k}" for k in range(10))
         impl_fn = Function_Subprogram(get_reader(f"""
 function {dt.name}_2s(x) result(s)
@@ -485,24 +563,37 @@ function {dt.name}_2s(x) result(s)
   character(len=:), allocatable :: s
   integer :: kmeta, {kmetas}
   s = ""  ! Start with an empty string.
-  {f90ops}
+  {f90_ser_ops}
   if (len(s) > 0) s = s(:len(s)-1)  ! Remove the trailing new line.
 end function {dt.name}_2s
 """.strip()))
         proc_names.append(f"{dt.name}_2s")
         append_children(impls, impl_fn)
 
-        # Conclude the deserializer of the type.
-        cppops: str = '\n'.join(cppops)
-        deserializer_fns.append(f"""
+        # Conclude the C++ serializer of the type.
+        cpp_ser_ops: str = '\n'.join(cpp_ser_ops)
+        cpp_serializer_fns.append(f"""
+std::string serialize(const {dt.name}* x) {{
+    std::stringstream s;
+    {cpp_ser_ops}
+    std::string out = s.str();
+    if (out.length() > 0) out.pop_back();
+    return out;
+}}
+""")
+
+        # Conclude the C++ deserializer of the type.
+        cpp_deser_ops: str = '\n'.join(cpp_deser_ops)
+        cpp_deserializer_fns.append(f"""
 void deserialize({dt.name}* x, std::istream& s) {{
     bool yep;
     array_meta m;
-    {cppops}
+    {cpp_deser_ops}
 }}
 """)
         # Conclude the config injection representation of the type.
-        all_cinjops = {k: (a, f"""(x.{b} ? "true" : "false")""" if k.endswith('_a') else f"x.{b}") for k, (a, b) in all_cinjops.items()}
+        all_cinjops = {k: (a, f"""(x.{b} ? "true" : "false")""" if k.endswith('_a') else f"x.{b}")
+                       for k, (a, b) in all_cinjops.items()}
         all_cinjops: List[str] = [f"""
 out << "{{";
 out << "\\"type\\": \\"ConstTypeInjection\\", ";
@@ -520,7 +611,7 @@ std::string config_injection(const {dt.name}& x) {{
 }}
 """)
 
-    # Conclude the serializer code.
+    # Conclude the F90 serializer code.
     for fn in chain(array_serializers.values(), base_serializers):
         _, name, _, _ = singular(children_of_type(fn, Function_Stmt)).children
         proc_names.append(f"{name}")
@@ -530,7 +621,7 @@ std::string config_injection(const {dt.name}& x) {{
     set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
     f90_code = f90_mod.tofortran()
 
-    # Conclude the deserializer code.
+    # Conclude the C++ serde code.
     forward_decls: str = '\n'.join(f"struct {k};" for k in sdfg_structs.keys())
     struct_defs: Dict[str, str] = {k: '\n'.join(f"{typ} {comp} = {{}};" for comp, typ in sorted(v.items()))
                                    for k, v in sdfg_structs.items()}
@@ -539,8 +630,6 @@ struct {name} {{
 {comps}
 }};
 """ for name, comps in struct_defs.items())
-    deserializer_fns: str = '\n'.join(deserializer_fns)
-    config_injection_fns: str = '\n'.join(config_injection_fns)
     # TODO: We don't generate our own structure definitions if the header file contains them (which they should). We can
     #  discard the code to generate them after we are sure that will happen permanently.
     struct_defs: str = f"""
@@ -550,6 +639,10 @@ struct {name} {{
 // (Re-)definitions of structs.
 {struct_defs}
 """
+    cpp_deserializer_fns: str = '\n'.join(cpp_deserializer_fns)
+    cpp_serializer_fns: str = '\n'.join(cpp_serializer_fns)
+    config_injection_fns: str = '\n'.join(config_injection_fns)
+
     cpp_code = f"""
 #ifndef __DACE_SERDE__
 #define __DACE_SERDE__
@@ -568,6 +661,10 @@ namespace serde {{
 
       int volume() const {{  return std::reduce(size.begin(), size.end(), 1, std::multiplies<int>()) ; }}
     }};
+    std::map<void*, array_meta>& ARRAY_META_DICT() {{
+        static auto* M = new std::map<void*, array_meta>();
+        return *M;
+    }}
 
     std::string scroll_space(std::istream& s) {{
         std::string out;
@@ -641,14 +738,15 @@ namespace serde {{
         return m;
     }}
 
-    {deserializer_fns}
+    {cpp_deserializer_fns}
+    {cpp_serializer_fns}
     {config_injection_fns}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__
 """
 
-    return SerdeCode(f90_serializer=f90_code.strip(), cpp_deserializer=cpp_code.strip())
+    return SerdeCode(f90_serializer=f90_code.strip(), cpp_serde=cpp_code.strip())
 
 
 def find_all_f90_files(root: Path) -> Generator[Path, None, None]:
@@ -689,17 +787,17 @@ def main():
         with open(args.out_f90, 'w') as f:
             f.write(serde_code.f90_serializer)
     else:
-        print(f"=== SERIALIZER CODE BEGINS ===")
+        print(f"=== F90 SERIALIZER CODE BEGINS ===")
         print(serde_code.f90_serializer)
-        print(f"=== SERIALIZER CODE ENDS ===")
+        print(f"=== F90 SERIALIZER CODE ENDS ===")
 
     if args.out_cpp:
         with open(args.out_cpp, 'w') as f:
-            f.write(serde_code.cpp_deserializer)
+            f.write(serde_code.cpp_serde)
     else:
-        print(f"=== DESERIALIZER CODE BEGINS ===")
-        print(serde_code.cpp_deserializer)
-        print(f"=== DESERIALIZER CODE ENDS ===")
+        print(f"=== C++ SERDE CODE BEGINS ===")
+        print(serde_code.cpp_serde)
+        print(f"=== C++ SERDE CODE ENDS ===")
 
 
 if __name__ == "__main__":

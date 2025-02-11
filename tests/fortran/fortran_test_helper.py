@@ -3,7 +3,7 @@ import subprocess
 from dataclasses import dataclass, field
 from os import path
 from tempfile import TemporaryDirectory
-from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection
+from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection, Iterable
 
 import numpy as np
 from fparser.two.Fortran2003 import Name
@@ -39,9 +39,10 @@ class SourceCodeBuilder:
         """Add source file contents in the order you'd pass them to `gfortran`."""
         if not name:
             name = SourceCodeBuilder._identify_name(content)
-        key, COUNTER = f"{name}.f90", 0
+        name, ext = name.rsplit('.', 1) if '.' in name else (name, 'f90')
+        key, COUNTER = f"{name}.{ext}", 0
         while key in self.sources:
-            key, COUNTER = f"{name}_{COUNTER}.f90", COUNTER+1
+            key, COUNTER = f"{name}_{COUNTER}.{ext}", COUNTER+1
         self.sources[key] = content
         return self
 
@@ -84,15 +85,16 @@ class SourceCodeBuilder:
                 print(e.stderr.decode())
                 raise e
 
-    def run_with_gcc(self) -> str:
+    def run_with_gcc(self, extra_build_args: Optional[Iterable[str]] = None) -> str:
         """Compile and execute the program with `g++`."""
+        extra_build_args = extra_build_args or tuple()
         with TemporaryDirectory() as td:
             # Create temporary Fortran source-file structure.
             for fname, content in self.sources.items():
                 with open(path.join(td, fname), 'w') as f:
                     f.write(content)
             # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
-            cmd = ['g++', '-Wall', '-fPIC', '-std=c++17', *self.sources.keys()]
+            cmd = ['g++', '-Wall', '-fPIC', '-std=c++17', *extra_build_args, *self.sources.keys()]
 
             try:
                 subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
