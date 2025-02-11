@@ -2290,7 +2290,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             uname = k[-1]
         uident_map[k] = uname
 
-    # PHASE 1.a: Remove all the places where any function is imported.
+    # PHASE 1.a: Remove all the places where any to-be-renamed function is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
         mod_spec = (mod_name,)
@@ -2307,17 +2307,15 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             src, tgt = src.string, tgt.string
             tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
             assert tgt_spec in ident_map
-            if not isinstance(ident_map[tgt_spec], (Function_Stmt, Subroutine_Stmt)):
+            if tgt_spec not in uident_map:
+                # We have chosen to not rename it.
                 survivors.append(c)
         if survivors:
-            olist.items = survivors
-            _reparent_children(olist)
+            set_children(olist, survivors)
         else:
-            par = use.parent
-            par.content = [c for c in par.children if c != use]
-            _reparent_children(par)
+            remove_self(use)
 
-    # PHASE 1.b: Replaces all the function callsites.
+    # PHASE 1.b: Replace all the function callsites.
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
 
@@ -2398,7 +2396,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
                 local_spec = search_local_alias_spec(nm)
                 # We need to do a bit of surgery, since we have the `oname` inide the scope ending with `uname`.
                 local_spec = local_spec[:-2] + local_spec[-1:]
-                local_spec = tuple(x.split('_deconglobalfn_')[0] for x in local_spec)
+                local_spec = tuple(x.split(f"_{SUFFIX}_")[0] for x in local_spec)
                 assert local_spec in ident_map and ident_map[local_spec] == v
                 nm.string = uname
 
