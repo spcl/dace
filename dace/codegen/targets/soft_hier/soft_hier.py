@@ -1041,8 +1041,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         # print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
                         hbm_width = nodedesc.shape[1]
                         hbm_height = nodedesc.shape[0]
-                        row_start = s[0][0]
-                        col_start = s[1][0]
+                        row_start = sym2cpp(s[0][0])
+                        col_start = sym2cpp(s[1][0])
                         height_split = nodedesc.hbm_split_scheme[0]
                         width_split = nodedesc.hbm_split_scheme[1]
                         channel_start = nodedesc.hbm_placement_scheme[0]
@@ -1140,8 +1140,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         # print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
                         hbm_width = nodedesc.shape[1]
                         hbm_height = nodedesc.shape[0]
-                        row_start = s[0][0]
-                        col_start = s[1][0]
+                        row_start = sym2cpp(s[0][0])
+                        col_start = sym2cpp(s[1][0])
                         height_split = nodedesc.hbm_split_scheme[0]
                         width_split = nodedesc.hbm_split_scheme[1]
                         channel_start = nodedesc.hbm_placement_scheme[0]
@@ -1307,8 +1307,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             s = subsets.Indices(memlet.src_subset)
                             hbm_width = nodedesc.shape[1]
                             hbm_height = nodedesc.shape[0]
-                            row_start = s[0][0]
-                            col_start = s[1][0]
+                            row_start = sym2cpp(s[0][0])
+                            col_start = sym2cpp(s[1][0])
                             height_split = nodedesc.hbm_split_scheme[0]
                             width_split = nodedesc.hbm_split_scheme[1]
                             channel_start = nodedesc.hbm_placement_scheme[0]
