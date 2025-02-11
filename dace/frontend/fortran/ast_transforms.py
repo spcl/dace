@@ -2399,19 +2399,21 @@ class TypeInference(NodeTransformer):
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
+        #if node.type != 'VOID':
+        #    return node
 
-        if node.type != 'VOID':
-            return node
+        node.parent_ref = self.visit(node.parent_ref)
+        node.part_ref = self.visit(node.part_ref)
 
-        struct, variable, _ = self.structures.find_definition(
+        struct, variable, prev_part_ref = self.structures.find_definition(
             self.scope_vars, node
         )
 
-        if variable.type != 'VOID':
-            node.type = variable.type
+        if prev_part_ref.part_ref.type != 'VOID':
+            node.type = prev_part_ref.part_ref.type
 
-        node.sizes = variable.sizes
-        node.offsets = variable.offsets
+        node.sizes = prev_part_ref.part_ref.sizes
+        node.offsets = prev_part_ref.part_ref.offsets
         if node.sizes is None:
             node.sizes = []
             variable.sizes = []
