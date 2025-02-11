@@ -259,7 +259,6 @@ class AST_translator:
     """
 
     def __init__(self, source: str, multiple_sdfgs: bool = False, startpoint=None, sdfg_path=None,
-                 toplevel_subroutine: Optional[str] = None, subroutine_used_names: Optional[Set[str]] = None,
                  normalize_offsets=False, do_not_make_internal_variables_argument: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
@@ -299,8 +298,6 @@ class AST_translator:
         self.placeholders = None
         self.placeholders_offsets = None
         self.replace_names = {}
-        self.toplevel_subroutine = toplevel_subroutine
-        self.subroutine_used_names = subroutine_used_names
         self.normalize_offsets = normalize_offsets
         self.temporary_sym_dict = {}
         self.temporary_link_to_parent = {}
@@ -2290,23 +2287,6 @@ class AST_translator:
                                 is_arg = False
                         break
 
-        # if this is a variable declared in the module,
-        # then we will not add it unless it is used by the functions.
-        # It would be sufficient to check the main entry function,
-        # since it must pass this variable through call
-        # to other functions.
-        # However, I am not completely sure how to determine which function is the main one.
-        #
-        # we ignore the variable that is not used at all in all functions
-        # this is a module variaable that can be removed
-        if not is_arg:
-            if self.subroutine_used_names is not None:
-
-                if node.name not in self.subroutine_used_names:
-                    print(
-                        f"Ignoring module variable {node.name} because it is not used in the the top level subroutine")
-                    return
-
         if is_arg:
             transient = False
         else:
@@ -2988,7 +2968,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
             continue
 
         # Do the actual translation.
-        ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn, toplevel_subroutine=None,
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn,
                                   normalize_offsets=cfg.normalize_offsets, do_not_make_internal_variables_argument=True)
         g = SDFG(ep)
         ast2sdfg.functions_and_subroutines = ast_transforms.FindFunctionAndSubroutines.from_node(program).names
@@ -3294,16 +3274,8 @@ def create_sdfg_from_fortran_file_with_options(
     for j in candidates:
         print(f"Building SDFG {j.name.name}")
         startpoint = j
-        ast2sdfg = AST_translator(
-            __file__,
-            multiple_sdfgs=False,
-            startpoint=startpoint,
-            sdfg_path=sdfgs_dir,
-            # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
-            # subroutine_used_names=arg_pruner.used_in_all_functions,
-            normalize_offsets=normalize_offsets,
-            do_not_make_internal_variables_argument=True,
-        )
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=startpoint, sdfg_path=sdfgs_dir,
+                                  normalize_offsets=normalize_offsets, do_not_make_internal_variables_argument=True)
         sdfg = SDFG(j.name.name)
         ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
         ast2sdfg.structures = program.structures
