@@ -71,8 +71,8 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        #pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
-        #./codecov
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
+        ./codecov
 
     - name: Run other tests
       run: |
@@ -82,13 +82,9 @@ jobs:
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        if test -x ./tests/polybench_test.sh ; then
-          ./tests/polybench_test.sh
-        fi
-        if test -x ./tests/xform_test.sh ; then
-          ./tests/xform_test.sh
-        fi
-        #coverage combine .; coverage report; coverage xml
+        ./tests/polybench_test.sh
+        ./tests/xform_test.sh
+        coverage combine .; coverage report; coverage xml
 
     - uses: codecov/codecov-action@v4
       with:
