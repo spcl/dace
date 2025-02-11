@@ -250,6 +250,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                         sdfg.arrays[viewname] = tmpview
                         # if placeholders.get(size.name) is not None:
                         #    placeholders[newsize]=placeholders[size.name]
+        sdfg.replace_dict(names_to_replace)                
 
 
 class AST_translator:
