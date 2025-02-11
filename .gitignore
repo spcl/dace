@@ -192,3 +192,9 @@ _build/
 
 .*cache/
 /doc/source/config_schema.rst
+
+# Ignoring the test junk
+_all_tests/
+
+
+

@@ -44,7 +44,7 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=unique
-        #pytest --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi or datainstrument" tests/
+        #pytest --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi or datainstrument"
 
     - name: Run MPI tests
       run: |
