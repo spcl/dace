@@ -1348,7 +1348,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                 callsite_stream.write("flex_dma_async_wait_all();")
                             callsite_stream.write("}")
                         else: # not interleaved
-                            src_strides = src_subset.absolute_strides(src_node_desc.strides)
+                            src_strides = src_node_desc.strides[-dims:]
                             dst_strides = dst_node_desc.strides[-dims:]
                             callsite_stream.write("if (flex_is_dm_core())")
                             callsite_stream.write("{")

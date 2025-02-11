@@ -55,13 +55,6 @@ class CanonTransformer(transformation.SingleStateTransformation):
         NPE = self.npe
         gi = self.gi
         gj = self.gj
-        map_param = map_entry.map.params[0]  # Assuming one dimensional
-        ##############################
-        # Change condition of loop to one fewer iteration (so that the
-        # final one reads from the last buffer)
-        map_rstart, map_rend, map_rstride = map_entry.map.range[0]
-        new_map_rstride = (f"({map_rstride})*({NPE})")
-        map_entry.map.range = subsets.Range([(map_rstart, map_rend, new_map_rstride)])
 
         ##############################
         # Gather transients to modify
@@ -74,6 +67,33 @@ class CanonTransformer(transformation.SingleStateTransformation):
                 path = graph.memlet_path(edge)
                 src_node = path[0].src
                 global_arrays.add(src_node.data)
+
+        map_param = map_entry.map.params[0]  # Assuming one dimensional
+        ##############################
+        # Change condition of loop to one fewer iteration (so that the
+        # final one reads from the last buffer)
+        map_rstart, map_rend, map_rstride = map_entry.map.range[0]
+        new_map_rstride = (f"({map_rstride})*({NPE})")
+        # map_entry.map.range = subsets.Range([(map_rstart, map_rend, new_map_rstride)])
+
+        # Change out edges of map_entry to use the new map parameter
+        for edge in graph.out_edges(map_entry):
+            path = graph.memlet_path(edge)
+            src_node = path[0].src
+            if isinstance(src_node, nodes.AccessNode) and src_node.data in global_arrays:
+                memlet = edge.data
+                ranges = memlet.subset.ranges
+                for idx, range in enumerate(ranges):
+                    (r_start, r_end, r_stride) = range
+                    if f"{r_start}" == f"{map_param}":
+                        new_r_start = symbolic.pystr_to_symbolic(map_param)
+                        new_r_end = symbolic.pystr_to_symbolic(f"{map_param} + {map_rstride}*{NPE} - 1")
+                        new_r_stride = symbolic.pystr_to_symbolic(f"{map_rstride}*{NPE}")
+                        edge.data.subset.ranges[idx] = (new_r_start, new_r_end, new_r_stride)
+
+        map_entry.map.range = subsets.Range([(map_rstart, map_rend, new_map_rstride)])
+
+       
 
         # Add dimension to transients and modify memlets
         for transient in transients_to_modify:
@@ -138,10 +158,10 @@ class CanonTransformer(transformation.SingleStateTransformation):
                     (r_start, r_end, r_stride) = range
                     if f"{r_start}" == f"{map_param}":
                         if idx == 0:
-                            memlet.subset = self._replace_in_subset(memlet.subset, map_param, f"{map_param} + (({gi}+{gj})%{NPE})*{map_rstride}")
+                            # memlet.subset = self._replace_in_subset(memlet.subset, map_param, f"{map_param} + (({gi}+{gj})%{NPE})*{map_rstride}")
                             memlet.other_subset = None
                         if idx == 1:
-                            memlet.subset = self._replace_in_subset(memlet.subset, map_param, f"{map_param} + (({gi}+{gj})%{NPE})*{map_rstride}")
+                            # memlet.subset = self._replace_in_subset(memlet.subset, map_param, f"{map_param} + (({gi}+{gj})%{NPE})*{map_rstride}")
                             memlet.other_subset = None
         
         ##############################
@@ -167,6 +187,11 @@ class CanonTransformer(transformation.SingleStateTransformation):
                     init_src = edge.src.data
                     init_stream = f"s_{transient}"
                     init_edge = copy.deepcopy(edge)
+                    if transient == "local_A":
+                        init_edge.data.subset.ranges[1] = (((gi + gj) % NPE) * map_rstride, ((gi + gj) % NPE) * map_rstride + map_rstride - 1, map_rstride)
+                    elif transient == "local_B":
+                        init_edge.data.subset.ranges[0] = (((gi + gj) % NPE) * map_rstride, ((gi + gj) % NPE) * map_rstride + map_rstride - 1, map_rstride)
+
                     init_edge.data.other_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] + list(init_edge.data.other_subset))
                     init_src_node = init_state.add_access(init_src)
                     init_dst_node = init_state.add_access(init_stream)
