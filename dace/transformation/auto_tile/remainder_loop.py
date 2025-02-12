@@ -189,7 +189,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     beg, end, step = range
                     if n == map_before_split:
                         map_len = step
-                    elif n.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                    elif n.map.schedule == self.tblock_type:
                         map_len = step
                     else:
                         map_len = ((end+1)-beg)
@@ -764,7 +764,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
     def add_missing_arrays(self, parent_sdfg: SDFG, sub_sdfg: SDFG, state):
         arrays_to_remove_from_parent = set()
-        for s in sub_sdfg.nodes() if state == None else [state]:
+        for s in sub_sdfg.states() if state == None else [state]:
             for n in s.nodes():
                 if isinstance(n, nodes.AccessNode):
                     arr_name = n.data
@@ -788,7 +788,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
     def prune_unused_data(self, sdfg: SDFG):
         used_arrays = set()
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for n in state.nodes():
                 if isinstance(n, nodes.AccessNode):
                     arr_name = n.data

@@ -238,13 +238,13 @@ def convert_inputs_to_gpu_storage(kernel_sdfg: SDFG):
                         )
 
 
-def set_transient(kernel_sdfg: SDFG):
+def set_transient(kernel_sdfg: SDFG, schedule = dace.ScheduleType.GPU_Device):
     input_output_arrs = []
     for state in kernel_sdfg.states():
         for node in state.nodes():
             if (
                 isinstance(node, dace.nodes.MapEntry)
-                and node.map.schedule == dace.ScheduleType.GPU_Device
+                and node.map.schedule == schedule
             ):
                 for in_edge in state.in_edges(node):
                     in_node, _, _, _, _ = in_edge
@@ -252,7 +252,7 @@ def set_transient(kernel_sdfg: SDFG):
                         input_output_arrs.append(in_node.data)
             elif (
                 isinstance(node, dace.nodes.MapExit)
-                and node.map.schedule == dace.ScheduleType.GPU_Device
+                and node.map.schedule == schedule
             ):
                 for out_edge in state.out_edges(node):
                     _, _, out_node, _, _ = out_edge

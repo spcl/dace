@@ -27,14 +27,7 @@ def clean_cache():
 
 
 def copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry):
-
-    nn = []
-    for n in state.bfs_nodes(scope_entry):
-        if n == state.exit_node(scope_entry):
-            nn.append(n)
-            break
-        nn.append(n)
-
+    nn = [scope_entry] + list(state.all_nodes_between(scope_entry, state.exit_node(scope_entry))) + [state.exit_node(scope_entry)]
     cut_sdfg = SDFGCutout.singlestate_cutout(state, *nn)
     return cut_sdfg
 
@@ -124,7 +117,6 @@ def _tile(
     thread_coarsening_parameters: List[Tuple[int]],
     thread_block_parameters: List[Tuple[int]],
     apply_remainder_loop: List[bool],
-    combinations,
     inputs: Dict[Type[str], Any],
     re_apply: bool,
     verbose: bool,
@@ -140,7 +132,7 @@ def _tile(
     if work_on_copy:
         _kernel_sdfg = copy_sub_scope(state, entry)
         _kernel_sdfg.name = f"{sdfg.name}_auto_tiled_{call_id}"
-        auto_tile_util.set_transient(_kernel_sdfg)
+        auto_tile_util.set_transient(_kernel_sdfg, schedule=dace.dtypes.ScheduleType.Default)
         _kernel_state = _kernel_sdfg.states()[0]
         _kernel_entry = find_node_in_state_by_cond(
             _kernel_state,
@@ -213,15 +205,15 @@ def _tile(
         _kernel_state = state
         _kernel_entry = entry
 
-    if combinations is None:
-        combinations = list(
-            itertools.product(
-                memory_tiling_parameters,
-                validate_and_pad_params_to_three(thread_coarsening_parameters),
-                validate_and_pad_params_to_three(thread_block_parameters),
-                apply_remainder_loop,
-            )
+
+    combinations = list(
+        itertools.product(
+            memory_tiling_parameters,
+            validate_and_pad_params_to_three(thread_coarsening_parameters),
+            validate_and_pad_params_to_three(thread_block_parameters),
+            apply_remainder_loop,
         )
+    )
     if not work_on_copy:
         if len(combinations) != 1:
             raise Exception(
@@ -379,6 +371,9 @@ def _tile(
                     sdfg=kernel_sdfg,
                     verify=True,
                     inner_work_map_entry=first_inner_work_map,
+                    options={
+                        "tblock_type":dace.dtypes.ScheduleType.CPU_Persistent,
+                    }
                 )
             else:
                 thread_coarsened_map = find_node_by_cond(
@@ -484,7 +479,6 @@ def auto_tile_cpu(
     thread_coarsening_parameters: List[Tuple[int]],
     thread_block_parameters: List[Tuple[int]],
     apply_remainder_loop: List[bool],
-    combinations,
     inputs: Dict[Type[str], Any],
     re_apply: bool = False,
     verbose: bool = False,
@@ -530,7 +524,6 @@ def auto_tile_cpu(
                 thread_coarsening_parameters=thread_coarsening_parameters,
                 thread_block_parameters=thread_block_parameters,
                 apply_remainder_loop=apply_remainder_loop,
-                combinations=combinations,
                 inputs=inputs,
                 re_apply=re_apply,
                 verbose=verbose,
@@ -544,8 +537,10 @@ def auto_tile_cpu(
 
         if verbose:
             print(f"Best Tiling Configuration for {kernel_entry.label}: {best_config}")
-
+    #sdfg = dace.SDFG.from_file("afterkerneltile.sdfg")
+    i = 0
     for (state_guid, kernel_entry_guid), (labels, best_config, best_time) in found_tilings.items():
+        #print("SDFG:", sdfg.label, sdfg.arrays, sdfg.states())
         state = find_state_by_cond(sdfg, lambda n: n.guid == state_guid)
         if state is None:
             raise Exception("After auto-tiling, the state is none")
@@ -577,7 +572,6 @@ def auto_tile_cpu(
                 thread_coarsening_parameters=thread_coarsening,
                 thread_block_parameters=thread_block_coarsening,
                 apply_remainder_loop=remainder_loop,
-                combinations=[best_config],
                 inputs=inputs,
                 re_apply=True,
                 verbose=verbose,
@@ -587,9 +581,10 @@ def auto_tile_cpu(
             )
         else:
             raise Exception("TODO")
-
+        i += 1
     print("Internal search completed")
     # Add missing symbols
+
     for input_sym, sym in inputs.items():
         if input_sym not in sdfg.symbols and input_sym not in sdfg.arrays:
             if isinstance(sym, dace.symbolic.symbol):
@@ -598,7 +593,6 @@ def auto_tile_cpu(
                 sdfg.add_symbol(input_sym, dace.dtypes.typeclass(type(sym)))
 
     # Post processing, COPIED FROM _tile, IMPROVE CODE QUALITY
-    """
     for cfg in sdfg.states():
         for node in cfg.nodes():
             if isinstance(node, dace.nodes.MapEntry):
@@ -630,5 +624,5 @@ def auto_tile_cpu(
             outer_map_entry=outer,
             inner_map_entry=inner,
         )
-    """
+
     return sdfg, found_tilings

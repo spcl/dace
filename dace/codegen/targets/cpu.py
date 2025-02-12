@@ -1931,9 +1931,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     beg,end,step = maprange
                     mapdim = int((end+1-beg)//step)
                     if _i == 0:
-                        result.write(f'auto {param} = omp_get_thread_num() % {mapdim};', cfg, state_id, node)
+                        result.write(f'auto {param} = {step} * (omp_get_thread_num() % {mapdim});', cfg, state_id, node)
                     else:
-                        result.write(f'auto {param} = omp_get_thread_num() / {accum};', cfg, state_id, node)
+                        result.write(f'auto {param} = {step} * (omp_get_thread_num() / {accum});', cfg, state_id, node)
                     _i += 1
                     accum *= mapdim
 
