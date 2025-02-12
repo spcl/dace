@@ -37,7 +37,7 @@ class ArrayElimination(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
         Removes redundant arrays and access nodes.
-        
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -84,7 +84,12 @@ class ArrayElimination(ppl.Pass):
                 result.update({n.data for n in removed_nodes})
 
         # If node is completely removed from graph, erase data descriptor
-        for aname, desc in list(sdfg.arrays.items()):
+        array_items = list(sdfg.arrays.items())
+        size_descriptors = set([v.size_desc_name for v in sdfg.arrays.values() if type(v) == data.Array and v.size_desc_name is not None])
+        for aname, desc in array_items:
+            # Remove size descriptors only if the original array is removed
+            if  aname in size_descriptors:
+                continue
             if not desc.transient or isinstance(desc, data.Scalar):
                 continue
             if aname not in access_sets or not access_sets[aname]:
@@ -92,7 +97,10 @@ class ArrayElimination(ppl.Pass):
                 if isinstance(desc, data.Structure) and len(desc.members) > 0:
                     continue
                 sdfg.remove_data(aname, validate=False)
+                if desc.size_desc_name is not None:
+                    sdfg.remove_data(desc.size_desc_name, validate=False)
                 result.add(aname)
+                result.add(desc.size_desc_name)
 
         return result or None
 

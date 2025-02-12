@@ -101,16 +101,15 @@ def _nested_arrays_from_json(obj, context=None):
     return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
-def _replace_dict_keys(d, old, new):
+def _replace_dict_keys(d, old, new, filter_set=None):
     if old == new:
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
-    if old in d:
+    if old in d and (filter_set is None or old in filter_set):
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
         d[new] = d[old]
         del d[old]
-
 
 def _replace_dict_values(d, old, new):
     for k, v in d.items():
@@ -688,6 +687,14 @@ class SDFG(ControlFlowRegion):
         """
         return self._arrays
 
+    def size_arrays(self):
+        size_arrays = [k for k, v in self.arrays.items() if hasattr(v, "is_size_array") and v.is_size_array is True]
+        return size_arrays
+
+    @property
+    def arrays(self):
+        return self._arrays
+
     @property
     def process_grids(self):
         """ Returns a dictionary of process-grid descriptors (`ProcessGrid` objects) used in this SDFG. """
@@ -750,16 +757,55 @@ class SDFG(ControlFlowRegion):
         }
 
         # Replace in arrays and symbols (if a variable name)
+        size_arrays =  self.sdfg.size_arrays()
+        non_size_arrays = {k for k in self.arrays if k not in size_arrays}
+        size_desc_map = dict()
+
         if replace_keys:
             # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
             repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
-                    _replace_dict_keys(self._arrays, name, new_name)
+                    _replace_dict_keys(self.arrays, name, new_name, non_size_arrays)
+                    # Size desc names are updated later
+                    if "__return" not in new_name: # To catch __return_0, __return_1, gpu__return, fpga__return
+                        size_desc_map[new_name] = new_name + "_size"
+                    else:
+                        size_desc_map[new_name] = None
                     _replace_dict_keys(self.symbols, name, new_name)
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
+
+        # Update size descriptors
+        # Having return_size break things (it is collected to the tuple of return) delete it from the arrays
+        # If this is called because array's properties had been changed then set the size desc to none
+        size_ararys_to_rm = set()
+        for arr_name, size_desc_name in size_desc_map.items():
+            arr = self.arrays[arr_name] if arr_name in self.arrays else None
+            if arr is not None and type(arr) == dt.Array:
+                size_desc_name_before = arr.size_desc_name
+                # If we change the name of an array, then we need to change its size array accordingly
+                if (arr.transient and size_desc_name_before is not None):
+                    arr.size_desc_name = size_desc_name
+                    assert (arr.size_desc_name == size_desc_name)
+                    self.arrays[size_desc_name]  = self.arrays.pop(size_desc_name_before)
+                # If the new size array is None, then we can remove the previous (and now unused size array)
+                if arr.size_desc_name is None and size_desc_name_before is not None:
+                    size_ararys_to_rm.add(size_desc_name_before)
+                # If the new size array is not None, but it was non before we need to add the size array
+                if size_desc_name_before is None and arr.size_desc_name is not None:
+                    retval = self._get_size_arr(arr_name, arr)
+                    if retval is not None:
+                        size_desc_name, size_desc = retval
+                        assert (size_desc_name == arr.size_desc_name)
+                        self._arrays[size_desc_name] = size_desc
+                        self._add_symbols(size_desc)
+
+        # Rm any size array we need to remove
+        for size_arr_name in size_ararys_to_rm:
+            if size_arr_name in self.arrays:
+                del self.arrays[size_arr_name]
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1095,7 +1141,7 @@ class SDFG(ControlFlowRegion):
         the execution order of the SDFG.
         Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
         etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
-    
+
         It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
         erasing an empty if branch, or merging two consecutive for-loops.
 
@@ -1161,7 +1207,15 @@ class SDFG(ControlFlowRegion):
                                          f"{name}: it is accessed by node "
                                          f"{node} in state {state}.")
 
+        # Check for size desc
+        if type(self._arrays[name]) == dt.Array:
+            size_desc_name = self._arrays[name].size_desc_name
+            # If unused it might have been removed by optimization
+            if size_desc_name is not None and size_desc_name in self._arrays:
+                del self._arrays[size_desc_name]
+
         del self._arrays[name]
+
 
     def reset_sdfg_list(self):
         """
@@ -1752,22 +1806,24 @@ class SDFG(ControlFlowRegion):
                   alignment=0,
                   may_alias=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
-
-        # convert strings to int if possible
+        # convert strings to int if possible, unless it is not the reserved symbol for deferred allocation
         newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        for i, s in enumerate(shape):
+            if isinstance(s, str) and "__dace_defer" in s:
+                newshape.append(dace.symbolic.pystr_to_symbolic(f"{s}_dim{i}"))
+            else:
+                try:
+                    newshape.append(int(s))
+                except:
+                    newshape.append(dace.symbolic.pystr_to_symbolic(s))
         shape = newshape
         strides = strides or None
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Array(dtype,
-                        shape,
+        desc = dt.Array(dtype=dtype,
+                        shape=shape,
                         storage=storage,
                         location=location,
                         allow_conflicts=allow_conflicts,
@@ -1778,9 +1834,11 @@ class SDFG(ControlFlowRegion):
                         alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size,
-                        may_alias=may_alias)
+                        may_alias=may_alias,
+                        size_desc_name=None)
 
-        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
+        array_name = self.add_datadesc(name, desc, find_new_name=find_new_name)
+        return array_name, desc
 
     def add_view(self,
                  name: str,
@@ -2027,6 +2085,46 @@ class SDFG(ControlFlowRegion):
         newdesc.debuginfo = debuginfo
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
+    def _add_symbols(self, desc: dt.Data):
+        if isinstance(desc, dt.Structure):
+            for v in desc.members.values():
+                if isinstance(v, dt.Data):
+                    self._add_symbols(v)
+        for sym in desc.free_symbols:
+            if sym.name not in self.symbols:
+                self.add_symbol(sym.name, sym.dtype)
+
+    def _get_size_arr(self, name: str, datadesc: dt.Data):
+        if (
+            datadesc.transient is True and
+            type(datadesc) == dt.Array and
+            "__return" not in name and
+            datadesc.lifetime is not dtypes.AllocationLifetime.External and
+            datadesc.lifetime is not dtypes.AllocationLifetime.Persistent and
+            datadesc.is_deferred_array
+            ):
+            size_desc_name = f"{name}_size"
+            # Regardless of the scope and storage it is allocated as a register array
+            # And at the start of the SDFG (or nested SDFG), not setting SDFG prevents to_gpu assertions
+            # from failing. To lifetime and storage are set explicitly to
+            # to prevent optimizations to putting them to FPGA/GPU storage
+            size_desc = dt.Array(dtype=dace.uint64,
+                                shape=(len(datadesc.shape),),
+                                storage=dtypes.StorageType.CPU_Heap,
+                                location=None,
+                                allow_conflicts=False,
+                                transient=True,
+                                strides=(1,),
+                                offset=(0,),
+                                lifetime=dtypes.AllocationLifetime.State,
+                                alignment=datadesc.alignment,
+                                debuginfo=datadesc.debuginfo,
+                                may_alias=False,
+                                size_desc_name=None)
+            size_desc.is_size_array = True
+            return size_desc_name, size_desc
+        return None
+
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
@@ -2067,18 +2165,18 @@ class SDFG(ControlFlowRegion):
             if name in self._pgrids:
                 raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
 
-        def _add_symbols(sdfg: SDFG, desc: dt.Data):
-            if isinstance(desc, dt.Structure):
-                for v in desc.members.values():
-                    if isinstance(v, dt.Data):
-                        _add_symbols(sdfg, v)
-            for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols:
-                    sdfg.add_symbol(sym.name, sym.dtype)
-
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
-        _add_symbols(self, datadesc)
+        self._add_symbols(datadesc)
+
+        retval = self._get_size_arr(name, datadesc)
+        if retval is not None:
+            size_desc_name, size_desc = retval
+            self._arrays[size_desc_name] = size_desc
+            # In case find_new_name and a new name is returned
+            # we need to update the size descriptor name of the array
+            datadesc.size_desc_name = size_desc_name
+            self._add_symbols(size_desc)
 
         return name
 
@@ -2417,8 +2515,8 @@ class SDFG(ControlFlowRegion):
 
         # Omit return values from arguments
         expected_args = collections.OrderedDict([(k, v) for k, v in expected_args.items()
-                                                 if not k.startswith('__return')])
-        kwargs = {k: v for k, v in kwargs.items() if not k.startswith('__return')}
+                                                 if '__return' not in k])
+        kwargs = {k: v for k, v in kwargs.items() if '__return' not in k}
 
         num_args_passed = len(args) + len(kwargs)
         num_args_expected = len(expected_args)
@@ -2540,7 +2638,7 @@ class SDFG(ControlFlowRegion):
         """
         Runs a basic sequence of transformations to optimize a given SDFG to decent
         performance. In particular, performs the following:
-            
+
             * Simplify
             * Auto-parallelization (loop-to-map)
             * Greedy application of SubgraphFusion

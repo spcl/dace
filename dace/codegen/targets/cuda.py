@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
 import functools
+import re
 import warnings
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
@@ -133,6 +134,9 @@ class CUDACodeGen(TargetCodeGenerator):
                                                     illegal_copy,
                                                     predicate=cpu_to_gpu_cpred)
                 dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, st, sched_type, illegal_copy)
+
+        dispatcher.register_reallocate_dispatcher(dtypes.StorageType.GPU_Global, self)
+        dispatcher.register_reallocate_dispatcher(dtypes.StorageType.CPU_Pinned, self)
         # End of illegal copies
         # End of dispatcher registration
         ######################################
@@ -297,7 +301,9 @@ class CUDACodeGen(TargetCodeGenerator):
 
                 # Add sink as terminator state
                 for arr in unfreed:
-                    self.pool_release[(sdfg, arr)] = (sink, set())
+                    if (sdfg.arrays[arr].storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]
+                        and arr not in sdfg.size_arrays()): # Do put size arrays to pool release
+                        self.pool_release[(sdfg, arr)] = (sink, set())
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -339,7 +345,7 @@ class CUDACodeGen(TargetCodeGenerator):
     cudaMemPool_t mempool;
     cudaDeviceGetDefaultMemPool(&mempool, 0);
     uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);            
+    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
 '''
 
         self._codeobject.code = """
@@ -548,6 +554,21 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
 
         declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
 
+    def _alloc_gpu_global(self, node, nodedesc, result_alloc, dataname, arrsize_malloc):
+        if nodedesc.pool:
+            cudastream = getattr(node, '_cuda_stream', 'nullptr')
+            if cudastream != 'nullptr':
+                cudastream = f'__state->gpu_context->streams[{cudastream}]'
+            result_alloc.write(
+                f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
+            )
+            self._emit_sync(result_alloc)
+        else:
+            # Strides are left to the user's discretion
+            result_alloc.write('DACE_GPU_CHECK(%sMalloc((void**)&%s, %s));\n' %
+                            (self.backend, dataname, arrsize_malloc))
+
+
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
@@ -561,6 +582,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
 
         # Check if array is already declared
         declared = False
+        size_declared = False
         try:
             self._dispatcher.declared_arrays.get(dataname)
             declared = True  # Array was already declared in this or upper scopes
@@ -585,28 +607,34 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         arrsize = nodedesc.total_size
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
-        ctypedef = '%s *' % nodedesc.dtype.ctype
 
-        # Different types of GPU arrays
-        if nodedesc.storage == dtypes.StorageType.GPU_Global:
+        ctypedef = '%s *' % nodedesc.dtype.ctype
+        deferred_allocation = any([s for s in nodedesc.shape if "__dace_defer" in str(s)])
+
+        # Different types of GPU arrays)
+        if deferred_allocation:
+            assert nodedesc.storage in dtypes.REALLOCATABLE_STORAGES
+
             if not declared:
-                result_decl.write('%s %s;\n' % (ctypedef, dataname))
+                declaration_stream.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
-            if nodedesc.pool:
-                cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                if cudastream != 'nullptr':
-                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
+            if deferred_allocation:
                 result_alloc.write(
-                    f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
+                    "%s = nullptr; // Deferred Allocation" %
+                    (dataname,)
                 )
-                self._emit_sync(result_alloc)
-            else:
-                # Strides are left to the user's discretion
-                result_alloc.write('DACE_GPU_CHECK(%sMalloc((void**)&%s, %s));\n' %
-                                   (self.backend, dataname, arrsize_malloc))
+
+        elif  nodedesc.storage == dtypes.StorageType.GPU_Global:
+            if not declared:
+                declaration_stream.write('%s %s;\n' % (ctypedef, dataname))
+            self._alloc_gpu_global(node, nodedesc, result_alloc, dataname, arrsize_malloc)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+
 
             if node.setzero:
+                if deferred_allocation:
+                    raise Exception("Deferred Allocation and setzero is not supported at the same time.")
                 result_alloc.write('DACE_GPU_CHECK(%sMemset(%s, 0, %s));\n' % (self.backend, dataname, arrsize_malloc))
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
@@ -742,7 +770,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if not nodedesc.pool:  # If pooled, will be freed somewhere else
-                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
+                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));//a1\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
@@ -755,7 +783,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
-            
+
             :param sdfg: The sdfg to modify.
             :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).
@@ -1263,8 +1291,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 ptrname = cpp.ptr(name, desc, sd, self._frame)
                 if isinstance(desc, dt.Array) and desc.start_offset != 0:
                     ptrname = f'({ptrname} - {cpp.sym2cpp(desc.start_offset)})'
-
-                callsite_stream.write(f'DACE_GPU_CHECK({backend}Free({ptrname}));\n', sd)
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}Free({ptrname}));//a2\n', sd)
                 self._emit_sync(callsite_stream)
                 to_remove.add((sd, name))
             for sd, name in to_remove:
@@ -1484,7 +1511,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
         # TODO move this into _get_const_params(dfg_scope)
-        const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
+        # Do not add src as const if the size is being read (src_conn is _read_size)
+        const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry) if e.src_conn is None or not (e.src_conn is not None and e.src_conn == "_read_size"))
 
         # Store init/exit code streams
         old_entry_stream = self.scope_entry_stream
@@ -1505,6 +1533,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         #       Refactor and fix when nested SDFGs are separate functions.
         self._dispatcher.defined_vars.enter_scope(scope_entry)
         prototype_kernel_args = {}
+        host_size_args = {}
         for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
             if aname in const_params:
                 defined_type, ctype = None, None
@@ -1558,8 +1587,18 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             prototype_kernel_args[aname] = arg
 
+            if aname in sdfg.arrays:
+                arr = sdfg.arrays[aname]
+                if arr.transient and arr.storage == dtypes.StorageType.GPU_Global and type(arr) == dt.Array and arr.size_desc_name is not None:
+                    size_arr_name = data_desc.size_desc_name
+                    if size_arr_name is not None:
+                        size_arr = sdfg.arrays[size_arr_name]
+                        host_size_args[size_arr_name] = size_arr
+
         kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)
                              for k, v in prototype_kernel_args.items()]
+        host_size_args_typed = ['const ' + v.as_arg(name=k)
+                             for k, v in host_size_args.items()]
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, cfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
@@ -1585,9 +1624,26 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
 
         # Write kernel prototype
+        dyn_args = []
+        dyn_args_typed = []
+        for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+            dyn_args.append(e.dst_conn)
+            dyn_args_typed.append(f"const {e.dst.in_connectors[e.dst_conn]} {e.dst_conn}")
+        # Size arrays
+        needed_size_scalars_declaration = []
+        for size_desc_name, arg in host_size_args.items():
+            arr_name = size_desc_name.removesuffix("_size")
+            for i in range(size_arr.shape[0]):
+                if f"__{arr_name}_dim{i}_size" not in dyn_args:
+                    dyn_args.append(f"__{arr_name}_dim{i}_size")
+                    size_desc = sdfg.arrays[size_desc_name]
+                    dyn_args_typed.append(f"const {size_desc.dtype.ctype} __{arr_name}_dim{i}_size")
+                    needed_size_scalars_declaration.append(f"const {size_desc.dtype.ctype} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
+        #raise Exception(needed_size_scalars_declaration, dyn_args)
+
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
+            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + dyn_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1612,7 +1668,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 void __dace_runkernel_{fname}({fargs})
 {{
-""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
+""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed + host_size_args_typed)), cfg, state_id,
             node)
 
         if is_persistent:
@@ -1659,9 +1715,13 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+            memlet_definition = self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn])
             self._localcode.write(
-                self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
+                memlet_definition,
                 cfg, state_id, scope_entry)
+        self._localcode.write("// Array sizes of arrays used are passed here if needed to the kernel even")
+        for decl in needed_size_scalars_declaration:
+            self._localcode.write(decl, cfg, state_id, scope_entry)
 
         gdims = 'dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims))
         bdims = ', '.join(_topy(block_dims))
@@ -1696,7 +1756,9 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 void  *{kname}_args[] = {{ {kargs} }};
 gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
             .format(kname=kernel_name,
-                    kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
+                    kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args]
+                                    + ['(void *)&' + arg for arg in dyn_args]
+                                    + extra_kernel_args),
                     gdims=gdims,
                     bdims=bdims,
                     dynsmem=_topy(dynsmem_size),
@@ -1714,7 +1776,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # Add invocation to calling code (in another file)
         function_stream.write(
             'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
+            (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed + host_size_args_typed)), cfg, state_id,
             scope_entry)
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
@@ -1737,7 +1799,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             '__dace_runkernel_%s(%s);\n' %
             (kernel_name,
              ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
-                                      for aname, arg in kernel_args.items()] + extra_call_args)), cfg, state_id,
+                                      for aname, arg in kernel_args.items()] + extra_call_args
+                                      +  list(host_size_args.keys()))), cfg, state_id,
             scope_entry)
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
@@ -2010,6 +2073,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(cfg.node(state_id), dfg_scope.source_nodes()[0]):
+            # If src is a _read_size, it was handled before
+            if e.src_conn is not None and e.src_conn == "_read_size":
+                continue
             kernel_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id,
@@ -2718,6 +2784,51 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
 
+    def reallocate(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg: StateSubgraphView,
+        state_id: int,
+        src_node: nodes.AccessNode,
+        dst_node: nodes.AccessNode,
+        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], dace.memlet.Memlet],
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ):
+        function_stream.write(
+            "#include <cstdlib>"
+        )
+        data_name = dst_node.data
+        new_size_array_name = src_node.data
+
+        desc = sdfg.arrays[data_name]
+        assert type(desc) == dt.Array
+        size_array_name = desc.size_desc_name
+
+        dtype = sdfg.arrays[data_name].dtype
+
+        size_assignment_strs, new_size_strs, old_size_strs = cpp._get_realloc_dimensions(
+            size_array_name, new_size_array_name, desc.shape
+        )
+
+        # Call realloc only after no __dace_defer is left in size_array (must be true)
+        # Save new and old sizes before registering them, because we need both to compute the bound of the new array
+        old_size_str = " * ".join(old_size_strs)
+        old_size_str += f" * sizeof({dtype.ctype})"
+        new_size_str = " * ".join(new_size_strs)
+        new_size_str += f" * sizeof({dtype.ctype})"
+
+        if desc.storage == dtypes.StorageType.GPU_Global:
+            self._alloc_gpu_global(dst_node, desc, callsite_stream, data_name, new_size_str)
+        elif desc.storage == dtypes.StorageType.CPU_Pinned:
+            assert desc.storage == dtypes.StorageType.CPU_Pinned
+            callsite_stream.write(f"DACE_GPU_CHECK({self.backend}MallocHost(reinterpret_cast<void**>(&{data_name}), {new_size_str}));", cfg, state_id, dst_node.guid)
+        else:
+            raise Exception("Realloc in CUDA, storage type must be CPU_Pinned or GPU_Global")
+
+        for size_assignment in size_assignment_strs:
+            callsite_stream.write(size_assignment)
 
 ########################################################################
 ########################################################################

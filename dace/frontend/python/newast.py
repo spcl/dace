@@ -191,13 +191,13 @@ def parse_dace_program(name: str,
     Parses a ``@dace.program`` function into an SDFG.
 
     :param src_ast: The AST of the Python program to parse.
-    :param visitor: A ProgramVisitor object returned from 
+    :param visitor: A ProgramVisitor object returned from
                     ``preprocess_dace_program``.
     :param closure: An object that contains the @dace.program closure.
     :param simplify: If True, simplification pass will be performed.
     :param save: If True, saves source mapping data for this SDFG.
-    :param progress: If True, prints a progress bar of the parsing process. 
-                        If None (default), prints after 5 seconds of parsing. 
+    :param progress: If True, prints a progress bar of the parsing process.
+                        If None (default), prints after 5 seconds of parsing.
                         If False, never prints progress.
     :return: A 2-tuple of SDFG and its reduced (used) closure.
     """
@@ -1466,8 +1466,8 @@ class ProgramVisitor(ExtNodeVisitor):
     def _symbols_from_params(self, params: List[Tuple[str, Union[str, dtypes.typeclass]]],
                              memlet_inputs: Dict[str, Memlet]) -> Dict[str, symbolic.symbol]:
         """
-        Returns a mapping between symbol names to their type, as a symbol 
-        object to maintain compatibility with global symbols. Used to maintain 
+        Returns a mapping between symbol names to their type, as a symbol
+        object to maintain compatibility with global symbols. Used to maintain
         typed symbols in SDFG scopes (e.g., map, consume).
         """
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -1900,7 +1900,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_consume_inputs(self, node: ast.FunctionDef) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
-        
+
             :return: A 5-tuple of Stream name, internal stream name,
                      (PE index, number of PEs), condition, chunk size.
         """
@@ -2179,7 +2179,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_nedge(internal_node, exit_node, dace.Memlet())
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
-        """ 
+        """
         Adds symbols from nested SDFG mapping values (if appear as globals)
         to current SDFG.
         """
@@ -4042,7 +4042,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Change transient names
         arrays_before = list(sdfg.arrays.items())
         for arrname, array in arrays_before:
-            if array.transient and arrname[:5] == '__tmp':
+            print(arrname, array, sdfg.arrays, sdfg.size_arrays())
+            if array.transient and arrname[:5] == '__tmp' and arrname not in sdfg.size_arrays():
                 if int(arrname[5:]) < self.sdfg._temp_transients:
                     if self.sdfg._temp_transients > sdfg._temp_transients:
                         new_name = self.sdfg.temp_data_name()
