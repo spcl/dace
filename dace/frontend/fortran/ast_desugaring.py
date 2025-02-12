@@ -1406,7 +1406,11 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         elif isinstance(alias_map[k], (Function_Stmt, Subroutine_Stmt)):
             ib = alias_map[k].parent.parent
         assert isinstance(ib, Interface_Block)
+        sppart = ib.parent
+        assert isinstance(sppart, Specification_Part)
         remove_self(ib)
+        if not sppart.children:
+            remove_self(sppart)
 
     return ast
 
