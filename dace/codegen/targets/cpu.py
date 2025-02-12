@@ -1924,7 +1924,19 @@ class CPUCodeGen(TargetCodeGenerator):
             if tid_is_used or ntid_is_used:
                 function_stream.write('#include <omp.h>', cfg, state_id, node)
             if tid_is_used:
-                result.write(f'auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                result.write(f'//auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                accum = 1
+                _i = 0
+                for param, maprange in zip(reversed(node.map.params), reversed(node.map.range)):
+                    beg,end,step = maprange
+                    mapdim = int((end+1-beg)//step)
+                    if _i == 0:
+                        result.write(f'auto {param} = omp_get_thread_num() % {mapdim};', cfg, state_id, node)
+                    else:
+                        result.write(f'auto {param} = omp_get_thread_num() / {accum};', cfg, state_id, node)
+                    _i += 1
+                    accum *= mapdim
+
             if ntid_is_used:
                 result.write(f'auto __omp_num_threads = omp_get_num_threads();', cfg, state_id, node)
         else:
@@ -1934,7 +1946,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 if var in map_param_types.keys():
                     var_type = map_param_types[var]
                 else:
-                    var_type = dtypes.result_type_of(infer_expr_type(r[0], state_dfg.symbols_defined_at(node)), 
+                    var_type = dtypes.result_type_of(infer_expr_type(r[0], state_dfg.symbols_defined_at(node)),
                                                      infer_expr_type(r[1], state_dfg.symbols_defined_at(node)))
 
                 begin, end, skip = r

@@ -36,7 +36,6 @@ def copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry)
         nn.append(n)
 
     cut_sdfg = SDFGCutout.singlestate_cutout(state, *nn)
-    print("BBB")
     return cut_sdfg
 
 
@@ -135,17 +134,13 @@ def _tile(
     if not re_apply:
         raise NotImplementedError("Not re-applying is not implemeneted for tiling yet")
 
-    print("a")
 
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
-        print("b")
         _kernel_sdfg = copy_sub_scope(state, entry)
-        print("bb")
         _kernel_sdfg.name = f"{sdfg.name}_auto_tiled_{call_id}"
         auto_tile_util.set_transient(_kernel_sdfg)
         _kernel_state = _kernel_sdfg.states()[0]
-        print("c")
         _kernel_entry = find_node_in_state_by_cond(
             _kernel_state,
             lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
@@ -164,9 +159,9 @@ def _tile(
             raise Exception("The output name could not be deduced")
 
         copy_inputs = copy.deepcopy(inputs)
-        # _kernel_sdfg.save("kernel.sdfg")
         # print("SDFG:", _kernel_sdfg, "INPUTS:", copy_inputs)
-        assert _kernel_sdfg is not None
+        if _kernel_sdfg is None:
+            raise Exception("_kernel_sdfg should not be None")
 
         """
         for cfg in _kernel_sdfg.states():
@@ -176,7 +171,6 @@ def _tile(
                     and cfg.entry_node(n) is None):
                     n.map.schedule = dace.dtypes.ScheduleType.CPU_Multicore
         """
-        _kernel_sdfg.save("untransformed.sdfg")
 
         non_transformed_time = auto_tile_util.run_and_measure_time(
             kernel_sdfg=_kernel_sdfg,
@@ -267,57 +261,23 @@ def _tile(
 
         has_work_maps = False
         kernel_maps = 0
-        assert len(kernel_sdfg.states()) == 1
-        for state in kernel_sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.MapEntry):
-                    if node.map.schedule == dace.dtypes.ScheduleType.Default:
-                        kernel_maps += 1
-                        nodes = state.all_nodes_between(node, state.exit_node(node))
-                        has_work_maps = any([n for n in nodes if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.Sequential])
-                        if has_work_maps is True:
-                            break
-        assert kernel_maps == 1
+        if work_on_copy:
+            if  len(kernel_sdfg.states()) != 1:
+                raise Exception("If working on copy then the kernel should have only one state")
 
-        # Create at least 1 work map
-        added_work_map = False
-        """
-        if has_work_maps is False:
-            map_range_length = len(kernel_entry.map.range)
+            for state in kernel_sdfg.states():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.MapEntry):
+                        if node.map.schedule == dace.dtypes.ScheduleType.Default:
+                            kernel_maps += 1
+                            nodes = state.all_nodes_between(node, state.exit_node(node))
+                            has_work_maps = any([n for n in nodes if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.Sequential])
+                            if has_work_maps is True:
+                                break
 
-            # Adjust memory_tiling_params[0] to match the length of map_range_length
-            if len(memory_tiling_params[0]) < map_range_length:
-                # Pad with 1s if shorter
-                memory_tiling_params[0].extend([1] * (map_range_length - len(memory_tiling_params[0])))
-            elif len(memory_tiling_params[0]) > map_range_length:
-                # Remove final elements if longer
-                memory_tiling_params[0] = memory_tiling_params[0][:map_range_length]
-            #nt = []
-            #for i, mm in enumerate(memory_tiling_params[0]):
-            #    nt.append(thread_coarsening_param[i]  * mm)
-            #thread_coarsening_param = tuple(nt)
+            if kernel_maps != 1:
+                raise Exception("Kernel should have only one kernel map")
 
-            MapTiling.apply_to(
-                sdfg=kernel_sdfg,
-                options=dict(
-                    prefix="w",
-                    tile_sizes=memory_tiling_params[0],
-                    divides_evenly=True,
-                    tile_trivial=True,
-                    skew=True,
-                ),
-                map_entry=kernel_entry,
-            )
-            kernel_entry.schedule = dace.dtypes.ScheduleType.Sequential
-            kernel_entry = find_node_in_state_by_cond(
-                kernel_state,
-                lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
-                and n.map.schedule == dace.dtypes.ScheduleType.Default
-                and kernel_state.entry_node(n) is None,
-            )
-            added_work_map = True
-        kernel_sdfg.save("AAAA.sdfg")
-        """
         is_assign_kernel = len(kernel_state.in_edges(kernel_entry)) == 0
 
         AddComputeElementBlockMap.apply_to(
@@ -376,11 +336,8 @@ def _tile(
         if not is_assign_kernel:
             for i in range(len(work_maps)):
                 work_map_entry: dace.nodes.MapEntry = work_maps[i]
-                if added_work_map:
-                    work_map_tile = memory_tiling_params[1]
-                else:
-                    work_map_tile = memory_tiling_params[0]
-                print("Work map tile:", work_map_tile)
+                work_map_tile = memory_tiling_params[0]
+                #print("Work map tile:", work_map_tile)
 
                 # If the passed memory tiling parameter is less than the map dimension, pad
                 # If it longer, then take the first elements
@@ -388,7 +345,6 @@ def _tile(
                 work_map_tile = work_map_tile[:tuple_size_needed] + (1,) * (
                     tuple_size_needed - len(work_map_tile)
                 )
-                kernel_sdfg.save("before_bt.sdfg")
 
                 BlockTiling.apply_to(
                     sdfg=kernel_sdfg,
@@ -397,7 +353,6 @@ def _tile(
                     thread_block_map_entry=thread_block_map_entry,
                     work_map_entry=work_map_entry,
                 )
-                kernel_sdfg.save("after_bt.sdfg")
             thread_block_map_entry = find_node_by_cond(
                 kernel_state,
                 kernel_entry,
@@ -441,10 +396,8 @@ def _tile(
                 )
 
         time = None
-        if work_on_copy and verify:
-            # Check shrmem compile limit
-            shr_mem_needed = 0
 
+        if work_on_copy:
             for cfg in kernel_sdfg.states():
                 for node in cfg.nodes():
                     if isinstance(node, dace.nodes.MapEntry):
@@ -454,7 +407,7 @@ def _tile(
             def find_next_map(state, n):
                 found_n = False
                 for node in state.nodes():
-                    if found_n and isinstance(node, dace.sdfg.states.MapEntry):
+                    if found_n and isinstance(node, dace.nodes.MapEntry):
                         return node
                     if node == n:
                         found_n = True
@@ -469,7 +422,9 @@ def _tile(
                             # Find next map:
                             next_map = find_next_map(s, n)
                             interchanges.append((n, next_map))
-            assert len(interchanges) == 1
+
+            if len(interchanges) != 1:
+                raise Exception("There should be only one CPU_Persitent and sequential kernel map to interchange if working ona  copy")
 
             # Need to apply map-interchange to make CPU_persistent appear before
             for outer, inner in interchanges:
@@ -479,8 +434,7 @@ def _tile(
                     inner_map_entry=inner,
                 )
 
-            kernel_sdfg.save("transformed.sdfg")
-
+        if work_on_copy and verify:
             copy_inputs_2 = copy.deepcopy(inputs)
             time = auto_tile_util.run_and_measure_time(
             kernel_sdfg=kernel_sdfg,
@@ -514,7 +468,7 @@ def _tile(
             print(f"Current config: {current_config}, best config: {best_config}")
             print(f"Non-transformed SDFG: {non_transformed_time:.10f} ms")
 
-    return best_config
+    return best_config, best_time
 
 
 def _tile_search(
@@ -907,7 +861,7 @@ def auto_tile_cpu(
     found_tilings = dict()
     for ii, (state, kernel_entry) in enumerate(kernel_guids):
         if exhaustive_search:
-            best_config = _tile(
+            best_config, best_time = _tile(
                 sdfg=sdfg,
                 state=state,
                 entry=kernel_entry,
@@ -923,8 +877,10 @@ def auto_tile_cpu(
                 call_id=ii,
                 num_cores=num_cores,
             )
-            found_tilings[(state.guid, kernel_entry.guid)] = best_config
+            found_tilings[(state.guid, kernel_entry.guid)] = tuple([(state.label, kernel_entry.label), best_config, best_time])
         else:
+            print("TODO")
+            """
             best_config = _tile_search(
                 sdfg=sdfg,
                 state=state,
@@ -937,13 +893,14 @@ def auto_tile_cpu(
                 num_cores=num_cores,
             )
             found_tilings[(state.guid, kernel_entry.guid)] = tuple(
-                list(best_config) + [(True, False), True]
+                list(best_config)
             )
+            """
 
         if verbose:
             print(f"Best Tiling Configuration for {kernel_entry.label}: {best_config}")
 
-    for (state_guid, kernel_entry_guid), best_config in found_tilings.items():
+    for (state_guid, kernel_entry_guid), (labels, best_config, best_time) in found_tilings.items():
         state = find_state_by_cond(sdfg, lambda n: n.guid == state_guid)
         if state is None:
             raise Exception("After auto-tiling, the state is none")
@@ -957,9 +914,8 @@ def auto_tile_cpu(
         memory_tiling = [best_config[0]]
         thread_coarsening = [best_config[1]]
         thread_block_coarsening = [best_config[2]]
+        remainder_loop = [best_config[3]]
         if exhaustive_search:
-            explicit_memory_transfer = [False]
-            remainder_loop = [best_config[3]]
             _tile(
                 sdfg=sdfg,
                 state=state,
@@ -985,7 +941,7 @@ def auto_tile_cpu(
                 memory_tiling_parameters=memory_tiling,
                 thread_coarsening_parameters=thread_coarsening,
                 thread_block_parameters=thread_block_coarsening,
-                apply_remainder_loop=[True],
+                apply_remainder_loop=remainder_loop,
                 inputs=inputs,
                 re_apply=True,
                 verbose=verbose,
@@ -993,7 +949,6 @@ def auto_tile_cpu(
                 call_id=len(kernel_guids),
                 num_cores=num_cores,
             )
-
     # Add missing symbols
     for input_sym, sym in inputs.items():
         if input_sym not in sdfg.symbols and input_sym not in sdfg.arrays:
@@ -1001,5 +956,38 @@ def auto_tile_cpu(
                 sdfg.add_symbol(input_sym, sym.dtype)
             else:
                 sdfg.add_symbol(input_sym, dace.dtypes.typeclass(type(sym)))
+
+    # Post processing, COPIED FROM _tile, IMPROVE CODE QUALITY
+    for cfg in sdfg.states():
+        for node in cfg.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                if node.map.schedule == dace.dtypes.ScheduleType.Default:
+                    node.map.schedule = dace.dtypes.ScheduleType.Sequential
+
+    def find_next_map(state, n):
+        found_n = False
+        for node in state.nodes():
+            if found_n and isinstance(node, dace.nodes.MapEntry):
+                return node
+            if node == n:
+                found_n = True
+        return None
+
+    interchanges = []
+    for s in sdfg.states():
+        for n in s.nodes():
+            if isinstance(n, dace.nodes.MapEntry):
+                if (n.map.schedule == dace.dtypes.ScheduleType.Sequential and
+                    s.entry_node(n) is None):
+                    # Find next map:
+                    next_map = find_next_map(s, n)
+                    interchanges.append((n, next_map))
+
+    for outer, inner in interchanges:
+        MapInterchange.apply_to(
+            sdfg=sdfg,
+            outer_map_entry=outer,
+            inner_map_entry=inner,
+        )
 
     return sdfg, found_tilings
