@@ -283,6 +283,19 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
         gen_base_type_serializer('real', 8),
     ]
     array_serializers: Dict[Tuple[str, int], Function_Subprogram] = {}
+    # Generate basic array serializers for ranks 1 to 4.
+    for rank in range(1, 5):
+        typez = ['LOGICAL', 'INTEGER(KIND = 1)', 'INTEGER(KIND = 2)', 'INTEGER(KIND = 4)', 'INTEGER(KIND = 8)',
+                 'REAL(KIND = 4)', 'REAL(KIND = 8)']
+        for t in typez:
+            tag = (f"{t}"
+                   .replace('TYPE(', 'dt_')
+                   .replace('(KIND =', '_')
+                   .replace('(LEN =', '_')
+                   .replace(' ', '_')
+                   .replace(')', '')
+                   .lower())
+            array_serializers[(tag, rank)] = generate_array_serializer_f90(t, rank, tag)
 
     # C++ SerDe related data structures.
     sdfg_structs: Dict[str, dace.data.Structure] = {v.name: v for k, v in g.arrays.items()
