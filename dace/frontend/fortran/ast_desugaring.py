@@ -2309,8 +2309,8 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             assert isinstance(c, Name)
             tgt_spec = find_real_ident_spec(c.string, mod_spec, alias_map)
             assert tgt_spec in ident_map and tgt_spec in uident_map
-            if uident_map[tgt_spec] == tgt_spec[-1]:
-                # We have chosen to not rename it.
+            if not isinstance(ident_map[tgt_spec], (Function_Stmt, Subroutine_Stmt)):
+                # We leave non-function uses alone.
                 survivors.append(c)
         if survivors:
             set_children(olist, survivors)
@@ -2423,11 +2423,11 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
 
-    known_names: Set[str] = {k[-1] for k in ident_map.keys()}
+    known_names: Set[str] = {k[-1].lower() for k in ident_map.keys()}
     name_collisions: Dict[str, int] = {k: 0 for k in known_names}
     for k in ident_map.keys():
-        name_collisions[k[-1]] += 1
-    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in KEYWORDS_TO_AVOID}
+        name_collisions[k[-1].lower()] += 1
+    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k in KEYWORDS_TO_AVOID}
 
     entry_point_args: Set[SPEC] = set()
     for k in keepers:
@@ -2460,8 +2460,9 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
         else:
             uname = k[-1]
         uident_map[k] = uname
+    uident_map.update({k: k[-1] for k in keepers})
 
-    # PHASE 1.a: Remove all the places where any variable is imported.
+    # PHASE 1.a: Remove all the places where any to-be-renamed variable is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
         mod_spec = (mod_name,)
@@ -2470,25 +2471,21 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
             continue
         survivors = []
         for c in olist.children:
-            assert isinstance(c, (Name, Rename))
-            if isinstance(c, Name):
-                src, tgt = c, c
-            elif isinstance(c, Rename):
-                _, src, tgt = c.children
-            src, tgt = src.string, tgt.string
-            tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
-            assert tgt_spec in ident_map
+            if isinstance(c, Rename):
+                # Renamed uses shouldn't survive, and should be replaced with direct uses.
+                continue
+            assert isinstance(c, Name)
+            tgt_spec = find_real_ident_spec(c.string, mod_spec, alias_map)
+            assert tgt_spec in ident_map and tgt_spec in uident_map
             if not isinstance(ident_map[tgt_spec], Entity_Decl):
+                # We leave non-variable uses alone.
                 survivors.append(c)
         if survivors:
-            olist.items = survivors
-            _reparent_children(olist)
+            set_children(olist, survivors)
         else:
-            par = use.parent
-            par.content = [c for c in par.children if c != use]
-            _reparent_children(par)
+            remove_self(use)
 
-    # PHASE 1.b: Replaces all the keywords when calling the functions. This must be done earlier than resolving other
+    # PHASE 1.b: Replace all the keywords when calling the functions. This must be done earlier than resolving other
     # references, because otherwise we cannot distinguish the two `kw`s in `fn(kw=kw)`.
     for kv in walk(ast, Actual_Arg_Spec):
         fref = kv.parent.parent
@@ -2505,12 +2502,11 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
         k, _ = kv.children
         assert isinstance(k, Name)
         kspec = find_real_ident_spec(k.string, cspec, alias_map)
-        if kspec not in uident_map:
-            # If we haven't planned to rename it, then skip.
-            continue
+        assert kspec in ident_map and kspec in uident_map
+        assert isinstance(ident_map[kspec], Entity_Decl)
         k.string = uident_map[kspec]
 
-    # PHASE 1.c: Replaces all the direct references.
+    # PHASE 1.c: Replace all the direct references.
     for vref in walk(ast, Name):
         if isinstance(vref.parent, Entity_Decl):
             # Do not change the variable declarations themselves just yet.
@@ -2532,6 +2528,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
         vspec = find_real_ident_spec(vspec[-1], scope_spec, alias_map)
         assert vspec in ident_map
         if vspec not in uident_map:
+            # TODO: `vspec` **should** be in `uident_map` if it is a variable (whether we rename it or not).
             # We have chosen to not rename it.
             continue
         uname = uident_map[vspec]
@@ -2595,7 +2592,8 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     for k, v in ident_map.items():
         if not isinstance(v, Entity_Decl):
             continue
-        if k not in uident_map:
+        if k not in uident_map or uident_map[k] == k[-1]:
+            # TODO: `k` **should** be in `uident_map` if it is a variable (whether we rename it or not).
             # We have chosen to not rename it.
             continue
         oname, uname = k[-1], uident_map[k]

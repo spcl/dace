@@ -2778,6 +2778,8 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.do_not_prune)
 
+        ast = consolidate_uses(ast)
+
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
     print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
 
