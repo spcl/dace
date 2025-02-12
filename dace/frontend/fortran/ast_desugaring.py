@@ -4,7 +4,6 @@ import re
 import sys
 from copy import copy
 from dataclasses import dataclass
-from itertools import chain
 from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
 
 import networkx as nx
@@ -28,7 +27,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
-    Bind_Stmt, Language_Binding_Spec, Type_Attr_Spec, Suffix
+    Language_Binding_Spec, Type_Attr_Spec, Suffix
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -1406,7 +1405,11 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         elif isinstance(alias_map[k], (Function_Stmt, Subroutine_Stmt)):
             ib = alias_map[k].parent.parent
         assert isinstance(ib, Interface_Block)
+        sppart = ib.parent
+        assert isinstance(sppart, Specification_Part)
         remove_self(ib)
+        if not sppart.children:
+            remove_self(sppart)
 
     return ast
 
@@ -2289,8 +2292,9 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
         else:
             uname = k[-1]
         uident_map[k] = uname
+    uident_map.update({k: k[-1] for k in keepers})
 
-    # PHASE 1.a: Remove all the places where any function is imported.
+    # PHASE 1.a: Remove all the places where any to-be-renamed function is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
         mod_spec = (mod_name,)
@@ -2299,25 +2303,21 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             continue
         survivors = []
         for c in olist.children:
-            assert isinstance(c, (Name, Rename))
-            if isinstance(c, Name):
-                src, tgt = c, c
-            elif isinstance(c, Rename):
-                _, src, tgt = c.children
-            src, tgt = src.string, tgt.string
-            tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
-            assert tgt_spec in ident_map
-            if not isinstance(ident_map[tgt_spec], (Function_Stmt, Subroutine_Stmt)):
+            if isinstance(c, Rename):
+                # Renamed uses shouldn't survive, and should be replaced with direct uses.
+                continue
+            assert isinstance(c, Name)
+            tgt_spec = find_real_ident_spec(c.string, mod_spec, alias_map)
+            assert tgt_spec in ident_map and tgt_spec in uident_map
+            if uident_map[tgt_spec] == tgt_spec[-1]:
+                # We have chosen to not rename it.
                 survivors.append(c)
         if survivors:
-            olist.items = survivors
-            _reparent_children(olist)
+            set_children(olist, survivors)
         else:
-            par = use.parent
-            par.content = [c for c in par.children if c != use]
-            _reparent_children(par)
+            remove_self(use)
 
-    # PHASE 1.b: Replaces all the function callsites.
+    # PHASE 1.b: Replace all the function callsites.
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
 
@@ -2328,11 +2328,8 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             assert isinstance(name, Intrinsic_Name), f"{fref}"
             continue
         fspec = find_real_ident_spec(name.string, scope_spec, alias_map)
-        assert fspec in ident_map
+        assert fspec in ident_map and fspec in uident_map
         assert isinstance(ident_map[fspec], (Function_Stmt, Subroutine_Stmt))
-        if fspec not in uident_map:
-            # We have chosen to not rename it.
-            continue
         uname = uident_map[fspec]
         ufspec = fspec[:-1] + (uname,)
         name.string = uname
@@ -2366,6 +2363,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             # Since this function is already defined at the current module, there is nothing to import.
             continue
 
+        # Add a "use" regardless whether it existed before or not, since it all gets consolidated later anyway.
         if not specification_part:
             append_children(subprog, Specification_Part(get_reader(f"use {mod}, only: {uname}")))
         else:
@@ -2375,7 +2373,8 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
     for k, v in ident_map.items():
         if not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
             continue
-        if k not in uident_map:
+        assert k in uident_map
+        if uident_map[k] == k[-1]:
             # We have chosen to not rename it.
             continue
         oname, uname = k[-1], uident_map[k]
@@ -2383,23 +2382,19 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
         # Fix the tail too.
         fdef = v.parent
         end_stmt = singular(children_of_type(fdef, (End_Function_Stmt, End_Subroutine_Stmt)))
-        _, end_name = end_stmt.children
-        if end_name:
-            end_name.string = uname
-        else:
-            replace_node(end_stmt, type(end_stmt)(f"{end_stmt} {uname}"))
+        kw, end_name = end_stmt.children
+        set_children(end_stmt, (kw, Name(uname)))
         # For functions, the function name is also available as a variable inside.
         if isinstance(v, Function_Stmt):
-            vspec = atmost_one(children_of_type(fdef, Specification_Part))
-            vexec = atmost_one(children_of_type(fdef, Execution_Part))
-            for nm in walk([n for n in [vspec, vexec] if n], Name):
+            for nm in walk(tuple(children_of_type(fdef, (Specification_Part, Execution_Part))), Name):
                 if nm.string != oname:
                     continue
                 local_spec = search_local_alias_spec(nm)
                 # We need to do a bit of surgery, since we have the `oname` inide the scope ending with `uname`.
                 local_spec = local_spec[:-2] + local_spec[-1:]
-                local_spec = tuple(x.split('_deconglobalfn_')[0] for x in local_spec)
-                assert local_spec in ident_map and ident_map[local_spec] == v
+                local_spec = tuple(x.split(f"_{SUFFIX}_")[0] for x in local_spec)
+                assert local_spec in ident_map, f"`{local_spec}` is not a valid identifier"
+                assert ident_map[local_spec] is v, f"`{local_spec}` does not refer to `{v}`"
                 nm.string = uname
 
     return ast

@@ -12,15 +12,15 @@ from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 import networkx as nx
 from fparser.api import get_reader
 from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
 from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt
-from fparser.two.parser import ParserFactory as pf, ParserFactory
-from fparser.two.symbol_table import SymbolTable
+from fparser.two.parser import ParserFactory
 from fparser.two.utils import Base, walk, FortranSyntaxError
 
+import dace
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from dace.frontend.fortran.ast_internal_classes import Program_Node
 import dace.frontend.fortran.ast_transforms as ast_transforms
 from dace import Language as lang
 from dace import SDFG, InterstateEdge, Memlet, pointer, SDFGState
@@ -259,7 +259,6 @@ class AST_translator:
     """
 
     def __init__(self, source: str, multiple_sdfgs: bool = False, startpoint=None, sdfg_path=None,
-                 toplevel_subroutine: Optional[str] = None, subroutine_used_names: Optional[Set[str]] = None,
                  normalize_offsets=False, do_not_make_internal_variables_argument: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
@@ -299,8 +298,6 @@ class AST_translator:
         self.placeholders = None
         self.placeholders_offsets = None
         self.replace_names = {}
-        self.toplevel_subroutine = toplevel_subroutine
-        self.subroutine_used_names = subroutine_used_names
         self.normalize_offsets = normalize_offsets
         self.temporary_sym_dict = {}
         self.temporary_link_to_parent = {}
@@ -2290,23 +2287,6 @@ class AST_translator:
                                 is_arg = False
                         break
 
-        # if this is a variable declared in the module,
-        # then we will not add it unless it is used by the functions.
-        # It would be sufficient to check the main entry function,
-        # since it must pass this variable through call
-        # to other functions.
-        # However, I am not completely sure how to determine which function is the main one.
-        #
-        # we ignore the variable that is not used at all in all functions
-        # this is a module variaable that can be removed
-        if not is_arg:
-            if self.subroutine_used_names is not None:
-
-                if node.name not in self.subroutine_used_names:
-                    print(
-                        f"Ignoring module variable {node.name} because it is not used in the the top level subroutine")
-                    return
-
         if is_arg:
             transient = False
         else:
@@ -2656,18 +2636,12 @@ class AST_translator:
 
 
 class ParseConfig:
-    def __init__(self,
-                 main: Union[None, Path, str] = None,
-                 sources: Union[None, List[Path], Dict[str, str]] = None,
+    def __init__(self, sources: Union[None, List[Path], Dict[str, str]] = None,
                  includes: Union[None, List[Path], Dict[str, str]] = None,
                  entry_points: Union[None, SPEC, List[SPEC]] = None,
                  config_injections: Optional[List[ConstInjection]] = None,
                  do_not_prune: Union[None, SPEC, List[SPEC]] = None):
         # Make the configs canonical, by processing the various types upfront.
-        if isinstance(main, Path):
-            main = main.read_text()
-        if main:
-            main = FortranStringReader(main)
         if not sources:
             sources: Dict[str, str] = {}
         elif isinstance(sources, list):
@@ -2684,7 +2658,6 @@ class ParseConfig:
             do_not_prune = [do_not_prune]
         do_not_prune = list({x for x in entry_points + do_not_prune})
 
-        self.main = main
         self.sources: Dict[str, str] = sources
         self.includes = includes
         self.entry_points: List[SPEC] = entry_points
@@ -2714,7 +2687,7 @@ def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
-    ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None, cfg.main)
+    ast = construct_full_ast(cfg.sources, parser, cfg.entry_points or None)
     ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
     return ast
@@ -2731,7 +2704,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 
     iast = ast_components.InternalFortranAst()
     prog = iast.create_ast(ast)
-    assert isinstance(prog, FNode)
+    assert isinstance(prog, Program_Node)
     prog.module_declarations = ast_utils.parse_module_declarations(prog)
     iast.finalize_ast(prog)
     return iast, prog
@@ -2770,32 +2743,43 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast = deconstuct_goto_statements(ast)
     ast = correct_for_function_calls(ast)
 
-    print("FParser Op: Inject configs & prune...")
-    ast = inject_const_evals(ast, cfg.config_injections)
-    ast = const_eval_nodes(ast)
-    ast = convert_data_statements_into_assignments(ast)
+    ast_f90_old, ast_f90_new = None, ast.tofortran()
+    while not ast_f90_old or ast_f90_old != ast_f90_new:
+        if ast_f90_old:
+            print(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
+                  f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
+        else:
+            print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
 
-    print("FParser Op: Fix global vars & prune...")
-    # Prune things once after fixing global variables.
-    # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
-    ast = make_practically_constant_global_vars_constants(ast)
-    ast = const_eval_nodes(ast)
-    ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.do_not_prune)
+        print("FParser Op: Inject configs & prune...")
+        ast = inject_const_evals(ast, cfg.config_injections)
+        ast = const_eval_nodes(ast)
+        ast = convert_data_statements_into_assignments(ast)
 
-    print("FParser Op: Fix arguments & prune...")
-    # Another round of pruning after fixing the practically constant arguments, just in case.
-    ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
-    ast = const_eval_nodes(ast)
-    ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.do_not_prune)
+        print("FParser Op: Fix global vars & prune...")
+        # Prune things once after fixing global variables.
+        # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
+        ast = make_practically_constant_global_vars_constants(ast)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.do_not_prune)
 
-    print("FParser Op: Fix local vars & prune...")
-    # Another round of pruning after fixing the locally constant variables, just in case.
-    ast = exploit_locally_constant_variables(ast)
-    ast = const_eval_nodes(ast)
-    ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.do_not_prune)
+        print("FParser Op: Fix arguments & prune...")
+        # Another round of pruning after fixing the practically constant arguments, just in case.
+        ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.do_not_prune)
+
+        print("FParser Op: Fix local vars & prune...")
+        # Another round of pruning after fixing the locally constant variables, just in case.
+        ast = exploit_locally_constant_variables(ast)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.do_not_prune)
+
+        ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
+    print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
 
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
@@ -2984,7 +2968,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
             continue
 
         # Do the actual translation.
-        ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn, toplevel_subroutine=None,
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn,
                                   normalize_offsets=cfg.normalize_offsets, do_not_make_internal_variables_argument=True)
         g = SDFG(ep)
         ast2sdfg.functions_and_subroutines = ast_transforms.FindFunctionAndSubroutines.from_node(program).names
@@ -3115,21 +3099,10 @@ def _get_toplevel_objects(path_f90: Tuple[str, str], parser, sources) -> Dict[st
         return {}
 
 
-def construct_full_ast(sources: Dict[str, str], parser,
-                       entry_points: Optional[Iterable[SPEC]] = None,
-                       main: Optional[FortranStringReader] = None) -> Program:
-
+def construct_full_ast(sources: Dict[str, str], parser, entry_points: Optional[Iterable[SPEC]] = None) -> Program:
     tops = {}
-
     for path, f90 in sources.items():
         ctops = _get_toplevel_objects((path, f90), parser=parser, sources=sources)
-        if ctops.keys() & tops.keys():
-            print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
-        tops.update(ctops)
-
-    # TODO: Remove after fixing the tests to not need `cfg.main` anymore.
-    if main:
-        ctops = _get_toplevel_objects(('main.f90', f"{parser(main)}"), parser, sources)
         if ctops.keys() & tops.keys():
             print(f"Found duplicate names for top-level objects: {ctops.keys() & tops.keys()}", file=sys.stderr)
         tops.update(ctops)
@@ -3301,16 +3274,8 @@ def create_sdfg_from_fortran_file_with_options(
     for j in candidates:
         print(f"Building SDFG {j.name.name}")
         startpoint = j
-        ast2sdfg = AST_translator(
-            __file__,
-            multiple_sdfgs=False,
-            startpoint=startpoint,
-            sdfg_path=sdfgs_dir,
-            # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
-            # subroutine_used_names=arg_pruner.used_in_all_functions,
-            normalize_offsets=normalize_offsets,
-            do_not_make_internal_variables_argument=True,
-        )
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=startpoint, sdfg_path=sdfgs_dir,
+                                  normalize_offsets=normalize_offsets, do_not_make_internal_variables_argument=True)
         sdfg = SDFG(j.name.name)
         ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
         ast2sdfg.structures = program.structures

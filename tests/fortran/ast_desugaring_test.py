@@ -1285,6 +1285,7 @@ SUBROUTINE main
   USE lib, ONLY: perim
   USE lib, ONLY: perim
   USE lib
+  USE lib, ONLY: perim
   IMPLICIT NONE
   TYPE(Square) :: s
   REAL :: a
