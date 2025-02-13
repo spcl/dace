@@ -22,6 +22,18 @@ def count_node(sdfg: SDFG, node_type):
                     nb_nodes += 1
     return nb_nodes
 
+
+def safe_view(sdfg: SDFG):
+    """Calls `sdfg.view()` but if it fails does nothing.
+
+    Mostly needed for the CI, for whatever reason.
+    """
+    try:
+        sdfg.view()
+    except Exception:
+        pass
+
+
 def apply_fusion(
         sdfg: SDFG,
         removed_maps: Union[int, None] = None,
@@ -59,8 +71,8 @@ def apply_fusion(
                     validate_all=True
                 )
     except:
-        org_sdfg.view()
-        sdfg.view()
+        safe_view(org_sdfg)
+        safe_view(sdfg)
         raise
 
     if unspecific:
@@ -72,16 +84,16 @@ def apply_fusion(
         has_processed = True
         rm = num_maps_before - num_maps_after
         if not (rm == removed_maps):
-            sdfg.view()
+            safe_view(sdfg)
         assert rm == removed_maps, f"Expected to remove {removed_maps} but removed {rm}"
     if final_maps is not None:
         has_processed = True
         if not (final_maps == num_maps_after):
-            sdfg.view()
+            safe_view(sdfg)
         assert final_maps == num_maps_after, f"Expected that only {final_maps} maps remain, but there are sill {num_maps_after}."
     if not has_processed:
         if not (num_maps_after < num_maps_before):
-            sdfg.view()
+            safe_view(sdfg)
         assert num_maps_after < num_maps_before, f"Maps after: {num_maps_after}; Maps before: {num_maps_before}"
     return sdfg
 
