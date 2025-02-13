@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
+from typing import Callable
 import dace
 from dace.properties import DictProperty, Property, SetProperty, make_properties
 from dace.sdfg import SDFG, SDFGState
@@ -24,7 +25,7 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
     operator_impl = DictProperty(
         key_type=str,
         value_type=str,
-        default={"add": "Add()"},
+        default={"add": "{c} = Add({a},{b})", "gemm": "{d} = GEMM({a},{b},{c})"},
     )
     mmu_size = Property(dtype=int, default=32)
     vector_unit_size = Property(dtype=int, default=32)
@@ -63,7 +64,13 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
 
             if len(entry.map.params) == 1 and len(outer_entry.map.params) == 2:
                 # Remove inner map and replace the nodes with a GEMM tasklet
-                self.add_gemm_tasklet_rm_scalar_unit_nodes(state, entry, nodetuple)
+                purpose_dict = self.try_deduce_input_purpose(
+                    state, outer_entry, entry, nodetuple
+                )
+                self.device_map_entry.purpose_dict = purpose_dict
+                self.add_gemm_tasklet_rm_scalar_unit_nodes(
+                    state, entry, nodetuple, purpose_dict
+                )
                 self.increase_map_step_size(entry, self.mmu_size)
                 self.increase_map_step_size(outer_entry, self.mmu_size)
                 params_to_update = set(entry.map.params).union(outer_entry.map.params)
@@ -107,12 +114,63 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
 
             # Update the map range
             self.add_non_scalar_unit_tasklet_rm_scalar_unit_nodes(
-                state, map_entry, nodetuple, "Add"
+                state, map_entry, nodetuple, "add", {}
             )
             self.increase_map_step_size(
                 map_entry, self.vector_unit_size, params=vars_used_in_contig_access
             )
             # self.increase_memlet_range(state, map_entry, vars_used_in_contig_access, factor=self.vector_unit_size)
+
+    def _param_appears(self, param_i, ranges):
+        for r in ranges:
+            b, e, s = r
+            print(b.free_symbols, e.free_symbols, s.free_symbols, param_i)
+            if (
+                param_i in b.free_symbols
+                or param_i in e.free_symbols
+                or param_i in s.free_symbols
+            ):
+                return True
+        return False
+
+    def try_deduce_input_purpose(
+        self,
+        state: dace.SDFGState,
+        outer_entry: dace.nodes.MapEntry,
+        entry: dace.nodes.MapEntry,
+        nodetuple,
+    ):
+        print(nodetuple)
+        purpose_dict = dict()
+        param_i, param_j = [dace.symbol(strsym) for strsym in outer_entry.map.params]
+        print(type(param_i), type(param_j))
+        print(outer_entry, entry)
+        for oe in state.out_edges(outer_entry):
+            print(oe, oe.data)
+            ranges = oe.data.subset
+            i_appears = self._param_appears(param_i, ranges)
+            j_appears = self._param_appears(param_j, ranges)
+            if i_appears and not j_appears:
+                purpose_dict[oe.data.data] = "A"
+            elif j_appears and not i_appears:
+                purpose_dict[oe.data.data] = "B"
+            elif i_appears and j_appears:
+                purpose_dict[oe.data.data] = "acc"
+            else:
+                raise Exception("Could not deduce purpose of input")
+        for oe in state.out_edges(state.exit_node(outer_entry)):
+            ranges = oe.data.subset
+            i_appears = self._param_appears(param_i, ranges)
+            j_appears = self._param_appears(param_j, ranges)
+            if oe.data.data not in purpose_dict:
+                purpose_dict[oe.data.data] = "C"
+            for oe2 in state.out_edges(oe.dst):
+                ranges = oe2.data.subset
+                i_appears = self._param_appears(param_i, ranges)
+                j_appears = self._param_appears(param_j, ranges)
+                if oe.data.data not in purpose_dict:
+                    purpose_dict[oe.data.data] = "C"
+        return purpose_dict
 
     def find_variables_used_in_contig_access(
         self, sdfg: SDFG, state: dace.SDFGState, map_entry, nodetuple
@@ -152,13 +210,20 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
         print(used_in_contig_dimensions)
         return used_in_contig_dimensions
 
-    def add_gemm_tasklet_rm_scalar_unit_nodes(self, state, map_entry, nodetuple):
+    def add_gemm_tasklet_rm_scalar_unit_nodes(
+        self, state, map_entry, nodetuple, purpose_dict
+    ):
         self.add_non_scalar_unit_tasklet_rm_scalar_unit_nodes(
-            state, map_entry, nodetuple, "GEMM"
+            state, map_entry, nodetuple, "gemm", purpose_dict
         )
 
     def add_non_scalar_unit_tasklet_rm_scalar_unit_nodes(
-        self, state, map_entry, nodetuple, tasklet_type
+        self,
+        state: dace.SDFGState,
+        map_entry: dace.nodes.MapEntry,
+        nodetuple,
+        tasklet_type,
+        purpose_dict,
     ):
         map_exit = state.exit_node(map_entry)
         scalar_unit_nodes = state.all_nodes_between(map_entry, map_exit)
@@ -171,38 +236,91 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
         # Collect inputs and outputs
         ins = set()
         outs = set()
-        conn_map = dict()
+        conn_map = dace.OrderedDict()
+        data_map = dace.OrderedDict()
+        _i = 0
         for oe in state.out_edges(map_entry):
             vc = oe.dst_conn
             v = oe.dst
             if isinstance(v, dace.nodes.Tasklet):
                 if v == nodetuple[0]:
-                    conn_id = len(ins)+1
-                    ins.add(f"_in{conn_id}")
-                    conn_map[(v,vc)] = f"_in{conn_id}"
+                    conn_id = _i
+                    ins.add(vc)
+                    conn_map[(v, vc)] = vc
+                    assert len(list(state.in_edges_by_connector(v, vc))) == 1
+                    data_map[vc] = list(
+                        state.in_edges_by_connector(v, vc)
+                    )[0].data.data
+                    _i += 1
                 elif v == nodetuple[2]:
                     ins.add("_in_acc")
-                    conn_map[(v,vc)] = "_in_acc"
+                    conn_map[(v, vc)] = "_in_acc"
+                    assert len(list(state.in_edges_by_connector(v, vc))) == 1
+                    data_map[f"_in_acc"] = list(state.in_edges_by_connector(v, vc))[
+                        0
+                    ].data.data
                 else:
                     raise Exception("uwu1")
+        _i = 0
         for ie in state.in_edges(map_exit):
             uc = ie.src_conn
             u = ie.src
             if isinstance(u, dace.nodes.Tasklet):
                 if u == nodetuple[-1]:
-                    conn_id = len(outs)+1
-                    outs.add(f"_out{conn_id}")
-                    conn_map[(u,uc)] = f"_out{conn_id}"
+                    conn_id = _i
+                    outs.add(uc)
+                    conn_map[(u, uc)] = uc
+                    assert len(list(state.out_edges_by_connector(u, uc))) == 1
+                    data_map[uc] = list(
+                        state.out_edges_by_connector(u, uc)
+                    )[0].data.data
+                    _i += 1
                 else:
                     raise Exception("uwu2")
-        print(ins, outs, conn_map)
+        purpose_map = dace.OrderedDict({k: purpose_dict[v] for k, v in data_map.items() if v in purpose_dict})
+        print(ins, outs, conn_map, data_map, purpose_map)
 
+        if len(purpose_map) != 0:
+            assert tasklet_type == "gemm"
+            res = None
+            a = None
+            b = None
+            acc = None
+            for k, v in purpose_map.items():
+                if "out" in k:
+                    if v == "acc":
+                        res = k
+                else:
+                    if v == "A":
+                        a = k
+                    elif v == "B":
+                        b = k
+                    elif v == "acc":
+                        acc = k
+            tasklet_template = self.operator_impl[tasklet_type]
+            instanciated_tasklet = tasklet_template.format(a=a, b=b, c=acc, d=res)
+        else:
+            tasklet_template = self.operator_impl[tasklet_type]
+            sorted_format_in_dict = {k: v for k in sorted(data_map) if "in" in k}
+            sorted_format_out_dict = {k: v for k in sorted(data_map) if "out" in k}
+            name = 'a'
+            combined_dict = dace.OrderedDict()
+            for k, v in sorted_format_in_dict.items():
+                combined_dict [name] = k
+                name = chr(ord(name) + 1)
+            for k, v in sorted_format_out_dict.items():
+                combined_dict [name] = k
+                name = chr(ord(name) + 1)
+            instanciated_tasklet = tasklet_template.format(**combined_dict)
         tasklet = dace.nodes.Tasklet(
             str(tasklet_type),
             ins,
             outs,
-            "",
+            instanciated_tasklet,
         )
+        #if len(purpose_map) == 0:
+        #    raise Exception(instanciated_tasklet, data_map, purpose_map, conn_map)
+
         for ic in ins:
             tasklet.add_in_connector(ic)
         for oc in outs:
@@ -215,7 +333,7 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
                     u,
                     uc,
                     tasklet,
-                    conn_map[(v,vc)],
+                    conn_map[(v, vc)],
                     copy.deepcopy(memlet),
                 )
         for ie in state.in_edges(map_exit):
@@ -223,7 +341,7 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
             if isinstance(u, dace.nodes.Tasklet):
                 state.add_edge(
                     tasklet,
-                    conn_map[(u,uc)],
+                    conn_map[(u, uc)],
                     v,
                     vc,
                     copy.deepcopy(memlet),
