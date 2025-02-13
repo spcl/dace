@@ -4,7 +4,7 @@ import re
 import sys
 from copy import copy
 from dataclasses import dataclass
-from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
+from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any, Generator
 
 import networkx as nx
 import numpy as np
@@ -89,6 +89,38 @@ class TYPE_SPEC:
         if not attrs:
             return f"{self.spec}"
         return f"{self.spec}[{' | '.join(attrs)}]"
+
+    def to_decl(self, var: str):
+        TYPE_MAP = {
+            'INTEGER1': 'INTEGER(kind=1)',
+            'INTEGER2': 'INTEGER(kind=2)',
+            'INTEGER4': 'INTEGER(kind=4)',
+            'INTEGER8': 'INTEGER(kind=8)',
+            'INTEGER': 'INTEGER(kind=4)',
+            'REAL4': 'REAL(kind=4)',
+            'REAL8': 'REAL(kind=8)',
+            'REAL': 'REAL(kind=4)',
+        }
+        typ = self.spec[-1]
+        typ = TYPE_MAP.get(typ, typ)
+
+        bits: List[str] = [typ]
+        if self.alloc:
+            bits.append('allocatable')
+        if self.optional:
+            bits.append('optional')
+        if self.inp and self.out:
+            bits.append('intent(inout)')
+        elif self.inp:
+            bits.append('intent(in)')
+        elif self.out:
+            bits.append('intent(out)')
+        if self.const:
+            bits.append('parameter')
+        bits: str = ', '.join(bits)
+        shape: str = ', '.join(self.shape) if self.shape else ''
+        shape = f"({shape})" if shape else ''
+        return f"{bits} :: {var}{shape}"
 
 
 def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
@@ -636,7 +668,7 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
     return None
 
 
-def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TYPE_SPEC]:
+def find_type_of_entity(node: Union[Entity_Decl, Component_Decl], alias_map: SPEC_TABLE) -> Optional[TYPE_SPEC]:
     anc = _find_type_decl_node(node)
     if not anc:
         return None
@@ -1654,7 +1686,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 root, rest = Part_Ref(f"{root.tofortran()}({rest[0].tofortran()})"), rest[1:]
             scope_spec = find_scope_spec(dr)
             # All the data-ref ancestors of `dr` must live too.
-            for upto in range(1, len(rest)+1):
+            for upto in range(1, len(rest) + 1):
                 anc: Tuple[Name, ...] = (root,) + rest[:upto]
                 ancref = Data_Ref('%'.join([c.tofortran() for c in anc]))
                 ancspec = find_dataref_component_spec(ancref, scope_spec, alias_map)
@@ -2137,8 +2169,8 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             loop_var_spec = ident_spec(alias_map[loop_var_spec])
             _integrate_subresults({}, {loop_var_spec})
     elif isinstance(node, (
-        Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
-        Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt)):
+            Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
+            Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt)):
         # These don't modify variables or give any new information.
         pass
     elif isinstance(node, (Allocate_Stmt, Deallocate_Stmt)):
@@ -2620,14 +2652,14 @@ def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
     assert len(spec) <= 1, f"A module/program cannot have more than one specification parts, found {spec} in {mod}"
     spec = spec[0] if spec else None
     # There may or may not exist an execution part.
-    exec = list(children_of_type(mod, Execution_Part))
-    assert len(exec) <= 1, f"A module/program cannot have more than one execution parts, found {spec} in {mod}"
-    exec = exec[0] if exec else None
+    expart = list(children_of_type(mod, Execution_Part))
+    assert len(expart) <= 1, f"A module/program cannot have more than one execution parts, found {spec} in {mod}"
+    expart = expart[0] if expart else None
     # There may or may not exist a subprogram part.
     subp = list(children_of_type(mod, Module_Subprogram_Part))
     assert len(subp) <= 1, f"A module/program cannot have more than one subprogram parts, found {subp} in {mod}"
     subp = subp[0] if subp else None
-    return stmt, spec, exec, subp
+    return stmt, spec, expart, subp
 
 
 def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Program:
@@ -2808,7 +2840,7 @@ class ConstTypeInjection:
 class ConstInstanceInjection:
     scope_spec: Optional[SPEC]  # Only replace within this scope object.
     root_spec: SPEC  # The root config object's spec (w.r.t. where it is defined)
-    component_spec: Optional[SPEC]  # A tuple of strings that identifies the targeted component
+    component_spec: SPEC  # A tuple of strings that identifies the targeted component
     value: Any  # Literal value to substitue with. The injected literal's type will match the type of the original.
 
 
@@ -2853,47 +2885,158 @@ def _lookup_dataref(dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[Tuple[Name,
     return root, rest
 
 
-def _find_matching_item(items: List[ConstInjection], dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[ConstInjection]:
-    root, rest = _lookup_dataref(dr, alias_map)
-    # NOTE: We should replace only when it is not an output of the function. However, here we pass the responsibilty to
-    # the user to provide valid injections.
-    if not all(isinstance(c, Name) for c in rest):
-        return None
-    root_id_spec = _find_real_ident_spec(root, alias_map)
-    scope_spec = find_scope_spec(dr)
-    comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
-    for item in items:
-        if isinstance(item, ConstTypeInjection):
-            # `item.component_spec` must be a precise suffix in the data-ref, and everything before that must
-            # precisely match `item.type_spec`.
-            if len(item.component_spec) > len(rest):
-                continue
-            pre, c_rest = rest[:-len(item.component_spec)], rest[-len(item.component_spec):]
-            comp_spec: SPEC = tuple(c.string for c in c_rest)
-            if comp_spec[:-1] != item.component_spec[:-1]:
-                # All but the last component must exactly match in all case.
-                continue
-            if comp_tspec.alloc:
-                if f"{comp_spec[-1]}_a" != item.component_spec[-1]:
-                    # Allocatable array's special variable didn't match either.
-                    continue
-            else:
-                if comp_spec[-1] != item.component_spec[-1]:
-                    # Otherwise the last component must exactly match too.
-                    continue
-            comp = Data_Ref(' % '.join(tuple(p.string for p in (root,) + pre)))
-            ctspec = find_type_dataref(comp, scope_spec, alias_map)
-            if ctspec.spec != item.type_spec:
-                continue
-        elif isinstance(item, ConstInstanceInjection):
-            # This is a simpler case, where the object must match `item.root_spec`, and the entire component
-            # parts of the data-ref must precisely match `item.component_spec`.
-            comp_spec: SPEC = tuple(c.string for c in rest)
-            if root_id_spec != item.root_spec or comp_spec != item.component_spec:
-                continue
+def _item_comp_matches_actual_comp(item_comp: str, actual_comp: str) -> bool:
+    if actual_comp == item_comp:
+        # Exactly matched the leaf.
+        return True
+    if f"{actual_comp}_a" == item_comp:
+        # Matched the allocatable array's special variable.
+        return True
+    dims: re.Match = re.search(r'^([a-zA-Z0-9_]+)_[od][0-9+]_s$', item_comp)
+    if dims and dims.group(1) == actual_comp:
+        # Matched the general array's special variable.
+        return True
+    return False
 
-        return item
-    return None
+
+def _type_injection_applies_to_instance(item: ConstTypeInjection,
+                                        defn_spec: SPEC,
+                                        comp_spec: SPEC,
+                                        alias_map: SPEC_TABLE) -> bool:
+    # ASSUMPTION: `item.scope_spec` must have been taken care of already.
+
+    assert len(item.component_spec) == 1, \
+        f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec}"
+    item_comp = item.component_spec[-1]
+
+    if not comp_spec:
+        # Type injection always requires a component.
+        return False
+    if item.type_spec not in alias_map or not isinstance(alias_map[item.type_spec], Derived_Type_Stmt):
+        # `item` does not really describe a type injection; potentially a bug.
+        return False
+
+    inst_typ = find_type_of_entity(alias_map[defn_spec], alias_map)
+    # We need to traverse the components until the remaining components have the exact same length as the `item`'s
+    # (i.e., exactly 1 for now).
+    while len(comp_spec) > 1:
+        if inst_typ.spec not in alias_map:
+            return False
+        tdef = alias_map[inst_typ.spec].parent
+        if not isinstance(tdef, Derived_Type_Def):
+            return False
+        comp: Optional[Component_Decl] = atmost_one(c for c in walk(tdef, Component_Decl)
+                                                    if find_name_of_node(c) == comp_spec[0])
+        if not comp:
+            # Either not a valid component (possibly a bug), or could not proceed with the traversal.
+            return False
+        inst_typ = find_type_of_entity(comp, alias_map)
+        comp_spec = comp_spec[1:]
+    comp: str = comp_spec[-1]
+
+    return _item_comp_matches_actual_comp(item_comp, comp)
+
+
+def _instance_injection_applies_to_instance(item: ConstInstanceInjection,
+                                            defn_spec: SPEC,
+                                            comp_spec: SPEC,
+                                            alias_map: SPEC_TABLE) -> bool:
+    # ASSUMPTION: `item.scope_spec` must have been taken care of already.
+
+    if len(defn_spec) != len(item.root_spec):
+        # `local_spec` surely does not match the instance described by `item`: different length.
+        return False
+    if defn_spec[:-1] != item.root_spec[:-1]:
+        # The last part may encode some extra information (to be checked later), but the remaining parts must match.
+        return False
+    if len(comp_spec) != len(item.component_spec):
+        # `comp_spec` surely does not match the instance described by `item`: different length.
+        return False
+    if comp_spec[:-1] != item.component_spec[:-1]:
+        # The last part may encode some extra information (to be checked later), but the remaining parts must match.
+        return False
+
+    if not comp_spec:
+        comp, item_comp = defn_spec[-1], item.root_spec[-1]
+    else:
+        if defn_spec[-1] != item.root_spec[-1]:
+            # Since we have components to look at, the last parts must match too in this case.
+            return False
+        comp, item_comp = comp_spec[-1], item.component_spec[-1]
+
+    return _item_comp_matches_actual_comp(item_comp, comp)
+
+
+def _const_injection_applies_to_instance(item: ConstInjection,
+                                         inst_ref: Union[Name, Part_Ref, Data_Ref, Entity_Decl],
+                                         alias_map: SPEC_TABLE) -> bool:
+    if isinstance(inst_ref, Entity_Decl):
+        defn_spec, comp_spec = ident_spec(inst_ref), tuple()
+    else:
+        root, rest = _lookup_dataref(inst_ref, alias_map) or (None, None)
+        if not root:
+            return False
+
+        # 1. Find out if `item` is even allowed to apply in this scope.
+        local_spec = search_local_alias_spec(root)
+        if not local_spec:
+            return False
+        if item.scope_spec:
+            if item.scope_spec != local_spec[:len(item.scope_spec)]:
+                # If `item` is restricted to a scope, then local spec of the instance must start with that.
+                return False
+        # 2. Find out if `inst_ref`'s root refers to a valid variable.
+        local_spec = search_real_local_alias_spec(root, alias_map)
+        if local_spec not in alias_map or not isinstance(alias_map[local_spec], Entity_Decl):
+            # `local_spec` does not really describe a target instance.
+            return False
+
+        # Now get the spec of the root variable as it is defined.
+        defn_spec = ident_spec(alias_map[local_spec])
+        comp_spec = tuple(f"{p}" for p in rest)
+
+    if isinstance(item, ConstTypeInjection):
+        return _type_injection_applies_to_instance(item, defn_spec, comp_spec, alias_map)
+    else:
+        return _instance_injection_applies_to_instance(item, defn_spec, comp_spec, alias_map)
+
+
+def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
+                                       inst_ref: Union[Name, Part_Ref, Data_Ref, Entity_Decl],
+                                       alias_map: SPEC_TABLE) -> Generator[ConstInjection, None, None]:
+    for it in items:
+        if _const_injection_applies_to_instance(it, inst_ref, alias_map):
+            yield it
+
+
+def _type_injection_applies_to_component(item: ConstTypeInjection,
+                                         comp_ref: Component_Decl,
+                                         alias_map: SPEC_TABLE) -> bool:
+    assert len(item.component_spec) == 1, \
+        f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec}"
+    item_comp = item.component_spec[-1]
+
+    tstmt = find_named_ancestor(comp_ref)
+    assert isinstance(tstmt, Derived_Type_Stmt)
+    defn_spec = ident_spec(tstmt)
+    comp = find_name_of_node(comp_ref)
+    assert comp
+
+    # Find out if `item` is even allowed to apply in this scope.
+    if item.scope_spec:
+        if item.scope_spec != defn_spec[:len(item.scope_spec)]:
+            # If `item` is restricted to a scope, then local spec of the instance must start with that.
+            return False
+
+    return _item_comp_matches_actual_comp(item_comp, comp)
+
+
+def _find_items_applicable_to_component(items: Iterable[ConstInjection],
+                                        comp_ref: Component_Decl,
+                                        alias_map: SPEC_TABLE) -> Generator[ConstTypeInjection, None, None]:
+    for it in items:
+        if isinstance(it, ConstTypeInjection) and _type_injection_applies_to_component(it, comp_ref, alias_map):
+            yield it
 
 
 def inject_const_evals(ast: Program,
@@ -2935,25 +3078,93 @@ def inject_const_evals(ast: Program,
         names: List[Name] = walk(scope, Name)
         allocateds: List[Intrinsic_Function_Reference] = [c for c in walk(scope, Intrinsic_Function_Reference)
                                                           if c.children[0].string == 'ALLOCATED']
+        allocatables: List[Union[Entity_Decl, Component_Decl]] = [
+            c for c in walk(scope, (Entity_Decl, Component_Decl)) if find_type_of_entity(c, alias_map).alloc]
 
         # Ignore the special variables related to array dimensions, since we don't handle them here.
-        alloc_items = [item for item in items if item.component_spec[-1].endswith('_a')]
-        items = [item for item in items
-                 if not (item.component_spec[-1].endswith('_s') or item.component_spec[-1].endswith('_a'))]
-        item_inst_root_specs: Set[SPEC] = {item.root_spec for item in items
+        alloc_items = list(filter(lambda it:
+                                  it.component_spec[-1].endswith('_a') if it.component_spec
+                                  else it.root_spec[-1].endswith('_a'),
+                                  items))
+        size_items = list(filter(lambda it:
+                                 it.component_spec[-1].endswith('_s') if it.component_spec
+                                 else it.root_spec[-1].endswith('_s'),
+                                 items))
+        items = [it for it in items if it not in alloc_items and it not in size_items]
+        item_inst_root_specs: Set[SPEC] = {it.root_spec for it in items
                                            if isinstance(item, ConstInstanceInjection)}  # For speedup later.
 
         for al in allocateds:
             _, args = al.children
             assert args and len(args.children) == 1
             arr, = args.children
-            if not isinstance(arr, Data_Ref):
-                # TODO: We don't support anything else for now.
-                continue
-            item = _find_matching_item(alloc_items, arr, alias_map)
+            item = atmost_one(_find_items_applicable_to_instance(alloc_items, arr, alias_map))
             if not item:
                 continue
             replace_node(al, _val_2_lit(item.value, ('LOGICAL',)))
+
+        for al in allocatables:
+            name_node = singular(children_of_type(al, Name))
+            name = find_name_of_node(al)
+            typ = find_type_of_entity(al, alias_map)
+            assert typ.alloc
+            shape = list(typ.shape)
+            if isinstance(al, Component_Decl):
+                siz_or_off: List[ConstInjection] = list(_find_items_applicable_to_component(size_items, al, alias_map))
+            else:
+                siz_or_off: List[ConstInjection] = list(_find_items_applicable_to_instance(size_items, al, alias_map))
+
+            def _key_(z: ConstInjection) -> Optional[str]:
+                if z.component_spec:
+                    return z.component_spec[-1]
+                if isinstance(z, ConstInstanceInjection):
+                    return z.root_spec[-1]
+                return None
+
+            for idx in range(len(shape)):
+                if shape[idx] != ':':
+                    # It's already fixed anyway.
+                    continue
+                siz = atmost_one(z for z in siz_or_off if _key_(z) == f"{name}_d{idx}_s")
+                off = atmost_one(z for z in siz_or_off if _key_(z) == f"{name}_o{idx}_s")
+                if not siz or not off:
+                    # We cannot inject and fix the size.
+                    continue
+                siz, off = int(siz.value), int(off.value)
+                shape[idx] = f"{off}:{siz + off - 1}"
+            if typ.shape == tuple(shape):
+                # Nothing changed, therefore, nothing to do.
+                continue
+
+            # Time to replace.
+            typ.shape = tuple(shape)
+            if not any(s == ':' for s in typ.shape):
+                typ.alloc = False
+            nudecl = typ.to_decl(name)
+            if isinstance(al, Component_Decl):
+                clist = al.parent
+                decl = clist.parent
+                cpart = decl.parent
+                nudecl = Data_Component_Def_Stmt(nudecl)
+                if len(clist.children) == 1:
+                    # Just a single element, so we replace the whole thing.
+                    replace_node(decl, nudecl)
+                else:
+                    # Otherwise, remove `al` and append it later.
+                    remove_self(al)
+                    append_children(cpart, nudecl)
+            elif isinstance(al, Entity_Decl):
+                elist = al.parent
+                decl = elist.parent
+                spart = decl.parent
+                nudecl = Type_Declaration_Stmt(nudecl)
+                if len(elist.children) == 1:
+                    # Just a single element, so we replace the whole thing.
+                    replace_node(decl, nudecl)
+                else:
+                    # Otherwise, remove `al` and append it later.
+                    remove_self(al)
+                    append_children(spart, nudecl)
 
         for dr in drefs:
             if isinstance(dr.parent, Assignment_Stmt):
@@ -2961,7 +3172,7 @@ def inject_const_evals(ast: Program,
                 lv, _, _ = dr.parent.children
                 if lv == dr:
                     continue
-            item = _find_matching_item(items, dr, alias_map)
+            item = atmost_one(_find_items_applicable_to_instance(items, dr, alias_map))
             if not item:
                 continue
             replace_node(dr, _val_2_lit(item.value, find_type_dataref(dr, find_scope_spec(dr), alias_map).spec))
@@ -2975,21 +3186,14 @@ def inject_const_evals(ast: Program,
             loc = search_real_local_alias_spec(nm, alias_map)
             if not loc or not isinstance(alias_map[loc], Entity_Decl):
                 continue
-            spec = ident_spec(alias_map[loc])
-            if spec not in item_inst_root_specs:
+            item = atmost_one(_find_items_applicable_to_instance(items, nm, alias_map))
+            if not item:
+                # Found no direct-value item that applies to `nm`.
                 continue
-            for item in items:
-                if (not isinstance(item, ConstInstanceInjection)
-                        or item.component_spec is not None
-                        or spec != item.root_spec):
-                    # To inject variables' values, it has to be a `ConstInstanceInjection` without a component and point
-                    # to the (scalar) variable identified by `nm`.
-                    continue
-                tspec = find_type_of_entity(alias_map[loc], alias_map)
-                # NOTE: We should replace only when it is not an output of the function. However, here we pass the
-                # responsibilty to the user to provide valid injections.
-                replace_node(nm, _val_2_lit(item.value, tspec.spec))
-                break
+            tspec = find_type_of_entity(alias_map[loc], alias_map)
+            # NOTE: We should replace only when it is not an output of the function. However, here we pass the
+            # responsibilty to the user to provide valid injections.
+            replace_node(nm, _val_2_lit(item.value, tspec.spec))
     return ast
 
 
@@ -3078,7 +3282,7 @@ end subroutine {fn_name}
         created_init_fns.add(fn_name)
 
     type_defs: List[SPEC] = [k for k in ident_map.keys() if isinstance(ident_map[k], Derived_Type_Stmt)]
-    type_defs: Dict[SPEC, Tuple[str, List[SPEC]]] =\
+    type_defs: Dict[SPEC, Tuple[str, List[SPEC]]] = \
         {k: (f"type_init_{k[-1]}_{idx}", []) for idx, k in enumerate(type_defs)}
     for k, v in ident_map.items():
         if not isinstance(v, Component_Decl) or not atmost_one(children_of_type(v, Component_Initialization)):
@@ -3148,7 +3352,7 @@ def convert_data_statements_into_assignments(ast: Program) -> Program:
                     else:
                         elem = v
                     # TODO: Support other types of data expressions.
-                    assert isinstance(elem, LITERAL_CLASSES),\
+                    assert isinstance(elem, LITERAL_CLASSES), \
                         f"only supports literal values in data data statements: {elem}"
                     if ktyp.shape:
                         if rest:
@@ -3302,14 +3506,14 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         assert spec
 
         if isinstance(ifc, (If_Stmt, If_Construct)):
-            goto_var, COUNTER = f"goto_{COUNTER}", COUNTER+1
+            goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
             append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var} = .false."))
             asgn = Assignment_Stmt(f"{goto_var} = .true.")
             replace_node(goto, asgn)
         else:
             raise NotImplementedError
 
-        for else_op in ifc.parent.children[ifc_pos+1 : target_pos]:
+        for else_op in ifc.parent.children[ifc_pos + 1: target_pos]:
             if isinstance(else_op, Continue_Stmt):
                 # Continue statements are no-op, but they may have label attached, so we leave them be.
                 continue
