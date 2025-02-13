@@ -127,7 +127,7 @@ end subroutine f2
         y = singular(y for p in walk(ast, Main_Program) for y in walk(p, Specification_Part))
         x = singular(x for p in walk(ast, Main_Program) for x in walk(p, Execution_Part))
         prepend_children(y, Use_Stmt(f"use serde"))
-        append_children(x, Call_Stmt(f'call write_to("{s_data.name}", trim(serialize(s)))'))
+        append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}", .true.), s)'))
 
         # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
         # the serialization is as expected.
