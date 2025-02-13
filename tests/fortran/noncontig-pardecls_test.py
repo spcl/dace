@@ -357,6 +357,54 @@ end subroutine fun
 
     assert np.all(d[1, [0, 2, 4]] * 2 == d2)
 
+def test_fortran_frontend_noncontiguous_nested_ecrad():
+    """
+    As above, but pass the whole subset across one dimension.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+
+subroutine main(d, sizex, firstcols, secondcols, res)
+
+  integer :: sizex
+  double precision, dimension(sizex, 5) :: d
+
+  integer, dimension(16) :: firstcols
+  integer, dimension(140) :: secondcols
+
+  double precision, dimension(5, 140) :: res
+
+  res = 1.0 - transpose( d(firstcols(secondcols), :))
+end subroutine main
+
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.validate()
+    sdfg.save('test.sdfg')
+    sdfg.simplify(verbose=True)
+    sdfg.save('simplify.sdfg')
+    sdfg.compile()
+
+    size_x = 5
+    d = np.full([1, size_x], 42, order="F", dtype=np.float64)
+    for i in range(0, size_x):
+        d[0, i] = 0 + (i+1) / 10
+
+    firstcols = np.full([16], 1, order="F", dtype=np.int32)
+
+    secondcols = np.full([140], 1, order="F", dtype=np.int32)
+    for i in range(140):
+        secondcols[i] = (i % 16) + 1
+
+    res = np.full([size_x, 140], 42, order="F", dtype=np.float64)
+
+    sdfg(d=d, sizex=1, sym_sizex=1, res=res, firstcols=firstcols, secondcols=secondcols)
+
+    firstcols -= 1
+    secondcols -= 1
+    d_new = d[firstcols[secondcols], :]
+    new_res = 1.0 - np.transpose(d_new)
+
+    assert (new_res == res).all()
 
 if __name__ == "__main__":
     test_fortran_frontend_noncontiguous_slices()
@@ -366,3 +414,4 @@ if __name__ == "__main__":
     test_fortran_frontend_noncontiguous_slices_2d_pardecl2()
     test_fortran_frontend_noncontiguous_slices_2d_data_refs()
     test_fortran_frontend_noncontiguous_nested()
+    test_fortran_frontend_noncontiguous_nested_ecrad()

@@ -1692,7 +1692,7 @@ class MathFunctions(IntrinsicTransformation):
                 raise NotImplementedError()
 
         def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
-            
+
             if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
                 return binop_node
 
@@ -1788,11 +1788,11 @@ class MathFunctions(IntrinsicTransformation):
     def output_size(node: ast_internal_classes.Call_Expr_Node):
 
         name = node.name.name.split('__dace_')
-        if len(name) != 2 or name[1] not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
+        if len(name) != 2 or name[1].upper() not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
             return None, None, 'VOID'
 
         # we also need to determine the size of the LHS when it's new
-        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[name[1]]
+        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[name[1].upper()]
 
         sizes = []
         for arg in node.args:
@@ -1815,7 +1815,7 @@ class MathFunctions(IntrinsicTransformation):
         return_type = 'VOID'
 
         if input_type != 'VOID':
-            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[name[1]]
+            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[name[1].upper()]
             if isinstance(replacement_rule, dict):
                 replacement_rule = replacement_rule[input_type]
 

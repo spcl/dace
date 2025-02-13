@@ -2238,13 +2238,14 @@ class TypeInference(NodeTransformer):
 
                 node.type = var_def.type
                 node.sizes = var_def.sizes
-                node.offsets = var_def.offsets
 
                 if node.sizes is None:
                     node.sizes = []
                     var_def.sizes = []
                     node.offsets = [1]
                     var_def.offsets = [1]
+                else:
+                    node.offsets = var_def.offsets
 
             except Exception as e:
                 print(f"Ignore type inference for {node.name}")
@@ -2263,7 +2264,11 @@ class TypeInference(NodeTransformer):
         node.type = var_def.type
 
         new_sizes = []
+        new_indices = []
         for i, idx in enumerate(node.indices):
+
+            idx = self.visit(idx)
+            new_indices.append(idx)
 
             if isinstance(idx, ast_internal_classes.ParDecl_Node):
 
@@ -2285,13 +2290,35 @@ class TypeInference(NodeTransformer):
                         )
                     )
             else:
-                new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
 
-        if len(new_sizes) == 1 and isinstance(new_sizes[0], ast_internal_classes.Int_Literal_Node) and new_sizes[0].value == "1":
+                # we also have non-contiguous arrays here!
+                # (1) if the index is an array or another object that has non-trivial size:
+                # (1a) if size is not 1D, then we throw an error - we don't support that.
+                # (1b) if size is 1D, then size of this object becomes the new size of the array in this dimension
+                #
+                # (2) for all other cases, it's mostly "1"
+
+                sizes = self._get_sizes(idx)
+
+                if len(sizes) > 1:
+                    raise NotImplementedError()
+
+                if len(sizes) == 1:
+                    new_sizes.append(sizes[0])
+                else:
+                    new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+
+        all_const = True
+        for size in new_sizes:
+            if not isinstance(size, ast_internal_classes.Int_Literal_Node) or not size.value == "1":
+                all_const = False
+        if all_const:
             new_sizes = []
 
+        node.indices = new_indices
         node.sizes = new_sizes
         node.offsets = var_def.offsets
+
 
         return node
 
@@ -2338,11 +2365,11 @@ class TypeInference(NodeTransformer):
 
             node.type = lval_type
 
-        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.type == 'VOID' and node.rval.type != 'VOID':
+        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.rval.type != 'VOID' and node.lval.type == 'VOID':
 
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
-            lval_definition.type = node.type
 
+            lval_definition.type = node.type
             lval_definition.sizes = self._get_sizes(node.rval)
             lval_definition.offsets = self._get_offsets(node.rval)
 

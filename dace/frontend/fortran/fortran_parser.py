@@ -2880,6 +2880,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
 
     program = ast_transforms.ParDeclNonContigArrayExpander(program).visit(program)
+    program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
