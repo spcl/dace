@@ -55,7 +55,7 @@ class SourceCodeBuilder:
                     f.write(content)
             # Run `gfortran -Wall` to verify that it compiles.
             # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
-            cmd = ['gfortran', '-Wall', '-shared', '-fPIC', *self.sources.keys()]
+            cmd = ['gfortran', '-Wall', '-shared', '-fPIC', '-ffree-line-length-none', *self.sources.keys()]
 
             try:
                 subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
