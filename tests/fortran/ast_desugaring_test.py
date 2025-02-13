@@ -1764,14 +1764,18 @@ module lib
   end type config
 end module lib
 
-subroutine main(cfg, b)
+subroutine main(cfg, b, c, d)
   use lib
   implicit none
   type(config), intent(in) :: cfg
   real, allocatable, intent(inout) :: b(:)
+  real, allocatable, intent(inout) :: c(:, :)
+  real, allocatable, intent(inout) :: d(:)
   real :: a = 1
   if (allocated(cfg%a)) a = 7.2
   if (allocated(b)) b = 7.2
+  if (allocated(c)) c = 7.2
+  if (allocated(d)) d = 7.2
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1784,6 +1788,12 @@ end subroutine main
         ConstInstanceInjection(None, ('main', 'b_a'), tuple(), 'true'),
         ConstInstanceInjection(None, ('main', 'b_d0_s'), tuple(), '4'),
         ConstInstanceInjection(None, ('main', 'b_o0_s'), tuple(), '1'),
+        ConstInstanceInjection(None, ('main', 'c_a'), tuple(), 'true'),
+        ConstInstanceInjection(None, ('main', 'c_d0_s'), tuple(), '4'),
+        ConstInstanceInjection(None, ('main', 'c_o0_s'), tuple(), '1'),
+        ConstInstanceInjection(None, ('main', 'd_a'), tuple(), 'false'),
+        ConstInstanceInjection(None, ('main', 'd_d0_s'), tuple(), '4'),
+        ConstInstanceInjection(None, ('main', 'd_o0_s'), tuple(), '1'),
     ])
 
     got = ast.tofortran()
@@ -1794,14 +1804,18 @@ MODULE lib
     INTEGER(KIND = 4) :: a(1 : 3, 2 : 4)
   END TYPE config
 END MODULE lib
-SUBROUTINE main(cfg, b)
+SUBROUTINE main(cfg, b, c, d)
   USE lib
   IMPLICIT NONE
   TYPE(config), INTENT(IN) :: cfg
   REAL(KIND = 4), INTENT(INOUT) :: b(1 : 4)
+  REAL, ALLOCATABLE, INTENT(INOUT) :: c(:, :)
+  REAL(KIND = 4), INTENT(INOUT) :: d(1 : 4)
   REAL :: a = 1
   IF (.TRUE.) a = 7.2
   IF (.TRUE.) b = 7.2
+  IF (.TRUE.) c = 7.2
+  IF (.FALSE.) d = 7.2
 END SUBROUTINE main
 """.strip()
     assert got == want

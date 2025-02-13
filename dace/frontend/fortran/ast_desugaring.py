@@ -2937,10 +2937,7 @@ def _type_injection_applies_to_instance(item: ConstTypeInjection,
     return _item_comp_matches_actual_comp(item_comp, comp)
 
 
-def _instance_injection_applies_to_instance(item: ConstInstanceInjection,
-                                            defn_spec: SPEC,
-                                            comp_spec: SPEC,
-                                            alias_map: SPEC_TABLE) -> bool:
+def _instance_injection_applies_to_instance(item: ConstInstanceInjection, defn_spec: SPEC, comp_spec: SPEC) -> bool:
     # ASSUMPTION: `item.scope_spec` must have been taken care of already.
 
     if len(defn_spec) != len(item.root_spec):
@@ -2967,75 +2964,68 @@ def _instance_injection_applies_to_instance(item: ConstInstanceInjection,
     return _item_comp_matches_actual_comp(item_comp, comp)
 
 
-def _const_injection_applies_to_instance(item: ConstInjection,
-                                         inst_ref: Union[Name, Part_Ref, Data_Ref, Entity_Decl],
-                                         alias_map: SPEC_TABLE) -> bool:
+def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
+                                       inst_ref: Union[Name, Part_Ref, Data_Ref, Entity_Decl],
+                                       alias_map: SPEC_TABLE) -> Generator[ConstInjection, None, None]:
+    # Find out if `inst_ref` can match any item at all.
     if isinstance(inst_ref, Entity_Decl):
-        defn_spec, comp_spec = ident_spec(inst_ref), tuple()
+        defn_spec, comp_spec, local_spec = ident_spec(inst_ref), tuple(), None
     else:
         root, rest = _lookup_dataref(inst_ref, alias_map) or (None, None)
         if not root:
-            return False
+            return None
 
-        # 1. Find out if `item` is even allowed to apply in this scope.
-        local_spec = search_local_alias_spec(root)
-        if not local_spec:
-            return False
-        if item.scope_spec:
-            if item.scope_spec != local_spec[:len(item.scope_spec)]:
-                # If `item` is restricted to a scope, then local spec of the instance must start with that.
-                return False
-        # 2. Find out if `inst_ref`'s root refers to a valid variable.
+        # Find out if `inst_ref`'s root refers to a valid variable.
         local_spec = search_real_local_alias_spec(root, alias_map)
         if local_spec not in alias_map or not isinstance(alias_map[local_spec], Entity_Decl):
             # `local_spec` does not really describe a target instance.
-            return False
+            return None
 
         # Now get the spec of the root variable as it is defined.
         defn_spec = ident_spec(alias_map[local_spec])
         comp_spec = tuple(f"{p}" for p in rest)
+        local_spec = search_local_alias_spec(root)
 
-    if isinstance(item, ConstTypeInjection):
-        return _type_injection_applies_to_instance(item, defn_spec, comp_spec, alias_map)
-    else:
-        return _instance_injection_applies_to_instance(item, defn_spec, comp_spec, alias_map)
-
-
-def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
-                                       inst_ref: Union[Name, Part_Ref, Data_Ref, Entity_Decl],
-                                       alias_map: SPEC_TABLE) -> Generator[ConstInjection, None, None]:
     for it in items:
-        if _const_injection_applies_to_instance(it, inst_ref, alias_map):
+        if it.scope_spec and it.scope_spec != local_spec[:len(it.scope_spec)]:
+            # If `item` is restricted to a scope, then local spec of the instance must start with that.
+            continue
+        if (isinstance(it, ConstTypeInjection)
+                and _type_injection_applies_to_instance(it, defn_spec, comp_spec, alias_map)):
+            yield it
+        elif (isinstance(it, ConstInstanceInjection)
+              and _instance_injection_applies_to_instance(it, defn_spec, comp_spec)):
             yield it
 
 
-def _type_injection_applies_to_component(item: ConstTypeInjection,
-                                         comp_ref: Component_Decl,
-                                         alias_map: SPEC_TABLE) -> bool:
+def _type_injection_applies_to_component(item: ConstTypeInjection, defn_spec: SPEC, comp: str) -> bool:
     assert len(item.component_spec) == 1, \
         f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec}"
     item_comp = item.component_spec[-1]
 
+    if item.type_spec != defn_spec:
+        # `item` is not applicable on this type.
+        return False
+
+    return _item_comp_matches_actual_comp(item_comp, comp)
+
+
+def _find_items_applicable_to_component(items: Iterable[ConstInjection], comp_ref: Component_Decl) \
+        -> Generator[ConstTypeInjection, None, None]:
+    # Find out if `inst_ref` can match any item at all.
     tstmt = find_named_ancestor(comp_ref)
     assert isinstance(tstmt, Derived_Type_Stmt)
     defn_spec = ident_spec(tstmt)
     comp = find_name_of_node(comp_ref)
     assert comp
 
-    # Find out if `item` is even allowed to apply in this scope.
-    if item.scope_spec:
-        if item.scope_spec != defn_spec[:len(item.scope_spec)]:
-            # If `item` is restricted to a scope, then local spec of the instance must start with that.
-            return False
-
-    return _item_comp_matches_actual_comp(item_comp, comp)
-
-
-def _find_items_applicable_to_component(items: Iterable[ConstInjection],
-                                        comp_ref: Component_Decl,
-                                        alias_map: SPEC_TABLE) -> Generator[ConstTypeInjection, None, None]:
     for it in items:
-        if isinstance(it, ConstTypeInjection) and _type_injection_applies_to_component(it, comp_ref, alias_map):
+        # Find out if `item` is even allowed to apply in this scope.
+        if it.scope_spec:
+            if it.scope_spec != defn_spec[:len(it.scope_spec)]:
+                # If `item` is restricted to a scope, then local spec of the instance must start with that.
+                continue
+        if isinstance(it, ConstTypeInjection) and _type_injection_applies_to_component(it, defn_spec, comp):
             yield it
 
 
@@ -3063,8 +3053,13 @@ def inject_const_evals(ast: Program,
                 print(f"{item}/{item.type_spec} does not refer to a valid type; moving on...", file=sys.stderr)
                 continue
         elif isinstance(item, ConstInstanceInjection):
-            if item.root_spec not in alias_map or not isinstance(alias_map[item.root_spec], Entity_Decl):
-                print(f"{item}/{item.root_spec} does not refer to a valid object; moving on...", file=sys.stderr)
+            root_spec = item.root_spec
+            if not item.component_spec and root_spec[-1].endswith('_a'):
+                root_spec = root_spec[:-1] + tuple(root_spec[-1].rsplit('_', maxsplit=2)[:1])
+            elif not item.component_spec and root_spec[-1].endswith('_s'):
+                root_spec = root_spec[:-1] + tuple(root_spec[-1].rsplit('_', maxsplit=3)[:1])
+            if root_spec not in alias_map or not isinstance(alias_map[root_spec], Entity_Decl):
+                print(f"{item}/{root_spec} does not refer to a valid object; moving on...", file=sys.stderr)
                 continue
 
     for scope_spec, items in items_by_scopes.items():
@@ -3091,8 +3086,6 @@ def inject_const_evals(ast: Program,
                                  else it.root_spec[-1].endswith('_s'),
                                  items))
         items = [it for it in items if it not in alloc_items and it not in size_items]
-        item_inst_root_specs: Set[SPEC] = {it.root_spec for it in items
-                                           if isinstance(item, ConstInstanceInjection)}  # For speedup later.
 
         for al in allocateds:
             _, args = al.children
@@ -3104,13 +3097,12 @@ def inject_const_evals(ast: Program,
             replace_node(al, _val_2_lit(item.value, ('LOGICAL',)))
 
         for al in allocatables:
-            name_node = singular(children_of_type(al, Name))
             name = find_name_of_node(al)
             typ = find_type_of_entity(al, alias_map)
             assert typ.alloc
             shape = list(typ.shape)
             if isinstance(al, Component_Decl):
-                siz_or_off: List[ConstInjection] = list(_find_items_applicable_to_component(size_items, al, alias_map))
+                siz_or_off: List[ConstInjection] = list(_find_items_applicable_to_component(size_items, al))
             else:
                 siz_or_off: List[ConstInjection] = list(_find_items_applicable_to_instance(size_items, al, alias_map))
 
@@ -3134,6 +3126,9 @@ def inject_const_evals(ast: Program,
                 shape[idx] = f"{off}:{siz + off - 1}"
             if typ.shape == tuple(shape):
                 # Nothing changed, therefore, nothing to do.
+                continue
+            if ':' in shape:
+                # The shape is not fully determined, so don't replace it
                 continue
 
             # Time to replace.
