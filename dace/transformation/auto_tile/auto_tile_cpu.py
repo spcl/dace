@@ -1,4 +1,6 @@
+import ast
 import copy
+import csv
 import itertools
 import os
 from pathlib import Path
@@ -123,9 +125,9 @@ def _tile(
     verify: bool,
     call_id: int,
     num_cores: int,
+    logfile,
+    loglines
 ):
-    if not re_apply:
-        raise NotImplementedError("Not re-applying is not implemeneted for tiling yet")
 
 
     # Copy kernel as a single state SDFG if we are working on the copy
@@ -222,6 +224,24 @@ def _tile(
 
     best_config = None
     best_time = None
+    tested_configs = []
+    if len(loglines) > 0:
+        best_row = None
+        max_speedup = 0
+        for row in loglines:
+            #print(row, type(row), sdfg.label, entry.label, row[0]==sdfg.label, row[1]==entry.label)
+            if row[0] == sdfg.label and row[1] == entry.label:
+                speedup = float(row[4])
+                config =  ast.literal_eval(row[2])
+                tested_configs.insert(0, config)
+                if speedup > max_speedup:
+                    max_speedup = speedup
+                    best_row = row
+                    best_time = float(row[3])
+                    best_config = config
+    print(f"Read best config and time as {best_config}, {best_time}, continuing search")
+
+
     for i, current_config in enumerate(combinations):
         # We need to copy this sdfg if we are working in the copy as we apply transformations
         (
@@ -230,6 +250,10 @@ def _tile(
             thread_block_param,
             apply_remainder_loop_param,
         ) = current_config
+        if not re_apply:
+            if current_config in tested_configs:
+                print(f"Skipping {current_config} it was profiled before")
+                continue
         if verbose:
             print("Current config:", current_config)
 
@@ -430,30 +454,31 @@ def _tile(
                     inner_map_entry=inner,
                 )
 
-        if work_on_copy and verify:
+        if work_on_copy:
             copy_inputs_2 = copy.deepcopy(inputs)
             time = auto_tile_util.run_and_measure_time(
-            kernel_sdfg=kernel_sdfg,
-            inputs=copy_inputs_2,
-            repeats=2,
-            warmups=1,
-            dev_type=dace.dtypes.ScheduleType.CPU_Persistent,
-            instr_type=dace.dtypes.InstrumentationType.Timer,
-        )
+                kernel_sdfg=kernel_sdfg,
+                inputs=copy_inputs_2,
+                repeats=2,
+                warmups=1,
+                dev_type=dace.dtypes.ScheduleType.CPU_Persistent,
+                instr_type=dace.dtypes.InstrumentationType.Timer,
+            )
             output_from_transformed = copy_inputs_2[output_name]
 
-            are_close = np.allclose(
-                output_from_transformed,
-                output_from_non_transformed,
-                rtol=1e-3,
-                atol=1e-5,
-            )
+            if verify:
+                are_close = np.allclose(
+                    output_from_transformed,
+                    output_from_non_transformed,
+                    rtol=1e-3,
+                    atol=1e-5,
+                )
 
             # Clean memory we do not need anymore
             for key in list(copy_inputs_2.keys()):
                 del copy_inputs_2[key]
 
-            if not are_close:
+            if verify and not are_close:
                 raise Exception("Numerical verification failed.")
 
             if best_time is None or time < best_time:
@@ -464,6 +489,9 @@ def _tile(
             print(f"Current config: {current_config}, best config: {best_config}")
             print(f"Non-transformed SDFG: {non_transformed_time:.10f} ms")
             print(f"Speed-up: {non_transformed_time / time:.2f}")
+            logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","{time}","{non_transformed_time / time}"\n')
+            if i % 20 == 0:
+                logfile.flush()
     return best_config, best_time
 
 
@@ -489,16 +517,33 @@ def auto_tile_cpu(
     sym_dict = sdfg.symbols
 
     # Create report folder and file
-    folder = Path(f"{sdfg_name}_report")
-    filename = Path.joinpath(folder, Path(f"{sdfg_name}.report"))
-    folder.mkdir(parents=True, exist_ok=True)
-    tiled_sdfg_path = Path.joinpath(folder, Path(f"{sdfg_name}_auto_tiled.sdfgz"))
+    #folder = Path(f"{sdfg_name}_report")
+    filename = Path(f"{sdfg_name}.csv")
+    #folder.mkdir(parents=True, exist_ok=True)
+    #tiled_sdfg_path = Path.joinpath(folder, Path(f"{sdfg_name}_auto_tiled.sdfgz"))
 
     # If this SDFG was tiled before, just return
-    if filename.exists() and tiled_sdfg_path.exists() and not re_apply:
-        return dace.SDFG.from_file(str(tiled_sdfg_path)), None
+    logged_lines = []
+    #if filename.exists() and tiled_sdfg_path.exists() and not re_apply:
+    #    return dace.SDFG.from_file(str(tiled_sdfg_path)), None
 
-    # filename.open('w').close() if filename.exists() else filename.touch()
+    if filename.exists() and not re_apply:
+        with open(filename, 'r') as f:
+            reader = csv.reader(f)
+            try:
+                next(reader)  # Skip the header row, do not crash if empty
+            except StopIteration:
+                pass
+            for row in reader:
+                logged_lines.append(row)
+            f.seek(0)
+
+    if not filename.exists():
+        filename.touch()
+        f = filename.open('a')
+        f.write("SDFG,Kernel,Config,Time,Speedup\n")
+    else:
+        f = filename.open('a')
 
     # Collect Device kernels
     kernel_guids: List[Tuple[dace.sdfg.SDFGState, str]] = []
@@ -530,6 +575,8 @@ def auto_tile_cpu(
                 verify=True,
                 call_id=ii,
                 num_cores=num_cores,
+                logfile=f,
+                loglines=logged_lines
             )
             found_tilings[(state.guid, kernel_entry.guid)] = tuple([(state.label, kernel_entry.label), best_config, best_time])
         else:
@@ -578,6 +625,8 @@ def auto_tile_cpu(
                 verify=False,
                 call_id=len(kernel_guids),
                 num_cores=num_cores,
+                logfile=f,
+                loglines=logged_lines,
             )
         else:
             raise Exception("TODO")
