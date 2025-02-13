@@ -836,51 +836,6 @@ class StructToContainerGroups(ppl.Pass):
 
         return name_hierarchy, member_hierarchy
 
-    """
-    def _process_edges(self, sdfg, edge_list, name_hierarchy, passing_view=False,
-                       passing_container_view=False, viewed_data=None, member_hierarchy=[]):
-        assert len(edge_list) == 1
-        edge = edge_list[0]
-        data = edge.data.data
-        if not passing_view:
-            tokenized_data = data.split(".")
-            #print(tokenized_data)
-            assert len(tokenized_data) == 2
-            name_hierarchy += tokenized_data
-            #print("NOVIEW:", data)
-            struct = sdfg.arrays[tokenized_data[0]]
-            member = struct.members[tokenized_data[1]]
-            member_hierarchy += [(tokenized_data[0], struct), (tokenized_data[1], member)]
-        else:
-            if passing_container_view:
-                #print(type(data), data)
-                #print("X", viewed_data, type(viewed_data))
-                name_hierarchy += [data]
-                next_member = None
-                if isinstance(member_hierarchy[-1], dace.data.ContainerArray):
-                    #print(member_hierarchy[-1].stype)
-                    next_member += [(data, member_hierarchy[-1].stype)]
-                elif isinstance(member_hierarchy[-1], dace.data.Structure):
-                    next_member = member_hierarchy[-1].members[data]
-                member_hierarchy += [(data, next_member)]
-                #print("CVIEW:", data)
-            else:
-                last_member = member_hierarchy[-1][1]
-                if isinstance(last_member, dace.data.ContainerArray):
-                    #print(last_member, last_member.stype, last_member.stype)
-                    name_hierarchy += [last_member.stype.name]
-                if isinstance(last_member, dace.data.Structure):
-                    assert data in last_member.members
-                    name_hierarchy += [data]
-                next_member = None
-                if isinstance(member_hierarchy[-1], dace.data.ContainerArray):
-                    #print(member_hierarchy[-1].stype)
-                    next_member += [(name_hierarchy[-1], member_hierarchy[-1].stype)]
-                elif isinstance(member_hierarchy[-1], dace.data.Structure):
-                    next_member = [(name_hierarchy[-1], member_hierarchy[-1].members[data])]
-                #print("SVIEW:", data, viewed_data)
-    """
-
     def _apply(
         self,
         state: SDFGState,
@@ -920,49 +875,6 @@ class StructToContainerGroups(ppl.Pass):
             struct_to_view_edges = [
                 e for e in state.out_edges(struct_access) if e.dst == view_chain[0]
             ]
-            """
-            #print(struct_to_view_edges)
-            self._process_edges(
-                sdfg=sdfg, edge_list=struct_to_view_edges, name_hierarchy=name_hierarchy,
-                    passing_view=False,
-                    passing_container_view=False,
-                    member_hierarchy=member_hierarchy
-            )
-            #print("H", member_hierarchy)
-            #print("Viewchain", view_chain)
-            for current_view_access in view_chain:
-                #print("1", current_view_access.data, type(sdfg.arrays[current_view_access.data]))
-                passing_container_view = False
-                passing_view = False
-                viewed_data=None
-                if isinstance(sdfg.arrays[current_view_access.data], dace.data.ContainerView):
-                    #print("2", current_view_access.data, sdfg.arrays[current_view_access.data].stype)
-                    passing_container_view = True
-                    passing_view = True
-                    viewed_data=sdfg.arrays[current_view_access.data].stype
-                    #print("VD",viewed_data)
-                elif isinstance(sdfg.arrays[current_view_access.data], dace.data.View):
-                    #print("3", current_view_access.data, sdfg.arrays[current_view_access.data])
-                    viewed_data=sdfg.arrays[current_view_access.data]
-                    #get_member_name = _get_member_name(sdfg, struct_access, )
-                    #print("VD",viewed_data)
-                    passing_view=True
-                view_to_next_edges = state.out_edges(current_view_access)
-                #print("A1")
-                self._process_edges(
-                    sdfg=sdfg,
-                    edge_list=view_to_next_edges,
-                    name_hierarchy=name_hierarchy,
-                    passing_view=passing_view,
-                    passing_container_view=passing_container_view,
-                    member_hierarchy=member_hierarchy,
-                    viewed_data=viewed_data
-                )
-                #print("H", member_hierarchy)
-                #print("a")
-            """
-
-        #raise Exception(member_hierarchy)
 
         if view_to_struct:
             view_to_struct_edges = [
