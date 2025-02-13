@@ -1924,7 +1924,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if tid_is_used or ntid_is_used:
                 function_stream.write('#include <omp.h>', cfg, state_id, node)
             if tid_is_used:
+                # Before
                 result.write(f'//auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                # After
+                # Unlike CUDA the the dimensions of this map need to be the same as threads
+                # Generate: #pragma omp parallel num_threads(<accumulated map dims>) instead of #pragma omp parallel
                 accum = 1
                 _i = 0
                 for param, maprange in zip(reversed(node.map.params), reversed(node.map.range)):
