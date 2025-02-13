@@ -38,6 +38,8 @@ from dace.symbolic import pystr_to_symbolic, inequal_symbols
 import numpy
 import sympy
 
+numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
+
 # register replacements in oprepo
 import dace.frontend.python.replacements
 from dace.frontend.python.replacements import _sym_type, broadcast_to, broadcast_together
@@ -2725,8 +2727,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     fake_subset = dace.subsets.Range(missing_dimensions + op_dimensions)
 
-                    # use this fake subset to calculate the offset
-                    fake_subset.offset(squeezed, True)
+                    # Use this fake subset to calculate the offset. Constant indices are ignored, as they do not depend
+                    # on the broadcasting operation.
+                    offset_indices_to_ignore = set()
+                    for i, idx in enumerate(inp_idx):
+                        if not symbolic.issymbolic(pystr_to_symbolic(idx)):
+                            offset_indices_to_ignore.add(i)
+                    fake_subset_offs_indices = []
+                    for i in range(len(fake_subset)):
+                        if i not in offset_indices_to_ignore:
+                            fake_subset_offs_indices.append(i)
+                    fake_subset.offset(squeezed, True, indices=fake_subset_offs_indices)
 
                     # we access the inp subset using the computed offset
                     # since the inp_subset may be missing leading dimensions, we reverse-zip-reverse
@@ -3288,7 +3299,21 @@ class ProgramVisitor(ExtNodeVisitor):
             for n in node.value.elts:
                 results.extend(self._gettype(n))
         else:
-            results.extend(self._gettype(node.value))
+            rval = self._gettype(node.value)
+            if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays and
+                self.sdfg.arrays[rval[0][0]].shape[0] == len(elts)):
+                # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as
+                # the number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses
+                # to constant indexes (according to the number of elements in the lhs). These expansions can then be
+                # used to perform an unpacking assignment, similar to what Python does natively.
+                for i in range(len(elts)):
+                    const_node = NumConstant(i)
+                    ast.copy_location(const_node, node)
+                    slice_node = ast.Subscript(rval[0][0], const_node, ast.Load)
+                    ast.copy_location(slice_node, node)
+                    results.extend(self._gettype(slice_node))
+            else:
+                results.extend(rval)
 
         if len(results) != len(elts):
             raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
@@ -3735,18 +3760,20 @@ class ProgramVisitor(ExtNodeVisitor):
         for state in sdfg.states():
             visited_state_data = set()
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data == name:
-                    visited_state_data.add(node.data)
-                    if (node.data not in visited_data and state.in_degree(node) == 0):
-                        return True
+                if isinstance(node, nodes.AccessNode):
+                    if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
+                        visited_state_data.add(node.data)
+                        if (node.data not in visited_data and state.in_degree(node) == 0):
+                            return True
             visited_data = visited_data.union(visited_state_data)
 
     def _is_outputnode(self, sdfg: SDFG, name: str):
         for state in sdfg.states():
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data == name:
-                    if state.in_degree(node) > 0:
-                        return True
+                if isinstance(node, nodes.AccessNode):
+                    if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
+                        if state.in_degree(node) > 0:
+                            return True
 
     def _get_sdfg(self, value: Any, args: Tuple[Any], kwargs: Dict[str, Any]) -> SDFG:
         if isinstance(value, SDFG):  # Already an SDFG
@@ -4893,9 +4920,9 @@ class ProgramVisitor(ExtNodeVisitor):
         return node.n
 
     def visit_Constant(self, node: ast.Constant):
-        if isinstance(node.value, bool):
+        if isinstance(node.value, bool) and numpy_version < '2.0.0':
             return dace.bool_(node.value)
-        if isinstance(node.value, (int, float, complex)):
+        if isinstance(node.value, (int, float, complex)) and numpy_version < '2.0.0':
             return dtypes.dtype_to_typeclass(type(node.value))(node.value)
         if isinstance(node.value, (str, bytes)):
             return StringLiteral(node.value)

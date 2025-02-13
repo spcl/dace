@@ -264,7 +264,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             elif const_name in sdfg.symbols:
                 if const_type.dtype != sdfg.symbols[const_name]:
                     # This should actually be an error, but there is a lots of code that depends on it.
-                    warnings.warn(f'Mismatch between constant and symobl type of "{const_name}", '
+                    warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
             else:
                 warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
