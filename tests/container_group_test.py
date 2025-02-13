@@ -2,7 +2,7 @@ import pytest
 import dace
 import numpy as np
 
-from dace.sdfg.container_group import ContainerGroupFlatteningMode
+from dace.transformation.passes.struct_to_container_group import ContainerGroupFlatteningMode
 from dace.transformation.passes.struct_to_container_group import StructToContainerGroups
 
 
@@ -32,10 +32,15 @@ def _get_jacobi_sdfg(container_variant: str):
         struct = dace.data.Structure(
             members={
                 "As": dace.data.ContainerArray(
-                    stype=dace.data.Array(
-                        shape=[N, N],
-                        storage=dace.dtypes.StorageType.CPU_Heap,
-                        dtype=dace.typeclass(np.float32),
+                    stype=dace.data.Structure(
+                        name="AsInternal",
+                        members={
+                            "AsArray": dace.data.Array(
+                                shape=[N, N],
+                                storage=dace.dtypes.StorageType.CPU_Heap,
+                                dtype=dace.typeclass(np.float32),
+                            ),
+                        }
                     ),
                     shape=(2,),
                     transient=False,
@@ -96,16 +101,32 @@ def _get_jacobi_sdfg(container_variant: str):
         kernel.add_node(ab3_access)
 
     if container_variant == "ContainerArray":
-        jacobi_sdfg.add_view(
+        jacobi_sdfg.add_datadesc_view(
             name="v_AB_As",
-            shape=[N, N],
-            storage=dace.dtypes.StorageType.CPU_Heap,
-            dtype=dace.typeclass(np.float32),
+            datadesc=struct.members["As"],
+        )
+        print(jacobi_sdfg.arrays)
+        jacobi_sdfg.add_datadesc_view(
+            name="v_AB_As_AsInternal",
+            datadesc=jacobi_sdfg.arrays["v_AB_As"].stype,
+        )
+        jacobi_sdfg.add_datadesc_view(
+            name="v_AB_As_AsInternal_AsArray",
+            datadesc=jacobi_sdfg.arrays["v_AB_As"].stype.members["AsArray"],
         )
         ab4_access = dace.nodes.AccessNode(data="v_AB_As")
         kernel.add_node(ab4_access)
         ab5_access = dace.nodes.AccessNode(data="v_AB_As")
         kernel.add_node(ab5_access)
+        ab4_is_access = dace.nodes.AccessNode(data="v_AB_As_AsInternal")
+        kernel.add_node(ab4_is_access)
+        ab5_is_access = dace.nodes.AccessNode(data="v_AB_As_AsInternal")
+        kernel.add_node(ab5_is_access)
+        ab4_is2_access = dace.nodes.AccessNode(data="v_AB_As_AsInternal_AsArray")
+        kernel.add_node(ab4_is2_access)
+        ab5_is2_access = dace.nodes.AccessNode(data="v_AB_As_AsInternal_AsArray")
+        kernel.add_node(ab5_is2_access)
+
 
     if container_variant != "Baseline":
         a_access = dace.nodes.AccessNode(data="v_A")
@@ -146,31 +167,59 @@ def _get_jacobi_sdfg(container_variant: str):
             None,
             ab4_access,
             "views",
-            dace.Memlet(data="AB.As", subset=dace.subsets.Range.from_string("0:1")),
+            dace.Memlet(data="AB.As"),
         )
         kernel.add_edge(
             ab2_access,
             None,
             ab5_access,
             "views",
-            dace.Memlet(data="AB.As", subset=dace.subsets.Range.from_string("1:2")),
+            dace.Memlet(data="AB.As"),
         )
         kernel.add_edge(
             ab4_access,
             None,
-            a_access,
+            ab4_is_access,
             "views",
-            dace.Memlet(
-                data="v_AB_As", subset=dace.subsets.Range.from_string("0:N, 0:N")
-            ),
+            dace.Memlet(expr="v_AB_As[0]"),
         )
         kernel.add_edge(
             ab5_access,
             None,
+            ab5_is_access,
+            "views",
+            dace.Memlet(expr="v_AB_As[1]"),
+        )
+        kernel.add_edge(
+            ab4_is_access,
+            None,
+            ab4_is2_access,
+            "views",
+            dace.Memlet(expr="v_AB_As_AsInternal.AsArray"),
+        )
+        kernel.add_edge(
+            ab5_is_access,
+            None,
+            ab5_is2_access,
+            "views",
+            dace.Memlet(expr="v_AB_As_AsInternal.AsArray"),
+        )
+        kernel.add_edge(
+            ab4_is2_access,
+            None,
+            a_access,
+            "views",
+            dace.Memlet(
+                data="v_AB_As_AsInternal_AsArray", subset=dace.subsets.Range.from_string("0:N, 0:N")
+            ),
+        )
+        kernel.add_edge(
+            ab5_is2_access,
+            None,
             b_access,
             "views",
             dace.Memlet(
-                data="v_AB_As", subset=dace.subsets.Range.from_string("0:N, 0:N")
+                data="v_AB_As_AsInternal_AsArray", subset=dace.subsets.Range.from_string("0:N, 0:N")
             ),
         )
     else:
@@ -342,12 +391,28 @@ def _get_jacobi_sdfg(container_variant: str):
         if j == 0:
             if container_variant == "ContainerArray":
                 ab6_access = kernel.add_access("v_AB_As")
+                _ab6_access = kernel.add_access("v_AB_As_AsInternal")
+                __ab6_access = kernel.add_access("v_AB_As_AsInternal_AsArray")
                 kernel.add_edge(
                     dst_access,
                     f"views",
+                    __ab6_access,
+                    None,
+                    dace.Memlet(expr=f"v_AB_As_AsInternal_AsArray[0:N, 0:N]"),
+                )
+                kernel.add_edge(
+                    __ab6_access,
+                    f"views",
+                    _ab6_access,
+                    None,
+                    dace.Memlet(expr=f"v_AB_As_AsInternal.AsArray"),
+                )
+                kernel.add_edge(
+                    _ab6_access,
+                    f"views",
                     ab6_access,
                     None,
-                    dace.Memlet(expr=f"v_AB_As[0:N, 0:N]"),
+                    dace.Memlet(expr=f"v_AB_As[{j}:{j}+1]"),
                 )
                 kernel.add_edge(
                     ab6_access,
@@ -370,12 +435,28 @@ def _get_jacobi_sdfg(container_variant: str):
         if j == 1:
             if container_variant == "ContainerArray":
                 ab7_access = kernel.add_access("v_AB_As")
+                _ab7_access = kernel.add_access("v_AB_As_AsInternal")
+                __ab7_access = kernel.add_access("v_AB_As_AsInternal_AsArray")
                 kernel.add_edge(
                     dst_access,
                     f"views",
+                    __ab7_access,
+                    None,
+                    dace.Memlet(expr=f"v_AB_As_AsInternal_AsArray[0:N, 0:N]"),
+                )
+                kernel.add_edge(
+                    __ab7_access,
+                    f"views",
+                    _ab7_access,
+                    None,
+                    dace.Memlet(expr=f"v_AB_As_AsInternal.AsArray"),
+                )
+                kernel.add_edge(
+                    _ab7_access,
+                    f"views",
                     ab7_access,
                     None,
-                    dace.Memlet(expr=f"v_AB_As[0:N, 0:N]"),
+                    dace.Memlet(expr=f"v_AB_As[{j}:{j}+1]"),
                 )
                 kernel.add_edge(
                     ab7_access,
@@ -418,6 +499,7 @@ def test_struct_to_container_group(container_variant: str):
     sdfg = _get_jacobi_sdfg(container_variant)
     use_container_array = container_variant == "ContainerArray"
     sdfg.simplify(validate_all=True)
+    sdfg.save("containerarray.sdfg")
 
     StructToContainerGroups(
         flattening_mode=ContainerGroupFlatteningMode.StructOfArrays,

@@ -6,12 +6,406 @@ import copy
 from typing import Any, Dict
 import dace
 from dace.sdfg import SDFG, NestedDict, SDFGState
-from dace.sdfg.state import ControlFlowBlock
 from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.data import Structure, View
 from dace.transformation import pass_pipeline as ppl
-from dace.sdfg.container_group import ContainerGroupFlatteningMode
+
+from collections import OrderedDict
+from typing import Set, Union
+import typing
+from dace import data
+from dace.data import Data
+from dace import serialize, symbolic
+from dace.properties import OrderedDictProperty, Property, make_properties
+from enum import Enum
+
+import numpy
+import sympy
+
+
+class ContainerGroupFlatteningMode(Enum):
+    ArrayOfStructs = 1
+    StructOfArrays = 2
+
+
+def _members_to_json(members):
+    if members is None:
+        return None
+    return [(k, serialize.to_json(v)) for k, v in members.items()]
+
+
+def _members_from_json(obj, context=None):
+    if obj is None:
+        return {}
+    return OrderedDict((k, serialize.from_json(v, context)) for k, v in obj)
+
+
+@make_properties
+class ContainerGroup:
+    name = Property(dtype=str, default="", allow_none=False)
+    members = OrderedDictProperty(
+        default=OrderedDict(),
+        desc="Dictionary of structure members",
+        from_json=_members_from_json,
+        to_json=_members_to_json,
+    )
+    is_cg = Property(dtype=bool, default=False, allow_none=False)
+    is_ca = Property(dtype=bool, default=False, allow_none=False)
+    shape = Property(dtype=tuple, default=(1,), allow_none=False)
+
+    def __init__(self, name, is_cg, is_ca, shape):
+        self.name = name
+        self.members = OrderedDict()
+        self.is_cg = is_cg
+        self.is_ca = is_ca
+        self.shape = shape
+        self._validate()
+
+    def add_member(self, name: str, member: Union[Data, "ContainerGroup"]):
+        if name is None or name == "":
+            name = len(self.members)
+        self.members[name] = member
+
+    @property
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+        """Returns a set of undefined symbols in this data descriptor."""
+        result = set()
+        for k, v in self.members.items():
+            result |= v.free_symbols
+        return result
+
+    def __call__(self):
+        return self
+
+    def validate(self):
+        self._validate()
+
+    def _validate(self):
+        return True
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj["type"] != "ContainerGroup":
+            raise TypeError("Invalid data type")
+
+        ret = ContainerGroup({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    def to_json(self):
+        attrs = serialize.all_properties_to_json(self)
+        retdict = {"type": type(self).__name__, "attributes": attrs}
+        return retdict
+
+    def is_equivalent(self, other):
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        return serialize.dumps(self) == serialize.dumps(other)
+
+    def __hash__(self):
+        return hash(serialize.dumps(self))
+
+    def __repr__(self):
+        members_repr = ", ".join(
+            f"{k}: {v.__repr__()}" for k, v in self.members.items()
+        )
+        return f"ContainerGroup(name='{self.name}', is_cg={self.is_cg}, is_ca={self.is_ca}, shape={self.shape}, members={{ {members_repr} }})"
+
+    def __str__(self):
+        return self.__repr__()
+
+    def _soa_from_struct(self, name, structure, acc_shape):
+        self._add_members(name, structure, acc_shape=None)
+
+    @classmethod
+    def from_struct(
+        cls,
+        name: str,
+        struct_or_container_array: typing.Union[data.Structure, data.ContainerArray],
+        is_cg: bool,
+        is_ca: bool,
+        shape: tuple,
+    ) -> "ContainerGroup":
+        dg = cls(name=name, is_cg=is_cg, is_ca=is_ca, shape=shape)
+        assert is_cg ^ is_ca
+
+        if isinstance(struct_or_container_array, data.Structure):
+            struct = struct_or_container_array
+            for member_name, member in struct.members.items():
+                new_member = None
+                if isinstance(member, data.Structure):
+                    new_member = cls.from_struct(
+                        name=member_name,
+                        struct_or_container_array=member,
+                        is_cg=True,
+                        is_ca=False,
+                        shape=(1,),
+                    )
+                elif isinstance(member, data.ContainerArray):
+                    new_member = cls.from_struct(
+                        name=member_name,
+                        struct_or_container_array=member,
+                        is_cg=False,
+                        is_ca=True,
+                        shape=member.shape,
+                    )
+                elif isinstance(member, (data.Array, data.Scalar)):
+                    new_member = member
+                elif isinstance(
+                    member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
+                ):
+                    new_member = data.Scalar(symbolic.symtype(member))
+                else:
+                    raise TypeError(
+                        f"Unsupported member type in Structure: {type(member)}"
+                    )
+
+                dg.add_member(name=f"{member_name}", member=new_member)
+        else:
+            assert isinstance(struct_or_container_array, data.ContainerArray)
+            container_array = struct_or_container_array
+            member = container_array.stype
+            member_name = None
+            new_member = None
+
+            if isinstance(member, data.Structure):
+                # Recursively convert nested Structures
+                member_name = member.name
+                new_member = cls.from_struct(
+                    name=member.name,
+                    struct_or_container_array=member,
+                    is_cg=True,
+                    is_ca=False,
+                    shape=(1,),
+                )
+            elif isinstance(member, data.ContainerArray):
+                raise Exception(
+                    "Two container arrays in a row is currently not supported"
+                )
+            elif isinstance(member, (data.Array, data.Scalar)):
+                new_member = member
+            elif isinstance(
+                member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
+            ):
+                new_member = data.Scalar(symbolic.symtype(member))
+            else:
+                raise TypeError(f"Unsupported member type in Structure: {type(member)}")
+            dg.add_member(
+                name=member_name if member_name is not None else "Leaf",
+                member=new_member,
+            )
+
+        return dg
+
+
+# ===================================================================================================
+# Functionality to Register Container Groups to an SDFG
+# ===================================================================================================
+def register_container_group_members(
+    sdfg: dace.SDFG, flattening_mode: ContainerGroupFlatteningMode
+):
+    for name, dg in sdfg.container_groups.items():
+        _register_container_group_members(
+            sdfg=sdfg,
+            flattening_mode=flattening_mode,
+            container_group_or_array=dg,
+            prefix_name=f"__CG_{name}",
+            acc_shape=(),
+        )
+
+
+def _register_container_group_members(
+    sdfg,
+    flattening_mode,
+    container_group_or_array: typing.Union["ContainerGroup", dace.data.ContainerArray],
+    prefix_name: str,
+    acc_shape: tuple,
+):
+    if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
+        if isinstance(container_group_or_array, ContainerGroup):
+            container_group = container_group_or_array
+            for name, member in container_group.members.items():
+                if isinstance(member, ContainerGroup):
+                    if member.is_cg:
+                        dg_prefix = prefix_name + f"__CG_{member.name}"
+                    else:
+                        dg_prefix = prefix_name + f"__CA_{member.name}"
+                        acc_shape += member.shape
+                    _register_container_group_members(
+                        sdfg=sdfg,
+                        flattening_mode=flattening_mode,
+                        container_group_or_array=member,
+                        prefix_name=dg_prefix,
+                        acc_shape=acc_shape,
+                    )
+                elif isinstance(member, dace.data.ContainerArray):
+                    assert False
+                else:
+                    # Add the dimensions accumulated while iterating from root to the leaf node of the trees
+                    member_demangled_name = prefix_name + f"__m_{name}"
+                    if isinstance(member, dace.data.Scalar):
+                        datadesc = dace.data.Array(
+                            dtype=member.dtype,
+                            shape=acc_shape,
+                            transient=member.transient,
+                            allow_conflicts=member.allow_conflicts,
+                            storage=member.storage,
+                            location=member.location,
+                            may_alias=member.may_alias,
+                            lifetime=member.lifetime,
+                            debuginfo=member.debuginfo,
+                            start_offset=member.start_offset,
+                        )
+                    elif isinstance(member, dace.data.Array):
+                        datadesc = dace.data.Array(
+                            dtype=member.dtype,
+                            shape=acc_shape + member.shape,
+                            transient=member.transient,
+                            allow_conflicts=member.allow_conflicts,
+                            storage=member.storage,
+                            location=member.location,
+                            may_alias=member.may_alias,
+                            lifetime=member.lifetime,
+                            debuginfo=member.debuginfo,
+                        )
+                    else:
+                        raise Exception(
+                            "Leaf member in a container group needs to be scalar or array"
+                        )
+                    sdfg.add_datadesc(
+                        name=member_demangled_name,
+                        datadesc=datadesc,
+                        find_new_name=False,
+                    )
+        elif isinstance(container_group_or_array, dace.data.ContainerArray):
+            assert False
+        else:
+            raise Exception("?")
+    elif flattening_mode == ContainerGroupFlatteningMode.ArrayOfStructs:
+        raise Exception("TODO Support for ArrayOfStructs Flattening")
+    else:
+        raise Exception("Unsupported Flattening Mode")
+
+
+def get_demangled_container_group_member_name(
+    sdfg, name_hierarchy: typing.List[typing.Type[str]]
+):
+    current_dg = None
+    demangled_name = ""
+    for i, name in enumerate(name_hierarchy):
+        if current_dg is None:
+            current_dg = sdfg.container_groups[name]
+            demangled_name += f"__CG_{current_dg.name}"
+        elif name in current_dg.members:
+            if isinstance(current_dg.members[name], ContainerGroup):
+                current_dg = current_dg.members[name]
+                if current_dg.is_cg:
+                    demangled_name += f"__CG_{current_dg.name}"
+                else:
+                    demangled_name += f"__CA_{current_dg.name}"
+            elif isinstance(current_dg.members[name], dace.data.ContainerArray):
+                assert False
+            else:
+                assert isinstance(current_dg.members[name], dace.data.Data)
+                assert i == len(name_hierarchy) - 1
+                demangled_name += f"__m_{name}"
+                return demangled_name
+        else:
+            # if we are at last element and it is a "Leaf" (data had no name) it is not an error
+            if (
+                i == len(name_hierarchy) - 1
+                and len(current_dg.members) == 1
+                and "Leaf" in current_dg.members
+            ):
+                demangled_name += f"__m_Leaf"
+                return demangled_name
+            raise Exception(
+                f"Name Hierarchy {name_hierarchy} Not in ContainerGroups {sdfg.container_groups}, {sdfg._arrays} 1"
+            )
+
+    if (
+        i == len(name_hierarchy) - 1
+        and len(current_dg.members) == 1
+        and "Leaf" in current_dg.members
+    ):
+        demangled_name += f"__m_Leaf"
+        return demangled_name
+    raise Exception(
+        f"Name Hierarchy {name_hierarchy} Not in ContainerGroups {sdfg.container_groups}, {sdfg._arrays} 2"
+    )
+
+
+def generate_container_groups_from_structs(
+    sdfg: dace.SDFG, flattening_mode: ContainerGroupFlatteningMode
+):
+    sdfg.container_groups = NestedDict()
+    for arr_name, arr in sdfg._arrays.items():
+        if isinstance(arr, dace.data.Structure):
+            dg_name = arr_name
+            dg = ContainerGroup.from_struct(
+                name=dg_name,
+                struct_or_container_array=arr,
+                is_cg=True,
+                is_ca=False,
+                shape=(1,),
+            )
+            sdfg.container_groups[dg_name] = dg
+
+
+def clean_container_groups(sdfg: dace.SDFG):
+    #assert hasattr(
+    #    sdfg, "container_groups"
+    #), "SDFG does not have a field named 'container_groups member, clean container groups called'"
+    if hasattr(sdfg, "container_groups"):
+        sdfg.container_groups = None
+
+
+def add_container_group_desc(sdfg: dace.SDFG, name: str, container_group_desc: ContainerGroup, find_new_name=False) -> str:
+    if not isinstance(name, str):
+        raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+
+    if find_new_name:
+        name = sdfg._find_new_name(name)
+        name = name.replace('.', '_')
+        if sdfg.is_name_used(name):
+            name = sdfg._find_new_name(name)
+    else:
+        if name in sdfg.arrays:
+            raise FileExistsError(f'Data group descriptor "{name}" already exists in SDFG')
+        if name in sdfg.symbols:
+            raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a symbol.')
+        if name in sdfg._subarrays:
+            raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a subarray.')
+        if name in sdfg._rdistrarrays:
+            raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a RedistrArray.')
+        if name in sdfg._pgrids:
+            raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a ProcessGrid.')
+
+    def _add_symbols(sdfg: SDFG, desc: dace.data.Data):
+        if isinstance(desc, dace.data.Structure):
+            for v in desc.members.values():
+                if isinstance(v, dace.data.Data):
+                    _add_symbols(sdfg, v)
+        for sym in desc.free_symbols:
+            if sym.name not in sdfg.symbols:
+                sdfg.add_symbol(sym.name, sym.dtype)
+
+    # Add the data descriptor to the SDFG and all symbols that are not yet known.
+    sdfg.container_groups[name] = container_group_desc
+    _add_symbols(sdfg, container_group_desc)
+
+    return name
+
+def add_container_group(sdfg: dace.SDFG,
+                    name: str,
+                    find_new_name: bool = False) -> typing.Tuple[str, "ContainerGroup"]:
+    dg_desc = ContainerGroup(name)
+    return add_container_group_desc(sdfg, name, dg_desc, find_new_name=find_new_name), dg_desc
+
+# ===================================================================================================
 
 
 @make_properties
@@ -36,6 +430,7 @@ class StructToContainerGroups(ppl.Pass):
         if self._flattening_mode == ContainerGroupFlatteningMode.ArrayOfStructs:
             raise Exception("TODO IMPL")
         super().__init__()
+        self._call = 0
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -50,8 +445,8 @@ class StructToContainerGroups(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> int:
-        sdfg.generate_container_groups_from_structs(self._flattening_mode)
-        sdfg.register_container_group_members(self._flattening_mode)
+        generate_container_groups_from_structs(sdfg, self._flattening_mode)
+        register_container_group_members(sdfg, self._flattening_mode)
 
         # A -> B both access nodes, this should trigger the further check whether we can apply
         i = 0
@@ -77,6 +472,7 @@ class StructToContainerGroups(ppl.Pass):
                                 newly_removed_nodes = self._apply(
                                     state, sdfg, src_access, dst_access
                                 )
+                                #sdfg.save(f"apply{i}.sdfg")
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
 
         # Clean Mapped Views (Views within data groups)
@@ -121,7 +517,7 @@ class StructToContainerGroups(ppl.Pass):
         for name, desc in sdfg.arrays.items():
             if isinstance(desc, dace.data.Structure):
                 to_rm.insert(0, name)
-        sdfg.save("a.sdfg")
+        #sdfg.save("a.sdfg")
         for name in to_rm:
             sdfg.remove_data(name=name, validate=True)
 
@@ -129,7 +525,7 @@ class StructToContainerGroups(ppl.Pass):
             sdfg.simplify(self._validate, self._validate_all)
 
         if self._clean_container_grous:
-            sdfg.container_groups = NestedDict()
+            clean_container_groups(sdfg)
 
     def _can_be_applied(
         self,
@@ -277,13 +673,213 @@ class StructToContainerGroups(ppl.Pass):
             else:
                 return view_accesses
 
-    def _process_edges(self, edge_list, name_hierarchy, take_last=False):
+
+    def _process_edges(self,
+                       sdfg : dace.SDFG,
+                       state: dace.SDFGState,
+                       view_chain: typing.List[dace.nodes.AccessNode]):
+        #(view_chain, view_chain[0])
+        first_access = view_chain[0]
+        ie = state.in_edges(first_access)[0]
+        src, src_conn, dst, dst_conn, memlet = ie
+        data = memlet.data
+        #print(data)
+        if "." in data:
+            all_data = data.split(".")
+        else:
+            all_data = [data]
+        ite = 0
+        root = None
+        member_hierarchy = []
+        name_hierarchy = []
+        view_to_name_map = dict()
+        for access in all_data:
+            if ite == 0:
+                root = sdfg.arrays[access]
+                name_hierarchy.append(access)
+                member_hierarchy.append((access, root))
+            else:
+                last_member = member_hierarchy[-1][1]
+                if isinstance(last_member, dace.data.ContainerArray):
+                    name_hierarchy.append(last_member.stype.members[access])
+                    member_hierarchy.append((last_member.stype.members[access].name, last_member.stype.members[access]))
+                elif isinstance(last_member, dace.data.Structure):
+                    name_hierarchy.append(access)
+                    member_hierarchy.append((access, last_member.members[access]))
+                else:
+                    raise Exception("This should not happen.")
+            ite += 1
+        view_to_name_map[first_access.data] = name_hierarchy[-1]
+
+        #print("VC2", view_chain[1:])
+        for access_node in view_chain[1:]:
+            for ie in state.in_edges(access_node):
+                src, src_conn, dst, dst_conn, memlet = ie
+                data = memlet.data
+                if "." in data:
+                    all_data = data.split(".")
+                else:
+                    all_data = [data]
+                if len(all_data) == 2:
+                    pass
+                if len(all_data) == 1:
+                    pass
+                #print(member_hierarchy)
+                last_member = member_hierarchy[-1][1]
+                last_name = name_hierarchy[-1]
+                if isinstance(last_member, dace.data.ContainerArray):
+                    #print("CG", view_to_name_map, member_hierarchy, access)
+                    access = all_data[0]
+                    true_name = view_to_name_map[access]
+                    assert len(all_data) == 1
+                    #print(last_member.stype.name, true_name, access)
+                    name_hierarchy.append(last_member.stype.name)
+                    member_hierarchy.append((last_member.stype.name, last_member.stype))
+                    assert access_node != view_chain[-1]
+                    if access_node != view_chain[-1]:
+                        view_to_name_map[access_node.data] = last_member.stype.name
+                elif isinstance(last_member, dace.data.Structure):
+                    assert len(all_data) == 2
+                    access1 = all_data[0]
+                    access2 = all_data[1]
+                    if access_node != view_chain[-1]:
+                        name_hierarchy.append(last_member.members[access2].name)
+                        member_hierarchy.append((last_member.members[access2].name, last_member.members[access2]))
+                        view_to_name_map[access_node.data] = last_member.members[access2].name
+                    else:
+                        name_hierarchy.append(access2)
+                        member_hierarchy.append((access2, last_member.members[access2]))
+                        view_to_name_map[access_node.data] = access2
+                else:
+                    raise Exception("This should not happen.")
+
+        return name_hierarchy, member_hierarchy
+
+    def _process_edges_reverse(self,
+                       sdfg : dace.SDFG,
+                       state: dace.SDFGState,
+                       view_chain: typing.List[dace.nodes.AccessNode]):
+        #print(view_chain, view_chain[0])
+        first_access = view_chain[-1]
+        ie = state.out_edges(first_access)[0]
+        src, src_conn, dst, dst_conn, memlet = ie
+        data = memlet.data
+        #print(data)
+        if "." in data:
+            all_data = data.split(".")
+        else:
+            all_data = [data]
+        ite = 0
+        root = None
+        member_hierarchy = []
+        name_hierarchy = []
+        view_to_name_map = dict()
+        for access in all_data:
+            if ite == 0:
+                root = sdfg.arrays[access]
+                name_hierarchy.append(access)
+                member_hierarchy.append((access, root))
+            else:
+                last_member = member_hierarchy[-1][1]
+                if isinstance(last_member, dace.data.ContainerArray):
+                    name_hierarchy.append(last_member.stype.members[access])
+                    member_hierarchy.append((last_member.stype.members[access].name, last_member.stype.members[access]))
+                elif isinstance(last_member, dace.data.Structure):
+                    name_hierarchy.append(access)
+                    member_hierarchy.append((access, last_member.members[access]))
+                else:
+                    raise Exception("This should not happen.")
+            ite += 1
+        view_to_name_map[first_access.data] = name_hierarchy[-1]
+
+        #print("VC2", view_chain[1:])
+        for access_node in reversed(view_chain[:-1]):
+            for ie in state.out_edges(access_node):
+                src, src_conn, dst, dst_conn, memlet = ie
+                data = memlet.data
+                if "." in data:
+                    all_data = data.split(".")
+                else:
+                    all_data = [data]
+                if len(all_data) == 2:
+                    pass
+                if len(all_data) == 1:
+                    pass
+                #print(member_hierarchy)
+                last_member = member_hierarchy[-1][1]
+                last_name = name_hierarchy[-1]
+                if isinstance(last_member, dace.data.ContainerArray):
+                    #print("CG", view_to_name_map, member_hierarchy, access)
+                    access = all_data[0]
+                    true_name = view_to_name_map[access]
+                    assert len(all_data) == 1
+                    #print(last_member.stype.name, true_name, access)
+                    name_hierarchy.append(last_member.stype.name)
+                    member_hierarchy.append((last_member.stype.name, last_member.stype))
+                    assert access_node != view_chain[-1]
+                    if access_node != view_chain[-1]:
+                        view_to_name_map[access_node.data] = last_member.stype.name
+                elif isinstance(last_member, dace.data.Structure):
+                    assert len(all_data) == 2
+                    access1 = all_data[0]
+                    access2 = all_data[1]
+                    if access_node != view_chain[0]:
+                        name_hierarchy.append(last_member.members[access2].name)
+                        member_hierarchy.append((last_member.members[access2].name, last_member.members[access2]))
+                        view_to_name_map[access_node.data] = last_member.members[access2].name
+                    else:
+                        name_hierarchy.append(access2)
+                        member_hierarchy.append((access2, last_member.members[access2]))
+                        view_to_name_map[access_node.data] = access2
+                else:
+                    raise Exception("This should not happen.")
+
+        return name_hierarchy, member_hierarchy
+
+    """
+    def _process_edges(self, sdfg, edge_list, name_hierarchy, passing_view=False,
+                       passing_container_view=False, viewed_data=None, member_hierarchy=[]):
         assert len(edge_list) == 1
         edge = edge_list[0]
         data = edge.data.data
-        tokenized_data = data.split(".")
-        assert len(tokenized_data) == 2 or len(tokenized_data) == 1
-        name_hierarchy += tokenized_data
+        if not passing_view:
+            tokenized_data = data.split(".")
+            #print(tokenized_data)
+            assert len(tokenized_data) == 2
+            name_hierarchy += tokenized_data
+            #print("NOVIEW:", data)
+            struct = sdfg.arrays[tokenized_data[0]]
+            member = struct.members[tokenized_data[1]]
+            member_hierarchy += [(tokenized_data[0], struct), (tokenized_data[1], member)]
+        else:
+            if passing_container_view:
+                #print(type(data), data)
+                #print("X", viewed_data, type(viewed_data))
+                name_hierarchy += [data]
+                next_member = None
+                if isinstance(member_hierarchy[-1], dace.data.ContainerArray):
+                    #print(member_hierarchy[-1].stype)
+                    next_member += [(data, member_hierarchy[-1].stype)]
+                elif isinstance(member_hierarchy[-1], dace.data.Structure):
+                    next_member = member_hierarchy[-1].members[data]
+                member_hierarchy += [(data, next_member)]
+                #print("CVIEW:", data)
+            else:
+                last_member = member_hierarchy[-1][1]
+                if isinstance(last_member, dace.data.ContainerArray):
+                    #print(last_member, last_member.stype, last_member.stype)
+                    name_hierarchy += [last_member.stype.name]
+                if isinstance(last_member, dace.data.Structure):
+                    assert data in last_member.members
+                    name_hierarchy += [data]
+                next_member = None
+                if isinstance(member_hierarchy[-1], dace.data.ContainerArray):
+                    #print(member_hierarchy[-1].stype)
+                    next_member += [(name_hierarchy[-1], member_hierarchy[-1].stype)]
+                elif isinstance(member_hierarchy[-1], dace.data.Structure):
+                    next_member = [(name_hierarchy[-1], member_hierarchy[-1].members[data])]
+                #print("SVIEW:", data, viewed_data)
+    """
 
     def _apply(
         self,
@@ -316,109 +912,110 @@ class StructToContainerGroups(ppl.Pass):
 
         assert len(view_chain) >= 1
         name_hierarchy = []
+        member_hierarchy = []
 
         if struct_to_view:
+            #print("SDD*E*E", view_chain)
+            name_hierarchy, member_hierarchy = self._process_edges(sdfg, state, view_chain)
             struct_to_view_edges = [
                 e for e in state.out_edges(struct_access) if e.dst == view_chain[0]
             ]
+            """
+            #print(struct_to_view_edges)
             self._process_edges(
-                edge_list=struct_to_view_edges, name_hierarchy=name_hierarchy
+                sdfg=sdfg, edge_list=struct_to_view_edges, name_hierarchy=name_hierarchy,
+                    passing_view=False,
+                    passing_container_view=False,
+                    member_hierarchy=member_hierarchy
             )
-
-            for current_view_access in view_chain[:-1]:
+            #print("H", member_hierarchy)
+            #print("Viewchain", view_chain)
+            for current_view_access in view_chain:
+                #print("1", current_view_access.data, type(sdfg.arrays[current_view_access.data]))
+                passing_container_view = False
+                passing_view = False
+                viewed_data=None
+                if isinstance(sdfg.arrays[current_view_access.data], dace.data.ContainerView):
+                    #print("2", current_view_access.data, sdfg.arrays[current_view_access.data].stype)
+                    passing_container_view = True
+                    passing_view = True
+                    viewed_data=sdfg.arrays[current_view_access.data].stype
+                    #print("VD",viewed_data)
+                elif isinstance(sdfg.arrays[current_view_access.data], dace.data.View):
+                    #print("3", current_view_access.data, sdfg.arrays[current_view_access.data])
+                    viewed_data=sdfg.arrays[current_view_access.data]
+                    #get_member_name = _get_member_name(sdfg, struct_access, )
+                    #print("VD",viewed_data)
+                    passing_view=True
                 view_to_next_edges = state.out_edges(current_view_access)
+                #print("A1")
                 self._process_edges(
+                    sdfg=sdfg,
                     edge_list=view_to_next_edges,
                     name_hierarchy=name_hierarchy,
-                    take_last=True,
+                    passing_view=passing_view,
+                    passing_container_view=passing_container_view,
+                    member_hierarchy=member_hierarchy,
+                    viewed_data=viewed_data
                 )
+                #print("H", member_hierarchy)
+                #print("a")
+            """
+
+        #raise Exception(member_hierarchy)
 
         if view_to_struct:
             view_to_struct_edges = [
                 e for e in state.in_edges(struct_access) if e.src == view_chain[-1]
             ]
-            self._process_edges(
-                edge_list=view_to_struct_edges, name_hierarchy=name_hierarchy
-            )
-
-            for current_view_access in view_chain[:-1]:
-                view_to_next_edges = state.out_edges(current_view_access)
-                self._process_edges(
-                    edge_list=view_to_next_edges,
-                    name_hierarchy=name_hierarchy,
-                    take_last=True,
-                )
-
-        demangled_name = sdfg.get_demangled_container_group_member_name(name_hierarchy)
+            #print("SDWD", view_chain)
+            name_hierarchy, member_hierarchy = self._process_edges_reverse(sdfg, state, view_chain)
+        #print("Name hierarchy:", name_hierarchy)
+        demangled_name = get_demangled_container_group_member_name(sdfg, name_hierarchy)
 
         an = nodes.AccessNode(data=demangled_name)
 
-        assert len(view_chain) <= 2
+        #assert len(view_chain) <= 2
+        #raise Exception(view_chain)
         if struct_to_view:
-            assert len(state.out_edges(view_chain[0])) == 1
-            src_edge = state.out_edges(view_chain[0])[0]
+            assert len(state.in_edges(view_chain[1])) == 1
+            src_edge = state.in_edges(view_chain[1])[0]
             assert len(state.out_edges(view_chain[-1])) == 1
             dst_edge = state.out_edges(view_chain[-1])[0]
+            #print("STV, S, D", src_edge, dst_edge)
+
         else:  # view_to_struct
-            assert len(state.in_edges(view_chain[0])) == 1
-            src_edge = state.in_edges(view_chain[0])[0]
+            assert len(state.in_edges(view_chain[1])) == 1
+            src_edge = state.in_edges(view_chain[1])[0]
             assert len(state.out_edges(view_chain[-1])) == 1
             dst_edge = state.out_edges(view_chain[-1])[0]
+            #print("VTS, S, D", src_edge, dst_edge)
+
 
         if self._flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
             memlet_shape = ()
 
             if struct_to_view:
                 assert len(struct_to_view_edges) == 1
-                struct_to_view_edge = struct_to_view_edges[0]
-                memlet_shape += tuple(struct_to_view_edge.data.subset.ranges)
-
-                if isinstance(
-                    sdfg.arrays[struct_to_view_edge.src.data], dace.data.Structure
-                ) and not isinstance(
-                    sdfg.arrays[struct_to_view_edge.data.data], dace.data.ContainerArray
-                ):
-                    skip = True
-                else:
-                    skip = False
                 for vc in view_chain:
-                    if skip:
-                        skip = False
-                        continue
                     dst_edge = state.out_edges(vc)[0]
                     if isinstance(
                         sdfg.arrays[vc.data], dace.data.Structure
-                    ) and not isinstance(
-                        sdfg.arrays[dst_edge.data.data], dace.data.ContainerArray
                     ):
-                        skip = True
+                        continue
                     memlet_shape += tuple(dst_edge.data.subset.ranges)
+                    #print("add shape", tuple(dst_edge.data.subset.ranges))
+                #raise Exception(memlet_shape)
 
             if view_to_struct:
                 assert len(view_to_struct_edges) == 1
-                view_to_struct_edge = view_to_struct_edges[0]
-                memlet_shape += tuple(view_to_struct_edge.data.subset.ranges)
-
-                if isinstance(
-                    sdfg.arrays[view_to_struct_edge.dst.data], dace.data.Structure
-                ) and not isinstance(
-                    sdfg.arrays[view_to_struct_edge.data.data], dace.data.ContainerArray
-                ):
-                    skip = True
-                else:
-                    skip = False
                 for vc in reversed(view_chain):
-                    if skip:
-                        skip = False
-                        continue
                     src_edge = state.in_edges(vc)[0]
-                    memlet_shape += tuple(src_edge.data.subset.ranges)
                     if isinstance(
                         sdfg.arrays[vc.data], dace.data.Structure
-                    ) and not isinstance(
-                        sdfg.arrays[src_edge.data.data], dace.data.ContainerArray
                     ):
-                        skip = True
+                        continue
+                    memlet_shape += tuple(src_edge.data.subset.ranges)
         else:
             raise Exception("ArrayOfStructs mode is not implemented yet")
 
@@ -456,6 +1053,7 @@ class StructToContainerGroups(ppl.Pass):
             nm.data = view_name
             state.add_edge(view_access, None, dst_edge.dst, dst_edge.dst_conn, nm)
 
+
             if struct_access.guid in self._data_connected_to_vsv_struct:
                 self._data_connected_to_vsv_struct[struct_access.guid][1].append(an)
             else:
@@ -489,14 +1087,24 @@ class StructToContainerGroups(ppl.Pass):
                 self._data_connected_to_vsv_struct[struct_access.guid] = ([an], [])
 
         # Clean-up
-        for view_node in view_chain:
-            state.remove_node(view_node)
-            removed_nodes.add(view_node)
+        if struct_to_view:
+            for view_node in view_chain:
+                state.remove_node(view_node)
+                removed_nodes.add(view_node)
+                #print("rm", view_node)
+        if view_to_struct:
+            for view_node in view_chain:
+                state.remove_node(view_node)
+                removed_nodes.add(view_node)
+                #print("rm", view_node)
+
         if (len(state.in_edges(struct_access)) == 0) and (
             len(state.out_edges(struct_access)) == 0
         ):
             state.remove_node(struct_access)
             removed_nodes.add(struct_access)
+        #sdfg.save(f"aa{self._call}.sdfg")
+        self._call += 1
 
         # All acccess from the view need to me mapped to the newly added array
         # The leaf node will not have access to all of the dimensions in the generated array we need to do that
@@ -504,7 +1112,6 @@ class StructToContainerGroups(ppl.Pass):
         # if not isinstance(missing_dims, List):
         #    missing_dims = list(missing_dims)
         self._access_names_map[view_chain[-1 if struct_to_view else 0].data] = view_name
-
         return removed_nodes
 
     def _get_src_dst(self, state: SDFGState, n1: nodes.Any, n2: nodes.Any):
