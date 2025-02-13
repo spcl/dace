@@ -2940,6 +2940,10 @@ def _type_injection_applies_to_instance(item: ConstTypeInjection,
         comp_spec = comp_spec[1:]
     comp: str = comp_spec[-1]
 
+    if inst_typ.spec != item.type_spec:
+        # `item` does not apply to this type.
+        return False
+
     return _item_comp_matches_actual_comp(item_comp, comp)
 
 
