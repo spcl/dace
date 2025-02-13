@@ -12,6 +12,7 @@ import random
 import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+import typing
 import warnings
 
 import dace
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
     from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeScope
 
-
 class NestedDict(dict):
 
     def __init__(self, mapping=None):
@@ -51,8 +51,11 @@ class NestedDict(dict):
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
+
         while tokens:
             token = tokens.pop(0)
+            if isinstance(result, dt.ContainerArray):
+                result = result.stype
             result = result.members[token]
         return result
 
@@ -444,6 +447,7 @@ class SDFG(ControlFlowRegion):
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+
 
     _pgrids = DictProperty(str,
                            ProcessGrid,
@@ -1328,11 +1332,16 @@ class SDFG(ControlFlowRegion):
 
         defined_syms |= set(self.constants_prop.keys())
 
+        init_code_symbols=set()
+        exit_code_symbols=set()
         # Add used symbols from init and exit code
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            init_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            exit_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+
+        #free_syms|=set(filter(lambda x: not str(x).startswith('__f2dace_ARRAY'),init_code_symbols))
+        #free_syms|=set(filter(lambda x: not  str(x).startswith('__f2dace_ARRAY'),exit_code_symbols))
 
         return super()._used_symbols_internal(all_symbols=all_symbols,
                                               keep_defined_in_mapping=keep_defined_in_mapping,
@@ -1421,7 +1430,9 @@ class SDFG(ControlFlowRegion):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
+        #TODO LATER investiagte why all_symbols=False leads to bug
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
+        free_symbols = set(filter(lambda x: not str(x).startswith('__f2dace_STRUCTARRAY'), free_symbols))
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
@@ -1922,7 +1933,7 @@ class SDFG(ControlFlowRegion):
             storage=storage,
             transient=transient,
             lifetime=lifetime,
-            debuginfo=debuginfo,
+            debuginfo=debuginfo
         )
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
