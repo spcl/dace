@@ -2422,9 +2422,15 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
                 if nm.string != oname:
                     continue
                 local_spec = search_local_alias_spec(nm)
-                # We need to do a bit of surgery, since we have the `oname` inide the scope ending with `uname`.
+                # We may need to do a bit of surgery. If renamed, the function now looks like, for example:
+                # ```f90
+                # real function oname_fn_0
+                #   oname = 1.0
+                # end function oname_fn_0
+                # ```
+                # And the local spec for that `oname` looks like `(..., oname_fn_0, oname)`. Then the prior spec of the
+                # function would look like `(..., oname)`, i.e., the penultimate part removed.
                 local_spec = local_spec[:-2] + local_spec[-1:]
-                local_spec = tuple(x.split(f"_{SUFFIX}_")[0] for x in local_spec)
                 assert local_spec in ident_map, f"`{local_spec}` is not a valid identifier"
                 assert ident_map[local_spec] is v, f"`{local_spec}` does not refer to `{v}`"
                 nm.string = uname
