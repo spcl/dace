@@ -74,6 +74,7 @@ class MapFusion(transformation.SingleStateTransformation):
     :note: If `assume_always_shared` is `True` then the transformation will assume that
             all intermediates are shared. This avoids the problems mentioned above with
             the cache at the expense of the creation of dead dataflow.
+    :note: If the renaming is not unique the transformation might fail.
     """
 
     # Pattern Nodes
@@ -1499,6 +1500,19 @@ class MapFusion(transformation.SingleStateTransformation):
 
         :param first_map: The first map (these parameters will be replaced).
         :param second_map: The second map, these parameters acts as source.
+
+        :note: This function currently fails if the renaming is not unique. Consider the
+            case were the first map has the structure `for i, j in map[0:20, 0:20]` and it
+            writes `T[i, j]`, while the second map is equivalent to
+            `for l, k in map[0:20, 0:20]` which reads `T[l, k]`. For this case we have
+            the following valid remappings `{l: i, k: j}` and `{l: j, k: i}` but
+            only the first one allows to fuse the map. This is because if the second
+            one is used the second map will read `T[j, i]` which leads to a data
+            dependency that can not be satisfied.
+            To avoid this issue the renaming algorithm will process them in order, i.e.
+            assuming that the order of the parameters in the map matches. But this is
+            not perfect, the only way to really solve this is by trying possible
+            remappings. At least the algorithm used here is deterministic.
         """
 
         # The parameter names
@@ -1520,9 +1534,13 @@ class MapFusion(transformation.SingleStateTransformation):
         }
 
         # Parameters of the second map that have not yet been matched to a parameter
-        #  of the first map and vice versa.
-        unmapped_second_params: Set[str] = set(second_params)
-        unused_first_params: Set[str] = set(first_params)
+        #  of the first map and the parameters of the first map that are still free.
+        #  That we use a `list` instead of a `set` is intentional, because it counter
+        #  acts the issue that is described in the doc string. Using a list ensures
+        #  that they indexes are matched in order. This assume that in real world
+        #  code the order of the loop is not arbitrary but kind of matches.
+        unmapped_second_params: List[str] = list(second_params)
+        unused_first_params: List[str] = list(first_params)
 
         # This is the result (`second_param -> first_param`), note that if no renaming
         #  is needed then the parameter is not present in the mapping.
@@ -1537,8 +1555,8 @@ class MapFusion(transformation.SingleStateTransformation):
                 # They have the same name and the same range, this is already a match.
                 #  Because the names are already the same, we do not have to enter them
                 #  in the `final_mapping`
-                unmapped_second_params.discard(param)
-                unused_first_params.discard(param)
+                unmapped_second_params.remove(param)
+                unused_first_params.remove(param)
 
         # Check if no remapping is needed.
         if len(unmapped_second_params) == 0:
@@ -1551,11 +1569,11 @@ class MapFusion(transformation.SingleStateTransformation):
             assert unmapped_second_param not in final_mapping
 
             # Now look in all not yet used parameters of the first map which to use.
-            for candidate_param in unused_first_params:
+            for candidate_param in list(unused_first_params):
                 candidate_rng = first_rngs[candidate_param]
                 if candidate_rng == second_rng:
                     final_mapping[unmapped_second_param] = candidate_param
-                    unused_first_params.discard(candidate_param)
+                    unused_first_params.remove(candidate_param)
                     break
             else:
                 # We did not find a candidate, so the remapping does not exist
