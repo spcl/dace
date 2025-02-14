@@ -191,7 +191,7 @@ def generate_array_serializer_f90(dtyp: str, rank: int, tag: str, use: Optional[
 integer :: k, kmeta, {iter_vars}
 """
     loop_ops = []
-    for k in range(1, rank + 1):
+    for k in reversed(range(1, rank + 1)):
         loop_ops.append(f"do k{k} = lbound(x, {k}), ubound(x, {k})")
     loop_ops.append(f"call serialize(io, x({iter_vars}), cleanup=.false.)")
     loop_ops.extend(['end do'] * rank)
