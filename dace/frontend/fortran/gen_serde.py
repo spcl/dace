@@ -49,7 +49,8 @@ contains
     character(len=:), allocatable :: path
     character(len=50) :: gen
     logical, optional, intent(in) :: asis
-    logical :: asis_local = .false.
+    logical :: asis_local
+    asis_local = .false.
     if (present(asis)) asis_local = asis
     if (asis_local) then
       path = prefix
@@ -73,9 +74,10 @@ contains
   subroutine W_string(io, x, cleanup, nline)
     integer :: io
     character(len=*), intent(in) :: x
-    logical, optional, intent(in) :: cleanup
-    logical, optional, intent(in) :: nline
-    logical :: cleanup_local = .true., nline_local = .true.
+    logical, optional, intent(in) :: cleanup, nline
+    logical :: cleanup_local, nline_local
+    cleanup_local = .true.
+    nline_local = .true.
     if (present(cleanup)) cleanup_local = cleanup
     if (present(nline)) nline_local = nline
     write (io, '(g0)', advance='no') trim(x)
@@ -106,9 +108,10 @@ subroutine {fn_name}(io, x, cleanup, nline)
   integer :: io
   {typ}{kind}, intent(in) :: x
   integer :: y
-  logical, optional, intent(in) :: cleanup
-  logical, optional, intent(in) :: nline
-  logical :: cleanup_local = .true., nline_local = .true.
+  logical, optional, intent(in) :: cleanup, nline
+  logical :: cleanup_local, nline_local
+  cleanup_local = .true.
+  nline_local = .true.
   if (present(cleanup)) cleanup_local = cleanup
   if (present(nline)) nline_local = nline
   {op}
@@ -122,15 +125,15 @@ def generate_array_meta_f90(arr: str, rank: int) -> List[str]:
     # Assumes there is `arr` is an array in local scope with rank `rank`.
     # Also assumes there is a serialization sink `io` and an integer `kmeta` that can be used as an iterator.
     return f"""
-call serialize(io, "# rank", .false.)
-call serialize(io, {rank}, .false.)
-call serialize(io, "# size", .false.)
+call serialize(io, "# rank", cleanup=.false.)
+call serialize(io, {rank}, cleanup=.false.)
+call serialize(io, "# size", cleanup=.false.)
 do kmeta = 1, {rank}
-  call serialize(io, size({arr}, kmeta), .false.)
+  call serialize(io, size({arr}, kmeta), cleanup=.false.)
 end do
-call serialize(io, "# lbound", .false.)
+call serialize(io, "# lbound", cleanup=.false.)
 do kmeta = 1, {rank}
-  call serialize(io, lbound({arr}, kmeta), .false.)
+  call serialize(io, lbound({arr}, kmeta), cleanup=.false.)
 end do
 """.strip().split('\n')
 
@@ -149,20 +152,20 @@ def generate_pointer_meta_f90(ptr: str, rank: int, candidates: Dict[str, Tuple])
             for k in range(c_rank):
                 if k not in subsc:
                     subsc_str.append(':')
-                    subsc_str_serialized.append('call serialize(io, ":", .false., .false.)')
+                    subsc_str_serialized.append('call serialize(io, ":", cleanup=.false., nline=.false.)')
                     continue
                 subsc_str.append(f"kmeta_{k}")
-                subsc_str_serialized.append(f"call serialize(io, kmeta_{k}, .false., .false.)")
+                subsc_str_serialized.append(f"call serialize(io, kmeta_{k}, cleanup=.false., , nline=.false.)")
                 ops.append(f"do kmeta_{k} = lbound({c}, {k + 1}), ubound({c}, {k + 1})")
             end_dos = ['end do'] * len(ops)
             subsc_str = ', '.join(subsc_str)
-            subsc_str_serialized = '\n call serialize(io, ",", .false., .false.) \n'.join(subsc_str_serialized)
+            subsc_str_serialized = '\n call serialize(io, ",", cleanup=.false., , nline=.false.) \n'.join(subsc_str_serialized)
             ops.append(f"""
 if (associated({ptr}, {c}({subsc_str}))) then
   kmeta = 1
-  call serialize(io, "=> {c}(", .false., .false.)
+  call serialize(io, "=> {c}(", cleanup=.false., , nline=.false.)
   {subsc_str_serialized}
-  call serialize(io, "))", .false.)
+  call serialize(io, "))", cleanup=.false.)
 end if
 """)
             ops.extend(end_dos)
@@ -175,7 +178,7 @@ if (associated({ptr})) then
   kmeta = 0
   {cand_checks}
   if (kmeta == 0) then
-    call serialize(io, "=> missing", .false.)
+    call serialize(io, "=> missing", cleanup=.false.)
   end if
 end if
 """.strip().split('\n')
@@ -185,27 +188,35 @@ def generate_array_serializer_f90(dtyp: str, rank: int, tag: str, use: Optional[
     iter_vars = ', '.join([f"k{k}" for k in range(1, rank + 1)])
     decls = f"""
 {dtyp}, intent(in) :: x({', '.join([':'] * rank)})
-integer :: k, {iter_vars}
+integer :: k, kmeta, {iter_vars}
 """
     loop_ops = []
     for k in range(1, rank + 1):
         loop_ops.append(f"do k{k} = lbound(x, {k}), ubound(x, {k})")
-    loop_ops.append(f"call serialize(io, x({iter_vars}), .false.)")
+    loop_ops.append(f"call serialize(io, x({iter_vars}), cleanup=.false.)")
     loop_ops.extend(['end do'] * rank)
     loop = '\n'.join(loop_ops)
+    meta_ops = generate_array_meta_f90('x', rank)
+    meta = '\n'.join(meta_ops)
     fn_name = f"W_{tag}_R_{rank}"
 
     return Subroutine_Subprogram(get_reader(f"""
-subroutine {fn_name}(io, x, cleanup, nline)
+subroutine {fn_name}(io, x, cleanup, nline, meta)
   {use or ''}
   integer :: io
   {decls}
-  logical, optional, intent(in) :: cleanup
-  logical, optional, intent(in) :: nline
-  logical :: cleanup_local = .true., nline_local = .true.
+  logical, optional, intent(in) :: cleanup, nline, meta
+  logical :: cleanup_local, nline_local, meta_local
+  cleanup_local = .true.
+  nline_local = .true.
+  meta_local = .true.
   if (present(cleanup)) cleanup_local = cleanup
   if (present(nline)) nline_local = nline
-  call serialize(io, "# entries", .false.)
+  if (present(meta)) meta_local = meta
+  if (meta_local) then
+    {meta}
+  endif
+  call serialize(io, "# entries", cleanup=.false.)
   {loop}
   ! NOTE: THIS CONDITIONAL IS INTENTIONALLY COMMENTED OUT, BECAUSE EACH ELEMENT ADD NEW LINE ANYWAY.
   ! if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
@@ -449,7 +460,7 @@ std::string serialize(bool x) {{
             if z.name not in sdfg_structs[dt.name]:
                 # The component is not present in the final SDFG, so we don't care for it.
                 continue
-            f90_ser_ops.append(f"call serialize(io , '# {z.name}', .false.)")
+            f90_ser_ops.append(f"call serialize(io , '# {z.name}', cleanup=.false.)")
             cpp_ser_ops.append(f"""add_line("# {z.name}", s);""")
             cpp_deser_ops.append(f"""read_line(s, {{"# {z.name}"}});  // Should contain '# {z.name}'""")
 
@@ -480,8 +491,8 @@ std::string serialize(bool x) {{
                 # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes,
                 #  we will only populate this when it points to a different component of the same structure.
                 f90_ser_ops.append(f"""
-call serialize(io, '# assoc', .false.)
-call serialize(io, associated(x%{z.name}), .false.)
+call serialize(io, '# assoc', cleanup=.false.)
+call serialize(io, associated(x%{z.name}), cleanup=.false.)
 """)
                 cpp_ser_ops.append(f"""
 add_line("# assoc", s);
@@ -506,8 +517,8 @@ x->{z.name} = nullptr;
             else:
                 if z.alloc:
                     f90_ser_ops.append(f"""
-call serialize(io, '# alloc', .false.)
-call serialize(io, allocated(x%{z.name}), .false.)
+call serialize(io, '# alloc', cleanup=.false.)
+call serialize(io, allocated(x%{z.name}), cleanup=.false.)
 if (allocated(x%{z.name})) then  ! BEGINNING IF
 """)
                     cpp_ser_ops.append(f"""
@@ -522,7 +533,7 @@ if (yep) {{  // BEGINING IF
 """)
                 if z.rank:
                     f90_ser_ops.extend(generate_array_meta_f90(f"x%{z.name}", z.rank))
-                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, .false.)")
+                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, cleanup=.false., nline=.true., meta=.false.)")
                     assert '***' not in sdfg_structs[dt.name][z.name]
                     ptrptr = '**' in sdfg_structs[dt.name][z.name]
                     if z.alloc:
@@ -534,7 +545,7 @@ if (yep) {{  // BEGINING IF
                         sa_vars, soa_vars = '', ''
                     cpp_ser_ops.append(f"""
 {{
-    const array_meta& m = ARRAY_META_DICT()[x->{z.name}];
+    const array_meta& m = (*ARRAY_META_DICT())[x->{z.name}];
     add_line("# rank", s);
     add_line(m.rank, s);
     add_line("# size", s);
@@ -552,39 +563,29 @@ if (yep) {{  // BEGINING IF
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
-read_line(s, {{"# entries"}});  // Should contain '# entries'
+// TODO: THIS IS POTENTIALLY BUGGY, BECAUSE IT IS NOT REALLY TESTED.
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
-x->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
-ARRAY_META_DICT()[x->{z.name}] = m;
-for (int i=0; i<m.volume(); ++i) {{
-  x->{z.name}[i] = new std::remove_pointer<std::remove_reference<decltype(x->{z.name}[i])>::type>::type;
-  deserialize(x->{z.name}[i], s);
-}}
+x ->{z.name} = m.read<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
                     else:
                         cpp_deser_ops.append(f"""
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
-read_line(s, {{"# entries"}});  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
-x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
-ARRAY_META_DICT()[x->{z.name}] = m;
-for (int i=0; i<m.volume(); ++i) {{
-  deserialize(&(x->{z.name}[i]), s);
-}}
+x ->{z.name} = m.read<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
                 elif '*' in sdfg_structs[dt.name][z.name]:
-                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, .false.)")
+                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, cleanup=.false.)")
                     cpp_ser_ops.append(f"add_line(serialize(x->{z.name}), s);")
                     cpp_deser_ops.append(f"""
 x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type;
 deserialize(x->{z.name}, s);
 """)
                 else:
-                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, .false.)")
+                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, cleanup=.false.)")
                     cpp_ser_ops.append(f"add_line(serialize(x->{z.name}), s);")
                     cpp_deser_ops.append(f"""
 deserialize(&(x->{z.name}), s);
@@ -603,10 +604,11 @@ subroutine W_{dt.name}(io, x, cleanup, nline)
   use {dt.spec[0]}, only: {dt.name}
   integer :: io
   type({dt.name}), target, intent(in) :: x
-  logical, optional, intent(in) :: cleanup
-  logical, optional, intent(in) :: nline
+  logical, optional, intent(in) :: cleanup, nline
   integer :: kmeta, {kmetas}
-  logical :: cleanup_local = .true., nline_local = .true.
+  logical :: cleanup_local, nline_local
+  cleanup_local = .true.
+  nline_local = .true.
   if (present(cleanup)) cleanup_local = cleanup
   if (present(nline)) nline_local = nline
   {f90_ser_ops}
@@ -702,17 +704,6 @@ struct {name} {{
 #include "{g.name}.h"
 
 namespace serde {{
-    struct array_meta {{
-      int rank = 0;
-      std::vector<int> size, lbound;
-
-      int volume() const {{  return std::reduce(size.begin(), size.end(), 1, std::multiplies<int>()) ; }}
-    }};
-    std::map<void*, array_meta>& ARRAY_META_DICT() {{
-        static auto* M = new std::map<void*, array_meta>();
-        return *M;
-    }}
-
     std::string scroll_space(std::istream& s) {{
         std::string out;
         while (!s.eof() && (!s.peek() || isspace(s.peek()))) {{
@@ -736,6 +727,22 @@ namespace serde {{
             }}
         }}
         return {{bin}};
+    }}
+
+    struct array_meta;
+    std::map<void*, array_meta>* ARRAY_META_DICT();
+
+    struct array_meta {{
+        int rank = 0;
+        std::vector<int> size, lbound;
+
+        int volume() const {{  return std::reduce(size.begin(), size.end(), 1, std::multiplies<int>()) ; }}
+
+        template<typename T> T* read(std::istream& s) const;
+    }};
+    std::map<void*, array_meta>* ARRAY_META_DICT() {{
+        static auto* M = new std::map<void*, array_meta>();
+        return M;
     }}
 
     template<typename T>
@@ -785,9 +792,27 @@ namespace serde {{
         return m;
     }}
 
+    template<typename T>
+    std::pair<array_meta, T*> read_array(std::istream& s) {{
+        auto m = serde::read_array_meta(s);
+        auto* y = m.read<T>(s);
+        return {{m, y}};
+    }}
+
     {cpp_deserializer_fns}
     {cpp_serializer_fns}
     {config_injection_fns}
+
+    template<typename T>
+    T* array_meta::read(std::istream& s) const {{
+        read_line(s, {{"# entries"}});
+        auto* buf = new T[volume()];
+        for (int i=0; i<volume(); ++i) {{
+            deserialize(&buf[i], s);
+        }}
+        (*ARRAY_META_DICT())[buf] = *this;
+        return buf;
+    }}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__

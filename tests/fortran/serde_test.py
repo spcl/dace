@@ -128,6 +128,7 @@ end subroutine f2
         x = singular(x for p in walk(ast, Main_Program) for x in walk(p, Execution_Part))
         prepend_children(y, Use_Stmt(f"use serde"))
         append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}", .true.), s)'))
+        append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}.bbz", .true.), s%name%w%bBZ)'))
 
         # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
         # the serialization is as expected.
@@ -225,9 +226,13 @@ end subroutine f2
 
 int main() {{
     std::ifstream data("{s_data.name}");
+    std::ifstream data_bbz("{s_data.name}.bbz");
+
 
     t x;
     serde::deserialize(&x, data);
+    // Just checking if we can read the plain array too.
+    auto [m, y] = serde::read_array<float>(data_bbz);
 
     auto* h = __dace_init_f2(&x);
     __program_f2(h, &x);
