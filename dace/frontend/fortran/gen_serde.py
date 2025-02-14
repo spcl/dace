@@ -6,116 +6,141 @@ from typing import Generator, Dict, Tuple, List, Optional, Union, Any
 
 from fparser.api import get_reader
 from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
-    Procedure_Stmt, Function_Subprogram, Interface_Block, Program, Intrinsic_Type_Spec, \
-    Function_Stmt, Dimension_Component_Attr_Spec, Declaration_Type_Spec, Private_Components_Stmt, Component_Part, \
-    Derived_Type_Def
+    Procedure_Stmt, Interface_Block, Program, Intrinsic_Type_Spec, \
+    Dimension_Component_Attr_Spec, Declaration_Type_Spec, Private_Components_Stmt, Component_Part, \
+    Derived_Type_Def, Subroutine_Subprogram, Subroutine_Stmt
 from fparser.two.utils import walk
 
 import dace
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
-    SPEC_TABLE, SPEC
+    SPEC_TABLE, SPEC, ConstTypeInjection, find_name_of_node
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, run_fparser_transformations
 
-NEW_LINE = "new_line('A')"
+NEW_LINE = "NEW_LINE('A')"
 
 
 def gen_f90_serde_module_skeleton() -> Module:
-    return Module(get_reader("""
+    return Module(get_reader(f"""
 module serde
   implicit none
 
+  ! ALWAYS: First argument should be an integer `io` that is an **opened** writeable stream.
+  ! ALWAYS: Second argument should be a **specialization type** to be serialized.
+  ! ALWAYS: Third argument should be an optional logical about whether to close `io` afterward (default true).
+  ! ALWAYS: Fourth argument should be an optional logical about whether add a new line afterward (default true).
   interface serialize
-    module procedure :: character_2s
+    module procedure :: W_string
   end interface serialize
+
+  ! A counter for versioning data files.
+  integer :: generation = 0
 contains
 
-  ! Given a string `s`, writes it to a file `path`.
-  subroutine write_to(path, s)
-    character(len=*), intent(in) :: path
-    character(len=*), intent(in) ::  s
+  ! Call `tic()` to switch to a new version of data files.
+  subroutine tic()
+    generation = generation + 1
+  end subroutine tic
+
+  ! Constructs a versioned file name for data file.
+  function cat(prefix, asis) result(path)
+    character(len=*), intent(in) :: prefix
+    character(len=:), allocatable :: path
+    character(len=50) :: gen
+    logical, optional, intent(in) :: asis
+    logical :: asis_local
+    asis_local = .false.
+    if (present(asis)) asis_local = asis
+    if (asis_local) then
+      path = prefix
+    else
+      ! NOTE: SINCE WE ARE WRITING TO STRING, WE DON'T ADVANCE.
+      write (gen, '(g0)') generation
+      path = prefix // '.' // trim(gen) // ".data"
+    endif
+  end function cat
+
+  ! Constructs a versioned file name for data file, opens it for (over)writing, and returns the handler.
+  function at(prefix, asis) result(io)
+    character(len=*), intent(in) :: prefix
     integer :: io
-    open (NEWUNIT=io, FILE=path, STATUS="replace", ACTION="write")
-    write (io, *) s
-    close (UNIT=io)
-  end subroutine write_to
+    logical, optional, intent(in) :: asis
+    logical :: asis_local = .false.
+    if (present(asis)) asis_local = asis
+    open (NEWUNIT=io, FILE=cat(prefix, asis_local), STATUS="replace", ACTION="write")
+  end function at
 
-  ! Given a string `r`, adds a line it to with the content `l`, and returns as `r`.
-  function add_line(r, l) result(s)
-    character(len=*), intent(in) :: r
-    character(len=*), intent(in) :: l
-    character(len=:), allocatable :: s
-    s = r // trim(l) // NEW_LINE('A')
-  end function add_line
-
-  ! Given a string `x`, returns a string where `x` has been serialised
-  function character_2s(x) result(s)
+  subroutine W_string(io, x, cleanup, nline)
+    integer :: io
     character(len=*), intent(in) :: x
-    character(len=:), allocatable :: s
-    allocate(character(len = len(x) + 1)::s)
-    write (s, '(g0)') trim(x)
-    s = trim(s)
-  end function character_2s
+    logical, optional, intent(in) :: cleanup, nline
+    logical :: cleanup_local, nline_local
+    cleanup_local = .true.
+    nline_local = .true.
+    if (present(cleanup)) cleanup_local = cleanup
+    if (present(nline)) nline_local = nline
+    write (io, '(g0)', advance='no') trim(x)
+    if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
+    if (cleanup_local) close(UNIT=io)
+  end subroutine W_string
 end module serde
 """))
 
 
-def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Function_Subprogram:
+def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine_Subprogram:
     assert typ in {'logical', 'integer', 'real'}
     if typ == 'logical':
         assert kind is None
     elif typ == 'integer':
         assert kind in {1, 2, 4, 8}
-    elif type == 'real':
+    elif typ == 'real':
         assert kind in {4, 8}
-    fn_name = f"{typ}{kind or ''}_2s"
+    fn_name = f"W_{typ}{kind or ''}"
     kind = f"(kind={kind})" if kind else ''
-
     if typ == 'logical':
-        return Function_Subprogram(get_reader(f"""
-function {fn_name}(x) result(s)
+        op = '\n'.join(['y = merge(1, 0, x)', "write (io, '(g0)', advance='no') y"])
+    else:
+        op = "write (io, '(g0)', advance='no') x"
+
+    return Subroutine_Subprogram(get_reader(f"""
+subroutine {fn_name}(io, x, cleanup, nline)
+  integer :: io
   {typ}{kind}, intent(in) :: x
   integer :: y
-  character(len=:), allocatable :: s
-  allocate (character(len=50) :: s)
-  y = x
-  write (s, '(g0)') y
-  s = trim(s)
-end function {fn_name}
-"""))
-    else:
-        return Function_Subprogram(get_reader(f"""
-function {fn_name}(x) result(s)
-  {typ}{kind}, intent(in) :: x
-  character(len=:), allocatable :: s
-  allocate (character(len=50) :: s)
-  write (s, '(g0)') x
-  s = trim(s)
-end function {fn_name}
+  logical, optional, intent(in) :: cleanup, nline
+  logical :: cleanup_local, nline_local
+  cleanup_local = .true.
+  nline_local = .true.
+  if (present(cleanup)) cleanup_local = cleanup
+  if (present(nline)) nline_local = nline
+  {op}
+  if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
+  if (cleanup_local) close(UNIT=io)
+end subroutine {fn_name}
 """))
 
 
 def generate_array_meta_f90(arr: str, rank: int) -> List[str]:
     # Assumes there is `arr` is an array in local scope with rank `rank`.
-    # Also assumes there is a serialization sink `s` and an integer `kmeta` that can be used as an iterator.
+    # Also assumes there is a serialization sink `io` and an integer `kmeta` that can be used as an iterator.
     return f"""
-s = add_line(s, "# rank")
-s = add_line(s, serialize({rank}))
-s = add_line(s, "# size")
+call serialize(io, "# rank", cleanup=.false.)
+call serialize(io, {rank}, cleanup=.false.)
+call serialize(io, "# size", cleanup=.false.)
 do kmeta = 1, {rank}
-  s = add_line(s, serialize(size({arr}, kmeta)))
+  call serialize(io, size({arr}, kmeta), cleanup=.false.)
 end do
-s = add_line(s, "# lbound")
+call serialize(io, "# lbound", cleanup=.false.)
 do kmeta = 1, {rank}
-  s = add_line(s, serialize(lbound({arr}, kmeta)))
+  call serialize(io, lbound({arr}, kmeta), cleanup=.false.)
 end do
 """.strip().split('\n')
 
 
 def generate_pointer_meta_f90(ptr: str, rank: int, candidates: Dict[str, Tuple]) -> List[str]:
     # Assumes there is `ptr` is a pointer to an array in local scope with rank `rank`.
-    # Also assumes there is a serialization sink `s` and integers `kmeta` and `kmeta_n` that can be used as iterators.
+    # Also assumes there is a serialization sink `io` and integers `kmeta` and `kmeta_n` that can be used as iterators.
     cand_checks: List[str] = []
     for c, c_shape in candidates.items():
         c_rank = len(c_shape)
@@ -127,20 +152,20 @@ def generate_pointer_meta_f90(ptr: str, rank: int, candidates: Dict[str, Tuple])
             for k in range(c_rank):
                 if k not in subsc:
                     subsc_str.append(':')
-                    subsc_str_serialized.append(f"':'")
+                    subsc_str_serialized.append('call serialize(io, ":", cleanup=.false., nline=.false.)')
                     continue
                 subsc_str.append(f"kmeta_{k}")
-                subsc_str_serialized.append(f"serialize(kmeta_{k})")
+                subsc_str_serialized.append(f"call serialize(io, kmeta_{k}, cleanup=.false., , nline=.false.)")
                 ops.append(f"do kmeta_{k} = lbound({c}, {k + 1}), ubound({c}, {k + 1})")
             end_dos = ['end do'] * len(ops)
             subsc_str = ', '.join(subsc_str)
-            subsc_str_serialized = "// ',' // ".join(subsc_str_serialized)
+            subsc_str_serialized = '\n call serialize(io, ",", cleanup=.false., , nline=.false.) \n'.join(subsc_str_serialized)
             ops.append(f"""
 if (associated({ptr}, {c}({subsc_str}))) then
-kmeta = 1
-s = s // "=> {c}("
-s = s // {subsc_str_serialized}
-s = s // "))" // {NEW_LINE}
+  kmeta = 1
+  call serialize(io, "=> {c}(", cleanup=.false., , nline=.false.)
+  {subsc_str_serialized}
+  call serialize(io, "))", cleanup=.false.)
 end if
 """)
             ops.extend(end_dos)
@@ -150,38 +175,53 @@ end if
     cand_checks: str = '\n'.join(cand_checks)
     return f"""
 if (associated({ptr})) then
-    kmeta = 0
-    {cand_checks}
-    if (kmeta == 0) then
-    s = add_line(s, "=> missing")
-    end if
+  kmeta = 0
+  {cand_checks}
+  if (kmeta == 0) then
+    call serialize(io, "=> missing", cleanup=.false.)
+  end if
 end if
 """.strip().split('\n')
 
 
-def generate_array_serializer_f90(dtyp: str, rank: int, tag: str, use: Optional[str] = None) -> Function_Subprogram:
+def generate_array_serializer_f90(dtyp: str, rank: int, tag: str, use: Optional[str] = None) -> Subroutine_Subprogram:
     iter_vars = ', '.join([f"k{k}" for k in range(1, rank + 1)])
     decls = f"""
-{dtyp}, intent(in) :: a({', '.join([':'] * rank)})
-character(len=:), allocatable :: s
-integer :: k, {iter_vars}
+{dtyp}, intent(in) :: x({', '.join([':'] * rank)})
+integer :: k, kmeta, {iter_vars}
 """
     loop_ops = []
     for k in range(1, rank + 1):
-        loop_ops.append(f"do k{k} = lbound(a, {k}), ubound(a, {k})")
-    loop_ops.append(f"s = add_line(s, serialize(a({iter_vars})))")
+        loop_ops.append(f"do k{k} = lbound(x, {k}), ubound(x, {k})")
+    loop_ops.append(f"call serialize(io, x({iter_vars}), cleanup=.false.)")
     loop_ops.extend(['end do'] * rank)
     loop = '\n'.join(loop_ops)
+    meta_ops = generate_array_meta_f90('x', rank)
+    meta = '\n'.join(meta_ops)
+    fn_name = f"W_{tag}_R_{rank}"
 
-    return Function_Subprogram(get_reader(f"""
-function {tag}_2s{rank}(a) result(s)
+    return Subroutine_Subprogram(get_reader(f"""
+subroutine {fn_name}(io, x, cleanup, nline, meta)
   {use or ''}
+  integer :: io
   {decls}
-  s = ""  ! Start with an empty string.
-  s = add_line(s, "# entries")
+  logical, optional, intent(in) :: cleanup, nline, meta
+  logical :: cleanup_local, nline_local, meta_local
+  cleanup_local = .true.
+  nline_local = .true.
+  meta_local = .true.
+  if (present(cleanup)) cleanup_local = cleanup
+  if (present(nline)) nline_local = nline
+  if (present(meta)) meta_local = meta
+  if (meta_local) then
+    {meta}
+  endif
+  call serialize(io, "# entries", cleanup=.false.)
   {loop}
-  if (len(s) > 0) s = s(:len(s)-1)  ! Remove the trailing new line.
-end function {tag}_2s{rank}
+  ! NOTE: THIS CONDITIONAL IS INTENTIONALLY COMMENTED OUT, BECAUSE EACH ELEMENT ADD NEW LINE ANYWAY.
+  ! if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
+  if (cleanup_local) close(UNIT=io)
+end subroutine {fn_name}
 """.strip()))
 
 
@@ -273,7 +313,7 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     f90_mod = gen_f90_serde_module_skeleton()
     proc_names = []
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
-    base_serializers: List[Function_Subprogram] = [
+    base_serializers: List[Subroutine_Subprogram] = [
         gen_base_type_serializer('logical'),
         gen_base_type_serializer('integer', 1),
         gen_base_type_serializer('integer', 2),
@@ -282,7 +322,7 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
         gen_base_type_serializer('real', 4),
         gen_base_type_serializer('real', 8),
     ]
-    array_serializers: Dict[Tuple[str, int], Function_Subprogram] = {}
+    array_serializers: Dict[Tuple[str, int], Subroutine_Subprogram] = {}
     # Generate basic array serializers for ranks 1 to 4.
     for rank in range(1, 5):
         typez = ['LOGICAL', 'INTEGER(KIND = 1)', 'INTEGER(KIND = 2)', 'INTEGER(KIND = 4)', 'INTEGER(KIND = 8)',
@@ -420,7 +460,7 @@ std::string serialize(bool x) {{
             if z.name not in sdfg_structs[dt.name]:
                 # The component is not present in the final SDFG, so we don't care for it.
                 continue
-            f90_ser_ops.append(f"s = add_line(s , '# {z.name}')")
+            f90_ser_ops.append(f"call serialize(io , '# {z.name}', cleanup=.false.)")
             cpp_ser_ops.append(f"""add_line("# {z.name}", s);""")
             cpp_deser_ops.append(f"""read_line(s, {{"# {z.name}"}});  // Should contain '# {z.name}'""")
 
@@ -451,8 +491,8 @@ std::string serialize(bool x) {{
                 # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes,
                 #  we will only populate this when it points to a different component of the same structure.
                 f90_ser_ops.append(f"""
-s = add_line(s, '# assoc')
-s = add_line(s, serialize(associated(x%{z.name})))
+call serialize(io, '# assoc', cleanup=.false.)
+call serialize(io, associated(x%{z.name}), cleanup=.false.)
 """)
                 cpp_ser_ops.append(f"""
 add_line("# assoc", s);
@@ -477,8 +517,8 @@ x->{z.name} = nullptr;
             else:
                 if z.alloc:
                     f90_ser_ops.append(f"""
-s = add_line(s, '# alloc')
-s = add_line(s, serialize(allocated(x%{z.name})))
+call serialize(io, '# alloc', cleanup=.false.)
+call serialize(io, allocated(x%{z.name}), cleanup=.false.)
 if (allocated(x%{z.name})) then  ! BEGINNING IF
 """)
                     cpp_ser_ops.append(f"""
@@ -493,7 +533,7 @@ if (yep) {{  // BEGINING IF
 """)
                 if z.rank:
                     f90_ser_ops.extend(generate_array_meta_f90(f"x%{z.name}", z.rank))
-                    f90_ser_ops.append(f"s = add_line(s, serialize(x%{z.name}))")
+                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, cleanup=.false., nline=.true., meta=.false.)")
                     assert '***' not in sdfg_structs[dt.name][z.name]
                     ptrptr = '**' in sdfg_structs[dt.name][z.name]
                     if z.alloc:
@@ -505,7 +545,7 @@ if (yep) {{  // BEGINING IF
                         sa_vars, soa_vars = '', ''
                     cpp_ser_ops.append(f"""
 {{
-    const array_meta& m = ARRAY_META_DICT()[x->{z.name}];
+    const array_meta& m = (*ARRAY_META_DICT())[x->{z.name}];
     add_line("# rank", s);
     add_line(m.rank, s);
     add_line("# size", s);
@@ -523,39 +563,29 @@ if (yep) {{  // BEGINING IF
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
-read_line(s, {{"# entries"}});  // Should contain '# entries'
+// TODO: THIS IS POTENTIALLY BUGGY, BECAUSE IT IS NOT REALLY TESTED.
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
-x->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
-ARRAY_META_DICT()[x->{z.name}] = m;
-for (int i=0; i<m.volume(); ++i) {{
-  x->{z.name}[i] = new std::remove_pointer<std::remove_reference<decltype(x->{z.name}[i])>::type>::type;
-  deserialize(x->{z.name}[i], s);
-}}
+x ->{z.name} = m.read<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
                     else:
                         cpp_deser_ops.append(f"""
 m = read_array_meta(s);
 {sa_vars}
 {soa_vars}
-read_line(s, {{"# entries"}});  // Should contain '# entries'
 // We only need to allocate a volume of contiguous memory, and let DaCe interpret (assuming it follows the same protocol 
 // as us).
-x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type[m.volume()];
-ARRAY_META_DICT()[x->{z.name}] = m;
-for (int i=0; i<m.volume(); ++i) {{
-  deserialize(&(x->{z.name}[i]), s);
-}}
+x ->{z.name} = m.read<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
                 elif '*' in sdfg_structs[dt.name][z.name]:
-                    f90_ser_ops.append(f"s = add_line(s, serialize(x%{z.name}))")
+                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, cleanup=.false.)")
                     cpp_ser_ops.append(f"add_line(serialize(x->{z.name}), s);")
                     cpp_deser_ops.append(f"""
 x ->{z.name} = new std::remove_pointer<decltype(x ->{z.name})>::type;
 deserialize(x->{z.name}, s);
 """)
                 else:
-                    f90_ser_ops.append(f"s = add_line(s, serialize(x%{z.name}))")
+                    f90_ser_ops.append(f"call serialize(io, x%{z.name}, cleanup=.false.)")
                     cpp_ser_ops.append(f"add_line(serialize(x->{z.name}), s);")
                     cpp_deser_ops.append(f"""
 deserialize(&(x->{z.name}), s);
@@ -569,18 +599,24 @@ deserialize(&(x->{z.name}), s);
         # Conclude the F90 serializer of the type.
         f90_ser_ops: str = '\n'.join(f90_ser_ops)
         kmetas = ', '.join(f"kmeta_{k}" for k in range(10))
-        impl_fn = Function_Subprogram(get_reader(f"""
-function {dt.name}_2s(x) result(s)
+        impl_fn = Subroutine_Subprogram(get_reader(f"""
+subroutine W_{dt.name}(io, x, cleanup, nline)
   use {dt.spec[0]}, only: {dt.name}
+  integer :: io
   type({dt.name}), target, intent(in) :: x
-  character(len=:), allocatable :: s
+  logical, optional, intent(in) :: cleanup, nline
   integer :: kmeta, {kmetas}
-  s = ""  ! Start with an empty string.
+  logical :: cleanup_local, nline_local
+  cleanup_local = .true.
+  nline_local = .true.
+  if (present(cleanup)) cleanup_local = cleanup
+  if (present(nline)) nline_local = nline
   {f90_ser_ops}
-  if (len(s) > 0) s = s(:len(s)-1)  ! Remove the trailing new line.
-end function {dt.name}_2s
+  if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
+  if (cleanup_local) close(UNIT=io)
+end subroutine W_{dt.name}
 """.strip()))
-        proc_names.append(f"{dt.name}_2s")
+        proc_names.append(f"W_{dt.name}")
         append_children(impls, impl_fn)
 
         # Conclude the C++ serializer of the type.
@@ -626,10 +662,10 @@ std::string config_injection(const {dt.name}& x) {{
 
     # Conclude the F90 serializer code.
     for fn in chain(array_serializers.values(), base_serializers):
-        _, name, _, _ = singular(children_of_type(fn, Function_Stmt)).children
+        _, name, _, _ = singular(children_of_type(fn, Subroutine_Stmt)).children
         proc_names.append(f"{name}")
         append_children(impls, fn)
-    iface = singular(p for p in walk(f90_mod, Interface_Block))
+    iface = singular(p for p in walk(f90_mod, Interface_Block) if find_name_of_node(p) == 'serialize')
     proc_names = Procedure_Stmt(f"module procedure {', '.join(proc_names)}")
     set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
     f90_code = f90_mod.tofortran()
@@ -668,17 +704,6 @@ struct {name} {{
 #include "{g.name}.h"
 
 namespace serde {{
-    struct array_meta {{
-      int rank = 0;
-      std::vector<int> size, lbound;
-
-      int volume() const {{  return std::reduce(size.begin(), size.end(), 1, std::multiplies<int>()) ; }}
-    }};
-    std::map<void*, array_meta>& ARRAY_META_DICT() {{
-        static auto* M = new std::map<void*, array_meta>();
-        return *M;
-    }}
-
     std::string scroll_space(std::istream& s) {{
         std::string out;
         while (!s.eof() && (!s.peek() || isspace(s.peek()))) {{
@@ -702,6 +727,22 @@ namespace serde {{
             }}
         }}
         return {{bin}};
+    }}
+
+    struct array_meta;
+    std::map<void*, array_meta>* ARRAY_META_DICT();
+
+    struct array_meta {{
+        int rank = 0;
+        std::vector<int> size, lbound;
+
+        int volume() const {{  return std::reduce(size.begin(), size.end(), 1, std::multiplies<int>()) ; }}
+
+        template<typename T> T* read(std::istream& s) const;
+    }};
+    std::map<void*, array_meta>* ARRAY_META_DICT() {{
+        static auto* M = new std::map<void*, array_meta>();
+        return M;
     }}
 
     template<typename T>
@@ -751,9 +792,27 @@ namespace serde {{
         return m;
     }}
 
+    template<typename T>
+    std::pair<array_meta, T*> read_array(std::istream& s) {{
+        auto m = serde::read_array_meta(s);
+        auto* y = m.read<T>(s);
+        return {{m, y}};
+    }}
+
     {cpp_deserializer_fns}
     {cpp_serializer_fns}
     {config_injection_fns}
+
+    template<typename T>
+    T* array_meta::read(std::istream& s) const {{
+        read_line(s, {{"# entries"}});
+        auto* buf = new T[volume()];
+        for (int i=0; i<volume(); ++i) {{
+            deserialize(&buf[i], s);
+        }}
+        (*ARRAY_META_DICT())[buf] = *this;
+        return buf;
+    }}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__

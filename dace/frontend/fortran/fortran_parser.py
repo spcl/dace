@@ -3145,13 +3145,6 @@ def name_and_rename_dict_creator(parse_order: list, dep_graph: nx.DiGraph) \
     return name_dict, rename_dict
 
 
-@dataclass
-class FindUsedFunctionsConfig:
-    root: str
-    needed_functions: List[str]
-    skip_functions: List[str]
-
-
 def create_sdfg_from_fortran_file_with_options(
         cfg: ParseConfig,
         ast: Program,
@@ -3272,12 +3265,10 @@ def create_sdfg_from_fortran_file_with_options(
             if (i.name.name, j.name.name) not in cfg.entry_points:
                 continue
             candidates.append(j)
-    assert len(candidates) == 1, "Multiple SDFG generation from multiple entry points not supported yet."
 
     for j in candidates:
         print(f"Building SDFG {j.name.name}")
-        startpoint = j
-        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=startpoint, sdfg_path=sdfgs_dir,
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=j, sdfg_path=sdfgs_dir,
                                   normalize_offsets=normalize_offsets, do_not_make_internal_variables_argument=True)
         sdfg = SDFG(j.name.name)
         ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
