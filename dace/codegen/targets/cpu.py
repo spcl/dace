@@ -1962,13 +1962,17 @@ class CPUCodeGen(TargetCodeGenerator):
                             unroll_pragma += f" {node.map.unroll_factor}"
                         result.write(unroll_pragma, cfg, state_id, node)
                     else:
-                        if node.map.unroll_mask[i]:
+                        if len(node.map.unroll_mask) == len(enumerate(node.map.range)):
+                            if node.map.unroll_mask[i]:
+                                unroll_pragma = "#pragma unroll"
+                                if node.map.unroll_factor:
+                                    unroll_pragma += f" {node.map.unroll_factor}"
+                                result.write(unroll_pragma, cfg, state_id, node)
+                        else:
                             unroll_pragma = "#pragma unroll"
                             if node.map.unroll_factor:
                                 unroll_pragma += f" {node.map.unroll_factor}"
                             result.write(unroll_pragma, cfg, state_id, node)
-
-
                 result.write(
                     "for (%s %s = %s; %s < %s; %s += %s) {\n" %
                     (var_type, var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
