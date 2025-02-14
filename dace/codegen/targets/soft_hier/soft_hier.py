@@ -1293,8 +1293,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         callsite_stream.write("if (flex_is_dm_core())")
                         callsite_stream.write("{")
                         callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), hbm({src_expr}), {length * data_size});")
-                        if is_sync:
-                            callsite_stream.write("flex_dma_async_wait_all();")
+                        # if is_sync:
+                        callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}")
                     elif dims == 2:
                         beg, end, step = subset.ranges[0]
@@ -1344,8 +1344,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                                 [f'hbm_addr(block_addr)'] + 
                                                 [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
                             )
-                            if is_sync:
-                                callsite_stream.write("flex_dma_async_wait_all();")
+                            # if is_sync:
+                            callsite_stream.write("flex_dma_async_wait_all();")
                             callsite_stream.write("}")
                         else: # not interleaved
                             src_strides = src_node_desc.strides[-dims:]
@@ -1362,8 +1362,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                                 [f'{src_strides[0]}*{data_size}'] +
                                                 [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
                             )
-                            if is_sync:
-                                callsite_stream.write("flex_dma_async_wait_all();")
+                            # if is_sync:
+                            callsite_stream.write("flex_dma_async_wait_all();")
                             callsite_stream.write("}")
                     else:
                         raise NotImplementedError(
