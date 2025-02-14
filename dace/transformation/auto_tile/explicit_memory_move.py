@@ -17,6 +17,7 @@ from dace import dtypes
 from functools import reduce
 from typing import Any, List, Dict
 from dace import symbol
+from sympy import nextprime
 
 
 @make_properties
@@ -324,6 +325,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     location_prefixes = DictProperty(key_type=dace.dtypes.StorageType, value_type=str,
                                      default={}, desc="Name mapping")
     level = Property(dtype=int, default=0, desc="Level of the map")
+    pad_contig_dim = Property(dtype=bool, default=False, allow_none=False, desc="Pad contiguous dimension to a prime number bigger than the contig dimension")
 
     def __init__(self):
         super().__init__()
@@ -333,6 +335,9 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             if src_arr_name.startswith(prefix):
                 return src_arr_name[len(prefix)+1:]
         return src_arr_name
+
+    def find_next_prime(self, number):
+        return nextprime(number)
 
 
     @classmethod
@@ -488,7 +493,18 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 int((e + 1 - b) / s)
                 for b, e, s in self.thread_group_map_entry.map.range
             ]
-
+            strides = None
+            if self.pad_contig_dim:
+                stride_0 = 1
+                stride_1 = self.find_next_prime(shape[-1])
+                strides = [stride_1, stride_0]
+                if len(shape) > 2:
+                    for sh in reversed(shape[:-2]):
+                        stride_1 *= sh
+                        strides.insert(0, stride_1)
+            else:
+                strides = None
+            #raise Exception(strides, shape, self.pad_contig_dim, self.tiles_evenly)
 
             pruned_src_arr_name = self.remove_prefix(src_arr_name)
             dst_arr_name = (
@@ -504,6 +520,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 name=dst_arr_name,
                 dtype=sdfg.arrays[src_arr_name].dtype,
                 shape=dst_arr_shape,
+                strides=strides,
                 transient=True,
                 storage=self.dst_memory_location,
             )
