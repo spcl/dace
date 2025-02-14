@@ -1956,10 +1956,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 begin, end, skip = r
 
                 if node.map.unroll:
-                    unroll_pragma = "#pragma unroll"
-                    if node.map.unroll_factor:
-                        unroll_pragma += f" {node.map.unroll_factor}"
-                    result.write(unroll_pragma, cfg, state_id, node)
+                    if node.map.unroll_mask is None:
+                        unroll_pragma = "#pragma unroll"
+                        if node.map.unroll_factor:
+                            unroll_pragma += f" {node.map.unroll_factor}"
+                        result.write(unroll_pragma, cfg, state_id, node)
+                    else:
+                        if node.map.unroll_mask[i]:
+                            unroll_pragma = "#pragma unroll"
+                            if node.map.unroll_factor:
+                                unroll_pragma += f" {node.map.unroll_factor}"
+                            result.write(unroll_pragma, cfg, state_id, node)
 
 
                 result.write(

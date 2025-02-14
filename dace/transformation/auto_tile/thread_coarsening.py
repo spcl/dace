@@ -4,18 +4,17 @@
 
 
 import dace
+from dace.data import Property
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
-from dace.properties import ListProperty, make_properties, SymbolicProperty
+from dace.properties import ListProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.auto_tile.auto_tile_util import order_tiling_params
 from dace.transformation.dataflow.tiling import MapTiling
 from dace import dtypes
-from dace.transformation.auto_tile.change_thread_block_map import ChangeThreadBlockMap
 from dace import subsets
-from typing import List
 
 
 @make_properties
@@ -31,6 +30,9 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
     tile_sizes = ListProperty(
         element_type=int, desc="Computational domain per core / thread"
     )
+
+    unroll = Property(dtype=bool, default=True, desc="Unroll the thread group map")
+    unroll_mask = ListProperty(element_type=bool, default=None, desc="Which dimensions to unroll")
 
     @classmethod
     def expressions(cls):
@@ -96,7 +98,8 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
 
         sequential_map_entry = thread_group_entry
         sequential_map_entry.map.schedule = dtypes.ScheduleType.Sequential
-        sequential_map_entry.map.unroll = True
+        sequential_map_entry.map.unroll = self.unroll
+        sequential_map_entry.map.unroll_mask = self.unroll_mask
         sequential_map_entry.map.label = "ThreadCoarsenedMap"
 
         # Find the thread block map encapsulating the sequential map

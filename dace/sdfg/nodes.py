@@ -865,7 +865,7 @@ class MapEntry(EntryNode):
             if p in self._map.param_types:
                 result[p] = self._map.param_types[p]
             else:
-                result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), 
+                result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols),
                                                   infer_expr_type(rng[1], symbols))
 
         # Handle the dynamic map ranges.
@@ -955,6 +955,7 @@ class Map(object):
     unroll_factor = Property(dtype=int, allow_none=True, default=0,
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
+    unroll__mask = ListProperty(element_type=bool, desc="Which dimensions to unroll, if None unroll all dims", allow_none=True, default=None)
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)

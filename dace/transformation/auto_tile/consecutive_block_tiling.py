@@ -53,6 +53,8 @@ class ConsecutiveBlockTiling(transformation.SingleStateTransformation):
 
     global_application_number = 0
 
+    unroll = Property(dtype=bool, default=True, desc="Unroll the map")
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.block_tiled_map_entry)]
@@ -137,7 +139,7 @@ class ConsecutiveBlockTiling(transformation.SingleStateTransformation):
                 ]
             ),
             schedule=dace.ScheduleType.Sequential,
-            unroll=False,
+            unroll=self.unroll,
         )
 
         # Re-route all outgoing edges from previous work map to this work map

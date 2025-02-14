@@ -4,6 +4,7 @@
 
 
 import sympy
+from dace.data import ListProperty
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property
@@ -52,6 +53,9 @@ class BlockTiling(transformation.SingleStateTransformation):
     block_tile_sizes = Property(dtype=tuple, default=(16,), desc="")
 
     global_application_number = 0
+
+    unroll = Property(dtype=bool, default=True, desc="Unroll the outer work map")
+    unroll_mask = ListProperty(element_type=bool, default=None, desc="Which dimensions to unroll")
 
     @classmethod
     def expressions(cls):
@@ -111,7 +115,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                                    ndrange=outer_work_map_range, schedule=dtypes.ScheduleType.Sequential)
         outer_work_map_entry = nodes.MapEntry(outer_work_map)
         outer_work_map_exit = nodes.MapExit(outer_work_map)
-        work_map.unroll = True
+        work_map.unroll = self.unroll
 
         # Update params with prefix
         new_params = [f"t{param}" for param in work_map.params]
@@ -486,7 +490,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                 amap_entry, amap_exit = state.add_map(name=f"assignment_map_{__i}",
                               ndrange=d,
                               schedule=dace.ScheduleType.Sequential,
-                              unroll=True)
+                              unroll=self.unroll)
                 __i += 1
 
                 # Find the data accessed in this chain

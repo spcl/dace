@@ -238,10 +238,14 @@ def _tile_cpu(
                 "ThreadBlock Map could not be found after applying threadblock map transformation"
             )
 
+        mask = [False for _ in thread_block_param]
+        mask[-1] = True
         ThreadCoarsening.apply_to(
             sdfg=kernel_sdfg,
             options={
                 "tile_sizes": thread_coarsening_param,
+                "unroll": True,
+                "unroll_mask": mask,
             },
             verify=True,
             device_map_entry=kernel_entry,
@@ -283,7 +287,7 @@ def _tile_cpu(
 
                 BlockTiling.apply_to(
                     sdfg=kernel_sdfg,
-                    options={"block_tile_sizes": work_map_tile},
+                    options={"block_tile_sizes": work_map_tile, "unroll": False},
                     verify=True,
                     thread_block_map_entry=thread_block_map_entry,
                     work_map_entry=work_map_entry,
