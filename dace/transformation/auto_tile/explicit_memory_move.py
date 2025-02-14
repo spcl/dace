@@ -256,6 +256,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
         code = ""
         code += f"// {self.src_arr_name}[{','.join([str(s) for s in self.src_arr.shape])}]\n"
         code += f"// {self.dst_arr_name}[{','.join([str(s) for s in self.dst_arr.shape])}]\n"
+        code += f"// Strides // {self.dst_arr_name}[{','.join([str(s) for s in self.dst_arr.strides])}]\n"
         num_threads = reduce(lambda x, y: x * y, self.num_threads)
         tiles_evenly = self.tiles_evenly
 

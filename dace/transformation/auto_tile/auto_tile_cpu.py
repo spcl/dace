@@ -5,112 +5,30 @@ import itertools
 import os
 from pathlib import Path
 import shutil
-from typing import Dict, List, Tuple, Type, Any, Union
+from typing import Dict, List, Tuple, Type, Any
 
 import numpy as np
 import dace
 from dace.transformation.auto_tile import auto_tile_util
 from dace.transformation.auto_tile.add_compute_element_map import AddComputeElementBlockMap
-from dace.transformation.auto_tile.add_thread_block_map import AddThreadBlockMap
 from dace.transformation.auto_tile.thread_coarsening import ThreadCoarsening
 from dace.transformation.auto_tile.block_tiling import BlockTiling
 from dace.transformation.auto_tile.remainder_loop import RemainderLoop
-from dace.sdfg.analysis.cutout import SDFGCutout
 from dace.transformation.dataflow import MapInterchange
-from dace.transformation.dataflow.tiling import MapTiling
 
 
-def clean_cache():
-    script_directory = os.getcwd()
-    cache_dir = Path(f"{script_directory}/.dacecache")
-    print(f"Clean {script_directory}/.dacecache")
-    if cache_dir.exists() and cache_dir.is_dir():
-        shutil.rmtree(cache_dir)
+from dace.transformation.auto_tile.auto_tile_util import clean_cache
+from dace.transformation.auto_tile.auto_tile_util import copy_sub_scope
+from dace.transformation.auto_tile.auto_tile_util import find_node_by_cond
+from dace.transformation.auto_tile.auto_tile_util import find_node_in_state_by_cond
+from dace.transformation.auto_tile.auto_tile_util import find_nodes_by_cond
+from dace.transformation.auto_tile.auto_tile_util import find_state_by_cond
+from dace.transformation.auto_tile.auto_tile_util import get_ref_kernel_nodes_and_edges
+from dace.transformation.auto_tile.auto_tile_util import validate_and_pad_params_to_three
 
 
-def copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry):
-    nn = [scope_entry] + list(state.all_nodes_between(scope_entry, state.exit_node(scope_entry))) + [state.exit_node(scope_entry)]
-    cut_sdfg = SDFGCutout.singlestate_cutout(state, *nn)
-    return cut_sdfg
 
-
-def find_node_by_cond(state, start_map_entry, cond):
-    s = set([start_map_entry])
-    while s:
-        n = s.pop()
-        if n != start_map_entry and cond(n, state):
-            return n
-        if n != state.exit_node(start_map_entry):
-            s = s.union([v for _, _, v, _, _ in state.out_edges(n)])
-    return None
-
-
-def find_node_in_state_by_cond(state, cond):
-    for n in state.nodes():
-        if cond(n, state):
-            return n
-    return None
-
-
-def find_nodes_by_cond(state, start_map_entry, cond):
-    s = set([start_map_entry])
-    ret = set()
-    while s:
-        n = s.pop()
-        if n != start_map_entry and cond(n, state):
-            ret.add(n)
-        if n != state.exit_node(start_map_entry):
-            s = s.union([v for _, _, v, _, _ in state.out_edges(n)])
-    return list(ret)
-
-
-def find_state_by_cond(sdfg, cond):
-    for n in sdfg.states():
-        if cond(n):
-            return n
-    return None
-
-
-def get_ref_kernel_nodes_and_edges(state, kernel_entry):
-    kernel_nodes = set()
-    kernel_nodes_to_visit = [kernel_entry]
-    kernel_edges = set()
-    visited_node_guids = set()
-
-    while kernel_nodes_to_visit:
-        n = kernel_nodes_to_visit.pop(0)
-        if n.guid in visited_node_guids:
-            continue
-        visited_node_guids.add(n.guid)
-        kernel_nodes.add(n)
-
-        kernel_edges = kernel_edges.union(state.out_edges(n))
-        kernel_edges = kernel_edges.union(state.in_edges(n))
-
-        if n != state.exit_node(kernel_entry):
-            for _, _, v, _, _ in state.out_edges(n) + state.in_edges(n):
-                if not v.guid in visited_node_guids:
-                    kernel_nodes_to_visit.append(v)
-
-    return (kernel_nodes, kernel_edges)
-
-
-def validate_and_pad_params_to_three(params):
-    validated_params = []
-    for param in params:
-        if len(param) < 3:
-            padded_param = param + (1,) * (3 - len(param))
-            validated_params.append(padded_param)
-        elif len(param) == 3:
-            validated_params.append(param)
-        else:
-            raise ValueError(
-                f"Tuple {param} has length greater than 3, which is not allowed."
-            )
-    return validated_params
-
-
-def _tile(
+def _tile_cpu(
     sdfg: dace.SDFG,
     state: dace.SDFGState,
     entry: dace.nodes.EntryNode,
@@ -199,7 +117,7 @@ def _tile(
         kernel_work_maps = find_nodes_by_cond(
             _kernel_state,
             _kernel_entry,
-            lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
+            lambda n, _kernel_state: isinstance(n, dace.nodes.MapEntry)
             and n.map.schedule == dace.dtypes.ScheduleType.Sequential,
         )
     else:
@@ -373,7 +291,7 @@ def _tile(
             thread_block_map_entry = find_node_by_cond(
                 kernel_state,
                 kernel_entry,
-                lambda n, kernel_staet: isinstance(n, dace.nodes.MapEntry)
+                lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                 and n.map.label == dace.dtypes.ScheduleType.CPU_Persistent.name +"Map",
             )
 
@@ -560,7 +478,7 @@ def auto_tile_cpu(
     found_tilings = dict()
     for ii, (state, kernel_entry) in enumerate(kernel_guids):
         if exhaustive_search:
-            best_config, best_time = _tile(
+            best_config, best_time = _tile_cpu(
                 sdfg=sdfg,
                 state=state,
                 entry=kernel_entry,
@@ -610,7 +528,7 @@ def auto_tile_cpu(
         """
 
         if exhaustive_search:
-            _tile(
+            _tile_cpu(
                 sdfg=sdfg,
                 state=state,
                 entry=kernel_entry,

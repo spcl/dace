@@ -1,4 +1,3 @@
-import copy
 from ctypes import sizeof
 import json
 import random
@@ -9,8 +8,104 @@ import cupy
 from dace.codegen.compiled_sdfg import CompiledSDFG
 import numpy
 from dace.sdfg.analysis.cutout import SDFGCutout
-from dace.sdfg.sdfg import SDFG, SDFGState
-import re
+from dace.sdfg.sdfg import SDFG
+import os
+import shutil
+from pathlib import Path
+
+
+def clean_cache():
+    script_directory = os.getcwd()
+    cache_dir = Path(f"{script_directory}/.dacecache")
+    print(f"Clean {script_directory}/.dacecache")
+    if cache_dir.exists() and cache_dir.is_dir():
+        shutil.rmtree(cache_dir)
+
+
+def copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry):
+    nn = (
+        [scope_entry]
+        + list(state.all_nodes_between(scope_entry, state.exit_node(scope_entry)))
+        + [state.exit_node(scope_entry)]
+    )
+    cut_sdfg = SDFGCutout.singlestate_cutout(state, *nn)
+    return cut_sdfg
+
+
+def find_node_by_cond(state, start_map_entry, cond):
+    s = set([start_map_entry])
+    while s:
+        n = s.pop()
+        if n != start_map_entry and cond(n, state):
+            return n
+        if n != state.exit_node(start_map_entry):
+            s = s.union([v for _, _, v, _, _ in state.out_edges(n)])
+    return None
+
+
+def find_node_in_state_by_cond(state, cond):
+    for n in state.nodes():
+        if cond(n, state):
+            return n
+    return None
+
+
+def find_nodes_by_cond(state, start_map_entry, cond):
+    s = set([start_map_entry])
+    ret = set()
+    while s:
+        n = s.pop()
+        if n != start_map_entry and cond(n, state):
+            ret.add(n)
+        if n != state.exit_node(start_map_entry):
+            s = s.union([v for _, _, v, _, _ in state.out_edges(n)])
+    return list(ret)
+
+
+def find_state_by_cond(sdfg, cond):
+    for n in sdfg.states():
+        if cond(n):
+            return n
+    return None
+
+
+def get_ref_kernel_nodes_and_edges(state, kernel_entry):
+    kernel_nodes = set()
+    kernel_nodes_to_visit = [kernel_entry]
+    kernel_edges = set()
+    visited_node_guids = set()
+
+    while kernel_nodes_to_visit:
+        n = kernel_nodes_to_visit.pop(0)
+        if n.guid in visited_node_guids:
+            continue
+        visited_node_guids.add(n.guid)
+        kernel_nodes.add(n)
+
+        kernel_edges = kernel_edges.union(state.out_edges(n))
+        kernel_edges = kernel_edges.union(state.in_edges(n))
+
+        if n != state.exit_node(kernel_entry):
+            for _, _, v, _, _ in state.out_edges(n) + state.in_edges(n):
+                if not v.guid in visited_node_guids:
+                    kernel_nodes_to_visit.append(v)
+
+    return (kernel_nodes, kernel_edges)
+
+
+def validate_and_pad_params_to_three(params):
+    validated_params = []
+    for param in params:
+        if len(param) < 3:
+            padded_param = param + (1,) * (3 - len(param))
+            validated_params.append(padded_param)
+        elif len(param) == 3:
+            validated_params.append(param)
+        else:
+            raise ValueError(
+                f"Tuple {param} has length greater than 3, which is not allowed."
+            )
+    return validated_params
 
 
 def _copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry):
@@ -28,13 +123,13 @@ def get_flops_and_mem_access(sdfg, state, device_map_entry):
     mem_access = 0
     for e in state.in_edges(device_map_entry):
         u, uc, v, vc, memlet = e
-        arr : dace.data.Array | dace.data.Scalar = sdfg.arrays[u.data]
+        arr: dace.data.Array | dace.data.Scalar = sdfg.arrays[u.data]
         mem_access += arr.total_size * sizeof(sdfg.arrays[u.data].dtype.as_ctypes())
 
     for e in state.out_edges(state.exit_node(device_map_entry)):
         u, uc, v, vc, memlet = e
-        arr : dace.data.Array | dace.data.Scalar = sdfg.arrays[v.data]
-        mem_access += arr.total_size  * sizeof(sdfg.arrays[v.data].dtype.as_ctypes())
+        arr: dace.data.Array | dace.data.Scalar = sdfg.arrays[v.data]
+        mem_access += arr.total_size * sizeof(sdfg.arrays[v.data].dtype.as_ctypes())
 
     s = [device_map_entry]
     visited_guids = set()
@@ -70,7 +165,7 @@ def find_node_by_cond(state, start_map_entry, cond):
     s = set([start_map_entry])
     while s:
         n = s.pop()
-        if n != start_map_entry and cond(n):
+        if n != start_map_entry and cond(n, state):
             return n
         if n != state.exit_node(start_map_entry):
             s = s.union([v for _, _, v, _, _ in state.out_edges(n)])
@@ -79,7 +174,7 @@ def find_node_by_cond(state, start_map_entry, cond):
 
 def find_node_in_state_by_cond(state, cond):
     for n in state.nodes():
-        if cond(n):
+        if cond(n, state):
             return n
     return None
 
@@ -118,9 +213,12 @@ def generate_random_data(
             elif storage_type == dace.StorageType.Default:
                 new_input = numpy.random.rand(*shape).astype(np_dtype)
             elif storage_type == None:
-                if arr.storage == dace.StorageType.Default or arr.storage == dace.StorageType.CPU_Heap:
+                if (
+                    arr.storage == dace.StorageType.Default
+                    or arr.storage == dace.StorageType.CPU_Heap
+                ):
                     new_input = numpy.random.rand(*shape).astype(np_dtype)
-                elif arr.storage ==  dace.StorageType.GPU_Global:
+                elif arr.storage == dace.StorageType.GPU_Global:
                     new_input = cupy.random.rand(*shape).astype(np_dtype)
                 else:
                     raise Exception(f"uwu, {arr.storage}, {storage_type}")
@@ -145,17 +243,19 @@ def solve(expr, defined_symbols):
     return dace.symbolic.simplify(expr)
 
 
-def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any], repeats=3, warmups=1,
-                         dev_type=dace.dtypes.ScheduleType.GPU_Device,
-                         instr_type=dace.dtypes.InstrumentationType.GPU_Events):
+def run_and_measure_time(
+    kernel_sdfg: SDFG,
+    inputs: Dict[Type[str], Any],
+    repeats=3,
+    warmups=1,
+    dev_type=dace.dtypes.ScheduleType.GPU_Device,
+    instr_type=dace.dtypes.InstrumentationType.GPU_Events,
+):
     assert len(kernel_sdfg.states()) == 1
     kernel_state = kernel_sdfg.states()[0]
 
     for node in kernel_state.nodes():
-        if (
-            isinstance(node, dace.nodes.MapEntry) and
-            node.map.schedule == dev_type
-        ):
+        if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dev_type:
             node.instrument = instr_type
 
     assert warmups
@@ -182,10 +282,13 @@ def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any], repea
         time += statistics.median(final_list) if rem_warmup > 0 else 0
         rem_warmup -= 1
 
-    time /= (repeats - warmups)
+    time /= repeats - warmups
     return time
 
-def run_and_measure_sdfg(kernel_sdfg: CompiledSDFG, inputs : Dict[Type[str], Any], verbose: bool = False):
+
+def run_and_measure_sdfg(
+    kernel_sdfg: CompiledSDFG, inputs: Dict[Type[str], Any], verbose: bool = False
+):
     time = 0.0
     for _ in range(5):
         kernel_sdfg(**inputs)
@@ -207,7 +310,7 @@ def percentage_peak(time, flops, mem_accessed, peak_flops, peak_bandwidh):
     op_intensity = flops / mem_accessed
     theo_max_perf = min(peak_bandwidh * op_intensity, peak_flops)
     my_perf = (flops * 1e3) / time
-    return (my_perf  * 100.0) / theo_max_perf
+    return (my_perf * 100.0) / theo_max_perf
 
 
 def percentage_bandwidth(time, mem_accessed, peak_bandwidh):
@@ -238,22 +341,16 @@ def convert_inputs_to_gpu_storage(kernel_sdfg: SDFG):
                         )
 
 
-def set_transient(kernel_sdfg: SDFG, schedule = dace.ScheduleType.GPU_Device):
+def set_transient(kernel_sdfg: SDFG, schedule=dace.ScheduleType.GPU_Device):
     input_output_arrs = []
     for state in kernel_sdfg.states():
         for node in state.nodes():
-            if (
-                isinstance(node, dace.nodes.MapEntry)
-                and node.map.schedule == schedule
-            ):
+            if isinstance(node, dace.nodes.MapEntry) and node.map.schedule == schedule:
                 for in_edge in state.in_edges(node):
                     in_node, _, _, _, _ = in_edge
                     if isinstance(in_node, dace.nodes.AccessNode):
                         input_output_arrs.append(in_node.data)
-            elif (
-                isinstance(node, dace.nodes.MapExit)
-                and node.map.schedule == schedule
-            ):
+            elif isinstance(node, dace.nodes.MapExit) and node.map.schedule == schedule:
                 for out_edge in state.out_edges(node):
                     _, _, out_node, _, _ = out_edge
                     if isinstance(out_node, dace.nodes.AccessNode):
@@ -273,7 +370,7 @@ def end_to_end_measurements(
     program_name: str,
     aopt_sdfg_path: str,
     auto_tiled_sdfg_path: str,
-    inputs : Dict[Type[str], Any],
+    inputs: Dict[Type[str], Any],
     verbose: bool = False,
 ):
     aopt_sdfg: dace.sdfg.SDFG = dace.sdfg.SDFG.from_file(aopt_sdfg_path)
@@ -303,6 +400,7 @@ def end_to_end_measurements(
 
     return (time1, time2)
 
+
 def order_tiling_params(map_range, tiling_dims):
     # tiles: 1, 2, 3, map: A, B, C, D, E
     # becomes A, B, C3, D2, E1
@@ -321,5 +419,5 @@ def order_tiling_params(map_range, tiling_dims):
     else:
         # tiles: 1, 2, 3, map: A, B
         # becomes A2, B1
-        tile_sizes  = list(reversed(tiling_dims[:map_entry_len]))
+        tile_sizes = list(reversed(tiling_dims[:map_entry_len]))
     return tile_sizes

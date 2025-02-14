@@ -2,6 +2,7 @@
 """ This module contains classes and functions that implement the grid-strided map tiling
     transformation."""
 
+from operator import mul
 import dace
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import ListProperty, Property, make_properties, SymbolicProperty
@@ -54,7 +55,7 @@ class AddComputeElementBlockMap(transformation.SingleStateTransformation):
         if self.schedule_to_add in [dace.dtypes.ScheduleType.GPU_ThreadBlock]:
             if len(self.compute_element_group_dims) > 3:
                 return False
-            if reduce(self.compute_element_group_dims) > 1024:
+            if reduce(mul, self.compute_element_group_dims) > 1024:
                 return False
         # Passing it double ensures the user know what they are doing
         if self.map_entry.map.schedule != self.map_schedule:

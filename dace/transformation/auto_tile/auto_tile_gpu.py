@@ -2,11 +2,8 @@ import ast
 import copy
 import csv
 import itertools
-import os
 from pathlib import Path
-import shutil
-from typing import Dict, List, Tuple, Type, Any, Union
-
+from typing import Dict, List, Tuple, Type, Any
 
 import cupy
 import dace
@@ -17,105 +14,19 @@ from dace.transformation.auto_tile.thread_coarsening import ThreadCoarsening
 from dace.transformation.auto_tile.explicit_memory_move import ExplicitMemoryMove
 from dace.transformation.auto_tile.block_tiling import BlockTiling
 from dace.transformation.auto_tile.remainder_loop import RemainderLoop
-from dace.sdfg.analysis.cutout import SDFGCutout
 
 
-def clean_cache():
-    script_directory = os.getcwd()
-    cache_dir = Path(f"{script_directory}/.dacecache")
-    print(f"Clean {script_directory}/.dacecache")
-    if cache_dir.exists() and cache_dir.is_dir():
-        shutil.rmtree(cache_dir)
+from dace.transformation.auto_tile.auto_tile_util import clean_cache
+from dace.transformation.auto_tile.auto_tile_util import copy_sub_scope
+from dace.transformation.auto_tile.auto_tile_util import find_node_by_cond
+from dace.transformation.auto_tile.auto_tile_util import find_node_in_state_by_cond
+from dace.transformation.auto_tile.auto_tile_util import find_nodes_by_cond
+from dace.transformation.auto_tile.auto_tile_util import find_state_by_cond
+from dace.transformation.auto_tile.auto_tile_util import get_ref_kernel_nodes_and_edges
+from dace.transformation.auto_tile.auto_tile_util import validate_and_pad_params_to_three
 
 
-def copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry):
-    nn = []
-    for n in state.bfs_nodes(scope_entry):
-        if n == state.exit_node(scope_entry):
-            break
-        nn.append(n)
-
-    cut_sdfg = SDFGCutout.singlestate_cutout(state, *nn)
-    return cut_sdfg
-
-
-def find_node_by_cond(state, start_map_entry, cond):
-    s = set([start_map_entry])
-    while s:
-        n = s.pop()
-        if n != start_map_entry and cond(n):
-            return n
-        if n != state.exit_node(start_map_entry):
-            s = s.union([v for _, _, v, _, _ in state.out_edges(n)])
-    return None
-
-
-def find_node_in_state_by_cond(state, cond):
-    for n in state.nodes():
-        if cond(n):
-            return n
-    return None
-
-
-def find_nodes_by_cond(state, start_map_entry, cond):
-    s = set([start_map_entry])
-    ret = set()
-    while s:
-        n = s.pop()
-        if n != start_map_entry and cond(n):
-            ret.add(n)
-        if n != state.exit_node(start_map_entry):
-            s = s.union([v for _, _, v, _, _ in state.out_edges(n)])
-    return list(ret)
-
-
-def find_state_by_cond(sdfg, cond):
-    for n in sdfg.states():
-        if cond(n):
-            return n
-    return None
-
-
-def get_ref_kernel_nodes_and_edges(state, kernel_entry):
-    kernel_nodes = set()
-    kernel_nodes_to_visit = [kernel_entry]
-    kernel_edges = set()
-    visited_node_guids = set()
-
-    while kernel_nodes_to_visit:
-        n = kernel_nodes_to_visit.pop(0)
-        if n.guid in visited_node_guids:
-            continue
-        visited_node_guids.add(n.guid)
-        kernel_nodes.add(n)
-
-        kernel_edges = kernel_edges.union(state.out_edges(n))
-        kernel_edges = kernel_edges.union(state.in_edges(n))
-
-        if n != state.exit_node(kernel_entry):
-            for _, _, v, _, _ in state.out_edges(n) + state.in_edges(n):
-                if not v.guid in visited_node_guids:
-                    kernel_nodes_to_visit.append(v)
-
-    return (kernel_nodes, kernel_edges)
-
-
-def validate_and_pad_params_to_three(params):
-    validated_params = []
-    for param in params:
-        if len(param) < 3:
-            padded_param = param + (1,) * (3 - len(param))
-            validated_params.append(padded_param)
-        elif len(param) == 3:
-            validated_params.append(param)
-        else:
-            raise ValueError(
-                f"Tuple {param} has length greater than 3, which is not allowed."
-            )
-    return validated_params
-
-
-def _tile(
+def _tile_gpu(
     sdfg: dace.SDFG,
     state: dace.SDFGState,
     entry: dace.nodes.EntryNode,
@@ -144,7 +55,7 @@ def _tile(
         _kernel_state = _kernel_sdfg.nodes()[0]
         _kernel_entry = find_node_in_state_by_cond(
             _kernel_state,
-            lambda n: isinstance(n, dace.nodes.MapEntry)
+            lambda n, _kernel_state: isinstance(n, dace.nodes.MapEntry)
             and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
             and n.guid == entry.guid,
         )
@@ -176,7 +87,7 @@ def _tile(
         kernel_work_maps = find_nodes_by_cond(
             _kernel_state,
             _kernel_entry,
-            lambda n: isinstance(n, dace.nodes.MapEntry)
+            lambda n, _kernel_state: isinstance(n, dace.nodes.MapEntry)
             and n.map.schedule == dace.dtypes.ScheduleType.Sequential,
         )
 
@@ -252,7 +163,7 @@ def _tile(
             kernel_state = kernel_sdfg_nodes[0]
             kernel_entry = find_node_in_state_by_cond(
                 kernel_state,
-                lambda n: isinstance(n, dace.nodes.MapEntry)
+                lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                 and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
                 and n.guid == _kernel_entry.guid,
             )
@@ -279,7 +190,7 @@ def _tile(
         thread_block_map_entry = find_node_by_cond(
             kernel_state,
             kernel_entry,
-            lambda n: isinstance(n, dace.nodes.MapEntry)
+            lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
             and n.map.label == dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map",
         )
         if thread_block_map_entry is None:
@@ -294,7 +205,7 @@ def _tile(
             },
             verify=True,
             device_map_entry=kernel_entry,
-            thread_block_map_entry=thread_block_map_entry,
+            thread_group_map_entry=thread_block_map_entry,
         )
         work_maps = find_nodes_by_cond(
             kernel_state,
@@ -339,7 +250,7 @@ def _tile(
             thread_block_map_entry = find_node_by_cond(
                 kernel_state,
                 kernel_entry,
-                lambda n, kernel_staet: isinstance(n, dace.nodes.MapEntry)
+                lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                 and n.map.label == dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map",
             )
             if apply_explicit_memory_transfer_param[0]:
@@ -349,14 +260,22 @@ def _tile(
                     lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                     and n.map.label == dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map",
                 )
+                print(thread_block_map_entry)
                 ExplicitMemoryMove.apply_to(
                     sdfg=kernel_sdfg,
                     verify=True,
                     device_map_entry=kernel_entry,
-                    thread_block_map_entry=thread_block_map_entry,
+                    thread_group_map_entry=thread_block_map_entry,
                     map_entry=thread_block_map_entry,
                     options={
-                        "memory_location": dace.dtypes.StorageType.GPU_Shared,
+                        "dst_memory_location": dace.dtypes.StorageType.GPU_Shared,
+                        "src_memory_location": dace.dtypes.StorageType.GPU_Global,
+                        "use_lib_node": True,
+                        "location_prefixes": {
+                            dace.dtypes.StorageType.GPU_Global: "glb",
+                            dace.dtypes.StorageType.GPU_Shared: "shr",
+                        },
+                        "level": 0,
                         "tiles_evenly": apply_explicit_memory_transfer_param[1],
                         "pad_contig_dim": apply_explicit_memory_transfer_param[2],
                     },
@@ -372,7 +291,7 @@ def _tile(
             first_inner_work_map = find_node_by_cond(
                 kernel_state,
                 thread_block_map_entry,
-                lambda n: isinstance(n, dace.nodes.MapEntry)
+                lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                 and n.map.label.startswith("InnerWorkMap"),
             )
             if len(work_maps) > 0:
@@ -430,6 +349,7 @@ def _tile(
                     del copy_inputs_2[key]
 
                 if verify and not are_close:
+                    kernel_sdfg.save(f"failed.sdfg")
                     raise Exception("Numerical verification failed.")
 
                 if best_time is None or time < best_time:
@@ -866,7 +786,7 @@ def auto_tile_gpu(
     found_tilings = dict()
     for ii, (state, kernel_entry) in enumerate(kernel_guids):
         if exhaustive_search:
-            best_config = _tile(
+            best_config = _tile_gpu(
                 sdfg=sdfg,
                 state=state,
                 entry=kernel_entry,
@@ -908,7 +828,7 @@ def auto_tile_gpu(
         if state is None:
             raise Exception("After auto-tiling, the state is none")
         kernel_entry = find_node_in_state_by_cond(
-            state, lambda n: n.guid == kernel_entry_guid
+            state, lambda n, state: n.guid == kernel_entry_guid
         )
         if kernel_entry is None:
             raise Exception("After auto-tiling the kernel entry is none")
@@ -920,7 +840,7 @@ def auto_tile_gpu(
         if exhaustive_search:
             explicit_memory_transfer = [best_config[3]]
             remainder_loop = [best_config[4]]
-            _tile(
+            _tile_gpu(
                 sdfg=sdfg,
                 state=state,
                 entry=kernel_entry,
@@ -935,9 +855,12 @@ def auto_tile_gpu(
                 verbose=verbose,
                 verify=False,
                 call_id=len(kernel_guids),
+                logfile=f,
+                loglines=logged_lines
             )
         else:
-            _tile(
+            raise Exception("TODO")
+            _tile_gpu(
                 sdfg=sdfg,
                 state=state,
                 entry=kernel_entry,
@@ -952,6 +875,8 @@ def auto_tile_gpu(
                 verbose=verbose,
                 verify=False,
                 call_id=len(kernel_guids),
+                logfile=f,
+                loglines=logged_lines
             )
 
     # Add missing symbols
