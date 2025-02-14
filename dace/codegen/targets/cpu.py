@@ -1962,7 +1962,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             unroll_pragma += f" {node.map.unroll_factor}"
                         result.write(unroll_pragma, cfg, state_id, node)
                     else:
-                        if len(node.map.unroll_mask) == len(enumerate(node.map.range)):
+                        if len(node.map.unroll_mask) == len(node.map.range):
                             if node.map.unroll_mask[i]:
                                 unroll_pragma = "#pragma unroll"
                                 if node.map.unroll_factor:
