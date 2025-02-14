@@ -4,6 +4,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties, InterstateEdge, SDFGState, properties
 from dace.sdfg.graph import Edge
+import typing
 
 import copy
 
@@ -16,7 +17,7 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def can_preprocess(sdfg: SDFG, state:SDFGState,
+    def can_preprocess(self, sdfg: SDFG, state:SDFGState,
                        map_entry: dace.nodes.MapEntry) -> bool:
         # All edges of kernel map directly go to a NestedSDFG
         dst_nodes = set()
@@ -24,9 +25,11 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
             dst_nodes.add(oe.dst)
         #print(dst_nodes)
         if len(dst_nodes) != 1:
+            print("More than one destination node (need 1 nested SDFG)")
             return False
         dst_node = dst_nodes.pop()
         if not isinstance(dst_node, dace.nodes.NestedSDFG):
+            print("The destination node is not a nested SDFG")
             return False
 
         # Need to have 2 states, transition to second state should assign the temporary accessess
@@ -35,10 +38,16 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
         nsdfg = dst_node.sdfg
         nested_start_state = nsdfg.start_state
         if nsdfg.out_degree(nested_start_state) != 1:
+            print("Start state goes to multiple out states")
             return False
 
+        if len(nsdfg.states()) != 2:
+            print("Need 2 states in the nested SDFG")
+            return False
 
-    def can_apply(sdfg: SDFG, state: SDFGState,
+        return True
+
+    def can_apply(self, sdfg: SDFG, state: SDFGState,
                   map_entry: dace.nodes.MapEntry,
                   names: Set[str]) -> bool:
         # All edges of kernel map directly go to a NestedSDFG
@@ -47,22 +56,27 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
             dst_nodes.add(oe.dst)
 
         if len(dst_nodes) != 1:
+            print("More than one destination node (need 1 nested SDFG)")
             return False
         dst_node = dst_nodes.pop()
-        if isinstance(dst_node, dace.nodes.NestedSDFG):
+        if not isinstance(dst_node, dace.nodes.NestedSDFG):
+            print(f"The destination node is not a nested SDFG, {dst_nodes}, {dst_node}, {map_entry}")
             return False
         if len(dst_node.sdfg.states()) != 2:
+            print("Need 2 states in the nested SDFG")
             return False
 
         # Need to have 2 states, first state empty, transition to second state should assign
         # all names
         nsdfg = dst_node.sdfg
         start_state = nsdfg.start_state
-        if len(start_state.nodes()) != 0 or nsdfg.out_degree(start_state) != 1:
+        if len(start_state.nodes()) != 0:
+            print("First state is not empty")
             return False
         interstate_edge : dace.InterstateEdge = nsdfg.out_edges(start_state)[0].data
         #print(interstate_edge)
         if set(interstate_edge.assignments.keys()) != set(names):
+            print("Name set does not match assignments")
             return False
 
         old_symbol_mapping = dict()
@@ -77,7 +91,7 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
 
         return True
 
-    def preprocess_for_symbollify(sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry) -> typing.List[str]:
+    def preprocess_for_symbollify(self, sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry) -> typing.List[str]:
         names = []
 
         # All edges of kernel map directly go to a NestedSDFG
@@ -180,7 +194,7 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
 
         return names
 
-    def symbollify(sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry, names : typing.List[str]):
+    def symbollify(self, sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry, names : typing.List[str]):
         # All edges of kernel map directly go to a NestedSDFG
         dst_nodes = set()
         for oe in state.out_edges(map_entry):
@@ -222,7 +236,9 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
                 u, uc, v, vc, memlet = list(state.in_edges_by_connector(dst_node, in_connector))[0]
                 if vc not in sdfg.arrays:
                     #print(f"{vc} not in sdfg.arrays")
-                    nname = sdfg.add_datadesc(name=vc, datadesc=copy.deepcopy(nsdfg.arrays[vc]))
+                    newdesc = copy.deepcopy(nsdfg.arrays[vc])
+                    newdesc.transient = True
+                    nname = sdfg.add_datadesc(name=vc, datadesc=newdesc)
                     assert nname == vc
 
                 # Since it is from a map to another map we do need a second access node.
@@ -239,7 +255,9 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
                 u, uc, v, vc, memlet = list(state.out_edges_by_connector(dst_node, out_connector))[0]
                 if uc not in sdfg.arrays:
                     #print(f"{uc} not in sdfg.arrays")
-                    nname = sdfg.add_datadesc(name=uc, datadesc=copy.deepcopy(nsdfg.arrays[uc]))
+                    newdesc = copy.deepcopy(nsdfg.arrays[uc])
+                    newdesc.transient = True
+                    nname = sdfg.add_datadesc(name=uc, datadesc=newdesc)
                     assert nname == uc
                 outside_exit_access_nodes[out_connector] = (v, vc, copy.deepcopy(memlet))
 
@@ -294,7 +312,9 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
 
         for node in nodes_to_add:
             if isinstance(node, dace.nodes.AccessNode) and node.data not in sdfg.arrays:
-                sdfg.add_datadesc(name=node.data, datadesc=copy.deepcopy(nsdfg.arrays[node.data]))
+                newdesc = copy.deepcopy(nsdfg.arrays[node.data])
+                newdesc.transient = True
+                sdfg.add_datadesc(name=node.data, datadesc=newdesc)
 
             if node not in state.nodes():
                 state.add_node(node)
@@ -322,11 +342,24 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
         self, sdfg: SDFG, _
     ) -> Optional[Set[Union[SDFGState, Edge[InterstateEdge]]]]:
         for s in sdfg.states():
-            kernel_entries = [n for n in s.nodes() if isinstance(n, dace.nodes.MapEntry) and s.scope_dict()[n] is None]
-            for n in kernel_entries:
+            kernel_entry_guids = [n.guid for n in s.nodes() if isinstance(n, dace.nodes.MapEntry)]
+            guid_names_map = dict()
+            # Guid the iteration trick is because nodes have offsets and preprocessing fucks it up
+            for guid in kernel_entry_guids:
+                ns = [n for n in s.nodes() if n.guid == guid]
+                assert len(ns) == 1
+                n = ns[0]
                 if isinstance(n, dace.nodes.MapEntry):
-                    if self.can_preprocess(n):
+                    if self.can_preprocess(sdfg, s, n):
                         names = self.preprocess_for_symbollify(sdfg, s, n)
-                        assert self.can_apply(sdfg, s, n, names)
+                        guid_names_map[guid] = names
+
+            for guid in kernel_entry_guids:
+                ns = [n for n in s.nodes() if n.guid == guid]
+                assert len(ns) == 1
+                n = ns[0]
+                if guid in guid_names_map:
+                    names = guid_names_map[guid]
+                    if self.can_apply(sdfg, s, n, names):
                         self.symbollify(sdfg, s, n, names)
-                        sdfg.validate()
+        sdfg.validate()
