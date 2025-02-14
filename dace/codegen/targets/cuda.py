@@ -626,7 +626,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                 raise NotImplementedError('Dynamic shared memory unsupported')
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for shared memory')
-            result_decl.write("__shared__ %s %s[%s];\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
+            result_decl.write("__shared__ __align__(64) %s %s[%s];\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
             if node.setzero:
                 result_alloc.write('dace::ResetShared<{type}, {block_size}, {elements}, '
