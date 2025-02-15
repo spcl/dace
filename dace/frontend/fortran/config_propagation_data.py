@@ -9,7 +9,7 @@ def serialize(x: ConstInjection) -> str:
     d: Dict[str, Any] = {'type': type(x).__name__,
                          'scope': '.'.join(x.scope_spec) if x.scope_spec else None,
                          'root': '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec),
-                         'component': '.'.join(x.component_spec) if x.component_spec else None,
+                         'component': '.'.join(x.component_spec),
                          'value': x.value}
     return json.dumps(d)
 

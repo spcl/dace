@@ -700,6 +700,7 @@ struct {name} {{
 #include <istream>
 #include <iostream>
 #include <sstream>
+#include <optional>
 
 #include "{g.name}.h"
 
