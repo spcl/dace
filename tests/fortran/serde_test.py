@@ -15,7 +15,7 @@ from dace.frontend.fortran.config_propagation_data import deserialize
 from dace.frontend.fortran.fortran_parser import ParseConfig, \
     create_fparser_ast, create_internal_ast, SDFGConfig, create_sdfg_from_internal_ast, \
     run_fparser_transformations
-from dace.frontend.fortran.gen_serde import generate_serde_code
+from dace.frontend.fortran.gen_serde import generate_serde_code, generate_type_injection_code
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -119,6 +119,7 @@ end subroutine f2
         g.build_folder = t_dir
         g.compile()
         serde_code = generate_serde_code(ast, g)
+        ti_code = generate_type_injection_code(ast)
 
         # Modify the AST to use the serializer.
         # 1. Reconstruct the original AST, since we have run some preprocessing on the existing one.
@@ -126,13 +127,14 @@ end subroutine f2
         # 2. Instrument the module usage, to serialize certain data into the path `s_data`.
         y = singular(y for p in walk(ast, Main_Program) for y in walk(p, Specification_Part))
         x = singular(x for p in walk(ast, Main_Program) for x in walk(p, Execution_Part))
-        prepend_children(y, Use_Stmt(f"use serde"))
+        prepend_children(y, [Use_Stmt(f"use serde"), Use_Stmt(f"use type_injection")])
         append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}", .true.), s)'))
         append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}.bbz", .true.), s%name%w%bBZ)'))
+        append_children(x, Call_Stmt(f'call type_inject(at("{s_data.name}.ti"), s%name%w)'))
 
         # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
         # the serialization is as expected.
-        ast = parse_and_improve({'serde.f90': serde_code.f90_serializer, 'main.f90': ast.tofortran()})
+        ast = parse_and_improve({'serde.f90': serde_code.f90_serializer, 'ti.f90': ti_code, 'main.f90': ast.tofortran()})
         SourceCodeBuilder().add_file(ast.tofortran()).run_with_gfortran()
 
         got = Path(s_data.name).read_text().strip()
@@ -322,26 +324,7 @@ int main() {{
 0
 """).strip()
 
-        # Now, verify that C++ object can generate config injection JSON.
-        cpp_code = f"""
-{serde_code.cpp_serde}
-
-#include <fstream>
-#include <iostream>
-
-int main() {{
-    std::ifstream data("{s_data.name}");
-
-    t x;
-    serde::deserialize(&x, data);
-    std::cout << serde::config_injection(*(x.name->w)) << std::endl;
-
-    return EXIT_SUCCESS;
-}}
-"""
-        output = run_main_cpp(cpp_code, t_dir, g.name)
-        cinjs = [deserialize(l.strip()) for l in output.splitlines() if l.strip()]
-
+        cinjs = [deserialize(l.strip()) for l in Path(f"{s_data.name}.ti").read_text().splitlines() if l.strip()]
         cfg = ParseConfig(sources=sources, entry_points=[('f1',), ('f2',)], config_injections=cinjs)
         ast = create_fparser_ast(cfg)
         ast = run_fparser_transformations(ast, cfg)
