@@ -1,4 +1,3 @@
-import argparse
 from dataclasses import dataclass
 from itertools import chain, combinations
 from pathlib import Path
@@ -8,15 +7,15 @@ from fparser.api import get_reader
 from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram_Part, Data_Component_Def_Stmt, \
     Procedure_Stmt, Interface_Block, Program, Intrinsic_Type_Spec, \
     Dimension_Component_Attr_Spec, Declaration_Type_Spec, Private_Components_Stmt, Component_Part, \
-    Derived_Type_Def, Subroutine_Subprogram, Subroutine_Stmt
+    Derived_Type_Def, Subroutine_Subprogram, Subroutine_Stmt, Main_Program, Function_Subprogram, Use_Stmt, Name, \
+    Only_List, Rename, Generic_Spec
 from fparser.two.utils import walk
 
 import dace
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
-    SPEC_TABLE, SPEC, ConstTypeInjection, find_name_of_node
+    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
-from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, run_fparser_transformations
 
 NEW_LINE = "NEW_LINE('A')"
 
@@ -159,7 +158,8 @@ def generate_pointer_meta_f90(ptr: str, rank: int, candidates: Dict[str, Tuple])
                 ops.append(f"do kmeta_{k} = lbound({c}, {k + 1}), ubound({c}, {k + 1})")
             end_dos = ['end do'] * len(ops)
             subsc_str = ', '.join(subsc_str)
-            subsc_str_serialized = '\n call serialize(io, ",", cleanup=.false., , nline=.false.) \n'.join(subsc_str_serialized)
+            subsc_str_serialized = '\n call serialize(io, ",", cleanup=.false., , nline=.false.) \n'.join(
+                subsc_str_serialized)
             ops.append(f"""
 if (associated({ptr}, {c}({subsc_str}))) then
   kmeta = 1
@@ -302,18 +302,70 @@ def iterate_over_public_components(dt: DerivedTypeInfo) \
                 yield ComponentInfo(f"{cname}", ctyp, ptr, alloc, rank, shape)
 
 
+def _make_type_injection_entry_op(typ: SPEC, component: SPEC, expr: str) -> str:
+    return f"""
+call serialize(io, '{{ "type": "ConstTypeInjection", "scope": null, "root": "{'.'.join(typ)}", "component": "{'.'.join(component)}", "value": "', cleanup=.false., nline=.false.)
+call serialize(io, {expr}, cleanup=.false., nline=.false.)
+call serialize(io, '" }}', cleanup=.false., nline=.true.)
+"""
+
+
+def type_injection_leaf_ops(alias_map: SPEC_TABLE,
+                            all_derived_types: Dict[SPEC, DerivedTypeInfo],
+                            dt: DerivedTypeInfo,
+                            root_tspec: SPEC,
+                            trail: SPEC = tuple()) -> Generator[str, None, None]:
+    for z in iterate_over_public_components(dt):
+        # Prepare array ops that go together.
+        siz_ops, off_ops = [], []
+        if z.rank:
+            comp = trail + (z.name,)
+            for dim in range(z.rank):
+                siz = trail + (f"__f2dace_SA_{z.name}_d_{dim}_s",)
+                siz_ops.append(_make_type_injection_entry_op(root_tspec, siz, f"size(x%{'%'.join(comp)}, {dim + 1})"))
+                off = trail + (f"__f2dace_SOA_{z.name}_d_{dim}_s",)
+                off_ops.append(_make_type_injection_entry_op(root_tspec, off, f"lbound(x%{'%'.join(comp)}, {dim + 1})"))
+
+        if z.alloc:
+            comp = trail + (z.name,)
+            alloc = trail + (f"{z.name}_a",)
+            siz_ops = '\n'.join(siz_ops)
+            off_ops = '\n'.join(off_ops)
+            yield _make_type_injection_entry_op(root_tspec, alloc, f"merge(true, false, allocated(x%{'%'.join(comp)}))")
+            yield f"""
+if (allocated(x%{'%'.join(comp)})) then
+  {siz_ops}
+  {off_ops}
+end if
+"""
+        elif z.rank:
+            for op in chain(siz_ops, off_ops):
+                yield op
+        elif z.ptr:
+            comp = trail + (f"__f2dace_{z.name}_POINTERTO",)
+            yield _make_type_injection_entry_op(root_tspec, comp, f"'=> MISSING'")
+        elif isinstance(z.type, Intrinsic_Type_Spec):
+            comp = trail + (z.name,)
+            yield _make_type_injection_entry_op(root_tspec, comp, f"x%{'%'.join(comp)}")
+        elif isinstance(z.type, Declaration_Type_Spec):
+            _, typ_name = z.type.children
+            comp_typ_alias = dt.spec[:-1] + (typ_name.string,)
+            assert comp_typ_alias in alias_map
+            cdt = singular(cdt for k, cdt in all_derived_types.items()
+                           if alias_map[comp_typ_alias].parent is cdt.tdef)
+            yield from type_injection_leaf_ops(alias_map, all_derived_types, cdt, root_tspec, trail + (z.name,))
+        else:
+            raise NotImplementedError(f"Do not know how to process for type-injection: {dt}/{z}")
+
+
 @dataclass(frozen=True)
 class SerdeCode:
     f90_serializer: str
     cpp_serde: str
 
 
-def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
-    # F90 Serializer related data structures.
-    f90_mod = gen_f90_serde_module_skeleton()
-    proc_names = []
-    impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
-    base_serializers: List[Subroutine_Subprogram] = [
+def _get_basic_serializers() -> List[Subroutine_Subprogram]:
+    return [
         gen_base_type_serializer('logical'),
         gen_base_type_serializer('integer', 1),
         gen_base_type_serializer('integer', 2),
@@ -322,6 +374,16 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
         gen_base_type_serializer('real', 4),
         gen_base_type_serializer('real', 8),
     ]
+
+
+def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
+    ast = _keep_only_derived_types(ast)
+
+    # F90 Serializer related data structures.
+    f90_mod = gen_f90_serde_module_skeleton()
+    proc_names = []
+    impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
+    base_serializers = _get_basic_serializers()
     array_serializers: Dict[Tuple[str, int], Subroutine_Subprogram] = {}
     # Generate basic array serializers for ranks 1 to 4.
     for rank in range(1, 5):
@@ -424,10 +486,11 @@ std::string serialize(bool x) {{
     return serialize(int(x));
 }}
 """]
-    config_injection_fns: List[str] = []
 
     # Actual code generation begins here.
     ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
+    derived_type_map = {dt.spec: dt for dt in iterate_over_derived_types(ident_map)}
     for dt in iterate_over_derived_types(ident_map):
         if dt.name not in sdfg_structs:
             # The type is not present in the final SDFG, so we don't care for it.
@@ -640,27 +703,9 @@ void deserialize({dt.name}* x, std::istream& s) {{
     {cpp_deser_ops}
 }}
 """)
-        # Conclude the config injection representation of the type.
-        all_cinjops = {k: (a, f"""(x.{b} ? "true" : "false")""" if k.endswith('_a') else f"x.{b}")
-                       for k, (a, b) in all_cinjops.items()}
-        all_cinjops: List[str] = [f"""
-out << "{{";
-out << "\\"type\\": \\"ConstTypeInjection\\", ";
-out << "\\"scope\\": null, ";
-out << "\\"root\\": \\"{a}\\", ";
-out << "\\"component\\": \\"{k}\\", ";
-out << "\\"value\\": \\"" << {b} << "\\"}}" << std::endl;
-""".strip() for k, (a, b) in all_cinjops.items()]
-        all_cinjops: str = '\n'.join(all_cinjops)
-        config_injection_fns.append(f"""
-std::string config_injection(const {dt.name}& x) {{
-    std::stringstream out;
-    {all_cinjops}
-    return out.str();
-}}
-""")
 
     # Conclude the F90 serializer code.
+    # Serializers.
     for fn in chain(array_serializers.values(), base_serializers):
         _, name, _, _ = singular(children_of_type(fn, Subroutine_Stmt)).children
         proc_names.append(f"{name}")
@@ -690,7 +735,6 @@ struct {name} {{
 """
     cpp_deserializer_fns: str = '\n'.join(cpp_deserializer_fns)
     cpp_serializer_fns: str = '\n'.join(cpp_serializer_fns)
-    config_injection_fns: str = '\n'.join(config_injection_fns)
 
     cpp_code = f"""
 #ifndef __DACE_SERDE__
@@ -802,7 +846,6 @@ namespace serde {{
 
     {cpp_deserializer_fns}
     {cpp_serializer_fns}
-    {config_injection_fns}
 
     template<typename T>
     T* array_meta::read(std::istream& s) const {{
@@ -822,61 +865,90 @@ namespace serde {{
     return SerdeCode(f90_serializer=f90_code.strip(), cpp_serde=cpp_code.strip())
 
 
+def _keep_only_derived_types(ast: Program) -> Program:
+    for x in reversed(walk(ast, (Main_Program, Interface_Block, Subroutine_Subprogram, Function_Subprogram))):
+        remove_self(x)
+    ident_map = identifier_specs(ast)
+    aliases = set(ident_map.keys())
+    for olist in walk(ast, Only_List):
+        use = olist.parent
+        assert isinstance(use, Use_Stmt)
+        mod_name = singular(children_of_type(use, Name)).string
+        mod_spec = (mod_name,)
+        scope_spec = find_scope_spec(use)
+        for c in olist.children:
+            assert isinstance(c, (Name, Rename, Generic_Spec))
+            if isinstance(c, (Name, Generic_Spec)):
+                src, tgt = c, c
+            elif isinstance(c, Rename):
+                _, src, tgt = c.children
+            src, tgt = f"{src}", f"{tgt}"
+            src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
+            if tgt_spec in aliases:
+                aliases.add(src_spec)
+            else:
+                remove_self(c)
+    return ast
+
+
+def generate_type_injection_code(ast: Program) -> str:
+    ast = _keep_only_derived_types(ast)
+
+    f90_mod = Module(get_reader(f"""
+module type_injection
+  use serde
+  implicit none
+
+  ! ALWAYS: First argument should be an integer `io` that is an **opened** writeable stream.
+  ! ALWAYS: Second argument should be a **specialization type** object to be injected.
+  interface type_inject
+  end interface type_inject
+
+  ! Some convenience constants
+  character(6), parameter :: true = 'true', false = 'false'
+contains
+  ! A placeholder so that FParser does not remove the module subprogram part.
+  subroutine noop()
+  end subroutine noop
+end module type_injection
+""".strip()))
+    impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
+
+    # Actual code generation begins here.
+    type_injection_serializers: Dict[SPEC, Subroutine_Subprogram] = {}
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
+    derived_type_map = {dt.spec: dt for dt in iterate_over_derived_types(ident_map)}
+    for idx, dt in enumerate(iterate_over_derived_types(ident_map)):
+        # Add config injectors from this type regardless whether they are present in the final SDFG.
+        ti_ops = '\n'.join(type_injection_leaf_ops(alias_map, derived_type_map, dt, dt.spec))
+        ti_fn_name = f"TI_{dt.name}_{idx}"
+        type_injection_serializers[dt.spec] = Subroutine_Subprogram(get_reader(f"""
+subroutine {ti_fn_name}(io, x)
+  use {dt.spec[0]}, only: {dt.name}
+  integer :: io
+  type({dt.name}), intent(in) :: x
+  {ti_ops}
+  close(UNIT=io)
+end subroutine {ti_fn_name}
+""".strip()))
+
+    # Conclude the F90 type injection code.
+    ti_procs = []
+    for fn in type_injection_serializers.values():
+        _, name, _, _ = singular(children_of_type(fn, Subroutine_Stmt)).children
+        ti_procs.append(f"{name}")
+        append_children(impls, fn)
+    iface = singular(p for p in walk(f90_mod, Interface_Block) if find_name_of_node(p) == 'type_inject')
+    proc_names = Procedure_Stmt(f"module procedure {', '.join(ti_procs)}")
+    set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
+
+    return f90_mod.tofortran()
+
+
 def find_all_f90_files(root: Path) -> Generator[Path, None, None]:
     if root.is_file():
         yield root
     else:
         for f in chain(root.rglob('*.f90'), root.rglob('*.F90')):
             yield f
-
-
-def main():
-    argp = argparse.ArgumentParser()
-    argp.add_argument('-i', '--in_src', type=str, required=True, action='append', default=[],
-                      help='The files or directories containing Fortran source code (absolute path or relative to CWD).'
-                           'Can be repeated to include multiple files and directories.')
-    argp.add_argument('-e', '--entry_points', type=str, required=False, action='append', default=[],
-                      help='The dot-delimited entry points for the SDFG (empty means all possible entry points).')
-    argp.add_argument('-g', '--in_sdfg', type=str, required=True, default=None,
-                      help='The SDFG file containing the final product of DaCe. We need this to know the structures '
-                           'and their members that are present in the end (aftre further pruning etc.)')
-    argp.add_argument('-f', '--out_f90', type=str, required=False, default=None,
-                      help='A file to write the generated F90 functions into (absolute path or relative to CWD).')
-    argp.add_argument('-c', '--out_cpp', type=str, required=False, default=None,
-                      help='A file to write the generated C++ functions into (absolute path or relative to CWD).')
-    args = argp.parse_args()
-
-    input_dirs = [Path(p) for p in args.in_src]
-    input_f90s = [f for p in input_dirs for f in find_all_f90_files(p)]
-    print(f"Will be reading from {len(input_f90s)} Fortran files in directories: {input_dirs}")
-
-    print(f"Will be using the SDFG as the deserializer target: {args.in_sdfg}")
-    g = SDFG.from_file(args.in_sdfg)
-
-    print(f"Will be using the following entry points for pruning (empty means all): {args.entry_points}")
-    entry_points = [tuple(ep.split('.')) for ep in args.entry_points]
-
-    cfg = ParseConfig(sources=input_f90s, entry_points=entry_points)
-    ast = create_fparser_ast(cfg)
-    ast = run_fparser_transformations(ast, cfg)
-    serde_code = generate_serde_code(ast, g)
-
-    if args.out_f90:
-        with open(args.out_f90, 'w') as f:
-            f.write(serde_code.f90_serializer)
-    else:
-        print(f"=== F90 SERIALIZER CODE BEGINS ===")
-        print(serde_code.f90_serializer)
-        print(f"=== F90 SERIALIZER CODE ENDS ===")
-
-    if args.out_cpp:
-        with open(args.out_cpp, 'w') as f:
-            f.write(serde_code.cpp_serde)
-    else:
-        print(f"=== C++ SERDE CODE BEGINS ===")
-        print(serde_code.cpp_serde)
-        print(f"=== C++ SERDE CODE ENDS ===")
-
-
-if __name__ == "__main__":
-    main()
