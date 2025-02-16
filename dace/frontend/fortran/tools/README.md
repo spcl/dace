@@ -13,7 +13,7 @@ _release_ ECRAD, 3) manually instrument `radiation_interface.F90` to use it, 4) 
   in SDFG optimisation for ECRAD, and we will keep this module in `externals/ecrad/utilities` directory of the real
   ECRAD.
 - We then need to run from the root of DaCe repository:
-  ```commandline
+  ```shell
   python -m dace.frontend.fortran.tools.generate_type_injectors \
       -i ~/gitspace/icon-dace-cpp-preprocessed/externals/ecrad \
       -f ~/gitspace/icon-dace/externals/ecrad/utilities/ti.F90
@@ -24,9 +24,9 @@ _release_ ECRAD, 3) manually instrument `radiation_interface.F90` to use it, 4) 
 
 ## 2. How to instrument the type injection module in the real ECRAD?
 
-It necessary changes should look like the following:
+Its necessary changes should look like the following:
 
-```commandline
+```
 ~/g/icon-dace (working-release|✚2) $ git diff externals/ecrad/radiation/radiation_interface.F90
 diff --git a/externals/ecrad/radiation/radiation_interface.F90 b/externals/ecrad/radiation/radiation_interface.F90
 index ab4e6fdc..4f76f6c9 100644
@@ -82,7 +82,7 @@ Explanation:
 
 - Suppose we have the C++ preprocessed (but otherwise not transformed or prune) code in
   `~/gitspace/icon-dace-cpp-preprocessed/externals/ecrad` directory.
-- Suppose we have an SDFG that is prudced out of this preprocessed code.
+- Suppose we have an SDFG that is produced out of this preprocessed code.
 - Suppose we have the "real" ECRAD code, that is a released version that we can build and run, in `~/gitspace/icon-dace`
   directory.
 - Suppose we want to generate a Fortran module `serde.F90` that can serialise various data objects that is relevant for
@@ -91,7 +91,7 @@ Explanation:
   will use later to pass to the SDFG as arguments for testing numerically. And we want to put this module in
   `~/radiation/include`, the same directory where the generated header from the SDFG is located.
 - We then need to run from the root of DaCe repository:
-  ```commandline
+  ```shell
   python -m dace.frontend.fortran.tools.generate_serde_f90_and_cpp \
       -i ~/gitspace/icon-dace-for-serde/icon-dace/externals/ecrad \
       -g ~/radiation/radiation.sdfg \
