@@ -35,7 +35,7 @@ if __name__ == "__main__":
     # Construct the primary ECRAD AST.
     parse_cfg = ParseConfig(
         sources=[Path(f) for f in fortran_files],
-        entry_points=[('radiation_mcica_sw', 'solver_mcica_sw')],
+        entry_points=[('radiation_interface', 'radiation')],
         config_injections=config_injection_list('dace/frontend/fortran/conf_files'),
     )
     ecrad_ast = create_fparser_ast(parse_cfg)
