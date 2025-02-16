@@ -821,8 +821,8 @@ class ArrayDimensionSymbolsMapper(NodeTransformer):
         return self.generic_visit(node)
 
 
-CONFIG_INJECTOR_SIZE_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_d(?P<num>[0-9]*)")
-CONFIG_INJECTOR_OFFSET_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_o(?P<num>[0-9]*)")
+CONFIG_INJECTOR_SIZE_PATTERN = re.compile(r"__f2dace_SA_(?P<comp>[a-zA-Z0-9_]+)_d_(?P<num>[0-9]*)")
+CONFIG_INJECTOR_OFFSET_PATTERN = re.compile(r"__f2dace_SOA_(?P<comp>[a-zA-Z0-9_]+)_o_(?P<num>[0-9]*)")
 
 
 class ArrayDimensionConfigInjector(NodeTransformer):
@@ -833,7 +833,6 @@ class ArrayDimensionConfigInjector(NodeTransformer):
         for c in cfg:
             assert c.scope_spec is None  # Cannot support otherwise.
             typ = c.type_spec[-1]  # We assume globally unique typenames for these configuration objects.
-            assert len(c.component_spec) == 1  # Cannot support otherwise.
             comp = c.component_spec[-1]
             if not comp.endswith('_s'):
                 continue
