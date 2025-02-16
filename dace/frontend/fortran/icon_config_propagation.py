@@ -12,18 +12,9 @@ from dace.frontend.fortran.gen_serde import find_all_f90_files
 
 
 def config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstTypeInjection]:
-    cfgs = [
-        (('radiation_aerosol', 'aerosol_type'), f"{root}/aerosol_obj.txt"),
-        (('radiation_cloud', 'cloud_type'), f"{root}/cloud_obj.txt"),
-        (('radiation_config', 'config_type'), f"{root}/config_type_obj.txt"),
-        (('radiation_flux', 'flux_type'), f"{root}/flux_obj.txt"),
-        (('radiation_gas', 'gas_type'), f"{root}/gas_obj.txt"),
-        (('radiation_single_level', 'single_level_type'), f"{root}/single_level_obj.txt"),
-        (('radiation_thermodynamics', 'thermodynamics_type'), f"{root}/thermodynamics_obj.txt"),
-    ]
-    injs = []
-    for k, v in cfgs:
-        injs.extend(deserialize_v2(Path(v).read_text(), k))
+    cfgs = [Path(root).joinpath(f).read_text() for f in [
+        'config.ti', 'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti']]
+    injs = [deserialize(l.strip()) for c in cfgs for l in c.splitlines() if l.strip()]
     return injs
 
 
