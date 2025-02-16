@@ -2232,24 +2232,18 @@ class TypeInference(NodeTransformer):
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
 
-        if not hasattr(node, 'type') or node.type == 'VOID' or not hasattr(node, 'sizes'):
-            try:
-                var_def = self.scope_vars.get_var(node.parent, node.name)
+        # We always retrieve the newest type information since it could have been modified.
+        try:
+            var_def = self.scope_vars.get_var(node.parent, node.name)
 
-                node.type = var_def.type
-                node.sizes = var_def.sizes
+            node.type = var_def.type
+            node.sizes = var_def.sizes
 
-                if node.sizes is None:
-                    node.sizes = []
-                    var_def.sizes = []
-                    node.offsets = [1]
-                    var_def.offsets = [1]
-                else:
-                    node.offsets = var_def.offsets
+            node.offsets = var_def.offsets
 
-            except Exception as e:
-                print(f"Ignore type inference for {node.name}")
-                print(e)
+        except Exception as e:
+            print(f"Ignore type inference for {node.name}")
+            print(e)
 
         return node
 
@@ -2319,7 +2313,6 @@ class TypeInference(NodeTransformer):
         node.sizes = new_sizes
         node.offsets = var_def.offsets
 
-
         return node
 
     def visit_Parenthesis_Expr_Node(self, node: ast_internal_classes.Parenthesis_Expr_Node):
@@ -2365,7 +2358,17 @@ class TypeInference(NodeTransformer):
 
             node.type = lval_type
 
-        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.rval.type != 'VOID' and node.lval.type == 'VOID':
+        is_assignment = isinstance(node.lval, (ast_internal_classes.Name_Node))
+
+        should_be_updated = False
+        if node.lval.type == 'VOID':
+            should_be_updated = True
+        if self._get_sizes(node.lval) is None:
+            should_be_updated = True
+        if isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.name.startswith("tmp_"):
+            should_be_updated = True
+
+        if node.op == '=' and is_assignment and node.rval.type != 'VOID' and should_be_updated:
 
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
 
@@ -2417,6 +2420,10 @@ class TypeInference(NodeTransformer):
 
                 node.sizes = self._get_sizes(node.rval)
                 node.offsets = self._get_offsets(node.rval)
+
+            else:
+                node.sizes = None
+                node.offsets = None
 
 
         if node.type == 'VOID':
@@ -3030,10 +3037,10 @@ class ReplaceStructArgsLibraryNodes(NodeTransformer):
                             ])
                         )
 
-                        dest_node = ast_internal_classes.Array_Subscript_Node(
-                            name=ast_internal_classes.Name_Node(name=tmp_var_name),
-                            parent=call_node.parent, type=var.type,
-                            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                        dest_node = ast_internal_classes.Name_Node(
+                            name=tmp_var_name,
+                            parent=call_node.parent,
+                            type=var.type
                         )
 
                         if isinstance(arg.part_ref, ast_internal_classes.Name_Node):
@@ -3654,6 +3661,17 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             self.nodes_to_process = {}
             n = self.visit(child)
+
+            # Restart type inference to ensure that we reassign size
+            if len(self.nodes_to_process) > 0 and isinstance(n, ast_internal_classes.BinOp_Node):
+                n.lval.sizes = None
+
+                if isinstance(n.lval, ast_internal_classes.Name_Node):
+                    var = self.scope_vars.get_var(node.parent, n.lval.name)
+                    var.sizes = None
+                elif isinstance(n.lval, ast_internal_classes.Array_Subscript_Node):
+                    var = self.scope_vars.get_var(node.parent, n.lval.name.name )
+                    var.sizes = None
 
             for tmp_array_name, tmp_array in self.nodes_to_process.items():
 
