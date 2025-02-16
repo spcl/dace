@@ -1802,9 +1802,7 @@ class MathFunctions(IntrinsicTransformation):
             else:
                 sizes.append(arg.sizes)
 
-        print(sizes)
         sizes = size_func(node, sizes)
-        print(sizes)
 
         if isinstance(sizes, ast_internal_classes.Int_Literal_Node):
             return sizes, [1], return_type
