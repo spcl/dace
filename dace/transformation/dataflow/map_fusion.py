@@ -397,6 +397,11 @@ class MapFusion(transformation.SingleStateTransformation):
                 graph.remove_edge(edge)
                 continue
 
+            # For an empty memlet we add it without creating a connector
+            if edge.data.is_empty():
+                graph.add_edge(edge.src, None, first_entry, None, dcpy(edge.data))
+                graph.remove_edge(edge)
+                continue
             # This is an external input to the second map which will now go
             # through the first map.
             conn = first_entry.next_connector()

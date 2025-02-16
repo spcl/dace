@@ -841,6 +841,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     """
 
     in_edges = state.in_edges(view)
+    # We should ignore empty synchoronization edges
+    in_edges = [e for e in in_edges if not e.data.is_empty()]
     out_edges = state.out_edges(view)
 
     # Invalid case: No data to view

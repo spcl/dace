@@ -166,6 +166,16 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                         except astutils.NameFound:
                                             # then add the hint expression 
                                             leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body + leaf.src.code.code
+                            elif isinstance(leaf.src, nodes.AccessNode):
+                                # Check if the source is a view
+                                # TODO: investigate this further
+                                # Why is a NSDFG -> View -> Access Node results in only removing the AN
+                                if leaf.src.data in sdfg.arrays:
+                                    desc = sdfg.arrays[leaf.src.data]
+                                    if isinstance(desc, data.View):
+                                        # If the source is a view, remove the view
+                                        dead_nodes.append(leaf.src)
+                                    
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
