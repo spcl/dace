@@ -80,12 +80,12 @@ contains
     nline_local = .true.
     if (present(cleanup)) cleanup_local = cleanup
     if (present(nline)) nline_local = nline
-    end = len(x)
+    xend = len(x)
     do i = 1, len(x)
       if (x(i:i) == char(0)) then
         xend = i - 1
         exit
-      end
+      end if
     end do
     write (io, '(A)', advance='no') trim(x(1:xend))
     if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
