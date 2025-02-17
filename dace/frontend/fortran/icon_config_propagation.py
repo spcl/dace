@@ -2,14 +2,11 @@
 
 import sys
 from pathlib import Path
-from typing import List
 
-from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.config_propagation_data import deserialize, ecrad_config_injection_list
+from dace.frontend.fortran.config_propagation_data import ecrad_config_injection_list
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, \
     create_sdfg_from_fortran_file_with_options
 from dace.frontend.fortran.gen_serde import find_all_f90_files
-
 
 if __name__ == "__main__":
     base_icon_path = sys.argv[1]
