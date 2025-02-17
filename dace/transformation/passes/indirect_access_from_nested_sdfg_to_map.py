@@ -4,7 +4,6 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties, InterstateEdge, SDFGState, properties
 from dace.sdfg.graph import Edge
-import typing
 
 import copy
 
@@ -91,7 +90,7 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
 
         return True
 
-    def preprocess_for_symbollify(self, sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry) -> typing.List[str]:
+    def preprocess_for_symbollify(self, sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry):
         names = []
 
         # All edges of kernel map directly go to a NestedSDFG
@@ -194,7 +193,7 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
 
         return names
 
-    def symbollify(self, sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry, names : typing.List[str]):
+    def symbollify(self, sdfg : dace.SDFG, state : dace.SDFGState, map_entry : dace.nodes.MapEntry, names : List[str]):
         # All edges of kernel map directly go to a NestedSDFG
         dst_nodes = set()
         for oe in state.out_edges(map_entry):
