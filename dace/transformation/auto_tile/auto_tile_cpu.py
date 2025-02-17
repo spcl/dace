@@ -49,7 +49,6 @@ def _tile_cpu(
     loglines
 ):
 
-
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
         _kernel_sdfg = copy_sub_scope(state, entry)
@@ -171,6 +170,8 @@ def _tile_cpu(
             thread_block_param,
             apply_remainder_loop_param,
         ) = current_config
+        clean_cache()
+
         if not re_apply:
             if current_config in tested_configs:
                 print(f"Skipping {current_config} it was profiled before")

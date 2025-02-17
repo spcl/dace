@@ -147,6 +147,7 @@ def _tile_gpu(
             apply_explicit_memory_transfer_param,
             apply_remainder_loop_param,
         ) = current_config
+        clean_cache()
         if not re_apply:
             if current_config in tested_configs:
                 print(f"Skipping {current_config} it was profiled before")
