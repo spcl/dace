@@ -15,6 +15,7 @@ def dbladd(A: dace.float64[100, 100], B: dace.float64[100, 100]):
     dbl = B
     return A + dbl * B
 
+
 @dace.program
 def unfusable(A: dace.float64[100], B: dace.float64[100, 100]):
     """Test function of two maps that can not be fused."""
@@ -57,8 +58,12 @@ def test_applyto_pattern():
     transient = next(aname for aname, desc in sdfg.arrays.items() if desc.transient)
     access_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == transient)
 
-    assert MapFusion.can_be_applied_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
-
+    assert MapFusion.can_be_applied_to(
+            sdfg,
+            first_map_exit=mult_exit,
+            array=access_node,
+            second_map_entry=add_entry
+    )
     MapFusion.apply_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
 
     assert len([node for node in state.nodes() if isinstance(node, dace.nodes.MapEntry)]) == 1

@@ -83,7 +83,8 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
     # Compute ground truth and validate result
 
     corr_ref = ground_truth(M, float_n_ref, data_ref)
-    assert np.allclose(corr, corr_ref)
+    diff = corr_ref - corr
+    assert np.abs(diff).max() <= 10e-10
     return sdfg
 
 
