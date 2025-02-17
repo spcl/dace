@@ -73,17 +73,21 @@ contains
   subroutine W_string(io, x, cleanup, nline)
     integer :: io
     character(len=*), intent(in) :: x
-    integer :: i
+    integer :: i, xend
     logical, optional, intent(in) :: cleanup, nline
     logical :: cleanup_local, nline_local
     cleanup_local = .true.
     nline_local = .true.
     if (present(cleanup)) cleanup_local = cleanup
     if (present(nline)) nline_local = nline
-    do i=1, len(x)
-      if (x(i:i) == char(0)) exit
-      write (io, '(A)', advance='no') x(i:i)
+    end = len(x)
+    do i = 1, len(x)
+      if (x(i:i) == char(0)) then
+        xend = i - 1
+        exit
+      end
     end do
+    write (io, '(A)', advance='no') trim(x(1:xend))
     if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
     if (cleanup_local) close(UNIT=io)
   end subroutine W_string
