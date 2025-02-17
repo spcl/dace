@@ -2,10 +2,10 @@ import typing
 
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, nodes
 from dace.autodiff.optimize_backward_pass_generator import autooptimize_sdfgs_for_ad
-
-
+from dace.sdfg.utils import inline_control_flow_regions
+from dace.sdfg.state import LoopRegion
 def add_backward_pass(sdfg: SDFG,
                       outputs: typing.List[typing.Union[nodes.AccessNode,
                                                         str]],
@@ -38,12 +38,20 @@ def add_backward_pass(sdfg: SDFG,
         :param outputs: the forward pass outputs of the function to differentiate.
         :param inputs: the inputs w.r.t. which the gradient will be returned.
     """
+    # Validate SDFG
     sdfg.validate()
+    
+    # Inline conditional blocks but keep loops
+    inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
+    
+    # Validate again
+    sdfg.validate()
+    
+    # Add backward pass
     gen = BackwardPassGenerator(sdfg=sdfg,
                                 given_gradients=outputs,
                                 required_gradients=inputs,
                                 backward_sdfg=sdfg,
-                                zero_non_transients=False,
                                 overwrite_strategy=overwite_strategy,
                                 data_to_recompute=data_to_recompute)
     gen.backward()

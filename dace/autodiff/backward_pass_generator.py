@@ -217,8 +217,6 @@ class BackwardPassGenerator:
         :param required_gradients: the inputs to generate gradients for
         :param backward_sdfg: the sdfg the backward pass will be contained in. If it is the same as the forward_sdfg,
                               outputs must be a list containing a single scalar.
-        :param zero_non_transients: Whether non-transient gradient buffers should be zero initialized in the backward
-                                    SDFG.
         :param array_grad_map: A mapping from array name to the gradient array name. May be passed when certain
                                mappings already exist.
         :param conflicted_gradient_buffers: A list of forward pass value names for which multiple backward passes will
@@ -235,7 +233,6 @@ class BackwardPassGenerator:
         given_gradients: Sequence[Union[nodes.AccessNode, str]],
         required_gradients: Sequence[Union[nodes.AccessNode, str]],
         backward_sdfg: SDFG,  # This can be the same as sdfg
-        zero_non_transients: bool,
         array_grad_map: Optional[Dict[str, str]] = None,
         conflicted_gradient_buffers: Optional[Set[str]] = None,
         overwrite_strategy: str = "store_all",
@@ -316,7 +313,6 @@ class BackwardPassGenerator:
 
         # Variable to check if backward has already been applied
         self._applied = False
-        self.zero_non_transients = zero_non_transients
 
         # Save a copy of the forward sdfg in case the backward pass will be added to the same object
         # TODO: This will be used for recomputation but preferably find another way
@@ -393,11 +389,14 @@ class BackwardPassGenerator:
         self._reverse_states()
 
         # Connect the new reversed states to the other states correctly
-        self._connect_reversed_state()
+        self._connect_reversed_states()
 
         # Fill the interstate edges with the correct conditions
         self._fill_interstate_edge_conditions()
 
+        # Add interstate assignements for control flow decisions
+        self._add_interstate_edge_assignments()
+        
         # Forward required data by the backward pass according to a user defined strategy
         self._forward_data_to_backward_states()
 
@@ -544,9 +543,9 @@ class BackwardPassGenerator:
                 continue
             self._reverse_loop_region(node)
 
-    def _connect_reversed_state(self):
+    def _connect_reversed_states(self):
         """
-        Go through all the state of the forward SDFG and connect the equivelent backward state as necessary.
+        Go through all the states of the forward SDFG and connect the equivelent backward state as necessary.
         All the incoming edges of a state in the forward SDFG will result in outgoing edges in the backward SDFG.
         """
 
@@ -649,62 +648,62 @@ class BackwardPassGenerator:
         # Iterate through all the nodes in topological order
         nodes = dutils.dfs_topological_sort(graph, graph.source_nodes())
         for node in nodes:
+            # A list of the conditions on all the in edges for this state
+            in_edges_conditions: List[str] = []
             if isinstance(node, SDFG) or isinstance(node, LoopRegion):
                 # if this is not a reversed loop region
                 if not node in self.reversed_loops_map:
                     continue
                 self._fill_interstate_edge_conditions_in_scope(node)
-                continue
+            else:
 
-            assert isinstance(node, SDFGState)
-            forward_state = node
-            parent_graph = forward_state.parent_graph
+                assert isinstance(node, SDFGState)
+                forward_state = node
+                parent_graph = forward_state.parent_graph
 
-            # if this is not a reversed state
-            if not node in self.reversed_states_map:
-                continue
+                # if this is not a reversed state
+                if node not in self.reversed_states_map:
+                    continue
 
-            # We will iterate through all the incoming edges to the forward state
-            edges_list = parent_graph.in_edges(forward_state)
+                # We will iterate through all the incoming edges to the forward state
+                edges_list = parent_graph.in_edges(forward_state)
 
-            # If there are none, this is a start state
-            # If there is only one incoming edge, no condition necessary
-            if len(edges_list) < 2:
-                conditions_map[forward_state] = "1"
-                continue
+                # If there are none, this is a start state
+                # If there is only one incoming edge, no condition necessary
+                if len(edges_list) < 2:
+                    conditions_map[forward_state] = "1"
 
-            # A list of the conditions on all the in edges for this state
-            in_edges_conditions: List[str] = []
-            for edge in edges_list:
-                # Get the src state
-                src_state = edge.src
+                
+                for edge in edges_list:
+                    # Get the src state
+                    src_state = edge.src
 
-                # Get the condition to get to the source state in the forward pass
-                src_state_condition = conditions_map[src_state]
+                    # Get the condition to get to the source state in the forward pass
+                    src_state_condition = conditions_map[src_state]
 
-                # Add the condition in the current edge
-                current_edge_condition = edge.data.condition.as_string
+                    # Add the condition in the current edge
+                    current_edge_condition = edge.data.condition.as_string
 
-                # New backward edge condition
-                new_bwd_edge_condition = f"({src_state_condition}) and {current_edge_condition}" if current_edge_condition != "1" else src_state_condition
-                bwd_edge = self._get_bcakward_state_edge(edge)
+                    # New backward edge condition
+                    new_bwd_edge_condition = f"({src_state_condition}) and {current_edge_condition}" if current_edge_condition != "1" else src_state_condition
+                    bwd_edge = self._get_bcakward_state_edge(edge)
 
-                # Add the condition to the edge
-                bwd_edge.data.condition = CodeBlock(new_bwd_edge_condition)
+                    # Add the condition to the edge
+                    bwd_edge.data.condition = CodeBlock(new_bwd_edge_condition)
 
-                # If there is a special case for the first iteration of the backward state
-                if forward_state in self.loop_states_view_map:
+                    # If there is a special case for the first iteration of the backward state
+                    if forward_state in self.loop_states_view_map:
 
-                    # Get the corresponding edge between the loop states
-                    bwd_loop_edge = self._get_bcakward_loop_state_edge(edge)
+                        # Get the corresponding edge between the loop states
+                        bwd_loop_edge = self._get_bcakward_loop_state_edge(edge)
 
-                    # Add the same condition to the edge
-                    bwd_loop_edge.data.condition = CodeBlock(new_bwd_edge_condition)
+                        # Add the same condition to the edge
+                        bwd_loop_edge.data.condition = CodeBlock(new_bwd_edge_condition)
 
-                # Add the forward condition to the list to update the conditions_map dict
-                if new_bwd_edge_condition != "1":
-                    # Only add the condition if it exists
-                    in_edges_conditions.append(new_bwd_edge_condition)
+                    # Add the forward condition to the list to update the conditions_map dict
+                    if new_bwd_edge_condition != "1":
+                        # Only add the condition if it exists
+                        in_edges_conditions.append(new_bwd_edge_condition)
 
             # Update the conditions mapping
             # This will be the logical or of all the saved conditions
@@ -717,9 +716,7 @@ class BackwardPassGenerator:
                     condition_for_state += f" or {in_edges_conditions[i]}"
 
             # Since we are doing topological sort before iterating
-            # This node should not have been updated before
-            assert forward_state not in conditions_map
-            conditions_map[forward_state] = condition_for_state
+            conditions_map[node] = condition_for_state
 
     def _fill_interstate_edge_conditions(self):
         """
@@ -781,7 +778,56 @@ class BackwardPassGenerator:
             reversed_loop.add_edge(src=new_start_state,
                                    dst=leftover_loop_state,
                                    data=dace.InterstateEdge(condition=leftover_iterations_condition))
+            
+    def _add_interstate_edge_assignments(self):
+        """
+        We will need to add interstate assignements at the start of the backward SDFG
+        This is necessary to make sure the control flow in the backward passs is correctly preserved. 
+        """
+        # We will add an empty state to the backward pass which will have all the assignements
+        assignement_states = SDFGState("_bwd_interstate_assignements_state")
+        
+        new_assignements = {}
+        # Get all the interstate edges in the forward sdfg
+        for edge in self.sdfg.all_interstate_edges():
+            if edge.data.assignments:
+                # There are assignments to be added to the start of the backward pass
+                new_assignements ={**new_assignements, **edge.data.assignments} 
 
+                # We need to check if any data needs to be used in these assignement
+                # This is important in the case of a NSDFG where data will need to be forwarded
+                for lhs, rhs in edge.data.assignments.items():
+                    # If any of the sdfg arrays are in the rhs assignement
+                    assignement_arrays = [array for array in self.sdfg.arrays.keys() if array in rhs]
+                    if assignement_arrays and self.separate_sdfgs:
+                        # We need to forward this data to the backward pass
+                        for array in assignement_arrays:
+                            if array not in self.backward_input_arrays:
+                                self.backward_input_arrays[array] = self.sdfg.arrays[array]
+                                # Special case if this is a symbol that is doesn't have a descriptor yet
+                                if array not in self.backward_sdfg.arrays:
+                                    # We add it now
+                                    self.backward_sdfg.add_datadesc(array, copy.deepcopy(self.sdfg.arrays[array]))
+                                
+        
+        if new_assignements:
+            # Add the new state to the backward pass
+            # First we get the start block of the backward pass
+            if self.separate_sdfgs:
+                bwd_start_block = self.backward_sdfg.start_block
+            else:
+                fwd_start_state = self.sdfg.start_block
+                if isinstance(fwd_start_state, LoopRegion):
+                    bwd_start_block = self.reversed_loops_map[fwd_start_state]
+                elif isinstance(fwd_start_state, SDFGState):
+                    bwd_start_block = self.reversed_states_map[fwd_start_state]
+                else:
+                    raise AutoDiffException("Need to add an assignements state but can't find the start block")
+            # TODO would this work on a loop region?
+            self.backward_sdfg.add_state_before(state=bwd_start_block, 
+                                                label="_bwd_interstate_assignements_state", 
+                                                assignments=new_assignements)
+            
     def is_within_map(self, state: SDFGState, node: nodes.AccessNode) -> bool:
         # Get the scope dictionary for the state
         scope_dict = state.scope_dict()
@@ -856,7 +902,7 @@ class BackwardPassGenerator:
                 if forward_node in self.reverse_map:
                     backward_node = self.reverse_map[forward_node]
                     assert forward_state in self.reversed_states_map
-                    backward_state = self.reversed_states_map[forward_state]
+                    backward_state: SDFGState = self.reversed_states_map[forward_state]
                     in_edges = backward_state.in_edges(backward_node)
                     
                     # Remove empty sync edges
@@ -1269,11 +1315,17 @@ class BackwardPassGenerator:
         expression_to_remove = matches.group()
         end = expression.replace(expression_to_remove, "")
 
-        # Remove parenthesis and space
-        end = end.replace("(", "")
-        end = end.replace(")", "")
-        end = end.replace(" ", "")
-
+        # TODO: need more generalized solution for functions in the loop bounds
+        if "floor" not in conditional:
+            # There is no function call in the statement, remove parenthesis 
+            end = end.replace("(", "")
+            end = end.replace(")", "")
+            end = end.replace(" ", "")
+        else:
+            if expression_to_remove.startswith("(") and not expression_to_remove.endswith(")") and expression.endswith(")"):
+                # Remove extra parenthesis
+                end = end[:-1]
+                 
         # Get the start from the initialization code
         init_code = loop.init_statement.as_string
         matches = re.search(fr".*{it} = .*", init_code)
@@ -1507,12 +1559,12 @@ class BackwardPassGenerator:
         forward_state_dst = forward_edge.dst
 
         # Get the equivelent states in the backward pass
-        assert forward_state_src in self.reversed_states_map
-        assert forward_state_dst in self.reversed_states_map
+        assert forward_state_src in self.reversed_states_map or forward_state_src in self.reversed_loops_map
+        assert forward_state_dst in self.reversed_states_map or forward_state_src in self.reversed_loops_map
 
         # Note that the src will become the destination
-        backward_state_dst = self.reversed_states_map[forward_state_src]
-        backward_state_src = self.reversed_states_map[forward_state_dst]
+        backward_state_dst = self.reversed_states_map[forward_state_src] if forward_state_src in self.reversed_states_map else self.reversed_loops_map[forward_state_src]
+        backward_state_src = self.reversed_states_map[forward_state_dst] if forward_state_dst in self.reversed_states_map else self.reversed_loops_map[forward_state_dst]
 
         # Each one of these in edges needs to have an equivelent
         # out edge in the backward part of the SDFG
@@ -2369,6 +2421,19 @@ class BackwardPassGenerator:
             # Set the wcr to sum temporarily so that the following works
             # Here, we are checking if there are possible conflicting writes
             # To the same node
+            
+            # We need to manually set the start block of the SDFG so that the following works
+            try:
+                start_state = self.sdfg.start_state
+            except dace.sdfg.graph.NodeNotFoundError:
+                source_nodes = self.sdfg.source_nodes()
+                # Because we are adding the reversed states then connecting them
+                # There will be more than a single source node which confuses the start_state function
+                source_nodes = [n for n in source_nodes if "reversed" not in n.label]
+                if len(source_nodes) != 1:
+                    raise AutoDiffException("Can't figure out the start block of the SDFG." +
+                                            " is_write_conflicted_with_reason will likely fail")
+                self.sdfg.start_block = source_nodes[0].block_id
             old_wcr = path_edge.data.wcr
             path_edge.data.wcr = "lambda x, y: x + y"
             if is_write_conflicted_with_reason(backward_state, path_edge):
@@ -4912,13 +4977,12 @@ class BackwardPassGenerator:
         given_gradients: List[str],
         required_gradients: List[str],
     ) -> ReverseNodeReturnType:
-        reverse_sdfg = dace.SDFG(node.sdfg.name + "_backward")
+        reverse_nsdfg = dace.SDFG(node.sdfg.name + "_backward")
         # recursive call
         gen = BackwardPassGenerator(sdfg=node.sdfg,
                                     given_gradients=given_gradients,
                                     required_gradients=required_gradients,
-                                    backward_sdfg=reverse_sdfg,
-                                    zero_non_transients=True,
+                                    backward_sdfg=reverse_nsdfg,
                                     overwrite_strategy=self.strategy,
                                     data_to_recompute=self.data_to_recompute)
         backward_result, _, backward_input_arrays = gen.backward()
@@ -4978,18 +5042,31 @@ class BackwardPassGenerator:
         outputs = set(backward_result.required_grad_names[name] for name in required_gradients)
 
         for inp in inputs:
-            reverse_sdfg.arrays[inp].transient = False
+            if inp in reverse_nsdfg.arrays:
+                reverse_nsdfg.arrays[inp].transient = False
         for outp in outputs:
-            reverse_sdfg.arrays[outp].transient = False
+            if outp in reverse_nsdfg.arrays:
+                reverse_nsdfg.arrays[outp].transient = False
 
-        # actually create the sdfg and return it
+        # Create the sdfg and return it
         nsdfg = backward_state.add_nested_sdfg(
-            reverse_sdfg,
+            reverse_nsdfg,
             None,
             inputs=inputs,
             outputs=outputs,
         )
 
+        # If any input connectors point to symbols
+        for conn, _ in nsdfg.in_connectors.items():
+            if conn in nsdfg.sdfg.symbols:
+                # We need to add a new symbol and create a mapping
+                new_symbol = find_str_not_in_set(nsdfg.sdfg.symbols, conn)
+                nsdfg.sdfg.add_symbol(new_symbol, nsdfg.sdfg.symbols[conn])
+                nsdfg.sdfg.replace(conn, new_symbol)
+                nsdfg.symbol_mapping[new_symbol] = conn
+                # Remove it from the symbol mapping too
+                if conn in nsdfg.symbol_mapping:
+                    del nsdfg.symbol_mapping[conn]
         for edge_args in deferred_edges:
             edge_args["v"] = nsdfg
             backward_state.add_edge(**edge_args)
