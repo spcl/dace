@@ -1781,19 +1781,19 @@ end subroutine main
     ast = parse_and_improve(sources)
     ast = inject_const_evals(ast, [
         ConstTypeInjection(None, ('lib', 'config'), ('a_a',), 'true'),
-        ConstTypeInjection(None, ('lib', 'config'), ('a_d0_s',), '3'),
-        ConstTypeInjection(None, ('lib', 'config'), ('a_o0_s',), '1'),
-        ConstTypeInjection(None, ('lib', 'config'), ('a_d1_s',), '3'),
-        ConstTypeInjection(None, ('lib', 'config'), ('a_o1_s',), '2'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_0_s',), '3'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_0_s',), '1'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SA_a_d_1_s',), '3'),
+        ConstTypeInjection(None, ('lib', 'config'), ('__f2dace_SOA_a_d_1_s',), '2'),
         ConstInstanceInjection(None, ('main', 'b_a'), tuple(), 'true'),
-        ConstInstanceInjection(None, ('main', 'b_d0_s'), tuple(), '4'),
-        ConstInstanceInjection(None, ('main', 'b_o0_s'), tuple(), '1'),
+        ConstInstanceInjection(None, ('main', '__f2dace_SA_b_d_0_s'), tuple(), '4'),
+        ConstInstanceInjection(None, ('main', '__f2dace_SOA_b_d_0_s'), tuple(), '1'),
         ConstInstanceInjection(None, ('main', 'c_a'), tuple(), 'true'),
-        ConstInstanceInjection(None, ('main', 'c_d0_s'), tuple(), '4'),
-        ConstInstanceInjection(None, ('main', 'c_o0_s'), tuple(), '1'),
+        ConstInstanceInjection(None, ('main', '__f2dace_SA_c_d_0_s'), tuple(), '4'),
+        ConstInstanceInjection(None, ('main', '__f2dace_SOA_c_d_0_s'), tuple(), '1'),
         ConstInstanceInjection(None, ('main', 'd_a'), tuple(), 'false'),
-        ConstInstanceInjection(None, ('main', 'd_d0_s'), tuple(), '4'),
-        ConstInstanceInjection(None, ('main', 'd_o0_s'), tuple(), '1'),
+        ConstInstanceInjection(None, ('main', '__f2dace_SA_d_d_0_s'), tuple(), '4'),
+        ConstInstanceInjection(None, ('main', '__f2dace_SOA_d_d_0_s'), tuple(), '1'),
     ])
 
     got = ast.tofortran()
