@@ -5,18 +5,10 @@ from pathlib import Path
 from typing import List
 
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.config_propagation_data import deserialize
+from dace.frontend.fortran.config_propagation_data import deserialize, ecrad_config_injection_list
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, \
     create_sdfg_from_fortran_file_with_options
 from dace.frontend.fortran.gen_serde import find_all_f90_files
-
-
-def config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstTypeInjection]:
-    cfgs = [Path(root).joinpath(f).read_text() for f in [
-        'config.ti', 'aerosol_optics.ti', 'cloud_optics.ti', 'gas_optics_lw.ti', 'gas_optics_sw.ti', 'pdf_sampler.ti',
-        'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti']]
-    injs = [deserialize(l.strip()) for c in cfgs for l in c.splitlines() if l.strip()]
-    return injs
 
 
 if __name__ == "__main__":
@@ -44,7 +36,7 @@ if __name__ == "__main__":
     parse_cfg = ParseConfig(
         sources=[Path(f) for f in fortran_files],
         entry_points=[(entry_point_module, entry_point_function)],
-        config_injections=config_injection_list('dace/frontend/fortran/conf_files'),
+        config_injections=ecrad_config_injection_list('dace/frontend/fortran/conf_files'),
     )
     ecrad_ast = create_fparser_ast(parse_cfg)
 

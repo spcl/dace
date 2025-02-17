@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import List, Any, Dict, Optional
 
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection, ConstInjection, SPEC
@@ -39,4 +40,12 @@ def deserialize_v2(s: str,
         elif v == 'F':
             v = 'false'
         injs.append(ConstTypeInjection(scope, typ, kparts, v))
+    return injs
+
+
+def ecrad_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstTypeInjection]:
+    cfgs = [Path(root).joinpath(f).read_text() for f in [
+        'config.ti', 'aerosol_optics.ti', 'cloud_optics.ti', 'gas_optics_lw.ti', 'gas_optics_sw.ti', 'pdf_sampler.ti',
+        'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti']]
+    injs = [deserialize(l.strip()) for c in cfgs for l in c.splitlines() if l.strip()]
     return injs
