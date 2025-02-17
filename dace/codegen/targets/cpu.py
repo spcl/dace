@@ -1876,7 +1876,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
                 schedule = ""
-                if node.map.omp_num_threads is not 0:
+                if node.map.omp_num_threads != 0:
                     schedule += f" num_threads({node.map.omp_num_threads})"
                 if node.map.omp_bind is not None:
                     schedule += f" proc_bind({node.map.omp_bind})"
