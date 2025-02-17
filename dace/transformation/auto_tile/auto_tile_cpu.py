@@ -1,7 +1,9 @@
 import ast
 import copy
 import csv
+import functools
 import itertools
+from operator import mul
 import os
 from pathlib import Path
 import shutil
@@ -176,6 +178,9 @@ def _tile_cpu(
         if verbose:
             print("Current config:", current_config)
 
+        num_threads = functools.reduce(mul, thread_block_param)
+        bind_var = "close" if num_threads >= num_cores else "spread"
+
         if work_on_copy:
             kernel_sdfg = copy.deepcopy(_kernel_sdfg)
             kernel_sdfg.name = f"{kernel_sdfg.name}_c{i}"
@@ -224,6 +229,9 @@ def _tile_cpu(
                 "compute_element_group_dims":thread_block_param,
                 "map_schedule":dace.dtypes.ScheduleType.Default,
                 "schedule_to_add":dace.dtypes.ScheduleType.CPU_Persistent,
+                "bind_var":bind_var,
+                "schedule_var":"static",
+                "num_threads": num_threads,
             },
         )
         # Need to restore maps after each time

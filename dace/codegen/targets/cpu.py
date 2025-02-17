@@ -1875,7 +1875,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     map_header += "#pragma omp parallel for"
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
-                map_header += "#pragma omp parallel"
+                schedule = ""
+                if node.map.omp_num_threads is not 0:
+                    schedule += f" num_threads({node.map.omp_num_threads})"
+                if node.map.omp_bind is not None:
+                    schedule += f" proc_bind({node.map.omp_bind})"
+                    raise Exception(node.map.omp_bind)
+
+                map_header += f"#pragma omp parallel {schedule}"
 
             # OpenMP schedule properties
             if not in_persistent:

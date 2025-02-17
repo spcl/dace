@@ -976,6 +976,8 @@ class Map(object):
                               default=0,
                               desc="OpenMP schedule chunk size",
                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_bind = Property(dtype=str, default=None, allow_none=True, desc="OpenMP bind policy (spread, close, master)")
+
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
