@@ -623,12 +623,12 @@ class ASTFindReplaceComplex(ast.NodeTransformer):
                     current_local_index+=1
                 elif dim=="__to_be_reshaped__":
                     #this is exactly going from two dimensions to one dimension
-                    expression_under_construction+=unparse(node.slice)
+                    
                     if first_dim:
                         first_dim=False
-                        expression_under_construction+=f"%{dimdivisor}"
+                        expression_under_construction+=f"{unparse(node.slice)}%{dimdivisor}"
                     else:
-                        expression_under_construction+=f"/{old_dim_divisor}"
+                        expression_under_construction+=f"int_floor({unparse(node.slice)},{old_dim_divisor})"
 
                 else:
                     expression_under_construction+=dim
