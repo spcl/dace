@@ -63,7 +63,7 @@ By "release" ECRAD, we mean the ICON repository from step 1.
       -c ~/radiation/include/serde.h
   ```
 
-## 2. How to generate input and output data of ICON?
+## 3. How to generate input and output data of ICON?
 
 Once the serialization module is placed inside ICON, we modify the code to serialize and output data necessary to execute our DaCe implementation.
 
@@ -107,13 +107,13 @@ Finally, we serialize and save the output data of the function once it has been 
 We execute the experiment using `bash exp.exclaim_ape_R2B09.run` inside `run`, and the results
 can be found in `experiments/exclaim_ape_R2B09`.
 
-## 3. How to valdate SDFG?
+## 4. How to valdate SDFG?
 
 Once we have input and output data of the ICON function, we have to compile SDFG and build
-the tester. The tester will load input arguments, execute the DaCe generated implementation,
-and compare obtained results with the outputs from ICON.
+the tester. The tester will load input arguments, execute the DaCe-generated implementation,
+and compare the obtained results with the outputs from ICON.
 
-Below you can find an example for the `get_albedos` function of `radiation_single` interface.
+Below, you can find an example of the `get_albedos` function of the `radiation_single` interface.
 
 Build it as:
 ```
