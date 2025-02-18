@@ -109,7 +109,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                     ]
                 )
                 if num_active_threads < num_threads:
-                    code += f"if (tid < {num_active_threads}){{\n"
+                    code += f"if (tid < Min({num_active_threads}, {conds[-2]} * {line_len})){{\n"
 
                 var_id = 0
                 for dim in conds[:-2]:
