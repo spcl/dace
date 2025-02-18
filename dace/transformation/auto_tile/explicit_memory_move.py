@@ -505,7 +505,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
                 dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
                 if len(shape) > 2:
-                    for sh in reversed(dst_arr_shape[:-2]):
+                    for sh in reversed(dst_arr_shape[1:-1]):
                         dst_arr_stride_1 *= sh
                         dst_arr_strides.insert(0, dst_arr_stride_1)
             else:
