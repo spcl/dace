@@ -3,7 +3,7 @@
 Before attempting any validation or integration of ICON with DaCe, please first make sure you can build ICON
 and execute a simple experiment using ECRAD (step 1).
 Then, proceed to generate the serialization header (step 2), instrument ICON and generate data (step 3),
-and finally validate the selected DaCe implementation (step 4).
+and validate the selected DaCe implementation (step 4).
 
 Additionally, type injection can be generated (step 42), but these are not always needed for serialization.
 
@@ -65,11 +65,11 @@ By "release" ECRAD, we mean the ICON repository from step 1.
 
 ## 2. How to generate input and output data of ICON?
 
-Once serialization module is placed inside ICON, we modify
+Once the serialization module is placed inside ICON, we modify the code to serialize and output data necessary to execute our DaCe implementation.
 
-We insert imports:
+First, we insert imports:
 
-```
+```fortran
   subroutine radiation(ncol, nlev, istartcol, iendcol, config, &
        &  single_level, thermodynamics, gas, cloud, aerosol, flux)
 
@@ -79,7 +79,7 @@ We insert imports:
 
 Then, we generate the input arguments needed for a selected ICON function:
 
-```
+```fortran
     if (lhook) call dr_hook('radiation_interface:radiation',0,hook_handle)
 
     call tic()
@@ -96,7 +96,7 @@ Then, we generate the input arguments needed for a selected ICON function:
 
 Finally, we serialize and save the output data of the function once it has been executed.
 
-```
+```fortran
       if (generation ==1) then
         call serialize(at("sw_albedo_direct.after.data", asis=.true.), sw_albedo_direct)
         call serialize(at("sw_albedo_diffuse.after.data", asis=.true.), sw_albedo_diffuse)
@@ -264,7 +264,7 @@ int main(int argc, char** argv)
 
 ## 42. How to generate and use the type injector module?
 
-> ![NOTE]
+> [!NOTE]
 > This step only needs to be done once and is not necessary for standard serialization.
 
 > TLDR; 1) We generate a module `ti.F90` from _patched_ ECRAD, 2) put it in the
