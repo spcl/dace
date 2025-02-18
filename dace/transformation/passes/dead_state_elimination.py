@@ -65,16 +65,17 @@ class DeadStateElimination(ppl.Pass):
                         for _, b in dead_branches:
                             result.add(b)
                             node.remove_branch(b)
-                        # If only an 'else' is left over, inline it.
-                        if len(node.branches) == 1 and node.branches[0][0] is None:
-                            branch = node.branches[0][1]
-                            node.parent_graph.add_node(branch)
-                            for ie in cfg.in_edges(node):
-                                cfg.add_edge(ie.src, branch, ie.data)
-                            for oe in cfg.out_edges(node):
-                                cfg.add_edge(branch, oe.dst, oe.data)
-                            result.add(node)
-                            cfg.remove_node(node)
+                        # If only one branch is left, and it is unconditionally executed, inline it.
+                        if len(node.branches) == 1:
+                            cond, branch = node.branches[0]
+                            if cond is None or self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), sdfg):
+                                node.parent_graph.add_node(branch)
+                                for ie in cfg.in_edges(node):
+                                    cfg.add_edge(ie.src, branch, ie.data)
+                                for oe in cfg.out_edges(node):
+                                    cfg.add_edge(branch, oe.dst, oe.data)
+                                result.add(node)
+                                cfg.remove_node(node)
                     else:
                         result.add(node)
                         is_start = node is cfg.start_block
@@ -170,7 +171,7 @@ class DeadStateElimination(ppl.Pass):
                     raise InvalidSDFGNodeError('Conditional block detected, where else branch is not the last branch')
                 break
             # If an unconditional branch is found, ignore all other branches that follow this one.
-            if cond.as_string.strip() == '1' or self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
+            if self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
                 unconditional = branch
                 break
         if unconditional is not None:

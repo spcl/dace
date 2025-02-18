@@ -380,6 +380,60 @@ _out = _tmp
     assert np.all(out == np.where(cond, true_value, false_value))
 
 
+def test_prune_single_branch_conditional_block():
+    sdfg = dace.SDFG("conditional_sdfg")
+
+    for name in "abc":
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                dtype=dace.float64,
+                transient=False,
+        )
+    sdfg.arrays["b"].transient = True
+
+    first_state = sdfg.add_state("first_state")
+    first_state.add_mapped_tasklet(
+            "first_comp",
+            map_ranges={"__i0": "0:10"},
+            inputs={"__in1": dace.Memlet("a[__i0]")},
+            code="__out = __in1 + 10.0",
+            outputs={"__out": dace.Memlet("b[__i0]")},
+            external_edges=True,
+    )
+
+    # create states inside the nested SDFG for the if-branches
+    if_region = dace.sdfg.state.ConditionalBlock("if")
+    sdfg.add_node(if_region)
+    sdfg.add_edge(
+            first_state,
+            if_region,
+            dace.InterstateEdge()
+    )
+
+    then_body = dace.sdfg.state.ControlFlowRegion(
+            "then_body",
+            sdfg=sdfg
+    )
+    then_state = then_body.add_state("true_branch", is_start_block=True)
+    if_region.add_branch(
+            dace.sdfg.state.CodeBlock("True"),
+            then_body
+    )
+    then_state.add_mapped_tasklet(
+            "second_comp",
+            map_ranges={"__i0": "0:10"},
+            inputs={"__in1": dace.Memlet("b[__i0]")},
+            code="__out = __in1 + 1.0",
+            outputs={"__out": dace.Memlet("c[__i0]")},
+            external_edges=True,
+    )
+    sdfg.validate()
+    res = DeadStateElimination().apply_pass(sdfg, {})
+    assert res and len(res) == 1
+    assert sdfg.out_edges(first_state)[0].dst == then_body
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
@@ -400,3 +454,4 @@ if __name__ == '__main__':
     test_dce_add_type_hint_of_variable(dace.float64)
     test_dce_add_type_hint_of_variable(dace.bool)
     test_dce_add_type_hint_of_variable(np.float64)
+    test_prune_single_branch_conditional_block()
