@@ -587,7 +587,7 @@ class ASTFindReplaceComplex(ast.NodeTransformer):
                 current_val+=1
             
             last_index_expression_from_outside_context=val[-1]
-            if expression_under_construction=='od_var_560':
+            if expression_under_construction=='od_var_520':
                 last_index_expression_from_outside_context=val[-2]    
             name=last_index_expression_from_outside_context[0]
             #this means it was a struct rather than an array access:

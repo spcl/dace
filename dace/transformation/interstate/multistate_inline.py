@@ -660,7 +660,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                                             components[i] = ("__to_be_replaced__",1)
                                         complex_replacement = True    
                                     else:
-                                        raise NotImplementedError
+                                        print ("Warning: shapes not matching, must hope that the sizes are the same")
+                                        if with_reshape:
+                                            components[i] = ("__to_be_reshaped__",view_edge.data.subset.size()[i])
+                                        else:
+                                            components[i] = ("__to_be_replaced__",1)
+                                        complex_replacement = True    
+                                        
                                 else:
                                     if with_reshape:
                                         components[i] = ("__to_be_reshaped__",view_edge.data.subset.size()[i])

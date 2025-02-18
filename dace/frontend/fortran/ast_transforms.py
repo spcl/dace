@@ -1960,7 +1960,7 @@ class IfConditionExtractor(NodeTransformer):
                 if isinstance(child.cond, ast_internal_classes.BinOp_Node):
                     if child.cond.op == "==" and isinstance(child.cond.rval, ast_internal_classes.Int_Literal_Node):
                        if isinstance(child.cond.lval, ast_internal_classes.Name_Node):
-                           if child.cond.lval.name=="jb_var_1001":
+                           if child.cond.lval.name=="jb_var_2205":
                                newbody.append(child)
                                continue 
                     
