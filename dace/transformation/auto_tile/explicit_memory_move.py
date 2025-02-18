@@ -198,7 +198,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                 strides = self.src_arr.strides
                 offset_expression_1d = "+".join(
                     [
-                        f"({stride}*({offset}))"
+                        f"({cpp.sym2cpp(stride)}*({cpp.sym2cpp(offset)}))"
                         for (offset, _, _), stride in zip(self.src_subset, strides)
                     ]
                 )
@@ -213,7 +213,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                 num_active_threads = num_threads
                 offset_expression_1d = "+".join(
                     [
-                        f"({stride}*({offset}))"
+                        f"({cpp.sym2cpp(stride)}*({cpp.sym2cpp(offset)}))"
                         for (offset, _, _), stride in zip(self.src_subset, strides)
                     ]
                 )
@@ -228,12 +228,12 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                 for i, (dst_stride, src_stride) in enumerate(
                     zip(self.dst_arr.strides[:-2], self.src_arr.strides[:-2])
                 ):
-                    further_access_strs_dst.append(f"i{i} * {dst_stride}")
-                    further_access_strs_src.append(f"i{i} * {src_stride}")
-                further_access_str_src = " + ".join(further_access_strs_dst)
-                further_access_str_dst = " + ".join(further_access_strs_src)
-                if further_access_str_dst != "":
-                    further_access_str_dst = " + " + further_access_str_dst
+                    further_access_strs_dst.append(f"i{i} * {cpp.sym2cpp(dst_stride)}")
+                    further_access_strs_src.append(f"i{i} * {cpp.sym2cpp(src_stride)}")
+                further_access_str_src = " + ".join(further_access_strs_src)
+                further_access_str_dst = " + ".join(further_access_strs_dst)
+                #if further_access_str_dst != "":
+                #    further_access_str_dst = " + " + further_access_str_dst
                 if further_access_str_src != "":
                     further_access_str_src = " + " + further_access_str_src
 
@@ -242,10 +242,10 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                 code += f"#pragma unroll\n"
                 code += f"for (int i{var_id+1} = tid; i{var_id+1} < {conds[-1]}; i{var_id+1} += {num_active_threads}) {{\n"
                 further_access_str_src += (
-                    " + " + f"((i{var_id}) * {self.src_arr.strides[-2]}) + i{var_id+1}"
+                    " + " + f"((i{var_id}) * {cpp.sym2cpp(self.src_arr.strides[-2])}) + i{var_id+1}"
                 )
                 further_access_str_dst += (
-                    f"((i{var_id}) * {self.dst_arr.strides[-2]}) + i{var_id+1}"
+                    " + " + f"((i{var_id}) * {cpp.sym2cpp(self.dst_arr.strides[-2])}) + i{var_id+1}"
                 )
 
                 code += f"{self.dst_arr_name}[{further_access_str_dst}] = {self.src_arr_name}[{offset_expression_1d}{further_access_str_src}];\n"
@@ -259,9 +259,9 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
 
     def generate_code(self, inputs, outputs):
         code = ""
-        code += f"// {self.src_arr_name}[{','.join([str(s) for s in self.src_arr.shape])}]\n"
-        code += f"// {self.dst_arr_name}[{','.join([str(s) for s in self.dst_arr.shape])}]\n"
-        code += f"// Strides // {self.dst_arr_name}[{','.join([str(s) for s in self.dst_arr.strides])}]\n"
+        code += f"// {self.src_arr_name}[{','.join([cpp.sym2cpp(s) for s in self.src_arr.shape])}]\n"
+        code += f"// {self.dst_arr_name}[{','.join([cpp.sym2cpp(s) for s in self.dst_arr.shape])}]\n"
+        code += f"// Strides // {self.dst_arr_name}[{','.join([cpp.sym2cpp(s) for s in self.dst_arr.strides])}]\n"
         num_threads = reduce(lambda x, y: x * y, self.num_threads)
         tiles_evenly = self.tiles_evenly
 
@@ -274,7 +274,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
 
         inner_dim_checks = [lim for lim in self.dst_arr.shape]
         outer_dim_checks = [
-            f"Min({lim - beg}, {dst_lim})"
+            f"Min({cpp.sym2cpp(lim - beg)}, {cpp.sym2cpp(dst_lim)})"
             for (beg, end, step), lim, dst_lim in zip(
                 self.src_subset, self.src_arr.shape, self.dst_arr.shape
             )
