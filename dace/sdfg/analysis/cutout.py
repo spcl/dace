@@ -1059,7 +1059,7 @@ def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState
                 check_for_read_after.add(dn.data)
 
         original_state: SDFGState = out_translation[state]
-        for edge in original_state.parent_graph.out_edges(original_state.parent_graph):
+        for edge in original_state.parent_graph.out_edges(original_state):
             if edge.dst in cutout_reach:
                 border_out_edges.add(edge.data)
 
