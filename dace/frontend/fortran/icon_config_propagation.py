@@ -56,13 +56,20 @@ if __name__ == "__main__":
     else:
         already_parsed_ast = None
 
+    if len(sys.argv) > 5:
+        entry_point_module = sys.argv[5]
+        entry_point_function = sys.argv[6]
+    else:
+        entry_point_module = 'radiation_interface'
+        entry_point_function = 'radiation'
+
     base_dir_ecrad = f"{base_icon_path}/externals/ecrad"
     fortran_files = find_path_recursive(base_dir_ecrad)
 
     # Construct the primary ECRAD AST.
     parse_cfg = ParseConfig(
         sources=[Path(f) for f in fortran_files],
-        entry_points=[('radiation_interface', 'radiation')],
+        entry_points=[(entry_point_module, entry_point_function)],
         config_injections=config_injection_list('dace/frontend/fortran/conf_files'),
     )
     if already_parsed_ast is None:
