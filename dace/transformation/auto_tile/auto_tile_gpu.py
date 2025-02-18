@@ -362,7 +362,7 @@ def _tile_gpu(
                 print(f"Transformed SDFG: {time:.10f} ms")
                 print(f"Current config: {current_config}, best config: {best_config}")
                 print(f"Non-transformed SDFG: {non_transformed_time:.10f} ms")
-                if verification_failed:
+                if not verification_failed:
                     logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","{time}","{non_transformed_time / time}"\n')
                 else:
                     logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","99999999999999.9","0.0"\n')
