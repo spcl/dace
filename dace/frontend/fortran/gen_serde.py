@@ -398,7 +398,7 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
 def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     uses, ser_ops = [], []
     gd_struct, des_ops = [], []
-    hack_typs, hack_args = [], []
+    hack_typs, hack_args, hack_ops, hack_call = [], [], [], []
     for mod in walk(ast, Module):
         mname = find_name_of_node(mod)
         spart = atmost_one(children_of_type(mod, Specification_Part))
@@ -419,8 +419,6 @@ call serialize(io, {vname}, cleanup=.false.)
 """)
             vctyp = _real_ctype(g.arrays[vname])
             gd_struct.append(f"{vctyp} {vname} = {{}};")
-            hack_typs.append(f"{vctyp}")
-            hack_args.append(f"{vname}")
             if isinstance(g.arrays[vname], dace.data.Array):
                 des_ops.append(f"""
 {{
@@ -429,10 +427,25 @@ call serialize(io, {vname}, cleanup=.false.)
     g->{vname} = arr;
 }}
 """)
+                hack_typs.append(f"{vctyp}")
+                hack_args.append(f"{vname}")
+                hack_call.append(f"{vname}")
+                hack_ops.append(f"""
+{{
+    auto& m = (*ARRAY_META_DICT())[gdata->{vname}];
+    std::copy(gdata->{vname}, gdata->{vname}+m.volume(), {vname});
+}}
+""")
             else:
                 des_ops.append(f"""
-read_line(s, "# {mname}.{vname}");
-serde::deserialize(g->{vname});
+read_line(s, "# {vname}");
+deserialize(g->{vname}, s);
+""")
+                hack_typs.append(f"{vctyp}*")
+                hack_args.append(f"{vname}")
+                hack_call.append(f"&{vname}")
+                hack_ops.append(f"""
+*{vname} = gdata->{vname};
 """)
 
     uses = '\n'.join(uses)
@@ -450,14 +463,8 @@ end subroutine serialize_global_data
     des_ops = '\n'.join(des_ops)
     hack_sig = ', '.join(f"{t} {a}" for t, a in zip(hack_typs, hack_args))
     hack_sig_typonly = ', '.join(f"{t}" for t in hack_typs)
-    hack_call = ', '.join(f"{a}" for a in hack_args)
-    hack_ops = '\n'.join(f"""
-{{
-auto& m = (*ARRAY_META_DICT())[gdata->{a}];
-std::cerr << "COPYING {a}: #" << m.volume() << std::endl;
-std::copy(gdata->{a}, gdata->{a}+m.volume(), {a});
-}}
-""" for a in hack_args)
+    hack_call = ', '.join(hack_call)
+    hack_ops = '\n'.join(hack_ops)
     cpp_code = f"""
 struct global_data {{
     {gd_struct}
@@ -539,6 +546,27 @@ void deserialize(long long* x, std::istream& s) {{
 }}
 void deserialize(bool* x, std::istream& s) {{
     read_scalar(*x, s);
+}}
+void deserialize(float& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(double& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(long double& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(int& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(long& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(long long& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(bool& x, std::istream& s) {{
+    read_scalar(x, s);
 }}
 """]
     cpp_serializer_fns: List[str] = [f"""

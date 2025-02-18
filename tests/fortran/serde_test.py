@@ -142,8 +142,8 @@ end subroutine f2
         prepend_children(y, [Use_Stmt(f"use serde"), Use_Stmt(f"use type_injection")])
         append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}", .true.), s)'))
         append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}.bbz", .true.), s%name%w%bBZ)'))
-        append_children(x, Call_Stmt(f'call serialize_global_data(at("{s_data.name}.gdata"))'))
-        append_children(x, Call_Stmt(f'call type_inject(at("{s_data.name}.ti"), s%name%w)'))
+        append_children(x, Call_Stmt(f'call serialize_global_data(at("{s_data.name}.gdata", .true.))'))
+        append_children(x, Call_Stmt(f'call type_inject(at("{s_data.name}.ti", .true.), s%name%w)'))
 
         # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
         # the serialization is as expected.
@@ -242,8 +242,11 @@ end subroutine f2
 
 int main() {{
     std::ifstream data("{s_data.name}");
+    assert (data.good());
     std::ifstream data_bbz("{s_data.name}.bbz");
+    assert (data_bbz.good());
     std::ifstream data_gdata("{s_data.name}.gdata");
+    assert (data_gdata.good());
 
     serde::deserialize(serde::global_data::singleton(), data_gdata);
 
