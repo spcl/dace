@@ -10,7 +10,7 @@ import dace
 from dace.config import Config
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children, \
     identifier_specs
-from dace.frontend.fortran.ast_utils import singular
+from dace.frontend.fortran.ast_utils import singular, atmost_one
 from dace.frontend.fortran.config_propagation_data import deserialize
 from dace.frontend.fortran.fortran_parser import ParseConfig, \
     create_fparser_ast, create_internal_ast, SDFGConfig, create_sdfg_from_internal_ast, \
