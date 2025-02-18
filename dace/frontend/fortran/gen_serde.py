@@ -49,11 +49,8 @@ contains
     character(len=*), intent(in) :: prefix
     character(len=:), allocatable :: path
     character(len=50) :: gen
-    logical, optional, intent(in) :: asis
-    logical :: asis_local
-    asis_local = .false.
-    if (present(asis)) asis_local = asis
-    if (asis_local) then
+    logical, intent(in) :: asis
+    if (asis) then
       path = prefix
     else
       ! NOTE: SINCE WE ARE WRITING TO STRING, WE DON'T ADVANCE.
@@ -67,7 +64,8 @@ contains
     character(len=*), intent(in) :: prefix
     integer :: io
     logical, optional, intent(in) :: asis
-    logical :: asis_local = .false.
+    logical :: asis_local
+    asis_local = .false.
     if (present(asis)) asis_local = asis
     open (NEWUNIT=io, FILE=cat(prefix, asis_local), STATUS="replace", ACTION="write")
   end function at
