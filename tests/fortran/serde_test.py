@@ -31,13 +31,11 @@ def parse_and_improve(sources: Dict[str, str]):
 def run_main_cpp(cpp_code: str, root_dir: str, libname: str) -> str:
     DACE_ROOT = Path(dace.__file__).parent
     return SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc([
-        *Config.get_default('compiler', 'cpu', 'args').split(),
+        f"{root_dir}/src/cpu/{libname}.cpp",
+        *Config.get('compiler', 'cpu', 'args').split(),
         f"-std=c++17",
         f"-I{root_dir}/include",
         f"-I{DACE_ROOT}/runtime/include/",
-        f"-L{root_dir}/build",
-        f"-l{libname}",
-        f"-Wl,-rpath,{root_dir}/build",
     ])
 
 
