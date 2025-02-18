@@ -948,8 +948,8 @@ end subroutine {ti_fn_name}
         ti_procs.append(f"{name}")
         append_children(impls, fn)
     iface = singular(p for p in walk(f90_mod, Interface_Block) if find_name_of_node(p) == 'type_inject')
-    proc_names = Procedure_Stmt(f"module procedure {', '.join(ti_procs)}")
-    set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
+    proc_names = [Procedure_Stmt(f"module procedure {', '.join(ti_procs)}")] if ti_procs else []
+    set_children(iface, iface.children[:-1] + proc_names + iface.children[-1:])
 
     return f90_mod.tofortran()
 
