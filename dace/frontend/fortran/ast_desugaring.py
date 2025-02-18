@@ -2898,7 +2898,7 @@ def _item_comp_matches_actual_comp(item_comp: str, actual_comp: str) -> bool:
     if f"{actual_comp}_a" == item_comp:
         # Matched the allocatable array's special variable.
         return True
-    dims: re.Match = re.search(r'^__f2dace_SO?A_([a-zA-Z0-9_]+)_d_[0-9+]_s$', item_comp)
+    dims: re.Match = re.match(r'^__f2dace_SO?A_([a-zA-Z0-9_]+)_d_[0-9]+_s$', item_comp)
     if dims and dims.group(1) == actual_comp:
         # Matched the general array's special variable.
         return True
