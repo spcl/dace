@@ -16,13 +16,14 @@ python -m dace.frontend.fortran.tools.generate_serde_f90_and_cpp \
 
 import argparse
 from pathlib import Path
+from typing import List
 
 from dace import SDFG
-from dace.frontend.fortran.ast_desugaring import const_eval_nodes, inject_const_evals
+from dace.frontend.fortran.ast_desugaring import const_eval_nodes, ConstTypeInjection, inject_const_evals
+from dace.frontend.fortran.config_propagation_data import deserialize, ecrad_config_injection_list
 from dace.frontend.fortran.create_preprocessed_ast import find_all_f90_files
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 from dace.frontend.fortran.gen_serde import generate_serde_code, _keep_only_derived_types
-from dace.frontend.fortran.icon_config_propagation import config_injection_list
 
 
 def main():
@@ -46,7 +47,7 @@ def main():
     print(f"Will be using the SDFG as the deserializer target: {args.in_sdfg}")
     g = SDFG.from_file(args.in_sdfg)
 
-    cfg = ParseConfig(sources=input_f90s, config_injections=config_injection_list())
+    cfg = ParseConfig(sources=input_f90s, config_injections=ecrad_config_injection_list())
     ast = create_fparser_ast(cfg)
     ast = _keep_only_derived_types(ast)
     ast = const_eval_nodes(ast)
