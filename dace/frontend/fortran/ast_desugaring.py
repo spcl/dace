@@ -2898,7 +2898,7 @@ def _item_comp_matches_actual_comp(item_comp: str, actual_comp: str) -> bool:
     if f"{actual_comp}_a" == item_comp:
         # Matched the allocatable array's special variable.
         return True
-    dims: re.Match = re.search(r'^([a-zA-Z0-9_]+)_[od][0-9+]_s$', item_comp)
+    dims: re.Match = re.search(r'^__f2dace_SO?A_([a-zA-Z0-9_]+)_d_[0-9+]_s$', item_comp)
     if dims and dims.group(1) == actual_comp:
         # Matched the general array's special variable.
         return True
@@ -2910,10 +2910,6 @@ def _type_injection_applies_to_instance(item: ConstTypeInjection,
                                         comp_spec: SPEC,
                                         alias_map: SPEC_TABLE) -> bool:
     # ASSUMPTION: `item.scope_spec` must have been taken care of already.
-
-    assert len(item.component_spec) == 1, \
-        f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec}"
-    item_comp = item.component_spec[-1]
 
     if not comp_spec:
         # Type injection always requires a component.
@@ -2938,12 +2934,15 @@ def _type_injection_applies_to_instance(item: ConstTypeInjection,
             return False
         inst_typ = find_type_of_entity(comp, alias_map)
         comp_spec = comp_spec[1:]
-    comp: str = comp_spec[-1]
 
     if inst_typ.spec != item.type_spec:
         # `item` does not apply to this type.
         return False
-
+    if comp_spec[:-1] != item.component_spec[:-1]:
+        # For what's left, everything until the leaf must exactly match.
+        return False
+    comp: str = comp_spec[-1]
+    item_comp = item.component_spec[-1]
     return _item_comp_matches_actual_comp(item_comp, comp)
 
 
@@ -3009,8 +3008,10 @@ def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
 
 
 def _type_injection_applies_to_component(item: ConstTypeInjection, defn_spec: SPEC, comp: str) -> bool:
-    assert len(item.component_spec) == 1, \
-        f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec}"
+    if len(item.component_spec) > 1:
+        print(f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec} "
+              f"to match against {comp}; moving on...", file=sys.stderr)
+        return False
     item_comp = item.component_spec[-1]
 
     if item.type_spec != defn_spec:
@@ -3115,6 +3116,8 @@ def inject_const_evals(ast: Program,
                 siz_or_off: List[ConstInjection] = list(_find_items_applicable_to_component(size_items, al))
             else:
                 siz_or_off: List[ConstInjection] = list(_find_items_applicable_to_instance(size_items, al, alias_map))
+            if not siz_or_off:
+                continue
 
             def _key_(z: ConstInjection) -> Optional[str]:
                 if z.component_spec:
@@ -3127,8 +3130,8 @@ def inject_const_evals(ast: Program,
                 if shape[idx] != ':':
                     # It's already fixed anyway.
                     continue
-                siz = atmost_one(z for z in siz_or_off if _key_(z) == f"{name}_d{idx}_s")
-                off = atmost_one(z for z in siz_or_off if _key_(z) == f"{name}_o{idx}_s")
+                siz = atmost_one(z for z in siz_or_off if _key_(z) == f"__f2dace_SA_{name}_d_{idx}_s")
+                off = atmost_one(z for z in siz_or_off if _key_(z) == f"__f2dace_SOA_{name}_d_{idx}_s")
                 if not siz or not off:
                     # We cannot inject and fix the size.
                     continue

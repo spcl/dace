@@ -6,6 +6,7 @@ from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 import networkx as nx
 import numpy as np
+import warnings
 
 import dace
 from dace import config, data, dtypes
@@ -1107,6 +1108,20 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
     # while isinstance(end_state, ControlFlowRegion):
     #     end_state = end_state.parent_graph
     assert not isinstance(end_state, ControlFlowRegion)
+
+
+    if start_state.parent_graph != end_state.parent_graph:
+        warnings.warn(f'Allocation and deallocation of "{data_name}" is not in the same CFG region... fixing that...')
+        cfg = start_state.parent_graph
+        sink_nodes = cfg.sink_nodes()
+        assert len(sink_nodes) > 0
+        if len(sink_nodes) > 1 or not isinstance(sink_nodes[0], SDFGState):
+            sink = cfg.add_state()
+            for snode in sink_nodes:
+                cfg.add_edge(snode, sink, dace.InterstateEdge())
+        else:
+            sink = sink_nodes[0]
+        end_state = sink
 
     # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
     # raise NotImplementedError

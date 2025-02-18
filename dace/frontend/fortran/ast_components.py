@@ -1323,7 +1323,8 @@ class InternalFortranAst:
 
                         size, assumed_vardecls, offset = self.assumed_array_shape(var, actual_name.name, get_line(node))
                         if size is None:
-                            offset = None
+                            size = []
+                            offset = [1]
                         else:
                             # only one array
                             size = size[0]
@@ -1358,8 +1359,8 @@ class InternalFortranAst:
                     vardecls.append(
                         ast_internal_classes.Symbol_Decl_Node(name=actual_name.name,
                                                               type=testtype,
-                                                              sizes=None,
-                                                              offsets=None,
+                                                              sizes=[],
+                                                              offsets=[1],
                                                               alloc=alloc,
                                                               init=init,
                                                               optional=optional))
