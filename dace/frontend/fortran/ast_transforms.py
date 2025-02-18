@@ -2484,14 +2484,14 @@ class TypeInference(NodeTransformer):
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
-        from dace.frontend.fortran.intrinsics import MathFunctions
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
 
         new_args = []
         for arg in node.args:
             new_args.append(self.visit(arg))
         node.args = new_args
 
-        sizes, offsets, return_type = MathFunctions.output_size(node)
+        sizes, offsets, return_type = FortranIntrinsics.output_size(node)
         if sizes is not None:
             node.sizes = sizes
             node.offsets = offsets

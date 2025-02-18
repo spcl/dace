@@ -1359,8 +1359,8 @@ class InternalFortranAst:
                     vardecls.append(
                         ast_internal_classes.Symbol_Decl_Node(name=actual_name.name,
                                                               type=testtype,
-                                                              sizes=None,
-                                                              offsets=None,
+                                                              sizes=[],
+                                                              offsets=[1],
                                                               alloc=alloc,
                                                               init=init,
                                                               optional=optional))

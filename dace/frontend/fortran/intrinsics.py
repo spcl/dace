@@ -826,6 +826,15 @@ class Sum(LoopBasedReplacement):
         def _result_update_op(self):
             return "+"
 
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        return [], first_arg.type
+
 
 class Product(LoopBasedReplacement):
     """
@@ -849,6 +858,14 @@ class Product(LoopBasedReplacement):
         def _result_update_op(self):
             return "*"
 
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        return [], first_arg.type
 
 class AnyAllCountTransformation(LoopBasedReplacementTransformation):
 
@@ -1002,6 +1019,16 @@ class Any(LoopBasedReplacement):
         def func_name() -> str:
             return "__dace_any"
 
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        # Without DIM parameter, it only returns scalars
+        return [], "LOGICAL"
+
 
 class All(LoopBasedReplacement):
     """
@@ -1033,6 +1060,16 @@ class All(LoopBasedReplacement):
         @staticmethod
         def func_name() -> str:
             return "__dace_all"
+
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        # Without DIM parameter, it only returns scalars
+        return [], "LOGICAL"
 
 
 class Count(LoopBasedReplacement):
@@ -1070,6 +1107,16 @@ class Count(LoopBasedReplacement):
         @staticmethod
         def func_name() -> str:
             return "__dace_count"
+
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        # Without DIM parameter, it only returns scalars
+        return [], "INTEGER"
 
 
 class MinMaxValTransformation(LoopBasedReplacementTransformation):
@@ -1178,6 +1225,16 @@ class MinVal(LoopBasedReplacement):
         def func_name() -> str:
             return "__dace_minval"
 
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        # Without DIM parameter, it only returns scalars
+        return [], first_arg.type
+
 
 class MaxVal(LoopBasedReplacement):
     """
@@ -1210,6 +1267,16 @@ class MaxVal(LoopBasedReplacement):
         def func_name() -> str:
             return "__dace_maxval"
 
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        # Without DIM parameter, it only returns scalars
+        return [], first_arg.type
+
 
 class Merge(LoopBasedReplacement):
     class Transformation(LoopBasedReplacementTransformation):
@@ -1235,7 +1302,11 @@ class Merge(LoopBasedReplacement):
                 In MERGE, we write directly to the destination array.
                 Thus, we store this result array for future use.
             """
-            pass
+            input_type = self.get_var_declaration(var.parent, self.first_array)
+
+            var_decl = self.get_var_declaration(var.parent, var)
+            var.type = input_type.type
+            var_decl.type = input_type.type
 
         def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -1254,6 +1325,7 @@ class Merge(LoopBasedReplacement):
                 self.first_array = node.args[0]
                 self.second_array = node.args[1]
                 self.mask_cond = node.args[2]
+
                 return
 
             else:
@@ -1269,7 +1341,7 @@ class Merge(LoopBasedReplacement):
                 assert len_pardecls_first_array == len_pardecls_second_array
                 if len_pardecls_first_array == 0:
                     self.uses_scalars = True
-                else:    
+                else:
                     self.uses_scalars = False
 
             # Last argument is either an array or a binary op
@@ -1414,6 +1486,15 @@ class Merge(LoopBasedReplacement):
                 line_number=node.line_number
             )
 
+    @staticmethod
+    def output_size(args: ast_internal_classes.FNode) -> Optional[Tuple[list, str]]:
+
+        first_arg = args[0]
+        if first_arg.type == 'VOID':
+            return None
+
+        return first_arg.sizes, first_arg.type
+
 
 class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
     array1 = xf.PatternNode(nodes.AccessNode)
@@ -1520,7 +1601,7 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
 
 
 class MathFunctions(IntrinsicTransformation):
-    MathTransformation = namedtuple("MathTransformation", "function return_type")
+    MathTransformation = namedtuple("MathTransformation", "function return_type size_function", defaults=[None, None, None])
     MathReplacement = namedtuple("MathReplacement", "function replacement_function return_type")
 
     def generate_scale(arg: ast_internal_classes.Call_Expr_Node):
@@ -1628,8 +1709,8 @@ class MathFunctions(IntrinsicTransformation):
         "ATAN": MathTransformation("atan", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG"),
         "DOT_PRODUCT": MathTransformation("__dace_blas_dot", "FIRST_ARG"),
-        "TRANSPOSE": MathTransformation("__dace_transpose", "FIRST_ARG"),
-        "MATMUL": MathTransformation("__dace_matmul", "FIRST_ARG"),
+        "TRANSPOSE": MathTransformation("__dace_transpose", "FIRST_ARG", IntrinsicSDFGTransformation.transpose_size),
+        "MATMUL": MathTransformation("__dace_matmul", "FIRST_ARG", IntrinsicSDFGTransformation.matmul_size),
         "IBSET": MathTransformation("bitwise_set", "INTEGER"),
         "IEOR": MathTransformation("bitwise_xor", "INTEGER"),
         "ISHFT": MathTransformation("bitwise_shift", "INTEGER"),
@@ -1637,21 +1718,6 @@ class MathFunctions(IntrinsicTransformation):
         "BTEST": MathTransformation("bitwise_test", "INTEGER"),
         "IBITS": MathTransformation("bitwise_extract", "INTEGER"),
         "IAND": MathTransformation("bitwise_and", "INTEGER")
-    }
-
-    @staticmethod
-    def one_to_one_size(node: ast_internal_classes.Call_Expr_Node, sizes: List[ast_internal_classes.FNode]):
-        return sizes[0]
-
-    INTRINSIC_SIZE_FUNCTIONS = {
-        "TRANSPOSE": IntrinsicSDFGTransformation.transpose_size,
-        "MATMUL": IntrinsicSDFGTransformation.matmul_size,
-        "EXP": one_to_one_size.__func__,
-        "MAX": one_to_one_size.__func__,
-        "MIN": one_to_one_size.__func__,
-        "SQRT": one_to_one_size.__func__,
-        "LOG": one_to_one_size.__func__,
-        "EXP": one_to_one_size.__func__,
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1718,7 +1784,6 @@ class MathFunctions(IntrinsicTransformation):
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
             if isinstance(replacement_rule, dict):
-
                 replacement_rule = replacement_rule[input_type]
             if replacement_rule.return_type == "FIRST_ARG":
                 return_type = input_type
@@ -1730,33 +1795,6 @@ class MathFunctions(IntrinsicTransformation):
                 node.type = return_type
             else:
                 binop_node.rval = replacement_rule.replacement_function(node)
-
-            # replace types of return variable - LHS of the binary operator
-            var = binop_node.lval
-            if isinstance(var, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node,
-                                ast_internal_classes.Array_Subscript_Node)):
-
-                var_decl = self.get_var_declaration(var.parent, var)
-
-                if var.type == 'VOID':
-                    var.type = return_type
-                    var_decl.type = return_type
-
-                    # we also need to determine the size of the LHS when it's new
-
-                    if func_name in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
-
-                        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[func_name]
-
-                        sizes = []
-                        for arg in node.args:
-                            sizes.append(arg.sizes)
-
-                        var_decl.sizes = size_func(node, sizes)
-                        var_decl.offsets = [1] * len(var_decl.sizes)
-
-                        var.sizes = var_decl.sizes
-                        var.offsets = var_decl.offsets
 
             return binop_node
 
@@ -1785,49 +1823,6 @@ class MathFunctions(IntrinsicTransformation):
         return [f'__dace_{f}' for f in funcs]
 
     @staticmethod
-    def output_size(node: ast_internal_classes.Call_Expr_Node):
-
-        name = node.name.name.split('__dace_')
-        if len(name) != 2 or name[1].upper() not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
-            return None, None, 'VOID'
-
-        # we also need to determine the size of the LHS when it's new
-        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[name[1].upper()]
-
-        sizes = []
-        for arg in node.args:
-
-            if isinstance(arg, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Real_Literal_Node)):
-                sizes.append(1)
-            else:
-                sizes.append(arg.sizes)
-
-        sizes = size_func(node, sizes)
-
-        if isinstance(sizes, ast_internal_classes.Int_Literal_Node):
-            return sizes, [1], return_type
-
-        # FIXME: copy-paste from code above; we used to do this in intrinsics, we should now connect
-        # to type infernece when possible
-        input_type = node.args[0].type
-        return_type = 'VOID'
-
-        if input_type != 'VOID':
-            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[name[1].upper()]
-            if isinstance(replacement_rule, dict):
-                replacement_rule = replacement_rule[input_type]
-
-            if replacement_rule.return_type == "FIRST_ARG":
-                return_type = input_type
-            else:
-                return_type = replacement_rule.return_type
-
-        if isinstance(sizes, list):
-            return sizes, [1] * len(sizes), return_type
-        else:
-            return [], [1], return_type
-
-    @staticmethod
     def replacable(func_name: str) -> bool:
         return func_name in MathFunctions.INTRINSIC_TO_DACE
 
@@ -1852,7 +1847,7 @@ class FortranIntrinsics:
         "ALL": All,
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
-        "MERGE": Merge,
+        "MERGE": Merge
     }
 
     # All functions return an array
@@ -1961,3 +1956,64 @@ class FortranIntrinsics:
                 name=name, type="VOID", subroutine=False,
                 args=args.args, line_number=line
             )
+
+    @staticmethod
+    def output_size(node: ast_internal_classes.Call_Expr_Node):
+
+        name = node.name.name.split('__dace_')
+        #if len(name) != 2 or name[1].upper() not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
+        if len(name) != 2:
+            return None, None, 'VOID'
+
+        sizes = []
+        for arg in node.args:
+
+            if isinstance(arg, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Real_Literal_Node)):
+                sizes.append(1)
+            else:
+                sizes.append(arg.sizes)
+
+        input_type = node.args[0].type
+        return_type = 'VOID'
+
+        func_name = name[1].upper()
+
+        if func_name in FortranIntrinsics.IMPLEMENTATIONS_AST:
+
+            replacement_rule = FortranIntrinsics.IMPLEMENTATIONS_AST[func_name]
+            res = replacement_rule.output_size(node.args)
+            if res is None:
+                return None, None, 'VOID'
+            else:
+                sizes = res[0]
+                return_type = res[1]
+
+        elif func_name in MathFunctions.INTRINSIC_TO_DACE:
+
+            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
+            if isinstance(replacement_rule, dict):
+                replacement_rule = replacement_rule[input_type]
+
+            if isinstance(replacement_rule, MathFunctions.MathTransformation) and replacement_rule.size_function is not None:
+
+                sizes = replacement_rule.size_function(node, sizes)
+            else:
+
+                if input_type != 'VOID':
+
+                    if replacement_rule.return_type == "FIRST_ARG":
+                        return_type = input_type
+                    else:
+                        return_type = replacement_rule.return_type
+
+                sizes = sizes[0]
+
+        else:
+            return None, None, 'VOID'
+
+        if isinstance(sizes, ast_internal_classes.Int_Literal_Node):
+            return sizes, [1], return_type
+        elif isinstance(sizes, list):
+            return sizes, [1] * len(sizes), return_type
+        else:
+            return [], [1], return_type
