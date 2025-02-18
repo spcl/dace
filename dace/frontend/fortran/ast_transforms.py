@@ -2363,8 +2363,13 @@ class TypeInference(NodeTransformer):
         should_be_updated = False
         if node.lval.type == 'VOID':
             should_be_updated = True
+
         if self._get_sizes(node.lval) is None:
             should_be_updated = True
+
+        # We do NOT overwrite size of a varible if it has been defined by the user.
+        # We only do it for temporaries introduced by our transformations.
+        # At this moment, the only way to distinguish between them is the `tmp_` prefix.
         if isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.name.startswith("tmp_"):
             should_be_updated = True
 
@@ -3037,6 +3042,7 @@ class ReplaceStructArgsLibraryNodes(NodeTransformer):
                             ])
                         )
 
+                        # No need to create array subscript node - Array2Loop will catch that.
                         dest_node = ast_internal_classes.Name_Node(
                             name=tmp_var_name,
                             parent=call_node.parent,
