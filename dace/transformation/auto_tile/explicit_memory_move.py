@@ -18,7 +18,7 @@ from functools import reduce
 from typing import Any, List, Dict
 from dace import symbol
 from sympy import nextprime
-
+from dace.codegen.targets import cpp
 
 @make_properties
 class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
@@ -104,7 +104,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                 num_active_threads = real_lines_at_a_time * line_len
                 offset_expression_1d = "+".join(
                     [
-                        f"({stride}*({offset}))"
+                        f"({cpp.sym2cpp(stride)}*({cpp.sym2cpp(offset)}))"
                         for (offset, _, _), stride in zip(self.src_subset, strides)
                     ]
                 )
@@ -113,7 +113,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
 
                 var_id = 0
                 for dim in conds[:-2]:
-                    code += f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
+                    code += f"for (int i{var_id} = 0; i{var_id} < {cpp.sym2cpp(dim)}; i{var_id} += 1) {{\n"
                     var_id += 1
 
                 further_access_strs_dst = []
@@ -126,10 +126,10 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                         self.src_arr.shape[:-2],
                     )
                 ):
-                    further_access_strs_dst.append(f"i{i} * {dst_stride}")
-                    further_access_strs_src.append(f"i{i} * {src_stride}")
-                further_access_str_src = " + ".join(further_access_strs_dst)
-                further_access_str_dst = " + ".join(further_access_strs_src)
+                    further_access_strs_dst.append(f"i{i} * {cpp.sym2cpp(dst_stride)}")
+                    further_access_strs_src.append(f"i{i} * {cpp.sym2cpp(src_stride)}")
+                further_access_str_src = " + ".join(further_access_strs_src)
+                further_access_str_dst = " + ".join(further_access_strs_dst)
                 if further_access_str_dst != "":
                     further_access_str_dst = " + " + further_access_str_dst
                 if further_access_str_src != "":
@@ -142,7 +142,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                         self.src_arr.shape[:-1],
                     )
                 ):
-                    bound_checks.append((f"i{i}", src_lim))
+                    bound_checks.append((f"i{i}", cpp.sym2cpp(src_lim)))
 
                 if dynamic_check:
                     code += f"const int effectivenum_threads = {lines_at_a_time} * effective_line_len;\n"
@@ -158,26 +158,31 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                             remainder_iters = 0
                     code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{\n"
                     further_access_str_src += (
-                        " + " + f"((i{var_id}) * {self.src_arr.strides[-2]})"
+                        " + " + f"((i{var_id}) * {cpp.sym2cpp(self.src_arr.strides[-2])})"
                     )
                     further_access_str_dst += (
-                        " + " + f"((i{var_id}) * {self.dst_arr.strides[-2]})"
+                        " + " + f"((i{var_id}) * {cpp.sym2cpp(self.dst_arr.strides[-2])})"
                     )
+                else:
+                     code += f"int i{var_id} = 0;\n"
 
                 if dynamic_check:
                     code += f"if(line_offset < effective_line_len && line_num + {bound_checks[-1][0]} < {conds[-2]}){{\n"
 
-                code += f"{self.dst_arr_name}[line_num*{self.dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self.src_arr_name}[{offset_expression_1d} + line_num*{self.src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
+                code += f"//{cpp.sym2cpp(self.dst_arr.strides[-2])}, {self.dst_arr.strides}, {further_access_str_dst}\n"
+                code += f"//{cpp.sym2cpp(self.src_arr.strides[-2])}, {self.src_arr.strides}, {further_access_str_src}\n"
+                code += f"{self.dst_arr_name}[line_num*{cpp.sym2cpp(self.dst_arr.strides[-2])} + line_offset{further_access_str_dst}] = {self.src_arr_name}[{offset_expression_1d} + line_num*{cpp.sym2cpp(self.src_arr.strides[-2])} + line_offset{further_access_str_src}];\n"
 
                 if self.dst_arr.shape[-2] > real_lines_at_a_time:
                     code += f"}}\n"
 
-                if not dynamic_check:
-                    if remainder_iters > 0:
-                        code += f"if (tid < {remainder_iters*line_len}){{\n"
-                        code += f"const int i{var_id} = {conds[-2]};\n"
-                        code += f"{self.dst_arr_name}[line_num*{self.dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self.src_arr_name}[{offset_expression_1d} + line_num*{self.src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
-                        code += "}\n"
+                if self.dst_arr.shape[-2] > real_lines_at_a_time:
+                    if not dynamic_check:
+                        if remainder_iters > 0:
+                            code += f"if (tid < {remainder_iters*line_len}){{\n"
+                            code += f"const int i{var_id} = {conds[-2]};\n"
+                            code += f"{self.dst_arr_name}[line_num*{cpp.sym2cpp(self.dst_arr.strides[-2])} + line_offset{further_access_str_dst}] = {self.src_arr_name}[{offset_expression_1d} + line_num*{cpp.sym2cpp(self.src_arr.strides[-2])} + line_offset{further_access_str_src}];\n"
+                            code += "}\n"
 
                 if dynamic_check:
                     code += f"}}\n" * 2
@@ -494,17 +499,17 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 int((e + 1 - b) / s)
                 for b, e, s in self.thread_group_map_entry.map.range
             ]
-            strides = None
+            dst_arr_strides = None
             if self.pad_contig_dim:
-                stride_0 = 1
-                stride_1 = self.find_next_prime(shape[-1])
-                strides = [stride_1, stride_0]
+                dst_arr_stride_0 = 1
+                dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
+                dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
                 if len(shape) > 2:
-                    for sh in reversed(shape[:-2]):
-                        stride_1 *= sh
-                        strides.insert(0, stride_1)
+                    for sh in reversed(dst_arr_shape[:-2]):
+                        dst_arr_stride_1 *= sh
+                        dst_arr_strides.insert(0, dst_arr_stride_1)
             else:
-                strides = None
+                dst_arr_strides = None
             #raise Exception(strides, shape, self.pad_contig_dim, self.tiles_evenly)
 
             pruned_src_arr_name = self.remove_prefix(src_arr_name)
@@ -517,11 +522,12 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                     dst_arr_name = dst_arr_name + str(c)
                 else:
                     c += 1
+
             (dst_arr_name, dst_arr) = sdfg.add_array(
                 name=dst_arr_name,
                 dtype=sdfg.arrays[src_arr_name].dtype,
                 shape=dst_arr_shape,
-                strides=strides,
+                strides=dst_arr_strides,
                 transient=True,
                 storage=self.dst_memory_location,
             )
