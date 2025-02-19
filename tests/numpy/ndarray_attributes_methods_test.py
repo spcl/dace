@@ -5,6 +5,7 @@ from common import compare_numpy_output
 
 M = 10
 N = 20
+P = 33
 
 
 @compare_numpy_output()
@@ -117,7 +118,7 @@ def test_conj(A: dace.complex64[M, N, N, M]):
 
 
 @compare_numpy_output()
-def test_sum__with_different_name(A: dace.float32[M, N, N, M]):
+def test_sum__with_different_name(A: dace.float32[M, N, P, M]):
     return A.sum()
 
 
