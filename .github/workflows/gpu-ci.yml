@@ -57,19 +57,17 @@ jobs:
         export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        if test -x ./tests/cuda_test.sh ; then
-          ./tests/cuda_test.sh
-        fi
+        ./tests/cuda_test.sh
 
     - name: Report overall coverage
       run: |
         source ~/.venv/bin/activate # activate venv
-        #export COVERAGE_RCFILE=`pwd`/.coveragerc
-        #coverage combine . */; coverage report; coverage xml
-        #reachable=0
-        #ping -W 2 -c 1 codecov.io || reachable=$?
-        #if [ $reachable -eq 0 ]; then
-        #  ./codecov
-        #else
-        #  echo "Codecov.io is unreachable"
-        #fi
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        coverage combine . */; coverage report; coverage xml
+        reachable=0
+        ping -W 2 -c 1 codecov.io || reachable=$?
+        if [ $reachable -eq 0 ]; then
+          ./codecov
+        else
+          echo "Codecov.io is unreachable"
+        fi
