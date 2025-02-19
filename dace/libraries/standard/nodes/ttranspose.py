@@ -6,8 +6,8 @@ from dace.libraries.blas import blas_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
-from .. import environments
-
+from dace.libraries.standard import environments
+from dace.libraries.linalg import environments as cutensorenv
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """ Implements the pure expansion of TensorTranspose library node. """
@@ -91,7 +91,7 @@ class ExpandCuTensor(ExpandTransformation):
     """
 
 
-    environments = [environments.cuTensor]
+    environments = [cutensorenv.cuTensor]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
@@ -140,12 +140,12 @@ class ExpandCuTensor(ExpandTransformation):
             //printf("Start permutation op!\\n");
             cutensorTensorDescriptor_t descA;
             cutensorTensorDescriptor_t descB;
-            dace::standard::CheckCuTensorError(
+            dace::linalg::CheckCuTensorError(
                 cutensorCreateTensorDescriptor(
                     __dace_cutensor_handle, &descA, modeA.size(), extentA.data(), stridesA.data(), {cuda_dtype.replace("CUDA", "CUTENSOR")}, 256
                 )
             );
-            dace::standard::CheckCuTensorError(
+            dace::linalg::CheckCuTensorError(
                 cutensorCreateTensorDescriptor(
                     __dace_cutensor_handle, &descB, modeB.size(), extentB.data(), stridesB.data(), {cuda_dtype.replace("CUDA", "CUTENSOR")}, 256
                 )
@@ -156,10 +156,10 @@ class ExpandCuTensor(ExpandTransformation):
         cdesc = f"""
             cutensorPlanPreference_t preference;
             cutensorOperationDescriptor_t op;
-            dace::standard::CheckCuTensorError(
+            dace::linalg::CheckCuTensorError(
                 cutensorCreatePlanPreference(__dace_cutensor_handle, &preference, CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT)
             );
-            dace::standard::CheckCuTensorError(
+            dace::linalg::CheckCuTensorError(
                 cutensorCreatePermutation(__dace_cutensor_handle, &op, descA, modeA.data(), CUTENSOR_OP_IDENTITY, descB, modeB.data(), {compute_type})
             );
             //printf("Plan preference and operation descriptor created!\\n");
@@ -170,7 +170,7 @@ class ExpandCuTensor(ExpandTransformation):
 
         execute = """
             cutensorPlan_t plan;
-            dace::standard::CheckCuTensorError(
+            dace::linalg::CheckCuTensorError(
                 cutensorCreatePlan(__dace_cutensor_handle, &plan, op, preference, 0)
             );
             cutensorStatus_t err = cutensorPermute(__dace_cutensor_handle, plan, &alpha, _inp_tensor, _out_tensor, __dace_current_stream);
@@ -184,7 +184,7 @@ class ExpandCuTensor(ExpandTransformation):
             //printf("Transpose executed!\\n");
         """
 
-        code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
+        code = f"{cutensorenv.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
