@@ -220,7 +220,10 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         """
         Constuct a list of identifier strings that can uniquely determine it through the entire AST.
         """
-        ident_base = (find_name_of_stmt(_node),)
+        if isinstance(_node, Interface_Stmt):
+            ident_base = ('__interface__', find_name_of_stmt(_node))
+        else:
+            ident_base = (find_name_of_stmt(_node),)
         # Find the next named ancestor.
         anc = find_named_ancestor(_node.parent)
         if not anc:
@@ -324,9 +327,13 @@ def alias_specs(ast: Program):
             # If there is no only list, all the top level (public) symbols are considered aliased.
             alias_updates: SPEC_TABLE = {}
             for k, v in alias_map.items():
-                if len(k) != len(mod_spec) + 1 or k[:len(mod_spec)] != mod_spec:
+                if len(k) < len(mod_spec) + 1 or len(k) > len(mod_spec) + 2 or k[:len(mod_spec)] != mod_spec:
+                    continue
+                if len(k) == len(mod_spec) + 2 and k[len(mod_spec)] != '__interface__':
                     continue
                 alias_spec = scope_spec + k[-1:]
+                if alias_spec in alias_updates and not isinstance(v, Interface_Stmt):
+                    continue
                 alias_updates[alias_spec] = v
             alias_map.update(alias_updates)
         else:
@@ -341,6 +348,9 @@ def alias_specs(ast: Program):
                     src, tgt = c, c
                 src, tgt = f"{src}", f"{tgt}"
                 src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
+                if mod_spec + ('__interface__', tgt) in alias_map:
+                    # If there is an interface and a subroutine of the same name, the interface is selected.
+                    tgt_spec = mod_spec + ('__interface__', tgt)
                 # `tgt_spec` must have already been resolved if we have sorted the modules properly.
                 assert tgt_spec in alias_map, f"{src_spec} => {tgt_spec}"
                 alias_map[src_spec] = alias_map[tgt_spec]
@@ -872,7 +882,7 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
             continue
         ib = ifs.parent
         scope_spec = find_scope_spec(ib)
-        ifspec = scope_spec + (name,)
+        ifspec = ident_spec(ifs)
 
         # Get the spec of all the callable things in this block that may end up as a resolution for this interface.
         fns: List[str] = []
@@ -1401,8 +1411,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
     # At this point, we must have replaced all the interface calls with concrete calls.
     for use in walk(ast, Use_Stmt):
-        mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
+        scope_spec = find_scope_spec(use)
         olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             # There is nothing directly referring to the interface.
@@ -1416,7 +1425,13 @@ def deconstruct_interface_calls(ast: Program) -> Program:
             elif isinstance(c, Rename):
                 _, src, tgt = c.children
             src, tgt = src.string, tgt.string
-            tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
+            if SUFFIX in src:
+                # These are the new use statements, that technically can still be pointing to an interface, because we
+                # have not removed the interfaces from the AST yet. So leave these alone.
+                survivors.append(c)
+                continue
+            assert scope_spec + (src,) in alias_map
+            tgt_spec = ident_spec(alias_map[scope_spec + (src,)])
             assert tgt_spec in alias_map
             if tgt_spec not in iface_map:
                 # Leave the non-interface usages alone.

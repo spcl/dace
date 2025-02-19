@@ -35,10 +35,10 @@ end module lib
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
     ident_map = identifier_specs(ast)
-    assert ident_map.keys() == {('lib',), ('lib', 'fun')}
+    assert ident_map.keys() == {('lib',), ('lib', '__interface__', 'fun')}
 
     alias_map = alias_specs(ast)
-    assert alias_map.keys() == {('lib',), ('lib', 'fun')}
+    assert alias_map.keys() == {('lib',), ('lib', '__interface__', 'fun')}
 
 
 def test_procedure_replacer():
@@ -865,6 +865,9 @@ module lib
   interface not_fun
     module procedure not_real_fun
   end interface not_fun
+  interface same_name
+    module procedure same_name, real_fun
+  end interface same_name
 contains
   real function real_fun()
     implicit none
@@ -875,14 +878,20 @@ contains
     real, intent(out) :: a
     a = 1.0
   end subroutine not_real_fun
+  real function same_name(x)
+    implicit none
+    real, intent(in) :: x
+    same_name = x
+  end function same_name
 end module lib
 
 subroutine main
-  use lib, only: fun, not_fun
+  use lib, only: fun, not_fun, same_name
   implicit none
   real d(4)
   d(2) = fun()
   call not_fun(d(3))
+  d(4) = same_name(2.0)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -902,14 +911,21 @@ MODULE lib
     REAL, INTENT(OUT) :: a
     a = 1.0
   END SUBROUTINE not_real_fun
+  REAL FUNCTION same_name(x)
+    IMPLICIT NONE
+    REAL, INTENT(IN) :: x
+    same_name = x
+  END FUNCTION same_name
 END MODULE lib
 SUBROUTINE main
+  USE lib, ONLY: same_name_deconiface_2 => same_name
   USE lib, ONLY: not_real_fun_deconiface_1 => not_real_fun
   USE lib, ONLY: real_fun_deconiface_0 => real_fun
   IMPLICIT NONE
   REAL :: d(4)
   d(2) = real_fun_deconiface_0()
   CALL not_real_fun_deconiface_1(d(3))
+  d(4) = same_name_deconiface_2(2.0)
 END SUBROUTINE main
 """.strip()
     assert got == want
