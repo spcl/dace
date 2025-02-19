@@ -100,60 +100,69 @@ class ExpandCuTensor(ExpandTransformation):
         dtype = out_tensor.dtype.base_type
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
         cuda_dtype = blas_helpers.dtype_to_cudadatatype(dtype)
-        compute_type = f"CUTENSOR_COMPUTE{cuda_dtype[cuda_dtype.rfind('_'):]}"
+        compute_type = f"CUTENSOR_COMPUTE_DESC{cuda_dtype[cuda_dtype.rfind('_'):]}"
         func = func + 'getrf'
 
         alpha = f"({cuda_type})1.0"
-        beta = f"({cuda_type})0.0"
         abtext = f"""
             {cuda_type} alpha = {alpha};
-            {cuda_type} beta = {beta};
         """
 
         in_modes = list(range(len(in_tensor.shape)))
-        out_modes = [i for i in in_modes if i not in node.in_axes]
-        out_modes.extend([i for i in out_modes if i not in node.in_axes])
-        if node.permutation and node.permutation != list(range(len(node.permutation))):
-            out_modes = [out_modes[i] for i in node.permutation]
+        out_modes = node.axes
+
+        from dace.codegen.targets import cpp # to avoid import loop
 
         modes = f"""
-            std::vector<int> modeA{{{','.join(str(m) for m in in_modes)}}};
-            std::vector<int> modeC{{{','.join(str(m) for m in out_modes)}}};
+            std::vector<int> modeA{{{','.join(cpp.sym2cpp(m) for m in in_modes)}}};
+            std::vector<int> modeB{{{','.join(cpp.sym2cpp(m) for m in out_modes)}}};
         """
 
-        extents = "std::unordered_map<int, int64_t> extent;\n"
+        extents = "std::unordered_map<int, int64_t> in_extent;\n"
         for i, s in zip(in_modes, in_tensor.shape):
-            extents += f"extent[{i}] = {s};\n"
+            extents += f"in_extent[{i}] = {s};\n"
+        extents += "std::unordered_map<int, int64_t> out_extent;\n"
+        for i, s in zip(in_modes, out_tensor.shape):
+            extents += f"out_extent[{i}] = {s};\n"
         extents += f"""
             std::vector<int64_t> extentA;
-            for (auto mode : modeA) extentA.push_back(extent[mode]);
+            for (auto mode : modeA) extentA.push_back(in_extent[mode]);
             std::vector<int64_t> extentB;
+            for (auto mode : modeA) extentB.push_back(in_extent[mode]);
         """
 
         extents += f"""
-            std::vector<int64_t> stridesA{{{','.join(str(s) for s in in_tensor.strides)}}};
-            std::vector<int64_t> stridesB{{{','.join(str(s) for s in out_tensor.strides)}}};
+            std::vector<int64_t> stridesA{{{','.join(cpp.sym2cpp(s) for s in in_tensor.strides)}}};
+            std::vector<int64_t> stridesB{{{','.join(cpp.sym2cpp(s) for s in out_tensor.strides)}}};
         """
 
         tdesc = f"""
-            cutensorTensorDescriptor_t descA, descB;
-            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
-                __dace_cutensor_handle, &descA, modeA.size(), extentA.data(), stridesA.data(), {cuda_dtype}, 256));
-            dace::linalg::CheckCuTensorError(cutensorTensorDescriptor(
-                __dace_cutensor_handle, &descB, modeB.size(), extentB.data(), stridesB.data(), {cuda_dtype}, 256));
-            // printf("Tensor descriptors created!\\n");
+            //printf("Start permutation op!\\n");
+            cutensorTensorDescriptor_t descA;
+            cutensorTensorDescriptor_t descB;
+            dace::standard::CheckCuTensorError(
+                cutensorCreateTensorDescriptor(
+                    __dace_cutensor_handle, &descA, modeA.size(), extentA.data(), stridesA.data(), {cuda_dtype.replace("CUDA", "CUTENSOR")}, 256
+                )
+            );
+            dace::standard::CheckCuTensorError(
+                cutensorCreateTensorDescriptor(
+                    __dace_cutensor_handle, &descB, modeB.size(), extentB.data(), stridesB.data(), {cuda_dtype.replace("CUDA", "CUTENSOR")}, 256
+                )
+            );
+            //printf("Tensor descriptors created!\\n");
         """
 
         cdesc = f"""
             cutensorPlanPreference_t preference;
             cutensorOperationDescriptor_t op;
-            dace::linalg::CheckCuTensorError(
+            dace::standard::CheckCuTensorError(
                 cutensorCreatePlanPreference(__dace_cutensor_handle, &preference, CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT)
             );
-            dace::linalg::CheckCuTensorError(
-                cutensorCreatePermutation(__dace_cutensor_handle, &op, descA, modeA.data(), CUTENSOR_OP_IDENTITY, descB, modeB.data(), {cuda_dtype})
+            dace::standard::CheckCuTensorError(
+                cutensorCreatePermutation(__dace_cutensor_handle, &op, descA, modeA.data(), CUTENSOR_OP_IDENTITY, descB, modeB.data(), {compute_type})
             );
-            // printf("Memory alignment and coontraction descriptor created!\\n");
+            //printf("Plan preference and operation descriptor created!\\n");
         """
 
         workspace = """
@@ -161,10 +170,10 @@ class ExpandCuTensor(ExpandTransformation):
 
         execute = """
             cutensorPlan_t plan;
-            dace::linalg::CheckCuTensorError(
+            dace::standard::CheckCuTensorError(
                 cutensorCreatePlan(__dace_cutensor_handle, &plan, op, preference, 0)
             );
-            cutensorStatus_t err = cutensorPermute(handle, plan, &alpha, A, B, __dace_current_stream);
+            cutensorStatus_t err = cutensorPermute(__dace_cutensor_handle, plan, &alpha, _inp_tensor, _out_tensor, __dace_current_stream);
             if(err != CUTENSOR_STATUS_SUCCESS) {
                 printf("ERROR: %s\\n", cutensorGetErrorString(err));
             }
@@ -172,7 +181,7 @@ class ExpandCuTensor(ExpandTransformation):
             if(err != CUTENSOR_STATUS_SUCCESS) {
                 printf("ERROR: %s\\n", cutensorGetErrorString(err));
             }
-            // printf("Transpose executed!\\n");
+            //printf("Transpose executed!\\n");
         """
 
         code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"

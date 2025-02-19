@@ -6,16 +6,16 @@ import dace.library
 class cuTensor:
 
     cmake_minimum_version = None
-    cmake_packages = ["CUDA"]
+    cmake_packages = []
     cmake_variables = {}
     cmake_includes = []
     cmake_libraries = ["cutensor"]
-    cmake_compile_flags = []
-    cmake_link_flags = ["-L -lcutensor"]
+    cmake_compile_flags = [""]
+    cmake_link_flags = ["-lcutensor"]
     cmake_files = []
 
     headers = {'frame': ["../include/dace_cutensor.h"], 'cuda': ["../include/dace_cutensor.h"]}
-    state_fields = ["dace::linalg::CuTensorHandle cutensor_handle;"]
+    state_fields = ["dace::standard::CuTensorHandle cutensor_handle;"]
     init_code = ""
     finalize_code = ""
     dependencies = []

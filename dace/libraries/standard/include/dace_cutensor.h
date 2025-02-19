@@ -11,7 +11,7 @@
 
 namespace dace {
 
-namespace linalg {
+namespace standard {
 
 static void CheckCuTensorError(cutensorStatus_t const& status) {
   if (status != CUTENSOR_STATUS_SUCCESS) {
