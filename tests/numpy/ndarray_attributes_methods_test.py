@@ -3,8 +3,8 @@ import dace
 import numpy as np
 from common import compare_numpy_output
 
-M = 10
-N = 20
+M = 11
+N = 22
 
 
 @compare_numpy_output()
