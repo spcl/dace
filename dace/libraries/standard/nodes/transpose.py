@@ -268,6 +268,5 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         out_size = out_subset.size()
         if len(out_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
-        # Disable for ICON
-        #if list(out_size) != [in_size[1], in_size[0]]:
-        #    raise ValueError("Output to transpose operation must agree in the m and n dimensions")
+        if list(out_size) != [in_size[1], in_size[0]]:
+            raise ValueError("Output to transpose operation must agree in the m and n dimensions")
