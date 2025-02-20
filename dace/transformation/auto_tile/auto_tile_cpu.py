@@ -29,7 +29,7 @@ from dace.transformation.auto_tile.auto_tile_util import find_state_by_cond
 from dace.transformation.auto_tile.auto_tile_util import get_ref_kernel_nodes_and_edges
 from dace.transformation.auto_tile.auto_tile_util import validate_and_pad_params_to_three
 
-
+import gc
 
 def _tile_cpu(
     sdfg: dace.SDFG,
@@ -112,7 +112,9 @@ def _tile_cpu(
         # Clean memory we do not need anymore
         for key in list(copy_inputs.keys()):
             if key != output_name:
-                del copy_inputs[key]
+                copy_inputs[key] = None
+        copy_inputs = None
+        gc.collect()
 
         # Unset GPU events
         for node in _kernel_state.nodes():
@@ -418,7 +420,9 @@ def _tile_cpu(
 
             # Clean memory we do not need anymore
             for key in list(copy_inputs_2.keys()):
-                del copy_inputs_2[key]
+                copy_inputs_2[key] = None
+            copy_inputs_2 = None
+            gc.collect()
 
             if verify and not are_close:
                 raise Exception("Numerical verification failed.")

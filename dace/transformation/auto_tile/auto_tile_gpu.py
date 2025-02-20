@@ -1,12 +1,14 @@
 import ast
 import copy
 import csv
+import gc
 import itertools
 from pathlib import Path
 import random
 from typing import Dict, List, Tuple, Type, Any
 
 import cupy
+import numpy as np
 import dace
 from dace.transformation.auto_tile import auto_tile_util
 from dace.transformation.auto_tile.add_compute_element_map import AddComputeElementBlockMap
@@ -80,7 +82,9 @@ def _tile_gpu(
         # Clean memory we do not need anymore
         for key in list(copy_inputs.keys()):
             if key != output_name:
-                del copy_inputs[key]
+                copy_inputs[key] = None
+        copy_inputs = None
+        gc.collect()
 
         # Unset GPU events
         for node in _kernel_state.nodes():
@@ -358,7 +362,9 @@ def _tile_gpu(
 
                 # Clean memory we do not need anymore
                 for key in list(copy_inputs_2.keys()):
-                    del copy_inputs_2[key]
+                    copy_inputs_2[key] = None
+                copy_inputs_2 = None
+                gc.collect()
 
                 verification_failed = False
                 if verify and not are_close:
