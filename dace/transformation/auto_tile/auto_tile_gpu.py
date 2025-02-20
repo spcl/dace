@@ -142,7 +142,9 @@ def _tile_gpu(
 
 
     curi = 0
-    for i, current_config in enumerate(combinations) if not random_iter else enumerate(random.shuffle(combinations)):
+    if random_iter:
+        random.shuffle(combinations)
+    for i, current_config in enumerate(combinations):
         # We need to copy this sdfg if we are working in the copy as we apply transformations
         (
             memory_tiling_params,
