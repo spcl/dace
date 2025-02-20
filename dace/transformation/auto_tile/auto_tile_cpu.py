@@ -51,7 +51,6 @@ def _tile_cpu(
     timeout=300,
     random_iter=True,
 ):
-
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
         _kernel_sdfg = copy_sub_scope(state, entry)
