@@ -3,6 +3,7 @@ import copy
 import csv
 import itertools
 from pathlib import Path
+import random
 from typing import Dict, List, Tuple, Type, Any
 
 import cupy
@@ -42,7 +43,9 @@ def _tile_gpu(
     verify: bool,
     call_id: int,
     logfile,
-    loglines
+    loglines,
+    timeout,
+    random_iter,
 ):
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
@@ -138,7 +141,8 @@ def _tile_gpu(
     print(f"Read best config and time as {best_config}, {best_time}, continuing search")
 
 
-    for i, current_config in enumerate(combinations):
+    curi = 0
+    for i, current_config in enumerate(combinations) if not random_iter else enumerate(random.shuffle(combinations)):
         # We need to copy this sdfg if we are working in the copy as we apply transformations
         (
             memory_tiling_params,
@@ -148,6 +152,11 @@ def _tile_gpu(
             apply_remainder_loop_param,
         ) = current_config
         clean_cache()
+        curi += 1
+        if timeout is not None and curi > timeout:
+            logfile.flush()
+            return best_config
+
         if not re_apply:
             if current_config in tested_configs:
                 print(f"Skipping {current_config} it was profiled before")
@@ -744,6 +753,8 @@ def auto_tile_gpu(
     device_schedule: dace.dtypes.ScheduleType = dace.dtypes.ScheduleType.GPU_Device,
     re_apply: bool = False,
     verbose: bool = False,
+    timeout=None,
+    random_iter: bool=True,
 ):
     sdfg_name = sdfg.name
     sym_dict = sdfg.symbols
@@ -808,7 +819,9 @@ def auto_tile_gpu(
                 verify=True,
                 call_id=ii,
                 logfile=f,
-                loglines=logged_lines
+                loglines=logged_lines,
+                timeout=timeout,
+                random_iter=random_iter
             )
             found_tilings[(state.guid, kernel_entry.guid)] = best_config
         else:
@@ -862,7 +875,9 @@ def auto_tile_gpu(
                 verify=False,
                 call_id=len(kernel_guids),
                 logfile=f,
-                loglines=logged_lines
+                loglines=logged_lines,
+                timeout=None,
+                random_iter=False
             )
         else:
             raise Exception("TODO")
