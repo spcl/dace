@@ -270,7 +270,7 @@ def unparse(node):
     # Support for numerical constants
     if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(node)
-    # Suport for string
+    # Support for string
     if isinstance(node, str):
         return node
 
