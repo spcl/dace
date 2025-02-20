@@ -656,6 +656,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             arrsize = prod(shape)
             if not declared:
                 result_decl.write('%s %s;\n' % (write_type, array_name))
+            ctypedef = '%s *' % node_to_allocate_desc.dtype.ctype
             self._dispatcher.defined_vars.add(array_name, DefinedType.Pointer, ctypedef)
             data_size = node_to_allocate_desc.dtype.bytes  # Number of bytes per element
             total_size = arrsize * data_size  # Total size in bytes
@@ -1280,8 +1281,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
                     callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), local({src_expr}), {dst_size});")
-                    if is_sync:
-                        callsite_stream.write("flex_dma_async_wait_all();")
+                    # if is_sync:
+                    callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
 
                 elif src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM:

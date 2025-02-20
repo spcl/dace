@@ -285,6 +285,7 @@ class CanonTransformer(transformation.SingleStateTransformation):
         # remove nstate from the nested state
         nsdfg.remove_node(nstate)
 
+        return nsdfg
 
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):

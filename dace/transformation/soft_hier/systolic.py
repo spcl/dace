@@ -87,8 +87,8 @@ class SystolocTransformer(transformation.SingleStateTransformation):
                     (r_start, r_end, r_stride) = range
                     if f"{r_start}" == f"{map_param}":
                         new_r_start = symbolic.pystr_to_symbolic(map_param)
-                        new_r_end = symbolic.pystr_to_symbolic(f"{map_param} + {map_rstride}*{NPE} - 1")
-                        new_r_stride = symbolic.pystr_to_symbolic(f"{map_rstride}*{NPE}")
+                        new_r_end = symbolic.pystr_to_symbolic(f"{map_param} + {new_map_rstride} - 1")
+                        new_r_stride = symbolic.pystr_to_symbolic(f"{new_map_rstride}")
                         edge.data.subset.ranges[idx] = (new_r_start, new_r_end, new_r_stride)
 
         map_entry.map.range = subsets.Range([(map_rstart, map_rend, new_map_rstride)])
@@ -176,6 +176,10 @@ class SystolocTransformer(transformation.SingleStateTransformation):
             new_streams[f"s_{trans_name}"] = s
 
         ##############################
+        # init state
+        init_state = nsdfg.add_state("init", is_start_block=True)
+
+        ##############################
         lr = LoopRegion(
             label="systolic_loop",
             condition_expr=f"_c < ({NPE}*2 - 1)  + ({new_map_rstride}/{map_rstride})",
@@ -186,7 +190,7 @@ class SystolocTransformer(transformation.SingleStateTransformation):
         )
         
 
-        init_state = nsdfg.add_state("init", is_start_block=True)
+        
         nsdfg.add_edge(init_state, lr, InterstateEdge(None, None))
         lr_param = lr.loop_variable
         
