@@ -6,6 +6,7 @@ import itertools
 from operator import mul
 import os
 from pathlib import Path
+import random
 import shutil
 from typing import Dict, List, Tuple, Type, Any
 
@@ -46,7 +47,9 @@ def _tile_cpu(
     call_id: int,
     num_cores: int,
     logfile,
-    loglines
+    loglines,
+    timeout=300,
+    random_iter=True,
 ):
 
     # Copy kernel as a single state SDFG if we are working on the copy
@@ -161,7 +164,9 @@ def _tile_cpu(
                     best_config = config
     print(f"Read best config and time as {best_config}, {best_time}, continuing search")
 
-
+    curi = 0
+    if random_iter:
+        random.shuffle(combinations)
     for i, current_config in enumerate(combinations):
         # We need to copy this sdfg if we are working in the copy as we apply transformations
         (
@@ -171,6 +176,10 @@ def _tile_cpu(
             apply_remainder_loop_param,
         ) = current_config
         clean_cache()
+        curi += 1
+        if timeout is not None and curi > timeout:
+            logfile.flush()
+            return best_config
 
         if not re_apply:
             if current_config in tested_configs:
@@ -444,6 +453,8 @@ def auto_tile_cpu(
     re_apply: bool = False,
     verbose: bool = False,
     num_cores: int = 32,
+    timeout=300,
+    random_iter=True,
 ):
     device_schedule: dace.dtypes.ScheduleType = dace.dtypes.ScheduleType.Default
     sdfg_name = sdfg.name
@@ -560,6 +571,8 @@ def auto_tile_cpu(
                 num_cores=num_cores,
                 logfile=f,
                 loglines=logged_lines,
+                timeout=timeout,
+                random_iter=random_iter,
             )
         else:
             raise Exception("TODO")
