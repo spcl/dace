@@ -429,10 +429,11 @@ class StructToContainerGroups(ppl.Pass):
         self._validate_all = validate_all
         self._clean_container_grous = clean_container_grous
         self._access_names_map = dict()
-        self._data_connected_to_vsv_struct = dict()
         self._flattening_mode = flattening_mode
         self._call = 0
         self._save_steps = save_steps
+        self._struct_to_view_reconn_map = dict()
+        self._view_to_struct_reconn_map = dict()
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -472,42 +473,12 @@ class StructToContainerGroups(ppl.Pass):
                             )
                             if pattern_found:
                                 i += 1
-                                newly_removed_nodes, (oldname, (newname, dimstopad, dims)) = self._apply(
+                                newly_removed_nodes, (oldname, newname) = self._apply(
                                     state, sdfg, src_access, dst_access
                                 )
-                                sdfg.save(f"apply{i}.sdfg")
+                                sdfg.save(f"apply{i}.sdfgz")
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
-                                name_replacements[oldname] = (newname, dimstopad, dims)
-
-        # View -> Struct -> View patterns result with disconnected compenets reconnect them with saved info
-        for state in sdfg.states():
-            nodes = state.nodes()
-            for node in nodes:
-                if node not in state.nodes():
-                    continue
-                for (
-                    in_connected_nodes,
-                    out_connected_nodes,
-                ) in self._data_connected_to_vsv_struct.values():
-                    assert (
-                        len(in_connected_nodes) <= 1 and len(out_connected_nodes) <= 1
-                    )
-                    if len(in_connected_nodes) == 1 and len(out_connected_nodes) == 1:
-                        if node in in_connected_nodes:
-                            src = node
-                            dst = out_connected_nodes[0]
-                            for oe in state.out_edges(dst):
-                                assert oe.src_conn is None
-                                state.add_edge(
-                                    src,
-                                    None,
-                                    oe.dst,
-                                    oe.dst_conn,
-                                    copy.deepcopy(oe.data),
-                                )
-                            state.remove_node(dst)
-                        elif node in out_connected_nodes:
-                            continue
+                                name_replacements[oldname] = newname
 
         # Remove structs
         to_rm = []
@@ -518,41 +489,7 @@ class StructToContainerGroups(ppl.Pass):
             sdfg.remove_data(name=name, validate=True)
 
         if self._save_steps:
-            sdfg.save("data_removed.sdfg")
-
-        # Map names
-        #print("Replace names:", name_replacements)
-        # Clean old names if they are in arrays
-        #for oldname in name_replacements:
-        #    if oldname in sdfg.arrays:
-        #        del sdfg.arrays[oldname]
-        # Replace names using removed views
-        #sdfg.replace_dict(name_replacements)
-        #
-        #if self._save_steps:
-        #    sdfg.save("name_replaced.sdfg")
-        for oldname in name_replacements:
-            if oldname in sdfg.arrays:
-                del sdfg.arrays[oldname]
-
-        # TODO replace ALL occurences of access to oldname with newname + dimensions
-        # Including if/for loop conditions, interstate edges (cond, assignment)
-        # If access to a previous view then pad their dimensions accorindgly too
-        for oldname, (newname, dimstopad, dims) in name_replacements.items():
-            pass
-
-        """
-        # Clean Mapped Views (Views within data groups)
-        for state in sdfg.states():
-            for edge in state.edges():
-                if edge.data.data in self._access_names_map:
-                    data_name = self._access_names_map[edge.data.data]
-                    edge.data.data = data_name
-
-        if self._save_steps:
-            sdfg.save("mapped_views_cleaned.sdfgz")
-        """
-
+            sdfg.save("data_removed.sdfgz")
 
         nd_to_rm = []
         for s in sdfg.states():
@@ -563,13 +500,22 @@ class StructToContainerGroups(ppl.Pass):
             s.remove_node(n)
 
         if self._save_steps:
-            sdfg.save("nodes_cleand.sdfg")
+            sdfg.save("nodes_cleand.sdfgz")
+
+        if self._validate or self._validate_all:
+            print("All flattening transformatiosn completed, validating")
+            sdfg.validate()
+
+            print("Flattened SDFG, validates, calling simplify")
 
         if self._simplify:
             sdfg.simplify(self._validate, self._validate_all)
 
         if self._clean_container_grous:
             clean_container_groups(sdfg)
+
+        if self._save_steps:
+            sdfg.save("flattened.sdfgz")
 
     def _can_be_applied(
         self,
@@ -758,7 +704,6 @@ class StructToContainerGroups(ppl.Pass):
             ite += 1
         view_to_name_map[first_access.data] = name_hierarchy[-1]
 
-        #print("VC2", view_chain[1:])
         for access_node in view_chain[1:]:
             for ie in state.in_edges(access_node):
                 src, src_conn, dst, dst_conn, memlet = ie
@@ -771,15 +716,12 @@ class StructToContainerGroups(ppl.Pass):
                     pass
                 if len(all_data) == 1:
                     pass
-                #print(member_hierarchy)
                 last_member = member_hierarchy[-1][1]
                 last_name = name_hierarchy[-1]
                 if isinstance(last_member, dace.data.ContainerArray):
-                    #print("CG", view_to_name_map, member_hierarchy, access)
                     access = all_data[0]
                     true_name = view_to_name_map[access]
                     assert len(all_data) == 1
-                    #print(last_member.stype.name, true_name, access)
                     name_hierarchy.append(last_member.stype.name)
                     member_hierarchy.append((last_member.stype.name, last_member.stype))
                     assert access_node != view_chain[-1]
@@ -806,12 +748,10 @@ class StructToContainerGroups(ppl.Pass):
                        sdfg : dace.SDFG,
                        state: dace.SDFGState,
                        view_chain: typing.List[dace.nodes.AccessNode]):
-        #print(view_chain, view_chain[0])
         first_access = view_chain[-1]
         ie = state.out_edges(first_access)[0]
         src, src_conn, dst, dst_conn, memlet = ie
         data = memlet.data
-        #print(data)
         if "." in data:
             all_data = data.split(".")
         else:
@@ -839,7 +779,6 @@ class StructToContainerGroups(ppl.Pass):
             ite += 1
         view_to_name_map[first_access.data] = name_hierarchy[-1]
 
-        #print("VC2", view_chain[1:])
         for access_node in reversed(view_chain[:-1]):
             for ie in state.out_edges(access_node):
                 src, src_conn, dst, dst_conn, memlet = ie
@@ -852,15 +791,12 @@ class StructToContainerGroups(ppl.Pass):
                     pass
                 if len(all_data) == 1:
                     pass
-                #print(member_hierarchy)
                 last_member = member_hierarchy[-1][1]
                 last_name = name_hierarchy[-1]
                 if isinstance(last_member, dace.data.ContainerArray):
-                    #print("CG", view_to_name_map, member_hierarchy, access)
                     access = all_data[0]
                     true_name = view_to_name_map[access]
                     assert len(all_data) == 1
-                    #print(last_member.stype.name, true_name, access)
                     name_hierarchy.append(last_member.stype.name)
                     member_hierarchy.append((last_member.stype.name, last_member.stype))
                     assert access_node != view_chain[-1]
@@ -946,54 +882,44 @@ class StructToContainerGroups(ppl.Pass):
         print("Source/Destination struct is: ", struct_access.data, type(sdfg.arrays[struct_access.data]))
 
         # If the length is less than 2 then we have only one view and one source struct
-
-        if struct_to_view:
-            assert len(state.in_edges(view_chain[0])) == 1
-            src_edge = state.in_edges(view_chain[0])[0]
-            assert len(state.out_edges(view_chain[-1])) <= 1
-            if len(state.out_edges(view_chain[-1])) == 0:
-                dst_edge = None # Can also be not directly used, but used on the interstate edge.
-            else:
-                dst_edge = state.out_edges(view_chain[-1])[0]
-        else:  # view_to_struct
-            assert view_to_struct
-            assert len(state.in_edges(view_chain[0])) == 1
-            src_edge = state.in_edges(view_chain[0])[0]
-            assert len(state.out_edges(view_chain[-1])) <= 1
-            dst_edge = state.out_edges(view_chain[-1])[0]
-
-
         if self._flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
             memlet_shape = ()
             # We need calculate the dimension of the new array
             # The shape and memlet expression calculations differ
             if struct_to_view:
                 assert len(struct_to_view_edges) == 1
-                for vc in [struct_access] + view_chain:
+                for vc in [struct_access] + view_chain[:-1]:
                     if state.out_degree(vc) > 0:
                         _dst_edge = state.out_edges(vc)[0]
-                        if isinstance(
+                        if (isinstance(
                             sdfg.arrays[vc.data], dace.data.Structure
-                        ):
+                            ) and isinstance(
+                                sdfg.arrays[_dst_edge.dst.data], dace.data.ContainerArray
+                            )):
                             continue
+                        #print("ADD SHAPE:", _dst_edge.data.subset.ranges, "From:", vc)
                         memlet_shape += tuple(_dst_edge.data.subset.ranges)
 
             if view_to_struct:
                 assert len(view_to_struct_edges) == 1
-                for vc in list(reversed(view_chain)) + [struct_access]:
+                for vc in [struct_access] + list(reversed(view_chain[1:])):
                     if state.in_degree(vc) > 0:
                         _src_edge = state.in_edges(vc)[0]
-                        if isinstance(
-                            sdfg.arrays[vc.data], dace.data.Structure
-                        ):
+                        if (isinstance(
+                            sdfg.arrays[vc.data], dace.data.ContainerArray
+                            ) and isinstance(
+                                sdfg.arrays[_src_edge.src.data], dace.data.Structure
+                            )):
                             continue
                         memlet_shape += tuple(_src_edge.data.subset.ranges)
         else:
             raise Exception("ArrayOfStructs mode is not implemented yet")
 
+        assert memlet_shape != ()
         mc = dace.memlet.Memlet(
             subset=dace.subsets.Range(memlet_shape), data=demangled_name
         )
+        print("New access memlet:", memlet_shape)
 
         # If Struct -> View -> Dst:
         # Then Struct (uc) -> (None) \ View \ (None) -> (vc) Dst
@@ -1004,118 +930,78 @@ class StructToContainerGroups(ppl.Pass):
         # Becomes Src (uc) -> (None) NewData
 
         # Simplify manages to remove this
-        state.add_node(an)
+        if struct_to_view:
+            if struct_access in self._struct_to_view_reconn_map:
+                an = self._struct_to_view_reconn_map[struct_access]
+            else:
+                state.add_node(an)
+        if view_to_struct:
+            if struct_access in self._view_to_struct_reconn_map:
+                an = self._view_to_struct_reconn_map[struct_access]
+            else:
+                state.add_node(an)
+
         view_name = None
         if struct_to_view:
-            if dst_edge is not None:
-                #view_name = "v_" + demangled_name
-                #a = sdfg.arrays[dst_edge.data.data]
-                #if view_name not in sdfg.arrays:
-                #    sdfg.add_view(
-                #        name=view_name,
-                #        shape=a.shape,
-                #        dtype=a.dtype,
-                #        storage=a.storage,
-                #        strides=a.strides,
-                #        offset=a.offset,
-                #        allow_conflicts=a.allow_conflicts,
-                #        find_new_name=False,
-                #        may_alias=a.may_alias,
-                #    )
-
-                #view_access = state.add_access(view_name)
-                #state.add_edge(an, None, view_access, "views", mc)
-                #nm = copy.deepcopy(dst_edge.data)
-                #nm.data = view_name
-
-                state.add_edge(an, None, dst_edge.dst, dst_edge.dst_conn, mc)
-            else:
-                state.add_edge(an, None, view_chain[-1], "views", mc)
-
-            if struct_access.guid in self._data_connected_to_vsv_struct:
-                self._data_connected_to_vsv_struct[struct_access.guid][1].append(an)
-            else:
-                self._data_connected_to_vsv_struct[struct_access.guid] = ([], [an])
-
+            state.add_edge(an, None, view_chain[-1], "views", mc)
         else:  # view_to_struct
-            assert dst_edge is not None
-            """
-            view_name = "v_" + demangled_name
-            if view_name not in sdfg.arrays:
-                a = sdfg.arrays[dst_edge.data.data]
-                sdfg.add_view(
-                    name=view_name,
-                    shape=a.shape,
-                    dtype=a.dtype,
-                    storage=a.storage,
-                    strides=a.strides,
-                    offset=a.offset,
-                    allow_conflicts=a.allow_conflicts,
-                    find_new_name=False,
-                    may_alias=a.may_alias,
-                )
-            view_access = state.add_access(view_name)
-            nm = copy.deepcopy(src_edge.data)
-            nm.data = view_name
-            state.add_edge(src_edge.src, src_edge.src_conn, view_access, None, nm)
-            state.add_edge(view_access, "views", an, None, mc)
-            """
-            state.add_edge(src_edge.src, src_edge.src_conn, an, None, mc)
-            if struct_access.guid in self._data_connected_to_vsv_struct:
-                self._data_connected_to_vsv_struct[struct_access.guid][0].append(an)
-            else:
-                self._data_connected_to_vsv_struct[struct_access.guid] = ([an], [])
+            state.add_edge(view_chain[0], "views", an, None, mc)
 
         # Replace all occurences
         if struct_to_view:
             repl_before = view_chain[-1].data
-
         if view_to_struct:
             repl_before = view_chain[0].data
-        repl_after = (demangled_name, 0, copy.deepcopy(mc.subset))
+        repl_after = demangled_name
         print("REPL later:", repl_before, "->", repl_after)
-        # If the memlet has more dimensions, then it means we need to incorporate the missing dimensions from left
-        # in the further accessess to the symbol
-        if len(mc.subset) >  len(sdfg.arrays[view_chain[-1 if struct_to_view else 0].data].shape):
-            print("This replacement will result with some string of form a[1][2] which might not be supported! TODO!!!\n"*5)
-            iterlen = len(mc.subset) - len(sdfg.arrays[view_chain[-1 if struct_to_view else 0].data].shape)
-            dimstopad = iterlen
-            repl_after = (demangled_name, dimstopad, copy.deepcopy(mc.subset))
-
-            # Go through all memlets and interstate edges, and if conditions and replace the name + access
-            # TODO: tomorrow
-            # After applying everytihng
-
 
         # Clean-up
         if struct_to_view:
-            for view_node in view_chain:
+            for view_node in view_chain[:-1]:
                 state.remove_node(view_node)
                 removed_nodes.add(view_node)
                 #print("rm", view_node)
+            for ie in state.in_edges(struct_access):
+                if struct_access in self._view_to_struct_reconn_map:
+                    raise Exception("v1 -> Struct -> v2, only supports v1 connecting to one struct currently")
+                self._view_to_struct_reconn_map[struct_access] = an
+            for oe in state.out_edges(struct_access):
+                if oe.dst == view_chain[0]:
+                    state.remove_edge(oe)
+
+            if (len(state.in_edges(struct_access)) == 0) and (
+                len(state.out_edges(struct_access)) == 0
+            ):
+                state.remove_node(struct_access)
+                removed_nodes.add(struct_access)
         if view_to_struct:
-            for view_node in view_chain:
+            for view_node in view_chain[1:]:
                 state.remove_node(view_node)
                 removed_nodes.add(view_node)
                 #print("rm", view_node)
-
-        if (len(state.in_edges(struct_access)) == 0) and (
-            len(state.out_edges(struct_access)) == 0
-        ):
-            state.remove_node(struct_access)
-            removed_nodes.add(struct_access)
-        #sdfg.save(f"aa{self._call}.sdfg")
+            for oe in state.out_edges(struct_access):
+                for struct_access in self._struct_to_view_reconn_map:
+                    raise Exception("Struct -> v1 -> Struct, only supports v1 connecting to one struct currently")
+                self._struct_to_view_reconn_map[struct_access] = an
+            for ie in state.in_edges(struct_access):
+                if ie.src == view_chain[-1]:
+                    state.remove_edge(ie)
+            if (len(state.in_edges(struct_access)) == 0) and (
+                len(state.out_edges(struct_access)) == 0
+            ):
+                state.remove_node(struct_access)
+                removed_nodes.add(struct_access)
         self._call += 1
-
-
+        #print(self._struct_to_view_reconn_map)
+        #print(self._view_to_struct_reconn_map)
 
         # All acccess from the view need to me mapped to the newly added array
         # The leaf node will not have access to all of the dimensions in the generated array we need to do that
         # missing_dims = memlet_shape[:-len(sdfg.arrays[view_chain[-1 if struct_to_view else 0].data].shape)]
         # if not isinstance(missing_dims, List):
         #    missing_dims = list(missing_dims)
-        if view_name is not None:
-            self._access_names_map[view_chain[-1 if struct_to_view else 0].data] = view_name
+        #if view_name is not None:
+        #    self._access_names_map[view_chain[-1 if struct_to_view else 0].data] = view_name
         return removed_nodes, (repl_before, repl_after)
 
     def _get_src_dst(self, state: SDFGState, n1: nodes.Any, n2: nodes.Any):
