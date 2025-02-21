@@ -176,9 +176,9 @@ class ArrayElimination(ppl.Pass):
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
                     xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0, override=True)
-                    #print(candidate, anode, anode.data, views_used_in_interstate_edges_and_cfgs)
+
                     # Try to apply
-                    if xform.can_be_applied(state, 0, sdfg):
+                    if xform.can_be_applied(state, 0, sdfg) and anode.data not in views_used_in_interstate_edges_and_cfgs:
                         xform.apply(state, sdfg)
                         removed_nodes.add(anode)
                         nodeset.remove(anode)
