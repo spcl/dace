@@ -2,11 +2,12 @@
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from dace import SDFG, SDFGState, data, properties
+from dace import SDFG, InterstateEdge, SDFGState, data, properties
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.sdfg.validation import InvalidSDFGNodeError
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
@@ -48,7 +49,7 @@ class ArrayElimination(ppl.Pass):
         reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
         # Get access nodes and modify set as pass continues
         access_sets: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
-
+        views_used_in_interstate_edges_and_cfgs = self._get_views_used_in_interstate_edges_and_cfgs(sdfg)
         # Traverse SDFG backwards
         try:
             state_order = list(cfg.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=True))
@@ -70,7 +71,7 @@ class ArrayElimination(ppl.Pass):
             removed_nodes |= self.merge_access_nodes(state, access_nodes, lambda n: state.out_degree(n) == 0)
 
             # Remove redundant views
-            removed_nodes |= self.remove_redundant_views(sdfg, state, access_nodes)
+            removed_nodes |= self.remove_redundant_views(sdfg, state, access_nodes, views_used_in_interstate_edges_and_cfgs)
 
             # Remove redundant copies and views
             removed_nodes |= self.remove_redundant_copies(sdfg, state, removable_data, access_nodes)
@@ -160,7 +161,8 @@ class ArrayElimination(ppl.Pass):
                 access_nodes[data_container] = [n for n in nodeset if n not in removed_nodes]
         return removed_nodes
 
-    def remove_redundant_views(self, sdfg: SDFG, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]]):
+    def remove_redundant_views(self, sdfg: SDFG, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]],
+                               views_used_in_interstate_edges_and_cfgs: Set[str]):
         """
         Removes access nodes that contain views, which can be represented normally by memlets. For example, slices.
         """
@@ -174,7 +176,7 @@ class ArrayElimination(ppl.Pass):
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
                     xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0, override=True)
-
+                    #print(candidate, anode, anode.data, views_used_in_interstate_edges_and_cfgs)
                     # Try to apply
                     if xform.can_be_applied(state, 0, sdfg):
                         xform.apply(state, sdfg)
@@ -252,3 +254,36 @@ class ArrayElimination(ppl.Pass):
                                     break
 
         return removed_nodes
+
+    def _get_views_used_in_interstate_edges_and_cfgs(self, sdfg: SDFG):
+        used_names = set()
+        view_names = [k for k, v in sdfg.arrays.items() if isinstance(v, data.View)]
+        for cfg in sdfg.nodes():
+            if not isinstance(cfg, SDFGState): # Needs to be CFG
+                for node in cfg.nodes():
+                    if isinstance(node, LoopRegion):
+                        assert node.loop_variable not in view_names
+                    elif isinstance(node, ConditionalBlock):
+                        for branch in node.branches:
+                            cb = branch[0]
+                            cfg = branch[1]
+                            symbols_to_check = (
+                                set.union(
+                                    cb.get_free_symbols(), cfg.free_symbols
+                                ) if cb is not None else cfg.free_symbols
+                            )
+                            for free_name in symbols_to_check:
+                                if free_name in view_names:
+                                    used_names.add(free_name)
+                    else:
+                        assert isinstance(node, SDFGState)
+
+        for edge in sdfg.edges():
+            interstate_edge: InterstateEdge = edge.data
+            for free_name in set.union(interstate_edge.condition.get_free_symbols(),
+                                       interstate_edge.assignments.keys(),
+                                       interstate_edge.assignments.values()):
+                if free_name in view_names:
+                    used_names.add(free_name)
+
+        return used_names
