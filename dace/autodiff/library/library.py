@@ -171,7 +171,6 @@ class ExpandBackwardPass(pm.ExpandTransformation):
                                            required_gradients=node.required_gradients.keys(),
                                            backward_sdfg=nsdfg,
                                            backward_state=nstate,
-                                           zero_non_transients=False,
                                            array_grad_map=array_grad_map,
                                            conflicted_gradient_buffers=node._conflicted_gradients)
 

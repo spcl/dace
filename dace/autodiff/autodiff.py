@@ -3,16 +3,18 @@ import typing
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 from dace.sdfg import SDFG, nodes
-from dace.autodiff.optimize_backward_pass_generator import autooptimize_sdfgs_for_ad
+from dace.autodiff.optimize_backward_pass_generator import autooptimize_sdfgs_for_ad, preprocess_fwd_sdfg
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.state import LoopRegion
+
 def add_backward_pass(sdfg: SDFG,
                       outputs: typing.List[typing.Union[nodes.AccessNode,
                                                         str]],
                       inputs: typing.List[typing.Union[nodes.AccessNode, str]],
                       overwite_strategy: str = "store_all",
                       data_to_recompute: typing.List[str] = None,
-                      autooptimize: bool = False):
+                      autooptimize: bool = False,
+                      seprate_sdfgs=False):
     """ Experimental: Add a backward pass to `state` using reverse-mode automatic differentiation.
 
         ``inputs``, ``outputs`` and ``grads`` can be provided either as ``AccessNode`` nodes, or as ``str``, in which
@@ -41,20 +43,32 @@ def add_backward_pass(sdfg: SDFG,
     # Validate SDFG
     sdfg.validate()
     
+    # preprocess the SDFG
+    preprocess_fwd_sdfg(sdfg)
+    
+    # Simplify and validate
+    sdfg.validate()
+    sdfg.simplify()
+    
     # Inline conditional blocks but keep loops
     inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])
     
-    # Validate again
-    sdfg.validate()
-    
+    if seprate_sdfgs:
+        backward_sdfg = SDFG(sdfg.name + "_backward")
+    else:
+        backward_sdfg = sdfg
+    sdfg.save("log_sdfgs/forward_after_soft.sdfg")
     # Add backward pass
     gen = BackwardPassGenerator(sdfg=sdfg,
                                 given_gradients=outputs,
                                 required_gradients=inputs,
-                                backward_sdfg=sdfg,
+                                backward_sdfg=backward_sdfg,
                                 overwrite_strategy=overwite_strategy,
                                 data_to_recompute=data_to_recompute)
     gen.backward()
     if autooptimize:
         autooptimize_sdfgs_for_ad(gen)
     sdfg.validate()
+    
+    if seprate_sdfgs:
+      return backward_sdfg

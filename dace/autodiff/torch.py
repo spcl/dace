@@ -35,8 +35,7 @@ def make_backward_function(
     gen = BackwardPassGenerator(sdfg=forward_sdfg,
                                 given_gradients=[clean_onnx_name(name) for name in model.outputs],
                                 required_gradients=required_grads,
-                                backward_sdfg=backward_sdfg,
-                                zero_non_transients=False)
+                                backward_sdfg=backward_sdfg)
 
     backward_result, backward_grad_arrays, backward_input_arrays = gen.backward()
 

@@ -71,9 +71,10 @@ class ReverseReduce(BackwardImplementation):
                                                shape=in_desc.shape,
                                                dtype=in_desc.dtype,
                                                strides=in_desc.strides)
+            # Make sure the output is set to zero
             reduce_all_axes = forward_node.axes is None or set(range(len(in_desc.shape))) == set(forward_node.axes)
 
-            state.add_mapped_tasklet(
+            _, _, exit_map = state.add_mapped_tasklet(
                 "_distribute_grad_" + str(reduction_type).replace(".", "_") + "_", {
                     "i" + str(i): "0:{}".format(shape)
                     for i, shape in enumerate(in_desc.shape)
@@ -89,6 +90,13 @@ class ReverseReduce(BackwardImplementation):
                 },
                 external_edges=True)
 
+            # Get the output AccessNode and setzero
+            out_eges = state.out_edges(exit_map)
+            assert len(out_eges) == 1
+            out_edge = out_eges[0]
+            out_node = out_edge.dst
+            assert isinstance(out_node, dace.nodes.AccessNode)
+            out_node.setzero = True
             return context.backward_state.add_nested_sdfg(sdfg, None, {rev_input_conn_name},
                                                           {rev_output_conn_name}), result
         else:

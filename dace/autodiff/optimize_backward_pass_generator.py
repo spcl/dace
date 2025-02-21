@@ -8,8 +8,146 @@ from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.dtypes import DeviceType
 from dace.libraries.blas.blas_helpers import to_blastype
+import dace.sdfg.nodes as nodes
 
 
+def preprocess_fwd_sdfg(forward_sdfg: SDFG):
+        """
+        Some preprocessing steps to make AD easier. Mainly pattern detect softmax to remove the max reduction
+        """
+    
+        # Remove Softmax max reduction
+        for node, parent in forward_sdfg.all_nodes_recursive():
+            # Chec if the node is still in the SDFG in case the pattern has been removed
+            if node not in parent.nodes():
+                continue
+            is_soft_max, pattern_nodes = _is_softmax_reduction(node, parent)
+            if is_soft_max:
+                _softmax_reduction_to_lib_node(pattern_nodes, parent)
+
+def _is_softmax_reduction(node: nodes.NestedSDFG, parent: SDFGState):
+        """
+        Change the forward pass for the softmax function to avoid having a max reduction
+        """
+        if isinstance(node, nodes.NestedSDFG) and "softmax" in node.label.lower():
+            return True, node
+        
+        # Pattern match the softmax start node
+        if not isinstance(node, nodes.AccessNode) or parent.out_degree(node) != 2:
+            return False, None
+        out_edges = parent.out_edges(node)
+        
+        reduction = out_edges[0].dst if isinstance(out_edges[0].dst, nodes.LibraryNode) else out_edges[1].dst
+        map_entry = out_edges[0].dst if isinstance(out_edges[0].dst, dace.nodes.MapEntry) else out_edges[1].dst
+        if not isinstance(reduction, nodes.LibraryNode) or not isinstance(map_entry, dace.nodes.MapEntry):
+            return False, None
+        
+        if not "Reduce" in reduction.label:
+            return False, None
+        
+        # Get the map exit node
+        map_exit = parent.exit_node(map_entry)
+        
+        # out edges of exit 
+        out_edges = parent.out_edges(map_exit)
+        if len(out_edges) != 1:
+            return False, None
+        first_exit_out_edge = out_edges[0]
+        
+        # should point to an
+        if not isinstance(first_exit_out_edge.dst, nodes.AccessNode):
+            return False, None
+        
+        edges = parent.out_edges(first_exit_out_edge.dst)
+        if len(edges) != 1:
+            return False, None
+        second_map = edges[0].dst
+        
+        second_exit = parent.exit_node(second_map)
+        edges = parent.out_edges(second_exit)
+        if len(edges) != 1:
+            return False, None
+        second_exit_out_edge = edges[0]
+        
+        # should be an
+        if not isinstance(second_exit_out_edge.dst, nodes.AccessNode):
+            return False, None
+        
+        # shoudl have two edges out
+        edges = parent.out_edges(second_exit_out_edge.dst)
+        if len(edges) != 2:
+            return False, None
+        
+        second_reduction = edges[0].dst if isinstance(edges[0].dst, nodes.LibraryNode) else edges[1].dst
+        second_map_entry = edges[0].dst if isinstance(edges[0].dst, dace.nodes.MapEntry) else edges[1].dst
+        if not isinstance(second_reduction, nodes.LibraryNode) or not isinstance(second_map_entry, dace.nodes.MapEntry):
+            return False, None
+        
+        # final map exit 
+        final_map_exit = parent.exit_node(second_map_entry)
+        edges = parent.out_edges(final_map_exit)
+        if len(edges) != 1:
+            return False, None
+        final_exit_out_edge = edges[0]
+        
+        output_node = final_exit_out_edge.dst
+        if not isinstance(output_node, nodes.AccessNode):
+            return False, None
+        
+        nodes_list = parent.all_nodes_between(node, output_node)
+        nodes_list = list(nodes_list)
+        nodes_list.insert(0, node)
+        nodes_list.append(output_node)
+        return True, nodes_list
+        
+            
+        
+def _softmax_reduction_to_lib_node(pattern_nodes, parent: SDFGState):
+        """
+        Change the forward pass for the softmax function to avoid having a max reduction
+        """
+        import dace.libraries.onnx as donnx 
+        # Get the equivelent library node
+        lib_node = donnx.ONNXSoftmax("Softmax")
+        parent.add_node(lib_node)
+        
+        if isinstance(pattern_nodes, nodes.NestedSDFG):
+            node = pattern_nodes
+            
+            # in edges
+            in_edges = parent.in_edges(node)
+            assert len(in_edges) == 1
+            in_edge = in_edges[0]
+            
+            # out edges
+            out_edges = parent.out_edges(node)
+            assert len(out_edges) == 1
+            out_edge = out_edges[0]
+            
+            # Connect it to the input and output
+            parent.add_edge(in_edge.src, in_edge.src_conn, lib_node, "input", in_edge.data)
+            parent.add_edge(lib_node, "output", out_edge.dst, out_edge.dst_conn, out_edge.data)
+            
+            # Remove the nested SDFG
+            parent.remove_node(node)
+        else: 
+            input = pattern_nodes[0]
+            in_edge = parent.out_edges(input)
+            assert len(in_edge) == 2
+            assert in_edge[0].data == in_edge[1].data
+            in_edge = in_edge[0]
+            parent.add_edge(in_edge.src, in_edge.src_conn, lib_node, "input", in_edge.data)
+            
+            output = pattern_nodes[-1]
+            out_edge = parent.in_edges(output)
+            assert len(out_edge) == 1
+            out_edge = out_edge[0]
+            parent.add_edge(lib_node, "output", out_edge.dst, out_edge.dst_conn, out_edge.data)
+            
+            pattern_nodes = pattern_nodes[1:-1] 
+            # Remove the list of nodes from the parent
+            parent.remove_nodes_from(pattern_nodes)
+                  
 def autooptimize_sdfgs_for_ad(bwd_generator: BackwardPassGenerator):
     """
     A pass that will be applied after getting the backward SDFG to optimize the SDFG.
@@ -47,7 +185,7 @@ def autooptimize_sdfgs_for_ad(bwd_generator: BackwardPassGenerator):
     # 3- Call autoopt for CPU
     backward_sdfg_opt = backward_sdfg
     forward_sdfg_opt = forward_sdfg
-    forward_sdfg.simplify()
+    forward_sdfg_opt.simplify()
     forward_sdfg_opt = auto_optimize(forward_sdfg, DeviceType.CPU)
     if bwd_generator.separate_sdfgs:
         backward_sdfg.simplify()

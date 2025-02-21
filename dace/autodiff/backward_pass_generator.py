@@ -391,6 +391,7 @@ class BackwardPassGenerator:
         # Connect the new reversed states to the other states correctly
         self._connect_reversed_states()
 
+        self.sdfg.save("log_sdfgs/before_fill_interstate.sdfg")
         # Fill the interstate edges with the correct conditions
         self._fill_interstate_edge_conditions()
 
@@ -1069,7 +1070,103 @@ class BackwardPassGenerator:
                     if state_node in state.scope_dict() and state.scope_dict(
                     )[state_node] == node and state_node in nodes_list:
                         nodes_list.remove(state_node)
-        
+                        
+    def _find_subgraph_to_differentiate_new(self) -> None:
+        """ 
+        Determine which nodes we need to reverse; this forms the subgraph we will differentiate:
+        we do a reverse BFS and a forward BFS, then take the intersection of nodes found. 
+        In the case where a state is within a loop, this may result in different subgraphs
+        depending on the loop iteration.
+
+        To calculate the gradients for a node x in ``required_gradients``, we need to sum up the gradient
+        contributions from every node y where x is used as an input. We thus first do a forward BFS. Also, the
+        gradient contributions of all nodes that are not connected by a path to a ``given_gradient`` node are
+        implicitly zero. Thus, we take the intersection of the two BFSs.
+        """
+        forward_nodes: set[nodes.Node] = set()
+        backward_nodes: set[nodes.Node] = set()
+        required_gradients_all_states = {n.data for n in self.required_gradients}
+        given_gradients_all_states = {n.data for n in self.given_gradients}
+
+        # Do the forward BFS iterativly
+        for state in self.state_order:
+            state_required_gradients = []
+
+            # Get all the access nodes that are neccessary for AD and are present in this state
+            for node in state:
+                if isinstance(node, nodes.AccessNode) and node.data in required_gradients_all_states:
+                    state_required_gradients.append(node)
+
+            forward_nodes = forward_nodes.union(
+                {n
+                 for e in state.edge_bfs(state_required_gradients)
+                 for n in [e.src, e.dst]})
+
+            # Update the list of required gradients to use for states
+            for node in forward_nodes:
+                if isinstance(node, nodes.AccessNode) and node.data not in required_gradients_all_states:
+                    # We want all of the forward AccessNodes that made it to the intersection
+                    required_gradients_all_states.add(node.data)
+
+        # Do the backward BFS iterativly
+        for state in reversed(self.state_order):
+            state_given_gradients: List[nodes.AccessNode] = []
+
+            for node in state:
+                if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
+                    state_given_gradients.append(node)
+
+            backward_nodes = {n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
+            nodes_list = list(forward_nodes.intersection(backward_nodes))
+            state_subgraph = dstate.StateSubgraphView(state, nodes_list)
+
+            state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(state=state,
+                                                                              state_subgraph=state_subgraph,
+                                                                              view_nodes=nodes_list)
+
+            # Add mapping
+            self.states_view_map[state] = state_subgraph
+
+            # In the case where this state is within a for loop
+            within_loop, _ = self._state_within_loop(state)
+            if within_loop:
+                # Other elements that are not within state_subgraph will need to be reversed
+                # We create a separate mapping for these elements
+
+                # Get all the access nodes that are used in the previous view
+                subgraph_an = [node.data for node in state_subgraph.nodes() if isinstance(node, nodes.AccessNode)]
+
+                # For each access node in this view
+                for state_node in state:
+                    if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an:
+                        state_given_gradients.append(state_node)
+
+                # Do reverse BFS starting from this new set of nodes
+                backward_nodes = {
+                    n
+                    for e in state.edge_bfs(state_given_gradients, reverse=True)
+                    for n in [e.src, e.dst]
+                }
+                view_nodes = list(forward_nodes.intersection(backward_nodes))
+                # Get the intersection with the forward nodes
+                # Note that these don't change even in the case of a for loop
+                loop_state_subgraph = dstate.StateSubgraphView(state, view_nodes)
+
+                loop_state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(
+                    state=state, state_subgraph=loop_state_subgraph, view_nodes=view_nodes)
+
+                # If the two views are different
+                # Here we only check if the number of nodes is the same
+                # Since states_view_map[state] is a subset of loop_states_view_map[state]
+                if len(state_subgraph) != len(loop_state_subgraph):
+                    self.loop_states_view_map[state] = loop_state_subgraph
+
+            # Update the list of given gradients to use for states
+            for node in backward_nodes:
+                if isinstance(node, nodes.AccessNode) and node.data not in given_gradients_all_states:
+                    # We want all of the backward AccessNodes that made it to the intersection
+                    given_gradients_all_states.add(node.data)
+                        
     def _find_subgraph_to_differentiate(self) -> None:
         """ 
         Determine which nodes we need to reverse; this forms the subgraph we will differentiate:
@@ -1518,30 +1615,41 @@ class BackwardPassGenerator:
         Given an edge from the forward pass, return the equivelent edge in the backward pass
         """
         # Get the source and destination states
-        forward_state_src = forward_edge.src
-        forward_state_dst = forward_edge.dst
+        forward_src = forward_edge.src
+        forward_dst = forward_edge.dst
 
-        # Get the equivelent states in the backward pass
-        assert forward_state_src in self.reversed_loop_states_map
-        assert forward_state_dst in self.reversed_loop_states_map
+        if isinstance(forward_src, LoopRegion):
+            fwd_src_is_loop = True
+            assert forward_src in self.reversed_loops_map
+        else:
+            fwd_src_is_loop = False
+            assert forward_src in self.reversed_states_map
+        
+        if isinstance(forward_dst, LoopRegion):
+            fwd_dst_is_loop = True
+            assert forward_dst in self.reversed_loops_map
+        else:
+            fwd_dst_is_loop = False
+            assert forward_dst in self.reversed_states_map
+            
 
         # Note that the source will become the destination
-        backward_state_dst = self.reversed_loop_states_map[forward_state_src]
-        backward_state_src = self.reversed_loop_states_map[forward_state_dst]
+        backward_dst = self.reversed_states_map[forward_src] if not fwd_src_is_loop else self.reversed_loops_map[forward_src]
+        backward_src = self.reversed_states_map[forward_dst] if not fwd_dst_is_loop else self.reversed_loops_map[forward_dst]
 
         # Each one of these in edges needs to have an equivelent
         # out edge in the backward part of the SDFG
         bwd_edge = None
-        connection_state = backward_state_dst
+        connection_state = backward_dst
 
         # Check if this state has a preceeding initialization state
-        if backward_state_dst in self.init_states:
+        if backward_dst in self.init_states:
             # In this case the edge will be to this initialization state
-            connection_state = self.init_states[backward_state_dst]
+            connection_state = self.init_states[backward_dst]
 
         # Find the equivelent edge in the backward SDFG
-        for b_edge in self.backward_sdfg.in_edges(connection_state):
-            if b_edge.src == backward_state_src:
+        for b_edge in connection_state.parent_graph.in_edges(connection_state):
+            if b_edge.src == backward_src:
                 bwd_edge = b_edge
                 break
 
@@ -1641,6 +1749,7 @@ class BackwardPassGenerator:
                 parent_graph = parent_graph.graph
 
             # Check if the node exists in the backward implementation repository
+            # if find_backward_implementation(parent_graph.parent_graph, parent_graph, node) is not None and not "Softmax" in node.label:
             if find_backward_implementation(parent_graph.parent_graph, parent_graph, node) is not None:
                 continue
 
@@ -2425,7 +2534,7 @@ class BackwardPassGenerator:
             # We need to manually set the start block of the SDFG so that the following works
             try:
                 start_state = self.sdfg.start_state
-            except dace.sdfg.graph.NodeNotFoundError:
+            except (dace.sdfg.graph.NodeNotFoundError, ValueError):
                 source_nodes = self.sdfg.source_nodes()
                 # Because we are adding the reversed states then connecting them
                 # There will be more than a single source node which confuses the start_state function
