@@ -522,39 +522,83 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T, typename U>
+
+
+/* If `DACE_XILINX` is defined then `pow` only returns floats, even if their arguments
+ *  are integer. If it is not defined, then if all arguments of `pow` are integers
+ *  the return value will also be an integer, currently it is always the largest supported by the platform.
+ *  This is the original behaviour prior to [PR#1748](https://github.com/spcl/dace/pull/1748). */
+#if defined(DACE_XILINX)
+
+        template<
+            typename T,
+            typename U
+        >
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
             return std::pow(a, b);
         }
 
-#ifndef DACE_XILINX
-        static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
+#else
+
+        template<
+            typename T,
+            typename U,
+            typename = std::enable_if_t<!(std::is_integral<T>::value && std::is_integral<U>::value)>
+        >
+        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
-            if (b < 0) return 0;
-            int result = 1;
-            for (int i = 0; i < b; ++i)
-                result *= a;
-            return result;
+            return std::pow(a, b);
         }
 
-        static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                       const unsigned int& b)
+
+        //TODO: Should this always be the largest integer?
+        template<typename T>
+        using IntPowReturnType_t = std::conditional_t<std::is_unsigned<T>::value, uintmax, intmax>;
+
+
+       /* TODO: The return value is always an integer, this is different from the behaviour of `std::pow` that
+        *  always return a float. We should probably patch the code generator to generate `ipow` calls if all
+        *  arguments are integers. */
+        template<
+            typename T1,
+            typename T2,
+            typename = std::enable_if_t<std::is_integral<T1>::value && std::is_integral<T2>::value>
+        >
+        static DACE_CONSTEXPR DACE_HDFI
+        IntPowReturnType_t<T1>
+        pow(const T1& a, const T2& b)
         {
-            unsigned int result = 1;
-            for (unsigned int i = 0; i < b; ++i)
+            if(std::is_signed<T2>::value) {
+                if(b < 0)
+                    return 0;
+            }
+            using IterationBound_t = std::make_unsigned_t<T2>;
+            IntPowReturnType_t<T1> result = 1;
+            const IterationBound_t stop = b;
+            //TODO: Implement logarithmic version.
+            for (IterationBound_t i = 0; i < stop; ++i)
                 result *= a;
             return result;
-        }
+	}
 #endif
 
+       /* Implements the power where the exponent is known as code generation time.
+        *
+        * Furthermore, as in accordance with `CPPUnparse._BinOp` the function assumes
+        * that the exponent is a positive, i.e. $b > 0` integer.
+        *
+        * TODO: Find out whyt the function can not be `constexpr`.
+        */
         template<typename T>
-        DACE_HDFI T ipow(const T& a, const unsigned int& b) {
+        DACE_HDFI T ipow(const T& a, const unsigned int b)
+        {
             T result = a;
             for (unsigned int i = 1; i < b; ++i)
                 result *= a;
             return result;
         }
+
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)
