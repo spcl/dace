@@ -447,14 +447,26 @@ def add_container_group(
         dg_desc,
     )
 
-
 def _get_name_hierarchy_from_name(demangled_name: str):
-    # Regular expression to match __CG_, __CA_, and __m_ prefixes
-    pattern = re.findall(r"(__CG_|__CA_|__m_)([^_]+)", demangled_name)
+    # Split the string while keeping the prefixes
+    parts = re.split(r'(?=__(?:CG|CA|m))', demangled_name)
 
-    # Extract names and their corresponding types
-    name_hierarchy = [name for _, name in pattern]
-    type_hierarchy = [kind[2:-1] for kind, _ in pattern]  # Remove '__' from prefix
+    name_hierarchy = []
+    type_hierarchy = []
+
+
+    for p in parts:
+        if not p or p == "":
+            continue
+        if p.startswith("__CG_"):
+            name_hierarchy.append(p[5:])
+            type_hierarchy.append("CG")
+        elif p.startswith("__CA_"):
+            name_hierarchy.append(p[5:])
+            type_hierarchy.append("CA")
+        elif p.startswith("__m_"):
+            name_hierarchy.append(p[4:])
+            type_hierarchy.append("m")
 
     return name_hierarchy, type_hierarchy
 
@@ -519,6 +531,10 @@ class StructToContainerGroups(ppl.Pass):
         desc: dace.data.Structure,
         registered_members: typing.List[typing.Tuple[str, dace.data.Data]],
     ):
+        if self._verbose:
+            print("Registered members:")
+            for mem in registered_members:
+                print("  ", mem)
 
         main_comment = "\n".join(
             [
@@ -526,6 +542,8 @@ class StructToContainerGroups(ppl.Pass):
                 for name, desc in registered_members
             ]
         )
+
+        print(main_comment)
 
         def _gen_loop(
             sdfg: SDFG,
@@ -580,10 +598,18 @@ class StructToContainerGroups(ppl.Pass):
             for member_name, prev_type, member_type in zip(
                 name_hierarchy[1:], name_hierarchy_types[:-1], name_hierarchy_types[1:]
             ):
-                if prev_type == "CG":
-                    member_arr = member_arr.members[member_name]
-                elif prev_type == "CA":
-                    member_arr = member_arr.stype
+                print(member_arr, "|", member_name, "|", prev_type, "|",member_type, "|")
+                print(name_hierarchy)
+                if member_type == "m":
+                    if prev_type == "CG":
+                        member_arr = member_arr.members[member_name]
+                    elif prev_type == "CA":
+                        member_arr = member_arr.stype
+                else:
+                    if prev_type == "CG":
+                        member_arr = member_arr.members[member_name]
+                    elif prev_type == "CA":
+                        member_arr = member_arr.stype
 
             ompfor = f"#pragma omp parallel for collapse({len(used_letters)}) schedule(static)\n"
             _cstr = ompfor + _cstr
@@ -622,7 +648,7 @@ class StructToContainerGroups(ppl.Pass):
                     arr_desc,
                     *_get_name_hierarchy_from_name(arr_name),
                 )
-                for (arr_name, arr_desc) in registered_members
+                for (arr_name, arr_desc) in registered_members if _get_name_hierarchy_from_name(arr_name)[0][0] == name
             ])
         copy_strs = "\n".join(copy_strs_list)
         copy_strs_reverse = "\n".join(copy_strs_reverse_list)
