@@ -33,7 +33,7 @@ jobs:
         sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage
+        pip install flake8 pytest-xdist coverage pytest-forked
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
@@ -55,7 +55,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack and not datainstrument and not long"
+        pytest --forked -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack and not datainstrument and not long"
         ./codecov
 
     - name: Test OpenBLAS LAPACK
