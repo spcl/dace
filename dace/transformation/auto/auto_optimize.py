@@ -14,11 +14,12 @@ from typing import Set, Tuple, Union, List, Iterable, Dict
 import warnings
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
+from dace.transformation.passes import FullMapFusion
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
-from dace.transformation import helpers as xfh
+from dace.transformation import helpers as xfh, pass_pipeline as ppl
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -57,8 +58,13 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         if isinstance(graph_or_subgraph, SDFG):
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
-            # MapFusion for trivial cases
-            graph_or_subgraph.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            # Apply MapFusion for the more trivial cases
+            full_map_fusion_pass = FullMapFusion(
+                    strict_dataflow=True,
+                    validate_all=validate_all,
+            )
+            full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
+            full_map_fusion_pileline.apply_pass(graph_or_subgraph, {})
 
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
@@ -76,7 +82,13 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            # Apply MapFusion for the more trivial cases
+            full_map_fusion_pass = FullMapFusion(
+                    strict_dataflow=True,
+                    validate_all=validate_all,
+            )
+            full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
+            full_map_fusion_pileline.apply_pass(sdfg, {})
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
         else:

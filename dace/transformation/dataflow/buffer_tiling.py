@@ -98,7 +98,13 @@ class BufferTiling(transformation.SingleStateTransformation):
 
         # Fuse maps
         some_buffer = next(iter(buffers))  # some dummy to pass to MapFusion.apply_to()
-        MapFusion.apply_to(sdfg, first_map_exit=tile_map1_exit, array=some_buffer, second_map_entry=tile_map2_entry)
+        MapFusion.apply_to(
+                sdfg,
+                first_map_exit=tile_map1_exit,
+                array=some_buffer,
+                second_map_entry=tile_map2_entry,
+                verify=True,
+        )
 
         # Optimize the simple cases
         map1_entry.range.ranges = [
