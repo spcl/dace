@@ -59,7 +59,7 @@ end module lib
 
     alias_map = alias_specs(ast)
     assert alias_map.keys() == {('lib',), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b'),
-                                ('lib', 'ext', 'a')}
+                                ('lib', 'ext', 'base'), ('lib', 'ext', 'base', 'a')}
 
 
 def test_spec_mapping_of_procedure_pointers():
@@ -807,6 +807,93 @@ MODULE main
     d(2) = 5.5 + i
   END SUBROUTINE fun
 END MODULE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_use_consolidation_with_potential_ambiguity():
+    sources, main = SourceCodeBuilder().add_file("""
+module A
+  integer, parameter :: mod = 1
+end module A
+
+module B
+  integer, parameter :: mod = 2
+  contains
+  subroutine foo
+    use A
+    print *, mod
+  end subroutine foo
+end module B
+
+subroutine main
+  use B
+  call foo
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = consolidate_uses(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE A
+  INTEGER, PARAMETER :: mod = 1
+END MODULE A
+MODULE B
+  INTEGER, PARAMETER :: mod = 2
+  CONTAINS
+  SUBROUTINE foo
+    USE A, ONLY: mod
+    PRINT *, mod
+  END SUBROUTINE foo
+END MODULE B
+SUBROUTINE main
+  USE B, ONLY: foo
+  CALL foo
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_use_consolidation_with_type_extension():
+    sources, main = SourceCodeBuilder().add_file("""
+module A
+  type, abstract :: AA
+  end type AA
+end module A
+
+module B
+  use A
+  type, extends(AA) :: BB
+  end type BB
+end module B
+
+subroutine main
+  use B
+  type(BB) :: c = BB()
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = consolidate_uses(ast)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE A
+  TYPE, ABSTRACT :: AA
+  END TYPE AA
+END MODULE A
+MODULE B
+  USE A, ONLY: AA
+  TYPE, EXTENDS(AA) :: BB
+  END TYPE BB
+END MODULE B
+SUBROUTINE main
+  USE B, ONLY: BB
+  TYPE(BB) :: c = BB()
+END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()

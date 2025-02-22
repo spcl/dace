@@ -1,7 +1,5 @@
 import argparse
-from itertools import chain
 from pathlib import Path
-from typing import Generator
 
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, run_fparser_transformations
 from dace.frontend.fortran.gen_serde import find_all_f90_files

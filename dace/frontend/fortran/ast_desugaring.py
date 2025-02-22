@@ -394,7 +394,7 @@ def alias_specs(ast: Program):
         for k, v in alias_map.items():
             if k[:len(base_dtspec)] != base_dtspec:
                 continue
-            updates[dtspec + k[len(base_dtspec):]] = v
+            updates[dtspec + k[len(base_dtspec)-1:]] = v
         alias_map.update(updates)
 
     assert set(ident_map.keys()).issubset(alias_map.keys())
@@ -1729,10 +1729,11 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
                 used_ifaces.add(k)
                 break
         for k, v in alias_map.items():
-            if isinstance(v, Interface_Stmt):
+            vspec = ident_spec(v)
+            if len(vspec) < 2 or vspec[-2] != INTERFACE_NAMESPACE:
                 continue
             if k not in ident_map:
-                used_ifaces.add(ident_spec(v))
+                used_ifaces.add(vspec)
         for k, v in ident_map.items():
             if len(k) < 2 or k[-2] != INTERFACE_NAMESPACE:
                 continue
@@ -2839,15 +2840,22 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
         use_map: Dict[str, Set[str]] = {}
         # Build the table to keep the use statements only if they are actually necessary.
         for nm in walk(sp.parent, Name):
-            if isinstance(nm.parent, (Only_List, Rename)):
+            if isinstance(nm.parent, (Use_Stmt, Only_List, Rename)):
                 # The identifiers in the use statements themselves are not of concern.
                 continue
             # Where did we _really_ import `nm` from? Find the definition module.
-            sc_spec = search_scope_spec(nm.parent)
+            sc_spec = search_scope_spec(nm)
             if not sc_spec:
+                continue
+            box = alias_map[sc_spec].parent
+            if box is not sp.parent and isinstance(box, (Function_Subprogram, Subroutine_Subprogram, Main_Program)):
+                # If `nm` is imported, it should happen in a deeper subprogram.
                 continue
             spec = search_real_ident_spec(nm.string, sc_spec, alias_map)
             if not spec or spec not in alias_map:
+                continue
+            if alias_map[spec].parent is sp.parent:
+                # If `nm` is just referring to the subprogram that `sp` is a part of, then just leave it be.
                 continue
             if len(spec) == 2:
                 mod_spec = spec[:-1]
@@ -2877,7 +2885,6 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
         nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(sorted(use_map[k]))}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
         set_children(sp, nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)])
-        _reparent_children(sp)
     return ast
 
 
