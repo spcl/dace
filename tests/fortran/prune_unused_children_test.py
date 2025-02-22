@@ -264,7 +264,6 @@ MODULE lib
   END SUBROUTINE fun
 END MODULE lib
 MODULE lib_indirect
-  USE lib, ONLY: fun
   CONTAINS
   SUBROUTINE fun_indirect(d)
     USE lib, ONLY: fun
@@ -466,7 +465,6 @@ MODULE lib
   END TYPE used_type
 END MODULE lib
 PROGRAM main
-  USE lib, ONLY: used_type
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
@@ -521,7 +519,6 @@ MODULE lib
   INTEGER, PARAMETER :: used = 1
 END MODULE lib
 PROGRAM main
-  USE lib, ONLY: used
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
@@ -574,7 +571,6 @@ MODULE lib
   INTEGER, PARAMETER :: used = 1
 END MODULE lib
 PROGRAM main
-  USE lib, ONLY: used
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
@@ -631,7 +627,6 @@ MODULE lib
   REAL, PARAMETER :: b = 4.2
 END MODULE lib
 PROGRAM main
-  USE lib, ONLY: a, b
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
@@ -689,7 +684,6 @@ MODULE lib
   REAL, PARAMETER :: b = 4.2
 END MODULE lib
 PROGRAM main
-  USE lib, ONLY: a, b
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
