@@ -10,7 +10,7 @@ def find_all_f90_files(root: Path) -> Generator[Path, None, None]:
     if root.is_file():
         yield root
     else:
-        for f in chain(root.rglob('*.f90'), root.rglob('*.F90')):
+        for f in chain(root.rglob('*.f90'), root.rglob('*.F90'), root.rglob('*.incf')):
             yield f
 
 
@@ -25,6 +25,8 @@ def main():
     argp.add_argument('-o', '--output_ast', type=str, required=False, default=None,
                       help='(Optional) A file to write the preprocessed AST into (absolute path or relative to CWD).'
                            'If nothing is given, then will write to STDOUT.')
+    argp.add_argument('--noop', type=str, required=False, action='append', default=[],
+                      help='(Optional) Functions or subroutine to make no-op.')
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -34,7 +36,10 @@ def main():
     entry_points = [tuple(ep.split('.')) for ep in args.entry_point]
     print(f"Will be keeping these as entry points: {entry_points}")
 
-    cfg = ParseConfig(sources=input_f90s, entry_points=entry_points)
+    noops = [tuple(np.split('.')) for np in args.noop]
+    print(f"Will be making these as no-ops: {noops}")
+
+    cfg = ParseConfig(sources=input_f90s, entry_points=entry_points, make_noop=noops)
 
     ast = create_fparser_ast(cfg)
     ast = run_fparser_transformations(ast, cfg)
