@@ -1679,7 +1679,6 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
             if not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
                 continue
             if k not in used_fns:
-                print(f"removing: {k}")
                 remove_self(v.parent)
                 removed_something = True
 
@@ -1708,7 +1707,6 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
             if not isinstance(v, Derived_Type_Stmt):
                 continue
             if k not in used_types:
-                print(f"removing: {k}")
                 remove_self(v.parent)
                 removed_something = True
 
@@ -1738,7 +1736,6 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
             if len(k) < 2 or k[-2] != INTERFACE_NAMESPACE:
                 continue
             if k not in used_ifaces:
-                print(f"removing: {k}")
                 remove_self(v.parent)
                 removed_something = True
 
@@ -1765,7 +1762,6 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
             if not isinstance(v, (Entity_Decl, Proc_Decl)):
                 continue
             if k not in used_vars:
-                print(f"removing: {k}")
                 elist = v.parent
                 remove_self(v)
                 elist_tdecl = elist.parent
