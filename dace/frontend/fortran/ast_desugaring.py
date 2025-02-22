@@ -394,7 +394,7 @@ def alias_specs(ast: Program):
         for k, v in alias_map.items():
             if k[:len(base_dtspec)] != base_dtspec:
                 continue
-            updates[dtspec + k[len(base_dtspec)-1:]] = v
+            updates[dtspec + k[len(base_dtspec) - 1:]] = v
         alias_map.update(updates)
 
     assert set(ident_map.keys()).issubset(alias_map.keys())
@@ -1658,9 +1658,9 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
             vname = find_name_of_stmt(v)
             box = alias_map[k[:-2] if k[-2] == INTERFACE_NAMESPACE else k[:-1]].parent
             for nm in walk(box, Name):
-                if (nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)) or
-                        isinstance(nm.parent,
-                                   (Function_Stmt, End_Function_Stmt, Subroutine_Stmt, End_Subroutine_Stmt))):
+                if (nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt))
+                        or isinstance(nm.parent, (Function_Stmt, End_Function_Stmt, Subroutine_Stmt,
+                                                  End_Subroutine_Stmt))):
                     continue
                 scope_spec = search_scope_spec(nm)
                 if scope_spec == k:
@@ -1672,6 +1672,15 @@ def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
                 continue
             if k not in ident_map:
                 used_fns.add(ident_spec(v))
+        for fref in walk(ast, (Function_Reference, Call_Stmt)):
+            scope_spec = find_scope_spec(fref)
+            name, _ = fref.children
+            if isinstance(name, Intrinsic_Name):
+                continue
+            fref_spec = search_real_ident_spec(name.string, scope_spec, alias_map)
+            if fref_spec and len(fref_spec) == 1:
+                # Free-floating functions do not need to be imported.
+                used_fns.add(fref_spec)
         for k, vs in iface_map.items():
             for v in vs:
                 used_fns.add(v)
