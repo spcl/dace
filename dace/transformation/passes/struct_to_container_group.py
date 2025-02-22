@@ -3,6 +3,7 @@
     transformation."""
 
 import copy
+import math
 import re
 from typing import Any, Dict, List
 import dace
@@ -233,6 +234,18 @@ def register_container_group_members(
     return registered
 
 
+def _get_fused_strides(member, acc_shape):
+    strides = []
+    member.strides
+    tot_stride = math.prod(member.strides)
+    cur_acc = 1
+    for i in acc_shape:
+        ns = tot_stride * cur_acc
+        strides.insert(0, ns)
+        cur_acc *= i
+    strides += member.strides
+    return strides
+
 def _register_container_group_members(
     sdfg,
     flattening_mode,
@@ -266,22 +279,37 @@ def _register_container_group_members(
                     # Add the dimensions accumulated while iterating from root to the leaf node of the trees
                     member_demangled_name = prefix_name + f"__m_{name}"
                     if isinstance(member, dace.data.Scalar):
-                        datadesc = dace.data.Array(
-                            dtype=member.dtype,
-                            shape=acc_shape,
-                            transient=member.transient if not register_as_transient else True,
-                            allow_conflicts=member.allow_conflicts,
-                            storage=member.storage,
-                            location=member.location,
-                            may_alias=member.may_alias,
-                            lifetime=member.lifetime,
-                            debuginfo=member.debuginfo,
-                            start_offset=member.start_offset,
-                        )
+                        if acc_shape == ():
+                            datadesc = dace.data.Array(
+                                dtype=member.dtype,
+                                shape=(1,),
+                                transient=member.transient if not register_as_transient else True,
+                                allow_conflicts=member.allow_conflicts,
+                                storage=member.storage,
+                                location=member.location,
+                                lifetime=member.lifetime,
+                                debuginfo=member.debuginfo,
+                                may_alias=False,
+                            )
+                        else:
+                            datadesc = dace.data.Array(
+                                dtype=member.dtype,
+                                shape=acc_shape,
+                                transient=member.transient if not register_as_transient else True,
+                                allow_conflicts=member.allow_conflicts,
+                                storage=member.storage,
+                                location=member.location,
+                                may_alias=member.may_alias,
+                                lifetime=member.lifetime,
+                                debuginfo=member.debuginfo,
+                                start_offset=member.start_offset,
+                            )
                     elif isinstance(member, dace.data.Array):
+                        strides = _get_fused_strides(member, acc_shape)
                         datadesc = dace.data.Array(
                             dtype=member.dtype,
                             shape=acc_shape + member.shape,
+                            strides=strides,
                             transient=member.transient if not register_as_transient else True,
                             allow_conflicts=member.allow_conflicts,
                             storage=member.storage,
@@ -612,13 +640,14 @@ class StructToContainerGroups(ppl.Pass):
                     elif prev_type == "CA":
                         member_arr = member_arr.stype
 
-            ompfor = f"#pragma omp parallel for collapse({len(used_letters)}) schedule(static)\n"
-            _cstr = ompfor + _cstr
-            _cstr_reverse = ompfor + _cstr_reverse
+            if not isinstance(member_arr, dace.data.Scalar):
+                ompfor = f"#pragma omp parallel for collapse({len(used_letters)}) schedule(static)\n"
+                _cstr = ompfor + _cstr
+                _cstr_reverse = ompfor + _cstr_reverse
 
             if isinstance(member_arr, dace.data.Scalar):
-                assert len(remaining_letters) == 0
-                endaccess = "0"
+                assert len(remaining_letters) == 1
+                endaccess = ""
             else:
                 assert len(remaining_letters) == len(member_arr.shape), f"{member_arr}, {remaining_letters}"
                 endaccess = " + ".join(
@@ -658,23 +687,29 @@ class StructToContainerGroups(ppl.Pass):
         copy_strs = "\n".join(copy_strs_list)
         copy_strs_reverse = "\n".join(copy_strs_reverse_list)
 
+        """
+        // Flatten:
+        // From:
+        // {name}, {desc}
+        // To:
+        {main_comment}
+        """
+
         flattener_codestr = f"""
-// Flatten:
-// From:
-// {name}, {desc}
-// To:
-{main_comment}
 {copy_strs}
 """
-        deflattener_codestr = f"""
-// Deflatten: 
-// Form:
-{main_comment}
-// To:
-// {name}, {desc}
-{copy_strs_reverse}
+        """
+        // Deflatten: 
+        // Form:
+        {main_comment}
+        // To:
+        // {name}, {desc}
+        """
 
+        deflattener_codestr = f"""
+{copy_strs_reverse}
 """
+
         self._flattener_codestr = flattener_codestr
         self._deflattener_codestr = deflattener_codestr
 
@@ -746,7 +781,6 @@ class StructToContainerGroups(ppl.Pass):
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
                                 name_replacements[oldname] = newname
 
-
         # Generate the flattener functions
         for name, desc in sdfg.arrays.items():
             if isinstance(desc, dace.data.Structure) and not isinstance(desc, dace.data.View):
@@ -783,17 +817,23 @@ class StructToContainerGroups(ppl.Pass):
                 an = dace.nodes.AccessNode(inname)
                 entry_interface.add_node(an)
                 entry_interface.add_edge(an, None, flatten_lib_node, None,
-                                         dace.Memlet(expr=f"{inname}"))
+                                         dace.Memlet(expr=inname))
                 #if inname.lower() not in flatten_lib_node.in_connectors:
                 #    flatten_lib_node.add_in_connector(inname)
             for outname in set(registered_names):
                 an = dace.nodes.AccessNode(outname)
                 entry_interface.add_node(an)
-                subsetlist = [(0, end-1, 1) for end in sdfg.arrays[outname].shape]
-                #entry_interface.add_edge(flatten_lib_node, None, an, None,
-                #                         dace.Memlet(data=f"{outname}", subset=dace.subsets.Range(subsetlist)))
-                entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
-                                         dace.Memlet(data=f"{outname}", subset=dace.subsets.Range(subsetlist)))
+                arr = sdfg.arrays[outname]
+                assert not isinstance(arr, dace.data.Scalar)
+                if isinstance(arr, dace.data.Scalar):
+                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
+                                            dace.Memlet(expr=outname)
+                                            )
+                else:
+                    assert isinstance(arr, dace.data.Array)
+                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
+                                            dace.Memlet(outname))
+
                 if outname.lower() not in flatten_lib_node.out_connectors:
                     flatten_lib_node.add_out_connector(outname.lower())
 
@@ -807,26 +847,20 @@ class StructToContainerGroups(ppl.Pass):
                 sdfg.add_edge(end_node, exit_interface, dace.sdfg.InterstateEdge())
 
             exit_interface.add_node(deflatten_lib_node)
-            gg = deflatten_lib_node.guid
             for inname in set(registered_names):
                 an = dace.nodes.AccessNode(inname)
                 exit_interface.add_node(an)
-                subsetlist = [(0, end-1, 1) for end in sdfg.arrays[inname].shape]
-                assert deflatten_lib_node.guid == gg
-                exit_interface.add_edge(an, None, deflatten_lib_node, None,
-                                        dace.Memlet(data=f"{inname}", subset=dace.subsets.Range(subsetlist)))
-                #exit_interface.add_edge(an, None, deflatten_lib_node, inname.lower(),
-                #                        dace.Memlet(data=f"{inname}", subset=dace.subsets.Range(subsetlist)))
-                #if inname.lower() not in deflatten_lib_node.in_connectors:
-                #    deflatten_lib_node.add_in_connector(inname.lower())
+                assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
+                if isinstance(sdfg.arrays[inname], dace.data.Scalar):
+                    exit_interface.add_edge(an, None, deflatten_lib_node, None,
+                                            dace.Memlet(inname))
+                else:
+                    assert isinstance(sdfg.arrays[inname], dace.data.Array)
+                    exit_interface.add_edge(an, None, deflatten_lib_node, None,
+                        dace.Memlet(inname))
             for outname in set([k for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
                             or isinstance(v, dace.data.ContainerArray)) and not
                             isinstance(v, dace.data.View)]):
-                #an = dace.nodes.AccessNode(outname)
-                #exit_interface.add_node(an)
-                #exit_interface.add_edge(deflatten_lib_node, outname.lower(), an, None, dace.Memlet(expr=f"{outname}"))
-                #if outname.lower() not in deflatten_lib_node.out_connectors:
-                #    deflatten_lib_node.add_out_connector(outname.lower())
                 pass
 
         if not self._interface_with_struct_copy:
@@ -1470,10 +1504,12 @@ class StructToContainerGroups(ppl.Pass):
         else:
             raise Exception("ArrayOfStructs mode is not implemented yet")
 
+        assert isinstance(sdfg.arrays[demangled_name], dace.data.Array)
         if memlet_shape == ():
             assert (
-                isinstance(sdfg.arrays[demangled_name], dace.data.Scalar) or (isinstance(sdfg.arrays[demangled_name], dace.data.Array) and len(sdfg.arrays[demangled_name].shape) == 0)
+                isinstance(sdfg.arrays[demangled_name], dace.data.Scalar) or (isinstance(sdfg.arrays[demangled_name], dace.data.Array) and len(sdfg.arrays[demangled_name].shape) == 1)
             )
+            memlet_shape = [(0,0,1)]
         mc = dace.memlet.Memlet(
             subset=dace.subsets.Range(memlet_shape), data=demangled_name
         )
