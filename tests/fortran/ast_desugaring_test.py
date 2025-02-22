@@ -947,6 +947,15 @@ end subroutine main
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE fun
+    MODULE PROCEDURE real_fun
+  END INTERFACE fun
+  INTERFACE not_fun
+    MODULE PROCEDURE not_real_fun
+  END INTERFACE not_fun
+  INTERFACE same_name
+    MODULE PROCEDURE same_name, real_fun
+  END INTERFACE same_name
   CONTAINS
   REAL FUNCTION real_fun()
     IMPLICIT NONE
@@ -964,9 +973,7 @@ MODULE lib
   END FUNCTION same_name
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: same_name_deconiface_2 => same_name
-  USE lib, ONLY: not_real_fun_deconiface_1 => not_real_fun
-  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  USE lib, ONLY: not_real_fun_deconiface_1 => not_real_fun, real_fun_deconiface_0 => real_fun, same_name_deconiface_2 => same_name
   IMPLICIT NONE
   REAL :: d(4)
   d(2) = real_fun_deconiface_0()
@@ -1010,6 +1017,12 @@ end subroutine fun
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE
+    SUBROUTINE fun(z)
+      IMPLICIT NONE
+      REAL, INTENT(OUT) :: z
+    END SUBROUTINE fun
+  END INTERFACE
 END MODULE lib
 SUBROUTINE main
   IMPLICIT NONE
@@ -1066,6 +1079,9 @@ end subroutine main
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE fun
+    MODULE PROCEDURE real_fun, integer_fun
+  END INTERFACE fun
   CONTAINS
   REAL FUNCTION real_fun(x)
     IMPLICIT NONE
@@ -1083,9 +1099,7 @@ MODULE lib
   END FUNCTION integer_fun
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: real_fun_deconiface_2 => real_fun
-  USE lib, ONLY: integer_fun_deconiface_1 => integer_fun
-  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  USE lib, ONLY: integer_fun_deconiface_1 => integer_fun, real_fun_deconiface_0 => real_fun, real_fun_deconiface_2 => real_fun
   IMPLICIT NONE
   REAL :: d(4)
   d(2) = real_fun_deconiface_0()
@@ -1135,6 +1149,9 @@ end subroutine main
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE fun
+    MODULE PROCEDURE real_fun
+  END INTERFACE fun
   CONTAINS
   REAL FUNCTION real_fun(w, x, y, z)
     IMPLICIT NONE
@@ -1150,9 +1167,7 @@ MODULE lib
   END FUNCTION real_fun
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: real_fun_deconiface_2 => real_fun
-  USE lib, ONLY: real_fun_deconiface_1 => real_fun
-  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  USE lib, ONLY: real_fun_deconiface_0 => real_fun, real_fun_deconiface_1 => real_fun, real_fun_deconiface_2 => real_fun
   IMPLICIT NONE
   REAL :: d(3)
   d(1) = real_fun_deconiface_0(1.0, 2.0, 3.0, 4.0)
