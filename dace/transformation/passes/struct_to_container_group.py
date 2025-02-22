@@ -741,8 +741,8 @@ class StructToContainerGroups(ppl.Pass):
                                 newly_removed_nodes, (oldname, newname) = self._apply(
                                     state, sdfg, src_access, dst_access
                                 )
-                                #if self._save_steps:
-                                #    sdfg.save(f"apply{i}.sdfgz")
+                                if self._save_steps:
+                                    sdfg.save(f"apply{i}.sdfgz")
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
                                 name_replacements[oldname] = newname
 
@@ -1435,6 +1435,15 @@ class StructToContainerGroups(ppl.Pass):
                             sdfg.arrays[_dst_edge.dst.data], dace.data.ContainerArray
                         ):
                             continue
+                        if isinstance(
+                            sdfg.arrays[vc.data], dace.data.Structure
+                        ):
+                            if _dst_edge.data.subset.ranges == [(0,0,1)]:
+                                continue
+                        if isinstance(
+                            sdfg.arrays[vc.data], dace.data.Scalar
+                        ):
+                            continue
                         memlet_shape += tuple(_dst_edge.data.subset.ranges)
 
             if view_to_struct:
@@ -1448,11 +1457,23 @@ class StructToContainerGroups(ppl.Pass):
                             sdfg.arrays[_src_edge.src.data], dace.data.Structure
                         ):
                             continue
+                        if isinstance(
+                            sdfg.arrays[_src_edge.src.data], dace.data.Structure
+                        ):
+                            if _dst_edge.data.subset.ranges == [(0,0,1)]:
+                                continue
+                        if isinstance(
+                            sdfg.arrays[_src_edge.src.data], dace.data.Scalar
+                        ):
+                            continue
                         memlet_shape += tuple(_src_edge.data.subset.ranges)
         else:
             raise Exception("ArrayOfStructs mode is not implemented yet")
 
-        assert memlet_shape != ()
+        if memlet_shape == ():
+            assert (
+                isinstance(sdfg.arrays[demangled_name], dace.data.Scalar) or (isinstance(sdfg.arrays[demangled_name], dace.data.Array) and len(sdfg.arrays[demangled_name].shape) == 0)
+            )
         mc = dace.memlet.Memlet(
             subset=dace.subsets.Range(memlet_shape), data=demangled_name
         )
