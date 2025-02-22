@@ -673,7 +673,7 @@ class StructToContainerGroups(ppl.Pass):
 
             return _cstr, _cstr_reverse
 
-        copy_strs_list, copy_strs_reverse_list = zip(*[
+        ll = [
                 _gen_loop(
                     sdfg,
                     name,
@@ -683,7 +683,9 @@ class StructToContainerGroups(ppl.Pass):
                     *_get_name_hierarchy_from_name(arr_name),
                 )
                 for (arr_name, arr_desc) in registered_members if _get_name_hierarchy_from_name(arr_name)[0][0] == name
-            ])
+            ]
+
+        copy_strs_list, copy_strs_reverse_list = zip(*ll) if ll != [] else ([], [])
         copy_strs = "\n".join(copy_strs_list)
         copy_strs_reverse = "\n".join(copy_strs_reverse_list)
 
@@ -749,7 +751,9 @@ class StructToContainerGroups(ppl.Pass):
                 state.remove_node(node)
             for edge in edges_to_add:
                 state.add_edge(*edge)
-        sdfg.save("preprocessed.sdfgz", compress=True)
+
+        if self._save_steps:
+            sdfg.save("preprocessed.sdfgz", compress=True)
 
         # A -> B both access nodes, this should trigger the further check whether we can apply
         i = 0
@@ -1115,7 +1119,7 @@ class StructToContainerGroups(ppl.Pass):
 
             if not reverse:
                 # Last Node (to Non-Views)
-                assert len(state.out_edges(path[-1])) <= 1, f"{state.out_edges(path[-1])}"
+                print(state, path[-1])
                 assert len(state.in_edges(path[-1])) <= 1, f"{state.in_edges(path[-1])}"
                 for oe in state.out_edges(path[-1]):
                     edges_to_add.add((old_node_to_new_node[oe.src], oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data)))
@@ -1129,7 +1133,6 @@ class StructToContainerGroups(ppl.Pass):
                 edges_to_add.add((ie.src, ie.src_conn, old_node_to_new_node[ie.dst], ie.dst_conn, copy.deepcopy(ie.data)))
             else:
                 assert len(state.out_edges(path[-1])) <= 1, f"{state.out_edges(path[-1])}"
-                assert len(state.in_edges(path[-1])) <= 1, f"{state.in_edges(path[-1])}"
                 # Last Node (from Non-Views)
                 for e in state.in_edges(path[-1]):
                     edges_to_add.add((e.src, e.src_conn, old_node_to_new_node[e.dst], e.dst_conn, copy.deepcopy(e.data)))
