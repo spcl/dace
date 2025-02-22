@@ -1376,6 +1376,30 @@ def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC
 def deconstruct_interface_calls(ast: Program) -> Program:
     SUFFIX, COUNTER = 'deconiface', 0
 
+    # We need to temporarily rename the interface imports to avoid shadowing the implementation.
+    alias_map = alias_specs(ast)
+    for olist in walk(ast, Only_List):
+        use = olist.parent
+        assert isinstance(use, Use_Stmt)
+        scope_spec = find_scope_spec(use)
+        mod = singular(children_of_type(use, Name))
+        assert isinstance(mod, Name)
+        for c in children_of_type(olist, Name):
+            tgt_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
+            if len(tgt_spec) < 2 or tgt_spec[-2] != INTERFACE_NAMESPACE:
+                continue
+            replace_node(c, Rename(f"{c.string}_{SUFFIX}_tmp => {c.string}"))
+
+            for nm in walk(use.parent.parent, Name):
+                if nm.string != c.string or isinstance(nm.parent, (Only_List, Rename)):
+                    continue
+                local_spec = search_real_local_alias_spec(nm, alias_map)
+                if not local_spec:
+                    continue
+                real_spec = ident_spec(alias_map[local_spec])
+                if real_spec == tgt_spec:
+                    replace_node(nm, Name(f"{c.string}_{SUFFIX}_tmp"))
+
     alias_map = alias_specs(ast)
     iface_map = interface_specs(ast, alias_map)
 
