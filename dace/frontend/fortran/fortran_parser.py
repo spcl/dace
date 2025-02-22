@@ -2762,17 +2762,29 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = remove_access_and_bind_statements(ast)
+    ast = deconstuct_goto_statements(ast)
+    ast = prune_coarsely(ast, cfg.do_not_prune)
     _checkpoint_ast(cfg, 'ast_v1.f90', ast)
 
     print("FParser Op: Removing remote indirections from AST...")
     ast = correct_for_function_calls(ast)
     ast = deconstruct_statement_functions(ast)
     ast = deconstruct_procedure_calls(ast)
-    ast = deconstruct_interface_calls(ast)
-    ast = correct_for_function_calls(ast)
-
-    print("FParser Op: Removing GOTO statements...")
-    ast = deconstuct_goto_statements(ast)
+    ast = prune_coarsely(ast, cfg.do_not_prune)
+    ast_f90_old, ast_f90_new = None, ast.tofortran()
+    while not ast_f90_old or ast_f90_old != ast_f90_new:
+        if ast_f90_old:
+            print(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
+                  f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
+        else:
+            print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
+        ast = correct_for_function_calls(ast)
+        ast = deconstruct_interface_calls(ast)
+        ast = prune_coarsely(ast, cfg.do_not_prune)
+        ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
+    if walk(ast, Interface_Stmt):
+        _checkpoint_ast(cfg, 'ast_v1.01.f90', ast)
+        raise RuntimeError(f"Could not remove all the interfaces from AST")
     ast = correct_for_function_calls(ast)
     _checkpoint_ast(cfg, 'ast_v2.f90', ast)
 
@@ -2783,6 +2795,9 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
                   f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
         else:
             print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
+
+        print("FParser Op: Coarsely pruning the AST...")
+        ast = prune_coarsely(ast, cfg.do_not_prune)
 
         print("FParser Op: Inject configs & prune...")
         ast = inject_const_evals(ast, cfg.config_injections)
