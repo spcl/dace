@@ -2665,6 +2665,46 @@ class ParseConfig:
         if isinstance(ast_checkpoint_dir, str):
             ast_checkpoint_dir = Path(ast_checkpoint_dir)
 
+        sources['builtins.f90'] = f"""
+module iso_c_binding
+  integer, parameter :: c_int8_t = 1, c_int16_t = 2, c_int32_t = 4, c_int64_t = 8
+  integer, parameter :: c_char = c_int8_t, c_signed_char = c_char, c_bool = c_int8_t, c_int = c_int32_t, c_long = c_int, c_size_t = c_int64_t
+  integer, parameter :: c_float = 4, c_double = 8
+  type c_ptr
+  end type c_ptr
+  type c_funptr
+  end type c_funptr
+  type(c_ptr), parameter :: c_null_ptr = c_ptr()
+  character(kind=c_char), parameter :: c_null_char = char(0)
+  interface c_f_pointer
+    module procedure :: cfp_logical_r3
+  end interface c_f_pointer
+  interface c_f_procpointer
+  end interface c_f_procpointer
+  interface c_loc
+  end interface c_loc
+  interface c_associated
+    module procedure :: cass_cptr
+  end interface c_associated
+contains
+  subroutine cfp_logical_r3(cptr, fptr, shape, lower)
+    type(c_ptr), intent(in) :: cptr
+    logical, pointer, intent(out) :: fptr(:, :, :)
+    integer, optional :: shape(:)
+    integer, optional :: lower(:)
+  end subroutine cfp_logical_r3
+  logical function cass_cptr(a, b)
+    type(c_ptr), intent(in) :: a
+    type(c_ptr), optional, intent(in) :: b
+  end function cass_cptr
+end module iso_c_binding
+module iso_fortran_env
+  integer, parameter :: real64 = 8
+  integer, parameter :: int64 = 8
+  character, parameter :: compiler_version = "", compiler_options = ""
+end module iso_fortran_env
+"""
+
         self.sources: Dict[str, str] = sources
         self.includes = includes
         self.entry_points: List[SPEC] = entry_points
