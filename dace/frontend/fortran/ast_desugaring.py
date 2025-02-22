@@ -44,10 +44,10 @@ SCOPE_OBJECT_CLASSES = (
     Subroutine_Body, Function_Body, Stmt_Function_Stmt)
 NAMED_STMTS_OF_INTEREST_TYPES = Union[
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt]
+    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl]
 NAMED_STMTS_OF_INTEREST_CLASSES = (
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt)
+    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl)
 SPEC = Tuple[str, ...]
 SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
 
@@ -152,6 +152,11 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
         name, = node.children
         if name == 'ABSTRACT':
             return None
+    elif isinstance(node, Proc_Component_Def_Stmt):
+        tgt, attrs, plist = node.children
+        assert len(plist.children) == 1, \
+            f"Only one procedure per statement is accepted due to Fparser bug. Break down the line: {node}"
+        name = singular(children_of_type(plist, Name))
     else:
         # TODO: Test out other type specific ways of finding names.
         name = singular(children_of_type(node, Name))
@@ -972,7 +977,10 @@ def set_children(par: Base, children: Iterable[Base]):
         par.items = tuple(children)
     elif hasattr(par, 'content'):
         par.content = list(children)
-    _reparent_children(par)
+        if not children:
+            remove_self(par)
+    if children:
+        _reparent_children(par)
 
 
 def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
@@ -1034,6 +1042,9 @@ def correct_for_function_calls(ast: Program):
         lv, _, _ = asgn.children
         if not isinstance(lv, (Part_Ref, Structure_Constructor, Function_Reference)):
             continue
+        if walk(lv, Subscript_Triplet):
+            # If we have a subscript triplet here, it cannot possibly be a statement function.
+            continue
         lv, _ = lv.children
         lvloc = search_real_local_alias_spec(lv, alias_map)
         if not lvloc:
@@ -1059,8 +1070,8 @@ def correct_for_function_calls(ast: Program):
 
     # TODO: Looping over and over is not ideal. But `Function_Reference(...)` sometimes generate inner `Part_Ref`s. We
     #  should figure out a way to avoid this clutter.
-    changed = True
-    while changed:
+    changed = None
+    while changed is None or changed:
         changed = False
         for pr in walk(ast, Part_Ref):
             scope_spec = find_scope_spec(pr)
@@ -1382,6 +1393,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         if fref_spec not in iface_map:
             # We are only interested in calls to interfaces here.
             continue
+        if not iface_map[fref_spec]:
+            # We cannot resolve this one, because there is no candidate.
+            print(f"{fref_spec} does not have any candidate to resolve to; moving on", file=sys.stderr)
+            continue
 
         # Find the nearest execution and its correpsonding specification parts.
         execution_part = fref.parent
@@ -1420,10 +1435,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
                 conc_spec = cand_spec
                 break
         if conc_spec not in alias_map:
-            print(f"{ifc_spec}/{conc_spec} / {args_sig}")
+            print(f"[in: {fref_spec}] {ifc_spec}/{conc_spec} not found; moving on", file=sys.stderr)
             for c in all_cand_sigs:
-                print(f"...> {c}")
-        assert conc_spec and conc_spec in alias_map, f"[in: {fref_spec}] {ifc_spec}/{conc_spec} not found"
+                print(f"...> {c}", file=sys.stderr)
+            continue
 
         # We are assumping that it's either a toplevel subprogram or a subprogram defined directly inside a module.
         assert 1 <= len(conc_spec) <= 2
@@ -1447,59 +1462,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         replace_node(name, Name(pname_alias))
 
-    # TODO: Figure out a way without rebuilding here.
-    # Rebuild the maps because aliasing may have changed.
-    alias_map = alias_specs(ast)
-
-    # At this point, we must have replaced all the interface calls with concrete calls.
-    for use in walk(ast, Use_Stmt):
-        scope_spec = find_scope_spec(use)
-        olist = atmost_one(children_of_type(use, Only_List))
-        if not olist:
-            # There is nothing directly referring to the interface.
-            continue
-
-        survivors = []
-        for c in olist.children:
-            assert isinstance(c, (Name, Rename))
-            if isinstance(c, Name):
-                src, tgt = c, c
-            elif isinstance(c, Rename):
-                _, src, tgt = c.children
-            src, tgt = src.string, tgt.string
-            if SUFFIX in src:
-                # These are the new use statements, that technically can still be pointing to an interface, because we
-                # have not removed the interfaces from the AST yet. So leave these alone.
-                survivors.append(c)
-                continue
-            assert scope_spec + (src,) in alias_map
-            tgt_spec = ident_spec(alias_map[scope_spec + (src,)])
-            assert tgt_spec in alias_map
-            if tgt_spec not in iface_map:
-                # Leave the non-interface usages alone.
-                survivors.append(c)
-
-        if survivors:
-            olist.items = survivors
-            _reparent_children(olist)
-        else:
-            remove_self(use)
-
-    # At this point, we must have replaced all references to the interfaces.
-    for k in iface_map.keys():
-        assert k in alias_map
-        ib = None
-        if isinstance(alias_map[k], Interface_Stmt):
-            ib = alias_map[k].parent
-        elif isinstance(alias_map[k], (Function_Stmt, Subroutine_Stmt)):
-            ib = alias_map[k].parent.parent
-        assert isinstance(ib, Interface_Block)
-        sppart = ib.parent
-        assert isinstance(sppart, Specification_Part)
-        remove_self(ib)
-        if not sppart.children:
-            remove_self(sppart)
-
+    ast = consolidate_uses(ast)
     return ast
 
 
@@ -2887,7 +2850,8 @@ def const_eval_nodes(ast: Program) -> Program:
         _const_eval_node(kind)
 
     NON_EXPRESSION_CLASSES = (
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization)
+        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
+        Section_Subscript_List)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
