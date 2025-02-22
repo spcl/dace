@@ -1641,6 +1641,151 @@ def _reparent_children(node: Base):
             c.parent = node
 
 
+def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
+    removed_something = None
+    while removed_something is None or removed_something:
+        removed_something = False
+        ast = consolidate_uses(ast)
+        ast = keep_sorted_used_modules(ast, keepers)
+        ident_map = identifier_specs(ast)
+        alias_map = alias_specs(ast)
+        iface_map = interface_specs(ast, alias_map)
+
+        used_fns: Set[SPEC] = set(keepers)
+        for k, v in ident_map.items():
+            if len(k) < 2 or not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-2] if k[-2] == INTERFACE_NAMESPACE else k[:-1]].parent
+            for nm in walk(box, Name):
+                if (nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)) or
+                        isinstance(nm.parent,
+                                   (Function_Stmt, End_Function_Stmt, Subroutine_Stmt, End_Subroutine_Stmt))):
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k:
+                    continue
+                used_fns.add(k)
+                break
+        for k, v in alias_map.items():
+            if not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
+                continue
+            if k not in ident_map:
+                used_fns.add(ident_spec(v))
+        for k, vs in iface_map.items():
+            for v in vs:
+                used_fns.add(v)
+        for k, v in ident_map.items():
+            if not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
+                continue
+            if k not in used_fns:
+                print(f"removing: {k}")
+                remove_self(v.parent)
+                removed_something = True
+
+        used_types: Set[SPEC] = set()
+        for k, v in ident_map.items():
+            if not isinstance(v, Derived_Type_Stmt):
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-1]].parent
+            for nm in walk(box, Name):
+                if nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)):
+                    continue
+                if isinstance(nm.parent, (Derived_Type_Stmt, End_Type_Stmt)) and nm.parent.parent is v.parent:
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k:
+                    continue
+                used_types.add(k)
+                break
+        for k, v in alias_map.items():
+            if not isinstance(v, Derived_Type_Stmt):
+                continue
+            if k not in ident_map:
+                used_types.add(ident_spec(v))
+        for k, v in ident_map.items():
+            if not isinstance(v, Derived_Type_Stmt):
+                continue
+            if k not in used_types:
+                print(f"removing: {k}")
+                remove_self(v.parent)
+                removed_something = True
+
+        used_ifaces: Set[SPEC] = set()
+        for k, v in ident_map.items():
+            if len(k) < 2 or k[-2] != INTERFACE_NAMESPACE:
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-2]].parent
+            for nm in walk(box, Name):
+                if nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)):
+                    continue
+                if isinstance(nm.parent, (Interface_Stmt, End_Interface_Stmt)) and nm.parent.parent is v.parent:
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k or scope_spec == k[:-2] + k[-1:]:
+                    continue
+                used_ifaces.add(k)
+                break
+        for k, v in alias_map.items():
+            if isinstance(v, Interface_Stmt):
+                continue
+            if k not in ident_map:
+                used_ifaces.add(ident_spec(v))
+        for k, v in ident_map.items():
+            if len(k) < 2 or k[-2] != INTERFACE_NAMESPACE:
+                continue
+            if k not in used_ifaces:
+                print(f"removing: {k}")
+                remove_self(v.parent)
+                removed_something = True
+
+        used_vars: Set[SPEC] = set()
+        for k, v in ident_map.items():
+            if not isinstance(v, (Entity_Decl, Proc_Decl)):
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-1]].parent
+            for nm in walk(box, Name):
+                if nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)) or nm.parent is v:
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k:
+                    continue
+                used_vars.add(k)
+                break
+        for k, v in alias_map.items():
+            if not isinstance(v, (Entity_Decl, Proc_Decl)):
+                continue
+            if k not in ident_map:
+                used_vars.add(ident_spec(v))
+        for k, v in ident_map.items():
+            if not isinstance(v, (Entity_Decl, Proc_Decl)):
+                continue
+            if k not in used_vars:
+                print(f"removing: {k}")
+                elist = v.parent
+                remove_self(v)
+                elist_tdecl = elist.parent
+                assert isinstance(elist_tdecl, (Type_Declaration_Stmt, Procedure_Declaration_Stmt))
+                if not elist.children:
+                    remove_self(elist_tdecl)
+                removed_something = True
+
+    # Clearout empty abstract interfaces.
+    for iface in walk(ast, Interface_Stmt):
+        name, = iface.children
+        if name and name != 'ABSTRACT':
+            continue
+        idef = iface.parent
+        if not idef.children[1:-1]:
+            remove_self(idef)
+
+    ast = keep_sorted_used_modules(ast, keepers)
+    return ast
+
+
 def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     Precondition: All the indirections have been taken out of the program.
