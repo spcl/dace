@@ -27,7 +27,8 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
-    Language_Binding_Spec, Type_Attr_Spec, Suffix
+    Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, Proc_Decl, End_Type_Stmt, \
+    End_Interface_Stmt, Procedure_Declaration_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -49,6 +50,8 @@ NAMED_STMTS_OF_INTEREST_CLASSES = (
     Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt)
 SPEC = Tuple[str, ...]
 SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
+
+INTERFACE_NAMESPACE = '__interface__'
 
 
 class TYPE_SPEC:
@@ -234,7 +237,7 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         Constuct a list of identifier strings that can uniquely determine it through the entire AST.
         """
         if isinstance(_node, Interface_Stmt):
-            ident_base = ('__interface__', find_name_of_stmt(_node))
+            ident_base = (INTERFACE_NAMESPACE, find_name_of_stmt(_node))
         else:
             ident_base = (find_name_of_stmt(_node),)
         # Find the next named ancestor.
@@ -287,6 +290,9 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
 def search_real_local_alias_spec_from_spec(loc: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     while len(loc) > 1 and loc not in alias_map:
         # The name is not immediately available in the current scope, but may be it is in the parent's scope.
+        iface_loc = loc[:-2] + (INTERFACE_NAMESPACE, loc[-1])
+        if iface_loc in alias_map:
+            return iface_loc
         loc = loc[:-2] + (loc[-1],)
     return loc if loc in alias_map else None
 
@@ -342,7 +348,7 @@ def alias_specs(ast: Program):
             for k, v in alias_map.items():
                 if len(k) < len(mod_spec) + 1 or len(k) > len(mod_spec) + 2 or k[:len(mod_spec)] != mod_spec:
                     continue
-                if len(k) == len(mod_spec) + 2 and k[len(mod_spec)] != '__interface__':
+                if len(k) == len(mod_spec) + 2 and k[len(mod_spec)] != INTERFACE_NAMESPACE:
                     continue
                 alias_spec = scope_spec + k[-1:]
                 if alias_spec in alias_updates and not isinstance(v, Interface_Stmt):
@@ -361,12 +367,30 @@ def alias_specs(ast: Program):
                     src, tgt = c, c
                 src, tgt = f"{src}", f"{tgt}"
                 src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
-                if mod_spec + ('__interface__', tgt) in alias_map:
+                if mod_spec + (INTERFACE_NAMESPACE, tgt) in alias_map:
                     # If there is an interface and a subroutine of the same name, the interface is selected.
-                    tgt_spec = mod_spec + ('__interface__', tgt)
+                    tgt_spec = mod_spec + (INTERFACE_NAMESPACE, tgt)
                 # `tgt_spec` must have already been resolved if we have sorted the modules properly.
                 assert tgt_spec in alias_map, f"{src_spec} => {tgt_spec}"
                 alias_map[src_spec] = alias_map[tgt_spec]
+
+    for dt in walk(ast, Derived_Type_Stmt):
+        attrs, name, _ = dt.children
+        if not attrs:
+            continue
+        dtspec = ident_spec(dt)
+        extends = atmost_one(a.children[1] for a in attrs.children
+                             if isinstance(a, Type_Attr_Spec) and a.children[0] == 'EXTENDS')
+        if not extends:
+            continue
+        scope_spec = find_scope_spec(dt)
+        base_dtspec = find_real_ident_spec(extends.string, scope_spec, alias_map)
+        updates = {}
+        for k, v in alias_map.items():
+            if k[:len(base_dtspec)] != base_dtspec:
+                continue
+            updates[dtspec + k[len(base_dtspec):]] = v
+        alias_map.update(updates)
 
     assert set(ident_map.keys()).issubset(alias_map.keys())
     return alias_map
@@ -374,6 +398,9 @@ def alias_specs(ast: Program):
 
 def search_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     k = in_spec + (ident,)
+    if k in alias_map:
+        return ident_spec(alias_map[k])
+    k = in_spec + (INTERFACE_NAMESPACE, ident)
     if k in alias_map:
         return ident_spec(alias_map[k])
     if not in_spec:
@@ -724,7 +751,9 @@ def find_type_of_entity(node: Union[Entity_Decl, Component_Decl], alias_map: SPE
         spec = (typ_name,)
     elif isinstance(typ, Declaration_Type_Spec):
         _, typ_name = typ.children
-        spec = find_real_ident_spec(typ_name.string, ident_spec(node), alias_map)
+        if isinstance(typ_name, Name):
+            typ_name = typ_name.string
+        spec = find_real_ident_spec(typ_name, ident_spec(node), alias_map)
 
     is_arg = False
     scope_spec = find_scope_spec(node)
@@ -927,12 +956,12 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
             cscope = scope_spec
             fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
             # If we are resolving the interface back to itself, we need to search a level above.
-            while ifspec == fn_spec:
-                assert cscope
-                cscope = cscope[:-1]
-                fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
-            assert ifspec != fn_spec
-            iface_map[ifspec] = (fn_spec,)
+            fn_impl_spec = search_real_local_alias_spec_from_spec(scope_spec + (fn_name,), alias_map)
+            # We may not have an implementation in the AST itself (e.g., C-binding declares the implementation outside).
+            if fn_impl_spec:
+                iface_map[ifspec] = (fn_impl_spec,)
+            else:
+                iface_map[ifspec] = tuple()
 
     return iface_map
 
@@ -2712,12 +2741,16 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
             spec = search_real_ident_spec(nm.string, sc_spec, alias_map)
             if not spec or spec not in alias_map:
                 continue
-            if len(spec) != 2:
+            if len(spec) == 2:
+                mod_spec = spec[:-1]
+            elif len(spec) == 3 and spec[-2] == INTERFACE_NAMESPACE:
+                mod_spec = spec[:-2]
+            else:
                 continue
-            if not isinstance(alias_map[spec[:-1]], Module_Stmt):
+            if not isinstance(alias_map[mod_spec], Module_Stmt):
                 # Objects defined inside a free function cannot be imported; so we must already be in that function.
                 continue
-            nm_mod = spec[0]
+            nm_mod = mod_spec[0]
             # And which module are we in right now?
             sp_mod = sp
             while sp_mod and not isinstance(sp_mod, (Module, Main_Program)):
@@ -2735,7 +2768,7 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
         # Build new use statements.
         nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(sorted(use_map[k]))}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
-        sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
+        set_children(sp, nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)])
         _reparent_children(sp)
     return ast
 
