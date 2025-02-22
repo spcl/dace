@@ -4,14 +4,7 @@ from pathlib import Path
 from typing import Generator
 
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, run_fparser_transformations
-
-
-def find_all_f90_files(root: Path) -> Generator[Path, None, None]:
-    if root.is_file():
-        yield root
-    else:
-        for f in chain(root.rglob('*.f90'), root.rglob('*.F90'), root.rglob('*.incf')):
-            yield f
+from dace.frontend.fortran.gen_serde import find_all_f90_files
 
 
 def main():
