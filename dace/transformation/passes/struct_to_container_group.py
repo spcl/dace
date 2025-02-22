@@ -503,12 +503,14 @@ def _get_name_hierarchy_from_name(demangled_name: str):
 
 @make_properties
 class Flattener(CodeLibraryNode):
+    code = Property(dtype=str, default="", allow_none=False)
+
     def __init__(self, name, input_names, output_names, code):
         super().__init__(name=name, input_names=input_names, output_names=output_names)
-        self._code = code
+        self.code = code
 
     def generate_code(self, inputs, outputs):
-        return self._code
+        return self.code
 
 
 @make_properties
