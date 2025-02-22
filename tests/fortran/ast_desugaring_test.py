@@ -23,7 +23,7 @@ def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[S
     return ast
 
 
-def test_spec_mapping():
+def test_spec_mapping_of_abstract_interface():
     sources, main = SourceCodeBuilder().add_file("""
 module lib  ! should be present
   abstract interface  ! should NOT be present
@@ -39,6 +39,52 @@ end module lib
 
     alias_map = alias_specs(ast)
     assert alias_map.keys() == {('lib',), ('lib', '__interface__', 'fun')}
+
+
+def test_spec_mapping_of_type_extension():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type base
+    integer :: a
+  end type base
+  type, extends(base) :: ext
+    integer :: b
+  end type ext
+end module lib
+""").check_with_gfortran().get()
+    ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
+
+    ident_map = identifier_specs(ast)
+    assert ident_map.keys() == {('lib',), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b')}
+
+    alias_map = alias_specs(ast)
+    assert alias_map.keys() == {('lib',), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b'),
+                                ('lib', 'ext', 'a')}
+
+
+def test_spec_mapping_of_procedure_pointers():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type T
+    procedure(fun), nopass, pointer :: fun
+    procedure(fun), nopass, pointer :: nofun
+  end type T
+  procedure(fun), pointer :: real_fun => null()
+contains
+  real function fun()
+    fun = 1.1
+  end function fun
+end module lib
+""").check_with_gfortran().get()
+    ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
+
+    ident_map = identifier_specs(ast)
+    assert (ident_map.keys() ==
+            {('lib',), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'), ('lib', 'real_fun')})
+
+    alias_map = alias_specs(ast)
+    assert (alias_map.keys() ==
+            {('lib',), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'), ('lib', 'real_fun')})
 
 
 def test_procedure_replacer():
