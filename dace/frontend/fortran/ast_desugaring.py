@@ -75,10 +75,23 @@ class TYPE_SPEC:
     def _parse_shape(attrs: str) -> Tuple[str, ...]:
         if 'DIMENSION' not in attrs:
             return tuple()
-        dims: re.Match = re.search(r'DIMENSION\(([^)]*)\)', attrs, re.IGNORECASE)
-        assert dims
-        dims: str = dims.group(1)
-        return tuple(p.strip().lower() for p in dims.split(','))
+        parts = []
+        dims = attrs.split('DIMENSION')[1]
+        assert dims[0] == '('
+        paren_count, part_start = 1, 1
+        for i in range(1, len(dims)):
+            if dims[i] == '(':
+                paren_count += 1
+            elif dims[i] == ')':
+                paren_count -= 1
+                if paren_count == 0:
+                    parts.append(dims[part_start:i])
+                    break
+            elif dims[i] == ',':
+                if paren_count == 1:
+                    parts.append(dims[part_start:i])
+                    part_start = i + 1
+        return tuple(p.strip().lower() for p in parts)
 
     def __repr__(self):
         attrs = []
