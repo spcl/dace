@@ -8,7 +8,6 @@ from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
 from .. import environments
 
-
 @library.expansion
 class ExpandPure(ExpandTransformation):
     """ Implements the pure expansion of TensorTranspose library node. """
@@ -84,11 +83,114 @@ class ExpandHPTT(ExpandTransformation):
         return tasklet
 
 
+@library.expansion
+class ExpandCuTensor(ExpandTransformation):
+    """
+    Implements the TensorDot library node using cuTENSOR for CUDA-compatible GPUs.
+    For more information, see https://developer.nvidia.com/cutensor.
+    """
+
+
+    environments = [environments.cuTensor]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        in_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+
+        dtype = out_tensor.dtype.base_type
+        func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
+        cuda_dtype = blas_helpers.dtype_to_cudadatatype(dtype)
+        compute_type = f"CUTENSOR_COMPUTE{cuda_dtype[cuda_dtype.rfind('_'):]}"
+        func = func + 'getrf'
+
+        alpha = f"({cuda_type})1.0"
+        beta = f"({cuda_type})0.0"
+        abtext = f"""
+            {cuda_type} alpha = {alpha};
+            {cuda_type} beta = {beta};
+        """
+
+        in_modes = list(range(len(in_tensor.shape)))
+        out_modes = [i for i in in_modes if i not in node.in_axes]
+        out_modes.extend([i for i in out_modes if i not in node.in_axes])
+        if node.permutation and node.permutation != list(range(len(node.permutation))):
+            out_modes = [out_modes[i] for i in node.permutation]
+
+        modes = f"""
+            std::vector<int> modeA{{{','.join(str(m) for m in in_modes)}}};
+            std::vector<int> modeC{{{','.join(str(m) for m in out_modes)}}};
+        """
+
+        extents = "std::unordered_map<int, int64_t> extent;\n"
+        for i, s in zip(in_modes, in_tensor.shape):
+            extents += f"extent[{i}] = {s};\n"
+        extents += f"""
+            std::vector<int64_t> extentA;
+            for (auto mode : modeA) extentA.push_back(extent[mode]);
+            std::vector<int64_t> extentB;
+        """
+
+        extents += f"""
+            std::vector<int64_t> stridesA{{{','.join(str(s) for s in in_tensor.strides)}}};
+            std::vector<int64_t> stridesB{{{','.join(str(s) for s in out_tensor.strides)}}};
+        """
+
+        tdesc = f"""
+            cutensorTensorDescriptor_t descA, descB;
+            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
+                __dace_cutensor_handle, &descA, modeA.size(), extentA.data(), stridesA.data(), {cuda_dtype}, 256));
+            dace::linalg::CheckCuTensorError(cutensorTensorDescriptor(
+                __dace_cutensor_handle, &descB, modeB.size(), extentB.data(), stridesB.data(), {cuda_dtype}, 256));
+            // printf("Tensor descriptors created!\\n");
+        """
+
+        cdesc = f"""
+            cutensorPlanPreference_t preference;
+            cutensorOperationDescriptor_t op;
+            dace::linalg::CheckCuTensorError(
+                cutensorCreatePlanPreference(__dace_cutensor_handle, &preference, CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT)
+            );
+            dace::linalg::CheckCuTensorError(
+                cutensorCreatePermutation(__dace_cutensor_handle, &op, descA, modeA.data(), CUTENSOR_OP_IDENTITY, descB, modeB.data(), {cuda_dtype})
+            );
+            // printf("Memory alignment and coontraction descriptor created!\\n");
+        """
+
+        workspace = """
+        """
+
+        execute = """
+            cutensorPlan_t plan;
+            dace::linalg::CheckCuTensorError(
+                cutensorCreatePlan(__dace_cutensor_handle, &plan, op, preference, 0)
+            );
+            cutensorStatus_t err = cutensorPermute(handle, plan, &alpha, A, B, __dace_current_stream);
+            if(err != CUTENSOR_STATUS_SUCCESS) {
+                printf("ERROR: %s\\n", cutensorGetErrorString(err));
+            }
+            cudaStreamSynchronize(__dace_current_stream);
+            if(err != CUTENSOR_STATUS_SUCCESS) {
+                printf("ERROR: %s\\n", cutensorGetErrorString(err));
+            }
+            // printf("Transpose executed!\\n");
+        """
+
+        code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+
+        return tasklet
+
+
 @library.node
 class TensorTranspose(nodes.LibraryNode):
     """ Implements out-of-place tensor transpositions. """
 
-    implementations = {"pure": ExpandPure, "HPTT": ExpandHPTT}
+    implementations = {"pure": ExpandPure, "HPTT": ExpandHPTT, "cuTensor": ExpandCuTensor}
     default_implementation = 'pure'
 
     axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")
