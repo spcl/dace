@@ -71,6 +71,14 @@
     #define __DACE_UNROLL
 #endif
 
+// If CUDA version is 11.4 or higher, __device__ variables can be declared as constexpr
+#if defined(__CUDACC__) && (__CUDACC_VER_MAJOR__ > 11 || (__CUDACC_VER_MAJOR__ == 11 && __CUDACC_VER_MINOR__ >= 4))
+    #define DACE_CONSTEXPR_HOSTDEV constexpr __host__ __device__
+#elif defined(__CUDACC__) || defined(__HIPCC__)
+    #define DACE_CONSTEXPR_HOSTDEV const __host__ __device__
+#else
+    #define DACE_CONSTEXPR_HOSTDEV const
+#endif
 
 #if !defined(__CUDACC__) && !defined(__HIPCC__) && !defined(DACE_ASCEND)
 namespace dace {

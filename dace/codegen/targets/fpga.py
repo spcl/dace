@@ -421,10 +421,11 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
-                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    node = self.find_rtl_tasklet(sg)
-                    if node:
-                        return node
+                if len(n.sdfg.nodes()) == 1 and isinstance(n.sdfg.nodes()[0], SDFGState):
+                    for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                        node = self.find_rtl_tasklet(sg)
+                        if node:
+                            return node
             elif isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog:
                 return n
         return None
@@ -438,9 +439,10 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
-                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    if self.is_multi_pumped_subgraph(sg):
-                        return True
+                if len(n.sdfg.nodes()) == 1 and isinstance(n.sdfg.nodes()[0], SDFGState):
+                    for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.nodes()[0]):
+                        if self.is_multi_pumped_subgraph(sg):
+                            return True
             elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Multi_Pumped:
                 return True
         return False
@@ -1105,7 +1107,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             self._dispatcher.dispatch_subgraph(sdfg,
                                                cfg,
                                                sg,
-                                               sdfg.node_id(state),
+                                               cfg.node_id(state),
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=False)
@@ -1720,7 +1722,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
-            state_dfg = sdfg.nodes()[state_id]
+            state_dfg = cfg.node(state_id)
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
                 self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, packed_types=True))
 
@@ -1974,7 +1976,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     return False
                 to_search += scope_dict[x]
             elif isinstance(x, dace.sdfg.nodes.NestedSDFG):
-                for state in x.sdfg:
+                for state in x.sdfg.states():
                     if not self._is_innermost(state.nodes(), state.scope_children(), x.sdfg):
                         return False
         return True

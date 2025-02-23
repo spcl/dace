@@ -21,7 +21,8 @@ from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_ascend, is_in_sco
 from dace.sdfg.validation import validate_memlet_data
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 from dace.codegen.targets import fpga
-
+from dace import dtypes
+from dace.codegen.tools.type_inference import infer_expr_type
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -853,7 +854,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Instrumentation: Pre-copy
             for instr in self._dispatcher.instrumentation.values():
                 if instr is not None:
-                    instr.on_copy_begin(sdfg, state_dfg, src_node, dst_node, edge, stream, None, copy_shape,
+                    instr.on_copy_begin(sdfg, cfg, state_dfg, src_node, dst_node, edge, stream, None, copy_shape,
                                         src_strides, dst_strides)
 
             nc = True
@@ -915,7 +916,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Post-copy
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_copy_end(sdfg, state_dfg, src_node, dst_node, edge, stream, None)
+                instr.on_copy_end(sdfg, cfg, state_dfg, src_node, dst_node, edge, stream, None)
         #############################################################
 
     ###########################################################################
@@ -1527,7 +1528,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-tasklet
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
-            instr.on_node_begin(sdfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
+            instr.on_node_begin(sdfg, cfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
 
         inner_stream.write("\n    ///////////////////\n", cfg, state_id, node)
 
@@ -1555,7 +1556,8 @@ class CPUCodeGen(TargetCodeGenerator):
         )
         # Instrumentation: Post-tasklet
         if instr is not None:
-            instr.on_node_end(sdfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
+            instr.on_node_end(sdfg, cfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
+
         callsite_stream.write(outer_stream_begin.getvalue(), cfg, state_id, node)
         callsite_stream.write('{', cfg, state_id, node)
         callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
@@ -1728,7 +1730,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # If the SDFG has a unique name, use it
             sdfg_label = node.unique_name
         else:
-            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.cfg_id, state_id, dfg.node_id(node))
+            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, cfg.cfg_id, state_id, dfg.node_id(node))
 
         code_already_generated = False
         if unique_functions and not inline:
@@ -1853,6 +1855,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         state_dfg = cfg.state(state_id)
         map_params = node.map.params
+        map_param_types = node.map.param_types
 
         result = callsite_stream
         map_header = ""
@@ -1874,7 +1877,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None:
-            instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
+            instr.on_scope_entry(sdfg, cfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
         # TODO: Refactor to generate_scope_preamble once a general code
         #  generator (that CPU inherits from) is implemented
@@ -1891,7 +1894,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     map_header += "#pragma omp parallel for"
 
             elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
-                map_header += "#pragma omp parallel"
+                schedule = ""
+                if node.map.omp_num_threads != 0:
+                    schedule += f" num_threads({node.map.omp_num_threads})"
+                if node.map.omp_bind is not None:
+                    schedule += f" proc_bind({node.map.omp_bind})"
+                    raise Exception(node.map.omp_bind)
+
+                map_header += f"#pragma omp parallel {schedule}"
 
             # OpenMP schedule properties
             if not in_persistent:
@@ -1940,24 +1950,58 @@ class CPUCodeGen(TargetCodeGenerator):
             if tid_is_used or ntid_is_used:
                 function_stream.write('#include <omp.h>', cfg, state_id, node)
             if tid_is_used:
-                result.write(f'auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                # Before
+                result.write(f'//auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+                # After
+                # Unlike CUDA the the dimensions of this map need to be the same as threads
+                # Generate: #pragma omp parallel num_threads(<accumulated map dims>) instead of #pragma omp parallel
+                accum = 1
+                _i = 0
+                for param, maprange in zip(reversed(node.map.params), reversed(node.map.range)):
+                    beg,end,step = maprange
+                    mapdim = int((end+1-beg)//step)
+                    if _i == 0:
+                        result.write(f'auto {param} = {step} * (omp_get_thread_num() % {mapdim});', cfg, state_id, node)
+                    else:
+                        result.write(f'auto {param} = {step} * (omp_get_thread_num() / {accum});', cfg, state_id, node)
+                    _i += 1
+                    accum *= mapdim
+
             if ntid_is_used:
                 result.write(f'auto __omp_num_threads = omp_get_num_threads();', cfg, state_id, node)
         else:
             # Emit nested loops
             for i, r in enumerate(node.map.range):
                 var = map_params[i]
+                if var in map_param_types.keys():
+                    var_type = map_param_types[var]
+                else:
+                    var_type = dtypes.result_type_of(infer_expr_type(r[0], state_dfg.symbols_defined_at(node)),
+                                                     infer_expr_type(r[1], state_dfg.symbols_defined_at(node)))
+
                 begin, end, skip = r
 
                 if node.map.unroll:
-                    unroll_pragma = "#pragma unroll"
-                    if node.map.unroll_factor:
-                        unroll_pragma += f" {node.map.unroll_factor}"
-                    result.write(unroll_pragma, cfg, state_id, node)
-
+                    if node.map.unroll_mask is None:
+                        unroll_pragma = "#pragma unroll"
+                        if node.map.unroll_factor:
+                            unroll_pragma += f" {node.map.unroll_factor}"
+                        result.write(unroll_pragma, cfg, state_id, node)
+                    else:
+                        if len(node.map.unroll_mask) == len(node.map.range):
+                            if node.map.unroll_mask[i]:
+                                unroll_pragma = "#pragma unroll"
+                                if node.map.unroll_factor:
+                                    unroll_pragma += f" {node.map.unroll_factor}"
+                                result.write(unroll_pragma, cfg, state_id, node)
+                        else:
+                            unroll_pragma = "#pragma unroll"
+                            if node.map.unroll_factor:
+                                unroll_pragma += f" {node.map.unroll_factor}"
+                            result.write(unroll_pragma, cfg, state_id, node)
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
-                    (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    "for (%s %s = %s; %s < %s; %s += %s) {\n" %
+                    (var_type, var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,
@@ -1988,7 +2032,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None and not is_devicelevel_gpu(sdfg, state_dfg, node) and not is_devicelevel_ascend(sdfg, state_dfg, node):
-            instr.on_scope_exit(sdfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
+            instr.on_scope_exit(sdfg, cfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
 
@@ -2173,7 +2217,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-node
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
-            instr.on_node_begin(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
+            instr.on_node_begin(sdfg, cfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
@@ -2216,7 +2260,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Post-node
         if instr is not None:
-            instr.on_node_end(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
+            instr.on_node_end(sdfg, cfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
     # Methods for subclasses to override
 

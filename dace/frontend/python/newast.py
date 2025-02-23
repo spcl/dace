@@ -38,9 +38,11 @@ from dace.symbolic import pystr_to_symbolic, inequal_symbols
 import numpy
 import sympy
 
+numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
+
 # register replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type, _broadcast_to
+from dace.frontend.python.replacements import _sym_type, broadcast_to, broadcast_together
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -449,11 +451,10 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map('indirection', {
-            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-            for i, (s, e, t) in enumerate(mapped_rng)
-        },
-                                            debuginfo=pvisitor.current_lineinfo)
+        ind_entry, ind_exit = graph.add_map(
+            'indirection', {'__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+                            for i, (s, e, t) in enumerate(mapped_rng)},
+            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -1319,7 +1320,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.replace_dict(repl_dict)
 
         propagate_states(self.sdfg)
-        for state, memlet, inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
+        for state, memlet, _inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
             if state is not None and state.dynamic_executions:
                 memlet.dynamic = True
 
@@ -1341,10 +1342,9 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update(self.sdfg.arrays)
 
         # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
+        result.update(
+            {v: self.sdfg.process_grids[v]
+             for k, v in self.variables.items() if v in self.sdfg.process_grids})
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
@@ -2350,7 +2350,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         astr = str(atom)
                         # Check for undefined variables
-                        if astr not in self.defined:
+                        if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):
@@ -2366,8 +2366,11 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
                                                 update_expr=incr[indices[0]],
                                                 inverted=False)
-            _, first_subblock, _, _ = self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno,
-                                                            extra_symbols=extra_syms, parent=loop_region,
+            _, first_subblock, _, _ = self._recursive_visit(node.body,
+                                                            f'for_{node.lineno}',
+                                                            node.lineno,
+                                                            extra_symbols=extra_syms,
+                                                            parent=loop_region,
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
@@ -2449,7 +2452,10 @@ class ProgramVisitor(ExtNodeVisitor):
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False)
 
         # Parse body
-        self._recursive_visit(node.body, f'while_{node.lineno}', node.lineno, parent=loop_region,
+        self._recursive_visit(node.body,
+                              f'while_{node.lineno}',
+                              node.lineno,
+                              parent=loop_region,
                               unconnected_last_block=False)
 
         if test_region is not None:
@@ -2492,7 +2498,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if astr not in self.defined:
                         raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                     # Add to global SDFG symbols if not a scalar
-                    if (astr not in self.sdfg.symbols and astr not in self.variables):
+                    if (astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays):
                         self.sdfg.add_symbol(astr, atom.dtype)
 
         # Handle else clause
@@ -2540,7 +2546,6 @@ class ProgramVisitor(ExtNodeVisitor):
             node = node.parent_graph
         return False
 
-
     def visit_Break(self, node: ast.Break):
         if not self._has_loop_ancestor(self.cfg_target):
             raise DaceSyntaxError(self, node, "Break block outside loop region")
@@ -2561,7 +2566,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add conditional region
         cond_block = ConditionalBlock(f'if_{node.lineno}')
-        self.cfg_target.add_node(cond_block)
+        self.cfg_target.add_node(cond_block, ensure_unique_name=True)
         self._on_block_added(cond_block)
 
         if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)
@@ -2572,8 +2577,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
-            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}',
-                                          sdfg=self.sdfg)
+            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}', sdfg=self.sdfg)
             cond_block.add_branch(None, else_body)
             # Visit recursively
             self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
@@ -2583,14 +2587,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
         side_effects = None
-        if isinstance(node, ast.FunctionDef) and \
-            hasattr(node, 'decorator_list') and \
-            isinstance(node.decorator_list, list) and \
-            len(node.decorator_list) > 0 and \
-            hasattr(node.decorator_list[0], 'args') and \
-            isinstance(node.decorator_list[0].args, list) and \
-            len(node.decorator_list[0].args) > 0 and \
-            hasattr(node.decorator_list[0].args[0], 'value'):
+        if isinstance(node, ast.FunctionDef) and hasattr(node, 'decorator_list') and isinstance(
+                node.decorator_list,
+                list) and len(node.decorator_list) > 0 and hasattr(node.decorator_list[0], 'args') and isinstance(
+                    node.decorator_list[0].args, list) and len(node.decorator_list[0].args) > 0 and hasattr(
+                        node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
@@ -2712,7 +2713,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if (indirect_indices or boolarr or len(ssize) != len(osize)
                         or any(inequal_symbols(s, o) for s, o in zip(ssize, osize)) or op):
 
-                    _, all_idx_tuples, _, _, inp_idx = _broadcast_to(squeezed.size(), op_subset.size())
+                    _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
 
                     idx = iter(i for i, _ in all_idx_tuples)
                     target_index = ','.join(
@@ -2726,8 +2727,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     fake_subset = dace.subsets.Range(missing_dimensions + op_dimensions)
 
-                    # use this fake subset to calculate the offset
-                    fake_subset.offset(squeezed, True)
+                    # Use this fake subset to calculate the offset. Constant indices are ignored, as they do not depend
+                    # on the broadcasting operation.
+                    offset_indices_to_ignore = set()
+                    for i, idx in enumerate(inp_idx):
+                        if not symbolic.issymbolic(pystr_to_symbolic(idx)):
+                            offset_indices_to_ignore.add(i)
+                    fake_subset_offs_indices = []
+                    for i in range(len(fake_subset)):
+                        if i not in offset_indices_to_ignore:
+                            fake_subset_offs_indices.append(i)
+                    fake_subset.offset(squeezed, True, indices=fake_subset_offs_indices)
 
                     # we access the inp subset using the computed offset
                     # since the inp_subset may be missing leading dimensions, we reverse-zip-reverse
@@ -2928,12 +2938,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 wsqz = sqz_wsub.squeeze()
                 sqz_rsub = copy.deepcopy(rtarget_subset)
                 rsqz = sqz_rsub.squeeze()
-                _, all_idx_tuples, _, out_idx, inp_idx = _broadcast_to(sqz_wsub.size(), sqz_osub.size())
+                _, all_idx_tuples, _, out_idx, inp_idx = broadcast_to(sqz_wsub.size(), sqz_osub.size())
                 # Re-add squeezed dimensions from original subset so that memlets match original arrays
                 osqueezed = [i for i in range(len(op_subset)) if i not in osqz]
                 wsqueezed = [i for i in range(len(wtarget_subset)) if i not in wsqz]
                 rsqueezed = [i for i in range(len(rtarget_subset)) if i not in rsqz]
-
 
                 if (boolarr or indirect_indices
                         or (sqz_wsub.size() == sqz_osub.size() and sqz_wsub.size() == sqz_rsub.size())):
@@ -3290,7 +3299,21 @@ class ProgramVisitor(ExtNodeVisitor):
             for n in node.value.elts:
                 results.extend(self._gettype(n))
         else:
-            results.extend(self._gettype(node.value))
+            rval = self._gettype(node.value)
+            if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays and
+                self.sdfg.arrays[rval[0][0]].shape[0] == len(elts)):
+                # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as
+                # the number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses
+                # to constant indexes (according to the number of elements in the lhs). These expansions can then be
+                # used to perform an unpacking assignment, similar to what Python does natively.
+                for i in range(len(elts)):
+                    const_node = NumConstant(i)
+                    ast.copy_location(const_node, node)
+                    slice_node = ast.Subscript(rval[0][0], const_node, ast.Load)
+                    ast.copy_location(slice_node, node)
+                    results.extend(self._gettype(slice_node))
+            else:
+                results.extend(rval)
 
         if len(results) != len(elts):
             raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
@@ -3303,12 +3326,38 @@ class ProgramVisitor(ExtNodeVisitor):
             name = rname(target)
             tokens = name.split('.')
             name = tokens[0]
+            tokens.pop(0)
             true_name = None
             true_array = None
+            visited_target = False
+
             if name in defined_vars:
-                true_name = defined_vars[name]
-                if len(tokens) > 1:
-                    true_name = '.'.join([true_name, *tokens[1:]])
+                # Handle complex object assignment (e.g., A.flat[:])
+                if isinstance(target, ast.Subscript):  # In case of nested subscripts, find the root AST node
+                    last_subscript = target
+                    # Find the first non-subscript target
+                    while isinstance(last_subscript.value, ast.Subscript):
+                        last_subscript = last_subscript.value
+                if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
+                    store_target = copy.copy(last_subscript.value)
+                    store_target.ctx = ast.Store()
+                    true_name = self.visit(store_target)
+                    # Refresh defined variables and arrays
+                    defined_vars = {**self.variables, **self.scope_vars}
+                    defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays})
+                    visited_target = True
+                else:
+                    true_name = defined_vars[name]
+                    while len(tokens):
+                        true_name = true_name + '.' + tokens.pop(0)
+                        if true_name not in defined_arrays:
+                            break
+                    if tokens:  # The non-struct remainder will be considered an attribute
+                        attribute_name = '.'.join(tokens)
+                        raise DaceSyntaxError(
+                            self, target,
+                            f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
+
                 true_array = defined_arrays[true_name]
 
             # If type was already annotated
@@ -3358,8 +3407,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
-            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                    (isinstance(result, str) and any(result in x for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
+            if not (
+                    result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+                (isinstance(result, str) and any(
+                    result in x
+                    for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3425,19 +3477,26 @@ class ProgramVisitor(ExtNodeVisitor):
             if new_data:
                 rng = rng or dace.subsets.Range.from_array(new_data)
             else:
-                true_target = copy.copy(target)
+                true_target = astutils.copy_tree(target)
                 nslice = None
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
                 elif isinstance(target, ast.Subscript):
-                    true_target.value = copy.copy(true_target.value)
-                    true_target.value.id = true_name
+                    # In case of nested subscripts, find the root AST node
+                    last_subscript = true_target
+                    # Find the first non-subscript target and modify its value to the new name
+                    while isinstance(last_subscript.value, ast.Subscript):
+                        last_subscript = last_subscript.value
+                    last_subscript.value = ast.copy_location(ast.Name(id=true_name, ctx=ast.Store()),
+                                                             last_subscript.value)
 
                     # Visit slice contents
                     nslice = self._parse_subscript_slice(true_target.slice)
 
                 defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays, **self.defined})
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_target, nslice)
+
+                # TODO: Use _create_output_shape_from_advanced_indexing
                 rng = expr.subset
                 if isinstance(rng, subsets.Indices):
                     rng = subsets.Range.from_indices(rng)
@@ -3467,7 +3526,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             cname = self.sdfg.find_new_constant(f'__ind{i}_{true_name}')
                             self.sdfg.add_constant(cname, carr)
                             # Add constant to descriptor repository
-                            self.sdfg.add_array(cname, carr.shape, dtypes.dtype_to_typeclass(carr.dtype.type),
+                            self.sdfg.add_array(cname,
+                                                carr.shape,
+                                                dtypes.dtype_to_typeclass(carr.dtype.type),
                                                 transient=True)
                             if numpy.array(arr).dtype == numpy.bool_:
                                 boolarr = cname
@@ -3477,13 +3538,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
-            if self.nested and not new_data:
+            if self.nested and not new_data and not visited_target:
                 new_name, new_rng = self._add_write_access(name, rng, target)
                 # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
                     new_rng = rng
             else:
                 new_name, new_rng = true_name, rng
+
+            # Change the range in case indirect indices are used
+            if indirect_indices:
+                for dim, indarr in indirect_indices.items():
+                    new_rng[dim] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
 
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
@@ -3694,18 +3760,20 @@ class ProgramVisitor(ExtNodeVisitor):
         for state in sdfg.states():
             visited_state_data = set()
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data == name:
-                    visited_state_data.add(node.data)
-                    if (node.data not in visited_data and state.in_degree(node) == 0):
-                        return True
+                if isinstance(node, nodes.AccessNode):
+                    if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
+                        visited_state_data.add(node.data)
+                        if (node.data not in visited_data and state.in_degree(node) == 0):
+                            return True
             visited_data = visited_data.union(visited_state_data)
 
     def _is_outputnode(self, sdfg: SDFG, name: str):
         for state in sdfg.states():
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data == name:
-                    if state.in_degree(node) > 0:
-                        return True
+                if isinstance(node, nodes.AccessNode):
+                    if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
+                        if state.in_degree(node) > 0:
+                            return True
 
     def _get_sdfg(self, value: Any, args: Tuple[Any], kwargs: Dict[str, Any]) -> SDFG:
         if isinstance(value, SDFG):  # Already an SDFG
@@ -3885,10 +3953,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # Map internal SDFG symbols by adding keyword arguments
         symbols = sdfg.used_symbols(all_symbols=False)
         try:
-            mapping = infer_symbols_from_datadescriptor(sdfg, {
-                k: self.sdfg.arrays[v]
-                for k, v in args if v in self.sdfg.arrays
-            }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            mapping = infer_symbols_from_datadescriptor(
+                sdfg, {k: self.sdfg.arrays[v]
+                       for k, v in args if v in self.sdfg.arrays},
+                set(sym.arg for sym in node.keywords if sym.arg in symbols))
         except ValueError as ex:
             raise DaceSyntaxError(self, node, str(ex))
         if len(mapping) == 0:  # Default to same-symbol mapping
@@ -3900,6 +3968,10 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             required_args.extend(symbols)
         required_args = dtypes.deduplicate(required_args)
+        gargs = set(a[0] for a in args)
+        for rarg in required_args:
+            if rarg not in gargs and rarg in self.sdfg.symbols:
+                args.append((rarg, rarg))
 
         # Argument checks
         for aname, arg in kwargs:
@@ -4428,8 +4500,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Connect Python state
         self._connect_pystate(tasklet, self.current_state, '__istate', '__ostate')
 
-        if return_type is None:
-            return []
+        if return_type is None:  # Unknown but potentially used return value
+            return [dtypes.pyobject()]
         else:
             return return_names
 
@@ -4519,7 +4591,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     name = "call"
                 call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
-                self.cfg_target.add_node(call_region)
+                self.cfg_target.add_node(call_region, ensure_unique_name=True)
                 self._on_block_added(call_region)
                 previous_last_cfg_target = self.last_cfg_target
                 previous_target = self.cfg_target
@@ -4722,22 +4794,26 @@ class ProgramVisitor(ExtNodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
-        # Modify node value to become an expression
-        new_node = ast.copy_location(ast.Expr(value=node.value), node)
-
-        # Return values can either be tuples or a single object
-        if isinstance(node.value, (ast.Tuple, ast.List)):
-            ast_tuple = ast.copy_location(
-                ast.parse('(%s,)' % ','.join('__return_%d' % i for i in range(len(node.value.elts)))).body[0].value,
-                node)
-            self._visit_assign(new_node, ast_tuple, None, is_return=True)
-        else:
-            ast_name = ast.copy_location(ast.Name(id='__return'), node)
-            self._visit_assign(new_node, ast_name, None, is_return=True)
-
-        if not isinstance(self.cfg_target, SDFG):
-            # In a nested control flow region, a return needs to be explicitly marked with a return block.
+        if node.value is None:
+            # If there's no value on the return node or it is None, insert just a return block.
             self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
+        else:
+            # Modify node value to become an expression
+            new_node = ast.copy_location(ast.Expr(value=node.value), node)
+
+            # Return values can either be tuples or a single object
+            if isinstance(node.value, (ast.Tuple, ast.List)):
+                ast_tuple = ast.copy_location(
+                    ast.parse('(%s,)' % ','.join('__return_%d' % i for i in range(len(node.value.elts)))).body[0].value,
+                    node)
+                self._visit_assign(new_node, ast_tuple, None, is_return=True)
+            else:
+                ast_name = ast.copy_location(ast.Name(id='__return'), node)
+                self._visit_assign(new_node, ast_name, None, is_return=True)
+
+            if not isinstance(self.cfg_target, SDFG):
+                # In a nested control flow region, a return needs to be explicitly marked with a return block.
+                self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
 
     def visit_With(self, node: ast.With, is_async=False):
         # "with dace.tasklet" syntax
@@ -4755,8 +4831,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     name = self.name
 
-                tasklet, inputs, outputs, sdfg_inp, sdfg_out = \
-                    self._parse_tasklet(state, node, name)
+                tasklet, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(state, node, name)
 
                 # Add memlets
                 inputs = {k: (state, v, set()) for k, v in inputs.items()}
@@ -4769,10 +4844,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 evald = astutils.evalnode(node.items[0].context_expr, self.globals)
                 if hasattr(evald, "name"):
                     named_region_name: str = evald.name
-                else:            
+                else:
                     named_region_name = f"Named Region {node.lineno}"
                 named_region = NamedRegion(named_region_name, debuginfo=self.current_lineinfo)
-                self.cfg_target.add_node(named_region)
+                self.cfg_target.add_node(named_region, ensure_unique_name=True)
                 self._on_block_added(named_region)
                 self._recursive_visit(node.body, "init_named", node.lineno, named_region, unconnected_last_block=False)
                 return
@@ -4845,9 +4920,9 @@ class ProgramVisitor(ExtNodeVisitor):
         return node.n
 
     def visit_Constant(self, node: ast.Constant):
-        if isinstance(node.value, bool):
+        if isinstance(node.value, bool) and numpy_version < '2.0.0':
             return dace.bool_(node.value)
-        if isinstance(node.value, (int, float, complex)):
+        if isinstance(node.value, (int, float, complex)) and numpy_version < '2.0.0':
             return dtypes.dtype_to_typeclass(type(node.value))(node.value)
         if isinstance(node.value, (str, bytes)):
             return StringLiteral(node.value)
@@ -4979,13 +5054,13 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = None, None
 
         # Type-check operands in order to provide a clear error message
-        if (isinstance(operand1, str) and operand1 in self.defined
-                and isinstance(self.defined[operand1].dtype, dtypes.pyobject)):
+        if (isinstance(operand1, dtypes.pyobject) or (isinstance(operand1, str) and operand1 in self.defined
+                                                      and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op1, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand1}" to enable using it within the program.')
-        if (isinstance(operand2, str) and operand2 in self.defined
-                and isinstance(self.defined[operand2].dtype, dtypes.pyobject)):
+        if (isinstance(operand2, dtypes.pyobject) or (isinstance(operand2, str) and operand2 in self.defined
+                                                      and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op2, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand2}" to enable using it within the program.')
@@ -5161,7 +5236,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(res, (ast.Constant, NumConstant)):
                     res = res.value
         elif sys.version_info < (3, 9) and isinstance(s, ast.Index):
-            res = self._parse_subscript_slice(s.value)
+            res = self._parse_subscript_slice(s.value, multidim=multidim)
         elif isinstance(s, ast.Slice):
             lower = s.lower
             if isinstance(lower, ast.AST):
@@ -5242,7 +5317,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Obtain array/tuple
         node_parsed = self._gettype(node.value)
 
-        if len(node_parsed) > 1:
+        if len(node_parsed) > 1 or (len(node_parsed) == 1 and isinstance(node_parsed[0], tuple)
+                                    and node_parsed[0][1] in ('symbol', 'NumConstant')):
             # If the value is a tuple of constants (e.g., array.shape) and the
             # slice is constant, return the value itself
             nslice = self.visit(node.slice)
@@ -5272,6 +5348,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Try to construct memlet from subscript
         node.value = ast.Name(id=array)
         defined = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.defined})
+
+        if arrtype is data.Scalar and array in defined and isinstance(defined[array].dtype, dtypes.pyobject):
+            raise DaceSyntaxError(
+                self, node, f'Object "{array}" is defined as a callback return value and cannot be sliced. '
+                'Consider adding a type hint to the variable.')
+
         expr: MemletExpr = ParseMemlet(self, defined, node, nslice)
 
         if inference:
@@ -5348,106 +5430,261 @@ class ProgramVisitor(ExtNodeVisitor):
                 rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
         return tmp, other_subset
 
-    def _array_indirection_subgraph(self, rnode: nodes.AccessNode, expr: MemletExpr) -> str:
-        aname = rnode.data
-        idesc = self.sdfg.arrays[aname]
+    def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
+        """
+        Computes the output shape of a slicing operation with advanced indexing.
 
-        if expr.new_axes:
-            # NOTE: Matching behavior with numpy would be to append all new
-            # axes in the end
-            raise IndexError('New axes unsupported when array indices are used')
+        :param aname: The name of the array being sliced.
+        :param expr: The MemletExpr object representing the slicing operation.
+        :return: A list of symbolic dimensions representing the output shape.
+        """
+        # The output shape is the shape of all contiguous advanced indexing arrays, after broadcasting with each other
+        # Start with all basic indexing dimensions, setting advanced indexing dimensions to None
+        output_shape = [s if i not in expr.arrdims else None for i, s in enumerate(expr.subset.size())]
+        # If any advanced indexing is found, mark any scalar dimension as advanced indices too
+        if expr.arrdims:
+            output_shape = [None if rng[0] == rng[1] else s for s, rng in zip(output_shape, expr.subset.ndrange())]
 
-        # Create output shape dimensions based on the sizes of the arrays
-        output_shape = None
-        constant_indices: Dict[int, str] = {}
-        for i, arrname in expr.arrdims.items():
+        # Mark every dimension that starts with None as an advanced indexing "chunk"
+        advanced_dims = [
+            i for i, s in enumerate(output_shape) if s is None and (i == 0 or output_shape[i - 1] is not None)
+        ]
+        # If there is more than one contiguous advanced indexing chunk, move all advanced indices to the beginning
+        prefix_dims = len(advanced_dims) > 1
+        if prefix_dims:
+            output_shape = [None] + [s for s in output_shape if s is not None]
+            dim_position = 0
+        else:
+            dim_position = advanced_dims[0]
+
+        # Add new axes
+        for new_axis in expr.new_axes:
+            if prefix_dims:
+                output_shape.insert(new_axis + 1, 1)
+            else:
+                output_shape.insert(new_axis, 1)
+                if new_axis <= dim_position:
+                    dim_position += 1
+
+        # Contract contiguous None dimensions that appear multiple times in a row
+        output_shape = [
+            s for i, s in enumerate(output_shape) if s is not None or i == 0 or output_shape[i - 1] is not None
+        ]
+
+        # Broadcast all advanced indexing expressions together
+        chunk_shape = None
+        # Get the advanced indexing expressions
+        for _, arrname in expr.arrdims.items():
             if isinstance(arrname, str):  # Array or constant
                 if arrname in self.sdfg.arrays:
                     desc = self.sdfg.arrays[arrname]
                 elif arrname in self.sdfg.constants:
                     desc = self.sdfg.constants[arrname]
-                    constant_indices[i] = arrname
                 else:
                     raise NameError(f'Array "{arrname}" used in indexing "{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
                 arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
                 carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
-                cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
-                self.sdfg.add_constant(cname, carr)
-                constant_indices[i] = cname
                 shape = carr.shape
 
-            if output_shape is not None and tuple(shape) != output_shape:
-                raise IndexError(f'Mismatch in array index shapes in access of '
-                                 f'"{aname}": {arrname} (shape {shape}) '
-                                 f'does not match existing shape {output_shape}')
-            elif output_shape is None:
-                output_shape = tuple(shape)
+            if chunk_shape is not None:
+                chunk_shape, *_ = broadcast_together(shape, chunk_shape)
+            else:
+                chunk_shape = tuple(shape)
 
-        # Check subset shapes for matching the array shapes
-        input_index = []
-        i0 = symbolic.pystr_to_symbolic('__i0')
-        for i, elem in enumerate(expr.subset.size()):
-            if i in expr.arrdims:
-                input_index.append((0, elem - 1, 1))
-                continue
-            if len(output_shape) > 1:
-                raise IndexError('Combining multidimensional array indices and '
-                                 'numeric subsets is unsupported (array '
-                                 f'"{aname}").')
-            if (elem, ) != output_shape:
-                # TODO(later): Properly broadcast multiple (and missing) shapes
-                raise IndexError(f'Mismatch in array index shapes in access of '
-                                 f'"{aname}": Subset {expr.subset[i]} '
-                                 f'does not match existing shape {output_shape}')
+        # Replace the advanced indexing dimensions with the broadcasted shape
+        output_shape = output_shape[:dim_position] + list(chunk_shape) + output_shape[dim_position + 1:]
 
-            # Since there can only be one-dimensional outputs if arrays and
-            # subsets are both involved, express memlet as a function of _i0
-            rb, _, rs = expr.subset[i]
-            input_index.append((rb + i0 * rs, rb + i0 * rs, 1))
+        return output_shape
 
+    def _create_memlets_from_advanced_indexing(
+            self, aname: str, expr: MemletExpr) -> Tuple[Dict[str, subsets.Range], Memlet, Memlet, List[Memlet]]:
+        """
+        Creates the input memlets and index expression of a slicing operation with advanced indexing.
+        Returns four elements: a dictionary mapping an index name (e.g., ``__i0``) to the range to access, a memlet
+        representing the array access for reading, a memlet representing the array access for writing, and a list of
+        memlets representing any other input index arrays.
+
+        This method also creates new constant arrays for indexing arrays used in advanced indexing expressions.
+
+        :param aname: The name of the array being sliced.
+        :param expr: The MemletExpr object representing the slicing operation.
+        :return: A tuple of (index mapping, input array memlet, output array memlet, input index memlets).
+        """
+        # Compute input subset and index mapping for the basic indexing expressions (ranges and scalars)
+        ndrange = expr.subset.ndrange()
+        output_ndrange = [(dace.symbol(f'__i{i}'), dace.symbol(f'__i{i}'), 1) if rng[0] != rng[1] else (0, 0, 1)
+                          for i, rng in enumerate(ndrange)]
+        # Create the input index subset by offsetting the output index subset
+        input_subset = subsets.Range([(rb + ind * rs, rb + ind * rs, 1)
+                                      for (rb, _, rs), (ind, _, _) in zip(ndrange, output_ndrange)])
+        index_mapping = {
+            f'__i{i}': (0, s - 1, 1)
+            for i, (s, rng) in enumerate(zip(expr.subset.size(), ndrange)) if rng[0] != rng[1]
+        }
+        index_memlets: List[Memlet] = []
+
+        # Fast path: no advanced indexing
+        if not expr.arrdims:
+            for new_axis in reversed(expr.new_axes):
+                output_ndrange.insert(new_axis, (0, 0, 1))
+            return (
+                index_mapping,
+                Memlet(data=aname, subset=input_subset),
+                Memlet(data=aname, subset=subsets.Range(output_ndrange)),
+                index_memlets,
+            )
+
+        # The output shape is the shape of all contiguous advanced indexing arrays, after broadcasting with each other
+
+        # Start with all basic indexing dimensions, setting advanced indexing dimensions to None
+        output_shape = [s if i not in expr.arrdims else None for i, s in enumerate(expr.subset.size())]
+
+        # If any advanced indexing is found, mark any scalar dimension as advanced indices too
+        output_shape = [None if rng[0] == rng[1] else s for s, rng in zip(output_shape, expr.subset.ndrange())]
+
+        # Create output subset based on the shape
+        output_ndrange = [None if output_shape[i] is None else rng for i, rng in enumerate(output_ndrange)]
+
+        # Mark every dimension that starts with None as an advanced indexing "chunk"
+        advanced_dims = [
+            i for i, s in enumerate(output_shape) if s is None and (i == 0 or output_shape[i - 1] is not None)
+        ]
+        # If there is more than one contiguous advanced indexing chunk, move all advanced indices to the beginning
+        prefix_dims = len(advanced_dims) > 1
+        if prefix_dims:
+            output_shape = [None] + [s for s in output_shape if s is not None]
+            output_ndrange = [None] + [rng for rng in output_ndrange if rng is not None]
+            dim_position = 0
+        else:
+            dim_position = advanced_dims[0]
+
+        # Add new axes
+        for new_axis in reversed(expr.new_axes):
+            if prefix_dims:
+                output_shape.insert(new_axis + 1, 1)
+                output_ndrange.insert(new_axis + 1, (0, 0, 1))
+            else:
+                output_shape.insert(new_axis, 1)
+                output_ndrange.insert(new_axis, (0, 0, 1))
+                if new_axis <= dim_position:
+                    dim_position += 1
+
+        # Contract contiguous None dimensions that appear multiple times in a row
+        output_shape = [
+            s for i, s in enumerate(output_shape) if s is not None or i == 0 or output_shape[i - 1] is not None
+        ]
+        output_ndrange = [
+            rng for i, rng in enumerate(output_ndrange)
+            if rng is not None or i == 0 or output_ndrange[i - 1] is not None
+        ]
+
+        # Broadcast all advanced indexing expressions together
+        advidx_shape = None
+        out_idx = None
+        advidx_arrays = {}
+        # Get the advanced indexing expressions
+        for i, idxarrname in expr.arrdims.items():
+            if isinstance(idxarrname, str):  # Array or constant
+                if idxarrname in self.sdfg.arrays:
+                    desc = self.sdfg.arrays[idxarrname]
+                elif idxarrname in self.sdfg.constants:
+                    desc = self.sdfg.constants[idxarrname]
+                else:
+                    raise NameError(f'Array "{idxarrname}" used in indexing "{aname}" not found')
+                shape = desc.shape
+            else:  # Literal list or tuple, add as constant and use shape
+                idxarr = [v if isinstance(v, Number) else self._parse_value(v) for v in idxarrname]
+                carr = numpy.array(idxarr, dtype=dtypes.typeclass(int).type)
+                cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
+                self.sdfg.add_constant(cname, carr)
+                self.sdfg.arrays[cname] = self.sdfg.constants_prop[cname][0]
+                self.sdfg.arrays[cname].transient = True
+                idxarrname = cname
+                shape = carr.shape
+
+            # Set the actual name of the advanced indexing array
+            advidx_arrays[i] = (idxarrname, shape)
+
+            # Loop once to get the broadcasted shape
+            if advidx_shape is not None:
+                advidx_shape, _, out_idx, *_ = broadcast_together(shape, advidx_shape)
+            else:
+                advidx_shape = tuple(shape)
+                out_idx = ','.join([f'__i{i}' for i in range(len(shape))])
+
+        # Rename indices to avoid conflicts
+        out_idx = out_idx.replace('__i', '__ind')
+        advidx_index = []
+        # Set the index mapping for the broadcasted array
+        for idx, s in zip(out_idx.split(','), advidx_shape):
+            index_mapping[idx.strip()] = (0, s - 1, 1)
+            symidx = symbolic.symbol(idx.strip())
+            advidx_index.append((symidx, symidx, 1))
+
+        # Loop over the advanced indexing expressions again to create the input memlets
+        for i, (idxarrname, shape) in advidx_arrays.items():
+            # Remove the original index dimension from index mapping
+            del index_mapping[f'__i{i}']
+
+            # NOTE: The indices can be multi-dimensional
+            _, _, out_idx, arr_idx, _ = broadcast_together(shape, advidx_shape)
+
+            # Create the input memlet for this advanced indexing array based on broadcasting rules
+            arr_idx = arr_idx.replace('__i', '__ind').split(',')
+            arr_subset = subsets.Range([(symbolic.symbol(idx.strip()), symbolic.symbol(idx.strip()), 1)
+                                        for idx in arr_idx])
+            index_memlets.append(Memlet(data=idxarrname, subset=arr_subset))
+
+            # Set the subset of the input/output array to be the entire array
+            input_subset[i] = ndrange[i]
+
+        # Replace the advanced indexing dimensions with the broadcasted shape
+        output_shape = output_shape[:dim_position] + list(advidx_shape) + output_shape[dim_position + 1:]
+        output_ndrange = output_ndrange[:dim_position] + advidx_index + output_ndrange[dim_position + 1:]
+
+        return (
+            index_mapping,
+            Memlet(data=aname, subset=input_subset, volume=1),
+            Memlet(data=aname, subset=subsets.Range(output_ndrange), volume=1),
+            index_memlets,
+        )
+
+    def _array_indirection_subgraph(self, rnode: nodes.AccessNode, expr: MemletExpr) -> str:
+        aname = rnode.data
+        idesc = self.sdfg.arrays[aname]
+
+        # Create output shape dimensions based on the sizes of the arrays
+        output_shape = self._compute_output_shape_from_advanced_indexing(aname, expr)
+        index_mapping, input_memlet, output_memlet, index_memlets = self._create_memlets_from_advanced_indexing(
+            aname, expr)
+
+        # Create an output array with the right shape
         outname, _ = self.sdfg.add_temp_transient(output_shape, idesc.dtype)
+        output_memlet.data = outname
 
-        # Make slice subgraph - input shape dimensions are len(expr.subset) and
-        # output shape dimensions are len(output_shape)
+        # Make slice subgraph - a mapped tasklet with the proper dimensions
 
-        # Make map with output shape
-        state = self.current_state
-        wnode = state.add_write(outname)
-        maprange = [(f'__i{i}', f'0:{s}') for i, s in enumerate(output_shape)]
-        me, mx = state.add_map('indirect_slice', maprange, debuginfo=self.current_lineinfo)
+        # Compute index expression string
+        access_expr = [f'__inp{i}' for i in range(len(expr.arrdims))]
+        access_str = ', '.join(access_expr)
 
-        # Make indirection tasklet for array-index dimensions
-        array_indices = set(expr.arrdims.keys()) - set(constant_indices.keys())
-        output_str = ', '.join(ind for ind, _ in maprange)
-        access_str = ', '.join(
-            [f'__inp{i}' if i in array_indices else f'{cname}[{output_str}]' for i in expr.arrdims.keys()])
-        t = state.add_tasklet('indirection', {'__arr'} | set(f'__inp{i}' for i in array_indices), {'__out'},
-                              f'__out = __arr[{access_str}]')
-
-        # Offset input memlet according to offset and stride if fixed, or
-        # entire array with volume 1 if array-index
-        input_subset = subsets.Range(input_index)
-        state.add_edge_pair(me, t, rnode, Memlet(data=aname, subset=input_subset, volume=1), internal_connector='__arr')
-        # Add array-index memlets
-        for dim in array_indices:
-            arrname = expr.arrdims[dim]
-            arrnode = state.add_read(arrname)
-            state.add_edge_pair(me,
-                                t,
-                                arrnode,
-                                Memlet(data=arrname, subset=subsets.Range([(ind, ind, 1) for ind, _ in maprange])),
-                                internal_connector=f'__inp{dim}')
-
-        # Output matches the output shape exactly
-        output_index = subsets.Range([(ind, ind, 1) for ind, _ in maprange])
-        state.add_edge_pair(mx,
-                            t,
-                            wnode,
-                            Memlet(data=outname, subset=output_index),
-                            external_memlet=Memlet(data=outname),
-                            internal_connector='__out')
+        # Make mapped tasklet with the proper dimensions
+        self.current_state.add_mapped_tasklet(
+            'indirection',
+            index_mapping,
+            inputs={
+                '__arr': input_memlet,
+                **{f'__inp{i}': m
+                   for i, m in enumerate(index_memlets)}
+            },
+            outputs={'__out': output_memlet},
+            code=f'__out = __arr[{access_str}]',
+            external_edges=True,
+            debuginfo=self.current_lineinfo,
+            input_nodes={rnode.data: rnode},
+        )
 
         return outname
 

@@ -1,9 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
 import copy
-from collections import OrderedDict
 from io import StringIO
 import inspect
 import numbers
@@ -12,7 +11,7 @@ import sympy
 import sys
 from typing import Any, Dict, List, Optional, Set, Union
 
-from dace import dtypes, symbolic
+from dace import symbolic
 
 
 if sys.version_info >= (3, 8):
@@ -230,6 +229,14 @@ def subscript_to_ast_slice_recursive(node):
 
 
 class ExtUnparser(astunparse.Unparser):
+
+    def _Constant(self, t):
+        # NOTE: This is needed since NumPy 2.0 to avoid unparsing NumPy scalars as calls, e.g. `numpy.int32(1)`
+        if isinstance(t.value, numbers.Number):
+            self.write(str(t.value))
+        else:
+            super()._Constant(t)
+
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
@@ -263,7 +270,7 @@ def unparse(node):
     # Support for numerical constants
     if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(node)
-    # Suport for string
+    # Support for string
     if isinstance(node, str):
         return node
 
@@ -584,6 +591,36 @@ class ASTFindReplace(ast.NodeTransformer):
                 val = unparse(val)
             node.arg = val
             self.replace_count += 1
+        return self.generic_visit(node)
+
+
+class FindAssignment(ast.NodeVisitor):
+
+    assignments: Dict[str, str]
+    multiple: bool
+
+    def __init__(self):
+        self.assignments = {}
+        self.multiple = False
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        for tgt in node.targets:
+            if isinstance(tgt, ast.Name):
+                if tgt.id in self.assignments:
+                    self.multiple = True
+                self.assignments[tgt.id] = unparse(node.value)
+        return self.generic_visit(node)
+
+
+class ASTReplaceAssignmentRHS(ast.NodeVisitor):
+
+    repl_visitor: ASTFindReplace
+
+    def __init__(self, repl: Dict[str, str]):
+        self.repl_visitor = ASTFindReplace(repl)
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        self.repl_visitor.visit(node.value)
         return self.generic_visit(node)
 
 

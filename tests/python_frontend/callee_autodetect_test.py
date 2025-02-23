@@ -8,6 +8,7 @@ from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 from dataclasses import dataclass
 import numpy as np
 import pytest
+from typing import List, Tuple
 
 
 @dataclass
@@ -276,6 +277,61 @@ def test_loop_unrolling():
     assert np.allclose(A, expected)
 
 
+def test_type_hints_in_nested_call():
+    """
+    Tests that type hints are correctly propagated to nested functions, ignoring
+    existing type hints if the nested function is not decorated.
+    """
+
+    def nested(a: int, b: List[float], c) -> Tuple[float, float]:
+        return np.sum(b) + a, c
+
+    @dace
+    def outer(a: dace.float64[20], result: dace.float64[2]):
+        ret1, ret2 = nested(5, a, 3.0)
+        result[0] = ret1
+        result[1] = ret2
+
+    A = np.random.rand(20)
+    res = np.zeros(2)
+    ref = np.copy(res)
+    ref[0] = np.sum(A) + 5
+    ref[1] = 3.0
+    outer(A, res)
+    assert np.allclose(res, ref)
+
+
+@pytest.mark.parametrize('decorated', (False, True))
+def test_explicit_type_hints_in_nested_call(decorated):
+    """
+    Tests that type hints are not ignored if the nested function is decorated.
+    """
+
+    if decorated:
+
+        @dace
+        def nested(a: dace.float64[20], b: dace.float64[16]):
+            b += a
+    else:
+        # This function is not decorated, so the type hints should be ignored
+        def nested(a: dace.float64[20], b: dace.float64[16]):
+            b += a
+
+    @dace
+    def outer(a: dace.float64[20]):
+        nested(a, a)
+
+    A = np.random.rand(20)
+    a_ref = A * 2
+
+    if decorated:
+        with pytest.raises(IndexError):
+            outer(A)
+    else:
+        outer(A)
+        assert np.allclose(A, a_ref)
+
+
 if __name__ == '__main__':
     test_autodetect_function()
     test_autodetect_method()
@@ -291,3 +347,6 @@ if __name__ == '__main__':
     test_error_handling()
     test_nested_class_error_handling()
     test_loop_unrolling()
+    test_type_hints_in_nested_call()
+    test_explicit_type_hints_in_nested_call(False)
+    test_explicit_type_hints_in_nested_call(True)

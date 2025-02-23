@@ -377,10 +377,11 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
         elif isinstance(block, ConditionalBlock):
             if not ignore_nonstate_blocks:
                 yield block
-            for _, branch in block.branches:
-                if not ignore_nonstate_blocks:
-                    yield branch
-                yield from blockorder_topological_sort(branch, recursive, ignore_nonstate_blocks)
+            if recursive:
+                for _, branch in block.branches:
+                    if not ignore_nonstate_blocks:
+                        yield branch
+                    yield from blockorder_topological_sort(branch, recursive, ignore_nonstate_blocks)
         elif isinstance(block, SDFGState):
             yield block
         else:

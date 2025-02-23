@@ -157,8 +157,8 @@ class CUDACodeGen(TargetCodeGenerator):
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         from dace.transformation.dataflow import CopyToMap
         for e, state in list(sdfg.all_edges_recursive()):
-            nsdfg = state.parent
             if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
+                nsdfg = state.parent
                 if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
                         and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
                     copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
@@ -626,7 +626,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                 raise NotImplementedError('Dynamic shared memory unsupported')
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for shared memory')
-            result_decl.write("__shared__ %s %s[%s];\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
+            result_decl.write("__shared__ __align__(64) %s %s[%s];\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
             if node.setzero:
                 result_alloc.write('dace::ResetShared<{type}, {block_size}, {elements}, '
@@ -775,7 +775,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         state_streams = []
         state_subsdfg_events = []
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             # Start by annotating source nodes
             source_nodes = state.source_nodes()
 
@@ -873,7 +873,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Compute maximal number of events by counting edges (within the same
         # state) that point from one stream to another
         state_events = []
-        for i, state in enumerate(sdfg.nodes()):
+        for i, state in enumerate(sdfg.states()):
             events = state_subsdfg_events[i]
 
             for e in state.edges():
@@ -1306,7 +1306,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # Invoke all instrumentation providers
             for instr in self._frame._dispatcher.instrumentation.values():
                 if instr is not None:
-                    instr.on_state_end(sdfg, state, callsite_stream, function_stream)
+                    instr.on_state_end(sdfg, cfg, state, callsite_stream, function_stream)
 
     def generate_devicelevel_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState,
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -1435,8 +1435,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
-        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, sdfg.node_id(state),
-                                       state.node_id(scope_entry))
+        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
@@ -1496,9 +1495,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Instrumentation for kernel scope
         instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
         if instr is not None:
-            instr.on_scope_entry(sdfg, state, scope_entry, callsite_stream, self.scope_entry_stream, self._globalcode)
+            instr.on_scope_entry(sdfg, cfg, state, scope_entry, callsite_stream, self.scope_entry_stream,
+                                 self._globalcode)
             outer_stream = CodeIOStream()
-            instr.on_scope_exit(sdfg, state, scope_exit, outer_stream, self.scope_exit_stream, self._globalcode)
+            instr.on_scope_exit(sdfg, cfg, state, scope_exit, outer_stream, self.scope_exit_stream, self._globalcode)
 
         # Redefine constant arguments and rename arguments to device counterparts
         # TODO: This (const behavior and code below) is all a hack.
@@ -1587,7 +1587,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Write kernel prototype
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg, state_id, node)
+            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1929,14 +1929,17 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 # Error when both gpu_block_size and thread-block maps were defined and conflict
                 if kernelmap_entry.map.gpu_block_size is not None:
-                    raise ValueError('Both the `gpu_block_size` property and internal thread-block '
-                                     'maps were defined with conflicting sizes for kernel '
-                                     f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
-                                     'Use `gpu_block_size` only if you do not need access to individual '
-                                     'thread-block threads, or explicit block-level synchronization (e.g., '
-                                     '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
-                                     '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
-                                     'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+                    block_size = kernelmap_entry.map.gpu_block_size
+
+                    warnings.warn('Both the `gpu_block_size` property and internal thread-block '
+                                   'maps were defined with conflicting sizes for kernel '
+                                   f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
+                                   'The block size in the and gpu_block_size will be preferred.'
+                                   'Use `gpu_block_size` only if you do not need access to individual '
+                                   'thread-block threads, or explicit block-level synchronization (e.g., '
+                                   '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
+                                   '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
+                                   'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
 
                 warnings.warn('Multiple thread-block maps with different sizes detected for '
                               f'kernel "{kernelmap_entry.map.label}": {detected_block_sizes}. '
@@ -2009,7 +2012,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         bidx = krange.coord_at(dsym)
 
         # handle dynamic map inputs
-        for e in dace.sdfg.dynamic_map_inputs(sdfg.states()[state_id], dfg_scope.source_nodes()[0]):
+        for e in dace.sdfg.dynamic_map_inputs(cfg.node(state_id), dfg_scope.source_nodes()[0]):
             kernel_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id,
@@ -2032,7 +2035,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
             # Delinearize beyond the third dimension
@@ -2059,7 +2062,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         assert CUDACodeGen._in_device_code is False
         CUDACodeGen._in_device_code = True
         self._kernel_map = node
-        self._kernel_state = sdfg.node(state_id)
+        self._kernel_state = cfg.node(state_id)
         self._block_dims = block_dims
         self._grid_dims = grid_dims
 

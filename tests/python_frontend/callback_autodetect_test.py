@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import time
 from dace import config
+from dace.frontend.python.common import DaceSyntaxError
 
 N = dace.symbol('N')
 
@@ -906,6 +907,38 @@ def test_custom_generator_with_break():
     assert np.allclose(aa, expected)
 
 
+def test_disallowed_callback_in_condition():
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return 42
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        if arr[0] < callbackfunc(arr):
+            return arr + 1
+        else:
+            return arr
+
+    with pytest.raises(DaceSyntaxError, match="Trying to operate on a callback"):
+        callback_in_condition.to_sdfg()
+
+
+def test_disallowed_callback_slice():
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return 42
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        a = callbackfunc(arr)
+        return arr + a[:20]
+
+    with pytest.raises(DaceSyntaxError, match="cannot be sliced"):
+        callback_in_condition.to_sdfg()
+
+
 @pytest.mark.skip('Test requires GUI')
 def test_matplotlib_with_compute():
     """
@@ -978,4 +1011,6 @@ if __name__ == '__main__':
     test_pyobject_return_tuple()
     test_custom_generator()
     test_custom_generator_with_break()
+    test_disallowed_callback_in_condition()
+    test_disallowed_callback_slice()
     # test_matplotlib_with_compute()

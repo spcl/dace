@@ -34,9 +34,9 @@ def get_uuid(element, state=None):
     if isinstance(element, SDFG):
         return ids_to_string(element.cfg_id)
     elif isinstance(element, SDFGState):
-        return ids_to_string(element.parent.cfg_id, element.parent.node_id(element))
+        return ids_to_string(element.parent_graph.cfg_id, element.block_id)
     elif isinstance(element, nodes.Node):
-        return ids_to_string(state.parent.cfg_id, state.parent.node_id(state), state.node_id(element))
+        return ids_to_string(state.parent_graph.cfg_id, state.block_id, state.node_id(element))
     else:
         return ids_to_string(-1)
 

@@ -163,8 +163,41 @@ def test_expand_with_limits():
     assert len(map_entries) == 2
 
 
+def test_expand_with_dependency_edges():
+
+    @dace.program
+    def expansion(A: dace.float32[2], B: dace.float32[2, 2, 2]):
+        for i in dace.map[0:2]:
+            A[i] = i
+
+            for j, k in dace.map[0:2, 0:2]:
+                B[i, j, k] = i * j + k
+
+    sdfg = expansion.to_sdfg()
+    sdfg.simplify()
+    sdfg.validate()
+
+    # If dependency edges are handled correctly, this should not raise an exception
+    try:
+        num_app = sdfg.apply_transformations_repeated(MapExpansion)
+    except Exception as e:
+        assert False, f"MapExpansion failed: {str(e)}"
+    assert num_app == 1
+    sdfg.validate()
+
+    A = np.random.rand(2).astype(np.float32)
+    B = np.random.rand(2, 2, 2).astype(np.float32)
+    sdfg(A=A, B=B)
+
+    A_expected = np.array([0, 1], dtype=np.float32)
+    B_expected = np.array([[[0, 1], [0, 1]], [[0, 1], [1, 2]]], dtype=np.float32)
+    assert np.all(A == A_expected)
+    assert np.all(B == B_expected)
+
+
 if __name__ == '__main__':
     test_expand_with_inputs()
     test_expand_without_inputs()
     test_expand_without_dynamic_inputs()
     test_expand_with_limits()
+    test_expand_with_dependency_edges()

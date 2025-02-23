@@ -450,7 +450,6 @@ def test_invalid_redundant_array_strided(order):
 
 
 if __name__ == '__main__':
-    test_slicing_with_redundant_arrays()
     test_in()
     test_out()
     test_out_success()

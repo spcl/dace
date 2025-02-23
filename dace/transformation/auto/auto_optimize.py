@@ -577,8 +577,6 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
-        for s in sdfg.cfg_list:
-            xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
@@ -598,6 +596,7 @@ def auto_optimize(sdfg: SDFG,
 
     # fuse subgraphs greedily
     sdfg.simplify()
+    sdfg.reset_cfg_list()
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
@@ -667,6 +666,8 @@ def auto_optimize(sdfg: SDFG,
         if debugprint and len(known_symbols) > 0:
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
+
+    sdfg.reset_cfg_list()
 
     # Validate at the end
     if validate or validate_all:

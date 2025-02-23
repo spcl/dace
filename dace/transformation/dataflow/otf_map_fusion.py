@@ -478,8 +478,11 @@ def advanced_replace(subgraph: StateSubgraphView, s: str, s_: str) -> None:
         elif isinstance(node, nodes.NestedSDFG):
             for nsdfg in node.sdfg.all_sdfgs_recursive():
                 nsdfg.replace(s, s_)
-                for nstate in nsdfg.nodes():
-                    for nnode in nstate.nodes():
-                        if isinstance(nnode, nodes.MapEntry):
-                            params = [s_ if p == s else p for p in nnode.map.params]
-                            nnode.map.params = params
+                for cfg in nsdfg.all_control_flow_regions():
+                    cfg.replace(s, s_)
+                    for nblock in cfg.nodes():
+                        if isinstance(nblock, SDFGState):
+                            for nnode in nblock.nodes():
+                                if isinstance(nnode, nodes.MapEntry):
+                                    params = [s_ if p == s else p for p in nnode.map.params]
+                                    nnode.map.params = params

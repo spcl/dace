@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """
 This file contains classes that describe data-centric transformations.
 
@@ -20,10 +20,10 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
-from dace import dtypes, serialize
+from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
@@ -34,8 +34,8 @@ from typing import TypeVar
 
 PassT = TypeVar('PassT', bound=ppl.Pass)
 
-def experimental_cfg_block_compatible(cls: PassT) -> PassT:
-    cls.__experimental_cfg_block_compatible__ = True
+def explicit_cf_compatible(cls: PassT) -> PassT:
+    cls.__explicit_cf_compatible__ = True
     return cls
 
 
@@ -311,7 +311,7 @@ class PatternTransformation(TransformationBase):
 
         If `apply` is `True` then the function will apply the transformation, if `verify`
         is also `True` the function will first call `can_be_applied()` to ensure the
-        transformation can be applied. If not an error is genrated.
+        transformation can be applied. If not, an error is generated.
         If `apply` is `False` the function will only call `can_be_applied()` and
         returns its result.
 
@@ -339,7 +339,7 @@ class PatternTransformation(TransformationBase):
         # Check that all keyword arguments are nodes and if interstate or not
         sample_node = next(iter(where.values()))
 
-        if isinstance(sample_node, SDFGState):
+        if isinstance(sample_node, ControlFlowBlock):
             graph = sample_node.parent_graph
             state_id = -1
             cfg_id = graph.cfg_id
@@ -506,7 +506,7 @@ class PatternTransformation(TransformationBase):
 
 
 @make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class SingleStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
@@ -811,8 +811,7 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
 
             if isinstance(subgraph.graph, SDFGState):
-                sdfg = subgraph.graph.parent
-                self.cfg_id = sdfg.cfg_id
+                self.cfg_id = subgraph.graph.parent_graph.cfg_id
                 self.state_id = subgraph.graph.block_id
             elif isinstance(subgraph.graph, SDFG):
                 self.cfg_id = subgraph.graph.cfg_id
@@ -823,13 +822,6 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = subgraph
             self.cfg_id = cfg_id
             self.state_id = state_id
-
-    def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
-        sdfg = sdfg.cfg_list[self.cfg_id]
-        if self.state_id == -1:
-            return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
-        state = sdfg.node(self.state_id)
-        return st.StateSubgraphView(state, list(map(state.node, self.subgraph)))
 
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
@@ -1069,7 +1061,7 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
                 sdfg = get_sdfg_arg(tgt, *args)
             if sdfg and isinstance(sdfg, SDFG):
                 root_sdfg: SDFG = sdfg.cfg_list[0]
-                if not root_sdfg.using_experimental_blocks:
+                if not root_sdfg.using_explicit_control_flow:
                     return vanilla_method(tgt, *args, **kwargs)
                 else:
                     warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +

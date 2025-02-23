@@ -1,7 +1,9 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the LiftStructViews pass. """
 
+import numpy as np
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.lift_struct_views import LiftStructViews
 
@@ -166,9 +168,45 @@ def test_sliced_multi_tasklet_access_to_cont_array():
     assert sdfg.is_valid()
 
 
+def test_lift_in_loop_meta_code():
+    sdfg = dace.SDFG('lift_in_loop_meta_code')
+    bounds_struct = dace.data.Structure({
+        'start': dace.data.Scalar(dace.int32),
+        'end': dace.data.Scalar(dace.int32),
+        'step': dace.data.Scalar(dace.int32),
+    })
+    sdfg.add_datadesc('bounds', bounds_struct)
+    sdfg.add_array('A', (20,), dace.int32)
+    loop = LoopRegion('loop', 'i < bounds.end', 'i', 'i = bounds.start', 'i = i + bounds.step')
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state('state', is_start_block=True)
+    a_write = state.add_access('A')
+    t1 = state.add_tasklet('t1', {}, {'o1'}, 'o1 = 1')
+    state.add_edge(t1, 'o1', a_write, None, dace.Memlet('A[i]'))
+
+    assert len(sdfg.nodes()) == 1
+    assert len(sdfg.arrays) == 2
+    assert sdfg.is_valid()
+
+    FixedPointPipeline([LiftStructViews()]).apply_pass(sdfg, {})
+
+    assert len(sdfg.nodes()) == 2
+    assert len(sdfg.arrays) == 5
+    assert sdfg.is_valid()
+
+    a = np.zeros((20,), np.int32)
+    valid = np.full((20,), 1, np.int32)
+    inpBounds = bounds_struct.dtype._typeclass.as_ctypes()(start=0, end=20, step=1)
+    func = sdfg.compile()
+    func(A=a, bounds=inpBounds)
+
+    assert np.allclose(a, valid)
+
+
 if __name__ == '__main__':
     test_simple_tasklet_access()
     test_sliced_tasklet_access()
     test_sliced_multi_tasklet_access()
     test_tasklet_access_to_cont_array()
     test_sliced_multi_tasklet_access_to_cont_array()
+    test_lift_in_loop_meta_code()

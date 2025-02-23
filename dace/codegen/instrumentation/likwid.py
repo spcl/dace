@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the LIKWID counter performance instrumentation provider.
     Used for collecting CPU performance counters.
 """
@@ -15,7 +15,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import helpers as xfh
 
 
@@ -213,13 +213,13 @@ LIKWID_MARKER_CLOSE;
 '''
         self.codegen._exitcode.write(exit_code, sdfg)
 
-    def on_state_begin(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream,
+    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
         if not self._likwid_used:
             return
 
         if state.instrument == dace.InstrumentationType.LIKWID_CPU:
-            cfg_id = state.parent_graph.cfg_id
+            cfg_id = cfg.cfg_id
             state_id = state.block_id
             node_id = -1
             region = f"state_{cfg_id}_{state_id}_{node_id}"
@@ -250,13 +250,13 @@ LIKWID_MARKER_CLOSE;
 '''
             local_stream.write(marker_code)
 
-    def on_state_end(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream,
+    def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                      global_stream: CodeIOStream) -> None:
         if not self._likwid_used:
             return
 
         if state.instrument == dace.InstrumentationType.LIKWID_CPU:
-            cfg_id = state.parent_graph.cfg_id
+            cfg_id = cfg.cfg_id
             state_id = state.block_id
             node_id = -1
             region = f"state_{cfg_id}_{state_id}_{node_id}"
@@ -269,8 +269,8 @@ LIKWID_MARKER_CLOSE;
 '''
             local_stream.write(marker_code)
 
-    def on_scope_entry(self, sdfg: SDFG, state: SDFGState, node: nodes.EntryNode, outer_stream: CodeIOStream,
-                       inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
+                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if not self._likwid_used or node.instrument != dace.InstrumentationType.LIKWID_CPU:
             return
 
@@ -279,7 +279,7 @@ LIKWID_MARKER_CLOSE;
         elif node.schedule not in LIKWIDInstrumentationCPU.perf_whitelist_schedules:
             raise TypeError("Unsupported schedule on scope")
 
-        cfg_id = state.parent_graph.cfg_id
+        cfg_id = cfg.cfg_id
         state_id = state.block_id
         node_id = state.node_id(node)
         region = f"scope_{cfg_id}_{state_id}_{node_id}"
@@ -296,13 +296,13 @@ LIKWID_MARKER_CLOSE;
 '''
         outer_stream.write(marker_code)
 
-    def on_scope_exit(self, sdfg: SDFG, state: SDFGState, node: nodes.ExitNode, outer_stream: CodeIOStream,
-                      inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
+                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         entry_node = state.entry_node(node)
         if not self._likwid_used or entry_node.instrument != dace.InstrumentationType.LIKWID_CPU:
             return
 
-        cfg_id = state.parent_graph.cfg_id
+        cfg_id = cfg.cfg_id
         state_id = state.block_id
         node_id = state.node_id(entry_node)
         region = f"scope_{cfg_id}_{state_id}_{node_id}"
@@ -405,13 +405,13 @@ LIKWID_NVMARKER_CLOSE;
 '''
         self.codegen._exitcode.write(exit_code, sdfg)
 
-    def on_state_begin(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream,
+    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
         if not self._likwid_used:
             return
 
         if state.instrument == dace.InstrumentationType.LIKWID_GPU:
-            cfg_id = state.parent_graph.cfg_id
+            cfg_id = cfg.cfg_id
             state_id = state.block_id
             node_id = -1
             region = f"state_{cfg_id}_{state_id}_{node_id}"
@@ -428,13 +428,13 @@ LIKWID_NVMARKER_START("{region}");
 '''
             local_stream.write(marker_code)
 
-    def on_state_end(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream,
+    def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                      global_stream: CodeIOStream) -> None:
         if not self._likwid_used:
             return
 
         if state.instrument == dace.InstrumentationType.LIKWID_GPU:
-            cfg_id = state.parent_graph.cfg_id
+            cfg_id = cfg.cfg_id
             state_id = state.block_id
             node_id = -1
             region = f"state_{cfg_id}_{state_id}_{node_id}"
@@ -444,8 +444,8 @@ LIKWID_NVMARKER_STOP("{region}");
 '''
             local_stream.write(marker_code)
 
-    def on_scope_entry(self, sdfg: SDFG, state: SDFGState, node: nodes.EntryNode, outer_stream: CodeIOStream,
-                       inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
+                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if not self._likwid_used or node.instrument != dace.InstrumentationType.LIKWID_GPU:
             return
 
@@ -454,7 +454,7 @@ LIKWID_NVMARKER_STOP("{region}");
         elif node.schedule not in LIKWIDInstrumentationGPU.perf_whitelist_schedules:
             raise TypeError("Unsupported schedule on scope")
 
-        cfg_id = state.parent_graph.cfg_id
+        cfg_id = cfg.cfg_id
         state_id = state.block_id
         node_id = state.node_id(node)
         region = f"scope_{cfg_id}_{state_id}_{node_id}"
@@ -471,13 +471,13 @@ LIKWID_NVMARKER_START("{region}");
 '''
         outer_stream.write(marker_code)
 
-    def on_scope_exit(self, sdfg: SDFG, state: SDFGState, node: nodes.ExitNode, outer_stream: CodeIOStream,
-                      inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
+                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         entry_node = state.entry_node(node)
         if not self._likwid_used or entry_node.instrument != dace.InstrumentationType.LIKWID_GPU:
             return
 
-        cfg_id = state.parent_graph.cfg_id
+        cfg_id = cfg.cfg_id
         state_id = state.block_id
         node_id = state.node_id(entry_node)
         region = f"scope_{cfg_id}_{state_id}_{node_id}"

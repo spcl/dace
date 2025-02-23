@@ -136,10 +136,15 @@ class MapExpansion(pm.SingleStateTransformation):
             graph.add_edge(entries[-1], edge.src_conn, edge.dst, edge.dst_conn, memlet=copy.deepcopy(edge.data))
             graph.remove_edge(edge)
 
-        if graph.in_degree(map_entry) == 0:
+        if graph.in_degree(map_entry) == 0 or all(
+            e.dst_conn is None or not e.dst_conn.startswith("IN_")
+            for e in graph.in_edges(map_entry)
+        ):
             graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
         else:
             for edge in graph.in_edges(map_entry):
+                if edge.dst_conn is None:
+                    continue
                 if not edge.dst_conn.startswith("IN_"):
                     continue
                 

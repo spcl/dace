@@ -625,7 +625,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 if find_disallowed_statements(sast):
                     return newnode
 
-                parsed = parser.DaceProgram(value, [], {}, False, dtypes.DeviceType.CPU)
+                parsed = parser.DaceProgram(value, [], {}, False, dtypes.DeviceType.CPU, ignore_type_hints=True)
                 # If method, add the first argument (which disappears due to
                 # being a bound method) and the method's object
                 if parent_object is not None:

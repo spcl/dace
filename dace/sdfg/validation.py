@@ -39,6 +39,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                                  symbols: dict,
                                  references: Set[int] = None,
                                  **context: bool):
+    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock, LoopRegion
     from dace.sdfg.scope import is_in_scope
     from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 
@@ -75,8 +76,15 @@ def validate_control_flow_region(sdfg: 'SDFG',
             if isinstance(edge.src, SDFGState):
                 validate_state(edge.src, region.node_id(edge.src), sdfg, symbols, initialized_transients, references,
                                **context)
+            elif isinstance(edge.src, ConditionalBlock):
+                for _, r in edge.src.branches:
+                    if r is not None:
+                        validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
             elif isinstance(edge.src, ControlFlowRegion):
-                validate_control_flow_region(sdfg, edge.src, initialized_transients, symbols, references, **context)
+                lsyms = copy.copy(symbols)
+                if isinstance(edge.src, LoopRegion) and not edge.src.loop_variable in lsyms:
+                    lsyms[edge.src.loop_variable] = None
+                validate_control_flow_region(sdfg, edge.src, initialized_transients, lsyms, references, **context)
 
         ##########################################
         # Edge
@@ -139,7 +147,10 @@ def validate_control_flow_region(sdfg: 'SDFG',
                     if r is not None:
                         validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
             elif isinstance(edge.dst, ControlFlowRegion):
-                validate_control_flow_region(sdfg, edge.dst, initialized_transients, symbols, references, **context)
+                lsyms = copy.copy(symbols)
+                if isinstance(edge.dst, LoopRegion) and not edge.dst.loop_variable in lsyms:
+                    lsyms[edge.dst.loop_variable] = None
+                validate_control_flow_region(sdfg, edge.dst, initialized_transients, lsyms, references, **context)
     # End of block DFS
 
     # If there is only one block, the DFS will miss it
@@ -147,8 +158,15 @@ def validate_control_flow_region(sdfg: 'SDFG',
         if isinstance(start_block, SDFGState):
             validate_state(start_block, region.node_id(start_block), sdfg, symbols, initialized_transients, references,
                            **context)
+        elif isinstance(start_block, ConditionalBlock):
+            for _, r in start_block.branches:
+                if r is not None:
+                    validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
         elif isinstance(start_block, ControlFlowRegion):
-            validate_control_flow_region(sdfg, start_block, initialized_transients, symbols, references, **context)
+            lsyms = copy.copy(symbols)
+            if isinstance(start_block, LoopRegion) and not start_block.loop_variable in lsyms:
+                lsyms[start_block.loop_variable] = None
+            validate_control_flow_region(sdfg, start_block, initialized_transients, lsyms, references, **context)
 
     # Validate all inter-state edges (including self-loops not found by DFS)
     for eid, edge in enumerate(region.edges()):
@@ -192,7 +210,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
-    
+
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.
@@ -239,14 +257,14 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
             if const_name in sdfg.arrays:
-                if const_type != sdfg.arrays[const_name].dtype:
+                if const_type.dtype != sdfg.arrays[const_name].dtype:
                     # This should actually be an error, but there is a lots of code that depends on it.
                     warnings.warn(f'Mismatch between constant and data descriptor of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
             elif const_name in sdfg.symbols:
                 if const_type.dtype != sdfg.symbols[const_name]:
                     # This should actually be an error, but there is a lots of code that depends on it.
-                    warnings.warn(f'Mismatch between constant and symobl type of "{const_name}", '
+                    warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
             else:
                 warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
@@ -261,8 +279,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
             # Because of how the code generator works Scalars can not be return values.
             #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
-            if isinstance(desc, dt.Scalar) and name.startswith("__return") and not desc.transient:
-                raise InvalidSDFGError(f'Can not use scalar "{name}" as return value.', sdfg, None)
+            if (sdfg.parent is None and isinstance(desc, dt.Scalar) and name.startswith("__return")
+                    and not desc.transient):
+                raise InvalidSDFGError(
+                    f'Cannot use scalar data descriptor ("{name}") as return value of a top-level function.', sdfg,
+                    None)
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
@@ -313,6 +334,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
+
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
         fpath = os.path.join('_dacegraphs', 'invalid.sdfgz')

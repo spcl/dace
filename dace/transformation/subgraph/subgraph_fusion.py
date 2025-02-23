@@ -1,24 +1,21 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion.    """
 import dace
 import networkx as nx
 
-from dace import dtypes, registry, symbolic, subsets, data
-from dace.sdfg import nodes, utils, replace, SDFG, scope_contains_scope
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.scope import ScopeTree
+from dace import dtypes, symbolic, subsets, data
+from dace.sdfg import nodes, SDFG
 from dace.memlet import Memlet
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.symbolic import overapproximate
-from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
+from dace.sdfg.propagation import _propagate_node
 from dace.transformation.subgraph import helpers
-from dace.transformation.dataflow import RedundantArray
-from dace.sdfg.utils import consolidate_edges_scope, get_view_node
+from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation.helpers import find_contiguous_subsets
 
 from copy import deepcopy as dcpy
-from typing import List, Union, Tuple
+from typing import List, Tuple
 import warnings
 
 import dace.libraries.standard as stdlib
@@ -74,7 +71,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         desc="A list of array names to treat as non-transients and not compress",
     )
 
-    def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         """
         Fusible if
         
@@ -89,7 +86,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             4. Check for any disjoint accesses of arrays.
         """
         # get graph
-        graph = subgraph.graph
+        graph: SDFGState = subgraph.graph
         for node in subgraph.nodes():
             if node not in graph.nodes():
                 return False
@@ -626,7 +623,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # do a full global search and count each data from each intermediate node
         scope_dict = graph.scope_dict()
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in data_intermediate:
                     # add them to the counter set in all cases

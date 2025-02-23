@@ -529,6 +529,8 @@ class CompiledSDFG(object):
                     raise KeyError("Missing program argument \"{}\"".format(a))
 
         else:
+            if len(sig) > 0:
+                raise KeyError(f"Missing program arguments: {', '.join(sig)}")
             arglist = []
             argtypes = []
             argnames = []

@@ -5,11 +5,11 @@ from dace.sdfg import utils as sdutil
 from dace import SDFG, properties
 from typing import Optional
 
-from dace.transformation.transformation import experimental_cfg_block_compatible
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class ConsolidateEdges(ppl.Pass):
     """
     Removes extraneous edges with memlets that refer to the same data containers within the same scope.

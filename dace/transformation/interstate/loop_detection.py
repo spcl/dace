@@ -12,25 +12,25 @@ from dace.transformation import transformation
 
 
 # NOTE: This class extends PatternTransformation directly in order to not show up in the matches
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class DetectLoop(transformation.PatternTransformation):
     """ Detects a for-loop construct from an SDFG. """
 
     # Always available
-    loop_begin = transformation.PatternNode(sd.SDFGState)
-    exit_state = transformation.PatternNode(sd.SDFGState)
+    loop_begin = transformation.PatternNode(ControlFlowBlock)
+    exit_state = transformation.PatternNode(ControlFlowBlock)
 
     # Available for natural loops
-    loop_guard = transformation.PatternNode(sd.SDFGState)
+    loop_guard = transformation.PatternNode(ControlFlowBlock)
 
     # Available for rotated loops
-    loop_latch = transformation.PatternNode(sd.SDFGState)
+    loop_latch = transformation.PatternNode(ControlFlowBlock)
 
     # Available for rotated and self loops
-    entry_state = transformation.PatternNode(sd.SDFGState)
+    entry_state = transformation.PatternNode(ControlFlowBlock)
 
     # Available for explicit-latch rotated loops
-    loop_break = transformation.PatternNode(sd.SDFGState)
+    loop_break = transformation.PatternNode(ControlFlowBlock)
 
     @classmethod
     def expressions(cls):
@@ -258,6 +258,10 @@ class DetectLoop(transformation.PatternTransformation):
 
         # Outgoing edges must be a negation of each other
         if latch_outedges[0].data.condition_sympy() != (sp.Not(latch_outedges[1].data.condition_sympy())):
+            return None
+
+        # Make sure the backedge (i.e, one of the condition edges) goes from the latch to the beginning state.
+        if latch_outedges[0].dst is not self.loop_begin and latch_outedges[1].dst is not self.loop_begin:
             return None
 
         # All nodes inside loop must be dominated by loop start

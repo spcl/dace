@@ -141,6 +141,8 @@ src.VC.VC.opendb
 
 # DaCe
 .dacecache/
+# Ignore dacecache if added as a symlink
+.dacecache
 out.sdfg
 *.out
 results.log

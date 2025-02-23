@@ -5,6 +5,7 @@ Nesting and dealiasing tests for schedule trees.
 import dace
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
+from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.dataflow import RemoveSliceView
 
 import pytest
@@ -63,7 +64,8 @@ def test_stree_mpath_nested():
 
     if simplified:
         assert [type(n)
-                for n in stree.preorder_traversal()][1:] == [tn.MapScope, tn.MapScope, tn.ForScope, tn.TaskletNode]
+                for n in stree.preorder_traversal()][1:] == [tn.MapScope, tn.MapScope, tn.GeneralLoopScope,
+                                                             tn.TaskletNode]
 
     tasklet: tn.TaskletNode = list(stree.preorder_traversal())[-1]
 
@@ -127,6 +129,7 @@ def test_dealias_nested_call():
         nester(b[1:21], a[10:30])
 
     sdfg = tester.to_sdfg(simplify=False)
+    inline_control_flow_regions(sdfg)
     sdfg.apply_transformations_repeated(RemoveSliceView)
 
     stree = as_schedule_tree(sdfg)
@@ -150,6 +153,7 @@ def test_dealias_nested_call_samearray():
         nester(a[1:21], a[10:30])
 
     sdfg = tester.to_sdfg(simplify=False)
+    inline_control_flow_regions(sdfg)
     sdfg.apply_transformations_repeated(RemoveSliceView)
 
     stree = as_schedule_tree(sdfg)
@@ -176,6 +180,7 @@ def test_dealias_memlet_composition(simplify):
         nester1(a[:, 1])
 
     sdfg = tester.to_sdfg(simplify=simplify)
+    inline_control_flow_regions(sdfg)
     stree = as_schedule_tree(sdfg)
 
     # Simplifying yields a different SDFG due to views, so testing is slightly different

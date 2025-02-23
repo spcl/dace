@@ -108,40 +108,77 @@ class Node(object):
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
 
-    def add_in_connector(self, connector_name: str, dtype: dtypes.typeclass = None, force: bool = False):
+    def add_in_connector(self, connector_name: str, dtype: Any = None, force: bool = False):
         """ Adds a new input connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
             :param dtype: The type of the connector, or None for auto-detect.
-            :param force: Add connector even if output connector already exists.
+            :param force: Add connector even if input or output connector of that name already exists.
             :return: True if the operation is successful, otherwise False.
         """
 
         if (not force and (connector_name in self.in_connectors or connector_name in self.out_connectors)):
             return False
-        connectors = self.in_connectors
-        connectors[connector_name] = dtype
-        self.in_connectors = connectors
+        if not isinstance(dtype, dace.typeclass):
+            dtype = dace.typeclass(dtype)
+        self.in_connectors[connector_name] = dtype
         return True
 
-    def add_out_connector(self, connector_name: str, dtype: dtypes.typeclass = None, force: bool = False):
+    def add_out_connector(self, connector_name: str, dtype: Any = None, force: bool = False,) -> bool:
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
             :param dtype: The type of the connector, or None for auto-detect.
-            :param force: Add connector even if input connector already exists.
+            :param force: Add connector even if input or output connector of that name already exists.
             :return: True if the operation is successful, otherwise False.
         """
 
         if (not force and (connector_name in self.in_connectors or connector_name in self.out_connectors)):
             return False
-        connectors = self.out_connectors
-        connectors[connector_name] = dtype
-        self.out_connectors = connectors
+        if not isinstance(dtype, dace.typeclass):
+            dtype = dace.typeclass(dtype)
+        self.out_connectors[connector_name] = dtype
+        return True
+
+    def _add_scope_connectors(
+            self,
+            connector_name: str,
+            dtype: Optional[dtypes.typeclass] = None,
+            force: bool = False,
+    ) -> None:
+        """ Adds input and output connector names to `self` in one step.
+
+            The function will add an input connector with name `'IN_' + connector_name`
+            and an output connector with name `'OUT_' + connector_name`.
+            The function is a shorthand for calling `add_in_connector()` and `add_out_connector()`.
+
+            :param connector_name: The base name of the new connectors.
+            :param dtype: The type of the connectors, or `None` for auto-detect.
+            :param force: Add connector even if input or output connector of that name already exists.
+            :return: True if the operation is successful, otherwise False.
+        """
+        in_connector_name = "IN_" + connector_name
+        out_connector_name = "OUT_" + connector_name
+        if not force:
+            if in_connector_name in self.in_connectors or in_connector_name in self.out_connectors:
+                return False
+            if out_connector_name in self.in_connectors or out_connector_name in self.out_connectors:
+                return False
+        # We force unconditionally because we have performed the tests above.
+        self.add_in_connector(
+                connector_name=in_connector_name,
+                dtype=dtype,
+                force=True,
+        )
+        self.add_out_connector(
+                connector_name=out_connector_name,
+                dtype=dtype,
+                force=True,
+        )
         return True
 
     def remove_in_connector(self, connector_name: str):
@@ -741,6 +778,9 @@ class EntryNode(Node):
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
+    add_scope_connectors = Node._add_scope_connectors
+
+
 
 # ------------------------------------------------------------------------------
 
@@ -751,6 +791,8 @@ class ExitNode(Node):
 
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
+
+    add_scope_connectors = Node._add_scope_connectors
 
 
 # ------------------------------------------------------------------------------
@@ -820,7 +862,11 @@ class MapEntry(EntryNode):
         result = {}
         # Add map params
         for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
+            if p in self._map.param_types:
+                result[p] = self._map.param_types[p]
+            else:
+                result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols),
+                                                  infer_expr_type(rng[1], symbols))
 
         # Handle the dynamic map ranges.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
@@ -902,12 +948,14 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ListProperty(element_type=str, desc="Mapped parameters")
+    param_types = DictProperty(key_type=str, value_type=dtypes.typeclass, desc="Types of mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
     unroll_factor = Property(dtype=int, allow_none=True, default=0,
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
+    unroll__mask = ListProperty(element_type=bool, desc="Which dimensions to unroll, if None unroll all dims", allow_none=True, default=None)
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
@@ -928,6 +976,8 @@ class Map(object):
                               default=0,
                               desc="OpenMP schedule chunk size",
                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
+    omp_bind = Property(dtype=str, default=None, allow_none=True, desc="OpenMP bind policy (spread, close, master)")
+
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
@@ -1418,8 +1468,8 @@ class LibraryNode(CodeNode):
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        cfg_id = sdfg.cfg_id
-        state_id = sdfg.nodes().index(state)
+        cfg_id = state.parent_graph.cfg_id
+        state_id = state.block_id
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)

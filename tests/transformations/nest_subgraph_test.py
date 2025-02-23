@@ -71,7 +71,7 @@ def test_symbolic_return():
     cft = cf.structured_control_flow_tree(sdfg, None)
     for_scope = None
     for i, child in enumerate(cft.children):
-        if isinstance(child, (cf.ForScope, cf.WhileScope)):
+        if isinstance(child, (cf.GeneralLoopScope)):
             for_scope = child
             break
     assert for_scope
@@ -80,11 +80,9 @@ def test_symbolic_return():
     exit_scope = cft.children[i+1]
     assert isinstance(exit_scope, cf.BasicCFBlock)
 
-    guard = for_scope.guard
-    fexit = exit_scope.first_block
-    states = list(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
+    states = for_scope.loop.nodes()
     
-    nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, states), start=guard)
+    nest_sdfg_subgraph(sdfg, SubgraphView(for_scope.loop, states))
 
     result = sdfg()
     val = result[1][0]

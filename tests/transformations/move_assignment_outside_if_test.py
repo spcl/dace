@@ -1,5 +1,7 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+
 import dace
+from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate import MoveAssignmentOutsideIf
 from dace.sdfg import InterstateEdge
 from dace.memlet import Memlet
@@ -35,18 +37,23 @@ def one_variable_simple_test(const_value: int = 0):
     # Create if-else condition such that either the formula state or the const state is executed
     sdfg.add_edge(guard, formula_state, InterstateEdge(condition='B[0] < 0.5'))
     sdfg.add_edge(guard, const_state, InterstateEdge(condition='B[0] >= 0.5'))
+    sdfg.simplify()
     sdfg.validate()
 
     # Assure transformation is applied
     assert sdfg.apply_transformations_repeated([MoveAssignmentOutsideIf]) == 1
+    sdfg.simplify()
     # SDFG now starts with a state containing the const_tasklet
-    assert const_tasklet in sdfg.start_state.nodes()
-    # The formula state has only one in_edge with the condition
-    assert len(sdfg.in_edges(formula_state)) == 1
-    assert sdfg.in_edges(formula_state)[0].data.condition.as_string == '(B[0] < 0.5)'
-    # All state have at most one out_edge -> there is no if-else branching anymore
-    for state in sdfg.states():
-        assert len(sdfg.out_edges(state)) <= 1
+    assert const_tasklet in sdfg.start_block.nodes()
+    # There should now only be one conditional branch remaining in the entire SDFG.
+    conditional = None
+    for n in sdfg.nodes():
+        if isinstance(n, ConditionalBlock):
+            conditional = n
+            break
+    assert conditional is not None
+    assert len(conditional.branches) == 1
+    assert conditional.branches[0][0].as_string == '(B[0] < 0.5)'
 
 
 def multiple_variable_test():
@@ -89,21 +96,26 @@ def multiple_variable_test():
     # Create if-else condition such that either the formula state or the const state is executed
     sdfg.add_edge(guard, formula_state, InterstateEdge(condition='D[0] < 0.5'))
     sdfg.add_edge(guard, const_state, InterstateEdge(condition='D[0] >= 0.5'))
+    sdfg.simplify()
     sdfg.validate()
 
     # Assure transformation is applied
     assert sdfg.apply_transformations_repeated([MoveAssignmentOutsideIf]) == 1
+    sdfg.simplify()
     # There are no other tasklets in the start state beside the const assignment tasklet as there are no other const
     # assignments
-    for node in sdfg.start_state.nodes():
+    for node in sdfg.start_block.nodes():
         if isinstance(node, Tasklet):
             assert node == const_tasklet_a or node == const_tasklet_b
-    # The formula state has only one in_edge with the condition
-    assert len(sdfg.in_edges(formula_state)) == 1
-    assert sdfg.in_edges(formula_state)[0].data.condition.as_string == '(D[0] < 0.5)'
-    # All state have at most one out_edge -> there is no if-else branching anymore
-    for state in sdfg.states():
-        assert len(sdfg.out_edges(state)) <= 1
+    # There should now only be one conditional branch remaining in the entire SDFG.
+    conditional = None
+    for n in sdfg.nodes():
+        if isinstance(n, ConditionalBlock):
+            conditional = n
+            break
+    assert conditional is not None
+    assert len(conditional.branches) == 1
+    assert conditional.branches[0][0].as_string == '(D[0] < 0.5)'
 
 
 def multiple_variable_not_all_const_test():
@@ -145,6 +157,7 @@ def multiple_variable_not_all_const_test():
     # Create if-else condition such that either the formula state or the const state is executed
     sdfg.add_edge(guard, formula_state, InterstateEdge(condition='C[0] < 0.5'))
     sdfg.add_edge(guard, const_state, InterstateEdge(condition='C[0] >= 0.5'))
+    sdfg.simplify()
     sdfg.validate()
 
     # Assure transformation is applied
@@ -154,24 +167,18 @@ def multiple_variable_not_all_const_test():
     for node in sdfg.start_state.nodes():
         if isinstance(node, Tasklet):
             assert node == const_tasklet_a or node == const_tasklet_b
-    # The formula state has only one in_edge with the condition
-    assert len(sdfg.in_edges(formula_state)) == 1
-    assert sdfg.in_edges(formula_state)[0].data.condition.as_string == '(C[0] < 0.5)'
-    # Guard still has two outgoing edges as if-else pattern still exists
-    assert len(sdfg.out_edges(guard)) == 2
-    # const state now has only const_tasklet_b left plus two access nodes
-    assert len(const_state.nodes()) == 3
-    for node in const_state.nodes():
-        if isinstance(node, Tasklet):
-            assert node == const_tasklet_b
+    # The conditional should still have two conditional branches
+    conditional = None
+    for n in sdfg.nodes():
+        if isinstance(n, ConditionalBlock):
+            conditional = n
+            break
+    assert conditional is not None
+    assert len(conditional.branches) == 2
 
 
-def main():
+if __name__ == '__main__':
     one_variable_simple_test(0)
     one_variable_simple_test(2)
     multiple_variable_test()
     multiple_variable_not_all_const_test()
-
-
-if __name__ == '__main__':
-    main()

@@ -19,7 +19,7 @@ def test_loop_inlining_regular_for():
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
     assert len(states) == 8
@@ -41,7 +41,7 @@ def test_loop_inlining_regular_while():
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
     guard = None
@@ -75,7 +75,7 @@ def test_loop_inlining_do_while():
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
     guard = None
@@ -115,7 +115,7 @@ def test_loop_inlining_do_for():
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
     guard = None
@@ -175,7 +175,7 @@ def test_inline_triple_nested_for():
     reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
     reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     assert len(sdfg.nodes()) == 14
     assert not any(isinstance(s, LoopRegion) for s in sdfg.nodes())
@@ -203,7 +203,7 @@ def test_loop_inlining_for_continue_break():
     state7 = sdfg.add_state('state7')
     sdfg.add_edge(loop1, state7, dace.InterstateEdge())
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
     assert len(states) == 12
@@ -240,7 +240,7 @@ def test_loop_inlining_multi_assignments():
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
     assert len(states) == 8
@@ -282,7 +282,7 @@ def test_loop_inlining_invalid_update_statement():
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
 
-    sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
     nodes = sdfg.nodes()
     assert len(nodes) == 3

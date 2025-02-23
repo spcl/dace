@@ -416,7 +416,6 @@ class typeclass(object):
         # Convert python basic types
         if isinstance(wrapped_type, str):
             try:
-
                 if wrapped_type == "bool":
                     wrapped_type = numpy.bool_
                 else:

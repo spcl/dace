@@ -169,7 +169,7 @@ Example:
     :alt: Generated SDFG for-loop for the above Data-Centric Python program
 
 If the :class:`~dace.frontend.python.parser.DaceProgram`'s
-:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, this will utilize
+:attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, this will utilize
 :class:`~dace.sdfg.state.LoopRegion`s instead of the explicit state machine depicted above.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_While`
@@ -191,7 +191,7 @@ Parses `while <https://docs.python.org/3/library/ast.html#ast.While>`_ statement
     :alt: Generated SDFG while-loop for the above Data-Centric Python program
 
 If the :class:`~dace.frontend.python.parser.DaceProgram`'s
-:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, this will utilize
+:attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, this will utilize
 :class:`~dace.sdfg.state.LoopRegion`s instead of the explicit state machine depicted above.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Break`
@@ -214,7 +214,7 @@ behaves as an if-else statement. This is also evident from the generated dataflo
     :alt: Generated SDFG for-loop with a break statement for the above Data-Centric Python program
 
 If the :class:`~dace.frontend.python.parser.DaceProgram`'s
-:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, loops are
+:attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, loops are
 represented with :class:`~dace.sdfg.state.LoopRegion`s, and a break is represented with a special
 :class:`~dace.sdfg.state.LoopRegion.BreakState`.
 
@@ -238,7 +238,7 @@ of `continue` makes the ``A[i] = i`` statement unreachable. This is also evident
     :alt: Generated SDFG for-loop with a continue statement for the above Data-Centric Python program
 
 If the :class:`~dace.frontend.python.parser.DaceProgram`'s
-:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, loops are
+:attr:`~dace.frontend.python.parser.DaceProgram.use_explicit_control_flow` attribute is set to true, loops are
 represented with :class:`~dace.sdfg.state.LoopRegion`s, and a continue is represented with a special
 :class:`~dace.sdfg.state.LoopRegion.ContinueState`.
 

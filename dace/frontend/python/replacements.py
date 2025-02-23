@@ -26,6 +26,8 @@ from dace.symbolic import pystr_to_symbolic, issymbolic, inequal_symbols
 import numpy as np
 import sympy as sp
 
+numpy_version = np.lib.NumpyVersion(np.__version__)
+
 Size = Union[int, dace.symbolic.symbol]
 Shape = Sequence[Size]
 if TYPE_CHECKING:
@@ -315,7 +317,7 @@ def _numpy_full(pv: ProgramVisitor,
     """
     if isinstance(shape, Number) or symbolic.issymbolic(shape):
         shape = [shape]
-    
+
     is_data = False
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.dtype_to_typeclass(type(fill_value))
@@ -587,7 +589,7 @@ def _arange(pv: ProgramVisitor,
 
     if any(not isinstance(s, Number) for s in [start, stop, step]):
         if step == 1:  # Common case where ceiling is not necessary
-            shape = (stop - start,)
+            shape = (stop - start, )
         else:
             shape = (symbolic.int_ceil(stop - start, step), )
     else:
@@ -664,7 +666,7 @@ def _linspace(pv: ProgramVisitor,
     start_shape = sdfg.arrays[start].shape if (isinstance(start, str) and start in sdfg.arrays) else []
     stop_shape = sdfg.arrays[stop].shape if (isinstance(stop, str) and stop in sdfg.arrays) else []
 
-    shape, ranges, outind, ind1, ind2 = _broadcast_together(start_shape, stop_shape)
+    shape, ranges, outind, ind1, ind2 = broadcast_together(start_shape, stop_shape)
     shape_with_axis = _add_axis_to_shape(shape, axis, num)
     ranges_with_axis = _add_axis_to_shape(ranges, axis, ('__sind', f'0:{symbolic.symstr(num)}'))
     if outind:
@@ -1021,6 +1023,16 @@ def _sum_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
     return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=0, identity=0)
 
 
+@oprepo.replaces('numpy.any')
+def _any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg, state, "lambda x, y: x or y", a, axis=axis, identity=0)
+
+
+@oprepo.replaces('numpy.all')
+def _all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg, state, "lambda x, y: x and y", a, axis=axis, identity=0)
+
+
 @oprepo.replaces('numpy.mean')
 def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
@@ -1042,26 +1054,39 @@ def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
-def _max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, initial=None):
+    initial = initial if initial is not None else dtypes.min_value(sdfg.arrays[a].dtype)
     return _reduce(pv,
                    sdfg,
                    state,
                    "lambda x, y: max(x, y)",
                    a,
                    axis=axis,
-                   identity=dtypes.min_value(sdfg.arrays[a].dtype))
+                   identity=initial)
 
 
 @oprepo.replaces('numpy.min')
 @oprepo.replaces('numpy.amin')
-def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, initial=None):
+    initial = initial if initial is not None else dtypes.max_value(sdfg.arrays[a].dtype)
     return _reduce(pv,
                    sdfg,
                    state,
                    "lambda x, y: min(x, y)",
                    a,
                    axis=axis,
-                   identity=dtypes.max_value(sdfg.arrays[a].dtype))
+                   identity=initial)
+
+
+@oprepo.replaces('numpy.clip')
+def _clip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a, a_min=None, a_max=None, **kwargs):
+    if a_min is None and a_max is None:
+        raise ValueError("clip() requires at least one of `a_min` or `a_max`")
+    if a_min is None:
+        return implement_ufunc(pv, None, sdfg, state, 'minimum', [a, a_max], kwargs)[0]
+    if a_max is None:
+        return implement_ufunc(pv, None, sdfg, state, 'maximum', [a, a_min], kwargs)[0]
+    return implement_ufunc(pv, None, sdfg, state, 'clip', [a, a_min, a_max], kwargs)[0]
 
 
 def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
@@ -1148,12 +1173,22 @@ def _slice(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+def _argmax(pv: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis: Optional[int] = None,
+            result_type=dace.int32):
     return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+def _argmin(pv: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis: Optional[int] = None,
+            result_type=dace.int32):
     return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
 
 
@@ -1169,7 +1204,12 @@ def _argminmax(pv: ProgramVisitor,
 
     assert func in ['min', 'max']
 
-    if axis is None or not isinstance(axis, Integral):
+    # Flatten the array if axis is not given
+    if axis is None:
+        axis = 0
+        a = flat(pv, sdfg, state, a)
+
+    if not isinstance(axis, Integral):
         raise SyntaxError('Axis must be an int')
 
     a_arr = sdfg.arrays[a]
@@ -1179,6 +1219,8 @@ def _argminmax(pv: ProgramVisitor,
 
     reduced_shape = list(copy.deepcopy(a_arr.shape))
     reduced_shape.pop(axis)
+    if not reduced_shape:
+        reduced_shape = [1]
 
     val_and_idx = dace.struct('_val_and_idx', idx=result_type, val=a_arr.dtype)
 
@@ -1188,17 +1230,17 @@ def _argminmax(pv: ProgramVisitor,
     code = "__init = _val_and_idx(val={}, idx=-1)".format(
         dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype))
 
-    nest.add_state().add_mapped_tasklet(
-        name="_arg{}_convert_".format(func),
-        map_ranges={'__i%d' % i: '0:%s' % n
-                    for i, n in enumerate(a_arr.shape) if i != axis},
-        inputs={},
-        code=code,
-        outputs={
-            '__init': Memlet.simple(reduced_structs,
-                                    ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
-        },
-        external_edges=True)
+    reduced_expr = ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis)
+    reduced_maprange = {'__i%d' % i: '0:%s' % n for i, n in enumerate(a_arr.shape) if i != axis}
+    if not reduced_expr:
+        reduced_expr = '0'
+        reduced_maprange = {'__i0': '0:1'}
+    nest.add_state().add_mapped_tasklet(name="_arg{}_convert_".format(func),
+                                        map_ranges=reduced_maprange,
+                                        inputs={},
+                                        code=code,
+                                        outputs={'__init': Memlet.simple(reduced_structs, reduced_expr)},
+                                        external_edges=True)
 
     nest.add_state().add_mapped_tasklet(
         name="_arg{}_reduce_".format(func),
@@ -1209,7 +1251,7 @@ def _argminmax(pv: ProgramVisitor,
         outputs={
             '__out':
             Memlet.simple(reduced_structs,
-                          ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis),
+                          reduced_expr,
                           wcr_str=("lambda x, y:"
                                    "_val_and_idx(val={}(x.val, y.val), "
                                    "idx=(y.idx if x.val {} y.val else x.idx))").format(
@@ -1223,16 +1265,14 @@ def _argminmax(pv: ProgramVisitor,
 
         nest.add_state().add_mapped_tasklet(
             name="_arg{}_extract_".format(func),
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(a_arr.shape) if i != axis},
+            map_ranges=reduced_maprange,
             inputs={
-                '__in': Memlet.simple(reduced_structs,
-                                      ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
+                '__in': Memlet.simple(reduced_structs, reduced_expr)
             },
             code="__out_val = __in.val\n__out_idx = __in.idx",
             outputs={
-                '__out_val': Memlet.simple(outval, ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis)),
-                '__out_idx': Memlet.simple(outidx, ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
+                '__out_val': Memlet.simple(outval, reduced_expr),
+                '__out_idx': Memlet.simple(outidx, reduced_expr)
             },
             external_edges=True)
 
@@ -1251,13 +1291,22 @@ def _array_array_where(visitor: ProgramVisitor,
                        state: SDFGState,
                        cond_operand: str,
                        left_operand: str = None,
-                       right_operand: str = None):
+                       right_operand: str = None,
+                       generated_nodes: Optional[Set[nodes.Node]] = None,
+                       left_operand_node: Optional[nodes.AccessNode] = None,
+                       right_operand_node: Optional[nodes.AccessNode] = None):
     if left_operand is None or right_operand is None:
         raise ValueError('numpy.where is only supported for the case where x and y are given')
 
     cond_arr = sdfg.arrays[cond_operand]
-    left_arr = sdfg.arrays.get(left_operand, None)
-    right_arr = sdfg.arrays.get(right_operand, None)
+    try:
+        left_arr = sdfg.arrays[left_operand]
+    except KeyError:
+        left_arr = None
+    try:
+        right_arr = sdfg.arrays[right_operand]
+    except KeyError:
+        right_arr = None
 
     left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
     right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
@@ -1278,10 +1327,10 @@ def _array_array_where(visitor: ProgramVisitor,
     right_shape = right_arr.shape if right_arr else [1]
     cond_shape = cond_arr.shape if cond_arr else [1]
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     # Broadcast condition with broadcasted left+right
-    _, _, _, cond_idx, _ = _broadcast_together(cond_shape, out_shape)
+    _, _, _, cond_idx, _ = broadcast_together(cond_shape, out_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -1302,12 +1351,26 @@ def _array_array_where(visitor: ProgramVisitor,
                                     '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]))
         n0 = state.add_read(cond_operand)
         n3 = state.add_write(out_operand)
+        if generated_nodes is not None:
+            generated_nodes.add(tasklet)
+            generated_nodes.add(n0)
+            generated_nodes.add(n3)
         state.add_edge(n0, None, tasklet, '__incond', dace.Memlet.from_array(cond_operand, cond_arr))
         if left_arr:
-            n1 = state.add_read(left_operand)
+            if left_operand_node:
+                n1 = left_operand_node
+            else:
+                n1 = state.add_read(left_operand)
+                if generated_nodes is not None:
+                    generated_nodes.add(n1)
             state.add_edge(n1, None, tasklet, '__in1', dace.Memlet.from_array(left_operand, left_arr))
         if right_arr:
-            n2 = state.add_read(right_operand)
+            if right_operand_node:
+                n2 = right_operand_node
+            else:
+                n2 = state.add_read(right_operand)
+                if generated_nodes is not None:
+                    generated_nodes.add(n2)
             state.add_edge(n2, None, tasklet, '__in2', dace.Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, '__out', n3, None, dace.Memlet.from_array(out_operand, out_arr))
     else:
@@ -1317,12 +1380,59 @@ def _array_array_where(visitor: ProgramVisitor,
             inputs['__in1'] = Memlet.simple(left_operand, left_idx)
         if right_arr:
             inputs['__in2'] = Memlet.simple(right_operand, right_idx)
-        state.add_mapped_tasklet("_where_",
-                                 all_idx_dict,
-                                 inputs,
-                                 '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]),
-                                 {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True)
+        input_nodes = {}
+        if left_operand_node:
+            input_nodes[left_operand] = left_operand_node
+        if right_operand_node:
+            input_nodes[right_operand] = right_operand_node
+        tasklet, me, mx = state.add_mapped_tasklet("_where_", all_idx_dict, inputs,
+                                                   '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
+                                                                                               i2=tasklet_args[2]),
+                                                   {'__out': Memlet.simple(out_operand, out_idx)}, external_edges=True,
+                                                   input_nodes=input_nodes)
+        if generated_nodes is not None:
+            generated_nodes.add(tasklet)
+            generated_nodes.add(me)
+            for ie in state.in_edges(me):
+                if ie.src is not left_operand_node and ie.src is not right_operand_node:
+                    generated_nodes.add(ie.src)
+            generated_nodes.add(mx)
+            for oe in state.out_edges(mx):
+                generated_nodes.add(oe.dst)
+
+    return out_operand
+
+
+@oprepo.replaces('numpy.select')
+def _array_array_select(visitor: ProgramVisitor,
+                        sdfg: SDFG,
+                        state: SDFGState,
+                        cond_list: List[str],
+                        choice_list: List[str],
+                        default = None):
+    if len(cond_list) != len(choice_list):
+        raise ValueError('numpy.select is only valid with same-length condition and choice lists')
+
+    default_operand = default if default is not None else 0
+
+    i = len(cond_list) - 1
+    cond_operand = cond_list[i]
+    left_operand = choice_list[i]
+    right_operand = default_operand
+    right_operand_node = None
+    out_operand = None
+    while i >= 0:
+        generated_nodes = set()
+        out_operand = _array_array_where(visitor, sdfg, state, cond_operand, left_operand, right_operand,
+                                         generated_nodes=generated_nodes, right_operand_node=right_operand_node)
+        i -= 1
+        cond_operand = cond_list[i]
+        left_operand = choice_list[i]
+        right_operand = out_operand
+        right_operand_node = None
+        for nd in generated_nodes:
+            if isinstance(nd, nodes.AccessNode) and nd.data == out_operand:
+                right_operand_node = nd
 
     return out_operand
 
@@ -1356,10 +1466,10 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _broadcast_to(target_shape, operand_shape):
+def broadcast_to(target_shape, operand_shape):
     # the difference to normal broadcasting is that the broadcasted shape is the same as the target
     # I was unable to find documentation for this in numpy, so we follow the description from ONNX
-    results = _broadcast_together(target_shape, operand_shape, unidirectional=True)
+    results = broadcast_together(target_shape, operand_shape, unidirectional=True)
 
     # the output_shape should be equal to the target_shape
     assert all(i == o for i, o in zip(target_shape, results[0]))
@@ -1367,7 +1477,7 @@ def _broadcast_to(target_shape, operand_shape):
     return results
 
 
-def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
+def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
 
     all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
 
@@ -1415,9 +1525,9 @@ def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
             all_idx_dict[get_idx(i)] = dim1
         else:
             if unidirectional:
-                raise SyntaxError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
+                raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
             else:
-                raise SyntaxError("operands could not be broadcast together with shapes {}, {}".format(
+                raise IndexError("operands could not be broadcast together with shapes {}, {}".format(
                     arr1_shape, arr2_shape))
 
     def to_string(idx):
@@ -1435,7 +1545,7 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str, opname
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
 
-    out_shape, all_idx_tup, all_idx, arr1_idx, arr2_idx = _broadcast_together(arr1.shape, arr2.shape)
+    out_shape, all_idx_tup, all_idx, arr1_idx, arr2_idx = broadcast_together(arr1.shape, arr2.shape)
 
     name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
     state.add_mapped_tasklet("_%s_" % opname,
@@ -1521,18 +1631,22 @@ def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         nptype = dtype.type
     else:
         nptype = dtype
-    if issubclass(nptype, bool):
+    if isinstance(nptype, type):
+        nptype_class = nptype
+    else:
+        nptype_class = type(nptype)
+    if issubclass(nptype_class, bool):
         return True
-    elif issubclass(nptype, np.bool_):
+    elif issubclass(nptype_class, np.bool_):
         return np.bool_(True)
-    elif issubclass(nptype, Integral):
+    elif issubclass(nptype_class, Integral):
         # NOTE: Returning the max representable integer seems a better choice
         # than 1, however it was causing issues with some programs. This should
         # be revisited in the future.
         # return nptype(np.iinfo(nptype).max)
         return nptype(1)
     else:
-        return nptype(np.finfo(nptype).resolution)
+        return nptype(np.finfo(nptype_class).resolution)
 
 
 def _np_result_type(nptypes):
@@ -1568,22 +1682,28 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
 
     datatypes = []
     dtypes_for_result = []
+    dtypes_for_result_np2 = []
     for arg in arguments:
         if isinstance(arg, (data.Array, data.Stream)):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(arg.dtype.type)
+            dtypes_for_result_np2.append(arg.dtype.type)
         elif isinstance(arg, data.Scalar):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(_representative_num(arg.dtype))
+            dtypes_for_result_np2.append(arg.dtype.type)
         elif isinstance(arg, (Number, np.bool_)):
             datatypes.append(dtypes.dtype_to_typeclass(type(arg)))
             dtypes_for_result.append(arg)
+            dtypes_for_result_np2.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
             dtypes_for_result.append(_representative_num(_sym_type(arg)))
+            dtypes_for_result_np2.append(_sym_type(arg).type)
         elif isinstance(arg, dtypes.typeclass):
             datatypes.append(arg)
             dtypes_for_result.append(_representative_num(arg))
+            dtypes_for_result_np2.append(arg.type)
         else:
             raise TypeError("Type {t} of argument {a} is not supported".format(t=type(arg), a=arg))
 
@@ -1616,8 +1736,11 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
         elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
               and coarse_types[0] == 3):
             raise TypeError("ufunc '{}' not supported for complex input".format(operator))
+        elif operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and numpy_version < '2.1.0':
+            result_type = dace.float64
+            casting[0] = _cast_str(result_type)
         elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt', 'Trigonometric', 'Angles', 'FpBoolean',
-                           'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc') and coarse_types[0] < 2):
+                           'Spacing', 'Modf') and coarse_types[0] < 2):
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
         elif operator in ('Frexp'):
@@ -1697,7 +1820,10 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
                 result_type = dace.float64
             # All other arithmetic operators and cases of the above operators
             else:
-                result_type = _np_result_type(dtypes_for_result)
+                if numpy_version >= '2.0.0':
+                    result_type = _np_result_type(dtypes_for_result_np2)
+                else:
+                    result_type = _np_result_type(dtypes_for_result)
 
             if dtype1 != result_type:
                 left_cast = _cast_str(result_type)
@@ -1816,7 +1942,7 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     left_shape = left_arr.shape
     right_shape = right_arr.shape
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -1884,7 +2010,7 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type, storage)
 
@@ -1954,7 +2080,7 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type, storage)
 
@@ -2589,7 +2715,7 @@ ufuncs = dict(
               operator=None,
               inputs=["__in1"],
               outputs=["__out"],
-              code="__out = sign(__in1)",
+              code="__out = sign_numpy_2(__in1)" if numpy_version >= '2.0.0' else "__out = sign(__in1)",
               reduce=None,
               initial=np.sign.identity),
     heaviside=dict(name="_numpy_heaviside_",
@@ -4546,25 +4672,40 @@ def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
     return implement_ufunc_reduce(pv, None, sdfg, state, 'minimum', [arr], kwargs)[0]
 
 
-# TODO: It looks like `_argminmax` does not work with a flattened array.
-# @oprepo.replaces_method('Array', 'argmax')
-# @oprepo.replaces_method('Scalar', 'argmax')
-# @oprepo.replaces_method('View', 'argmax')
-# def _ndarray_argmax(pv: ProgramVisitor,
-#                  sdfg: SDFG,
-#                  state: SDFGState,
-#                  arr: str,
-#                  axis: int = None,
-#                  out: str = None) -> str:
-#     if not axis:
-#         axis = 0
-#         arr = flat(pv, sdfg, state, arr)
-#     nest, newarr = _argmax(pv, sdfg, state, arr, axis)
-#     if out:
-#         r = state.add_read(arr)
-#         w = state.add_read(newarr)
-#         state.add_nedge(r, w, dace.Memlet.from_array(newarr, sdfg.arrays[newarr]))
-#     return new_arr
+@oprepo.replaces_method('Array', 'argmax')
+@oprepo.replaces_method('Scalar', 'argmax')
+@oprepo.replaces_method('View', 'argmax')
+def _ndarray_argmax(pv: ProgramVisitor,
+                    sdfg: SDFG,
+                    state: SDFGState,
+                    arr: str,
+                    axis: int = None,
+                    out: str = None) -> str:
+    nest, newarr = _argmax(pv, sdfg, state, arr, axis)
+    if out:
+        r = state.add_read(newarr)
+        w = state.add_write(out)
+        state.add_nedge(r, w, dace.Memlet.from_array(newarr, sdfg.arrays[newarr]))
+        newarr = out
+    return newarr
+
+
+@oprepo.replaces_method('Array', 'argmin')
+@oprepo.replaces_method('Scalar', 'argmin')
+@oprepo.replaces_method('View', 'argmin')
+def _ndarray_argmin(pv: ProgramVisitor,
+                    sdfg: SDFG,
+                    state: SDFGState,
+                    arr: str,
+                    axis: int = None,
+                    out: str = None) -> str:
+    nest, newarr = _argmin(pv, sdfg, state, arr, axis)
+    if out:
+        r = state.add_read(newarr)
+        w = state.add_write(out)
+        state.add_nedge(r, w, dace.Memlet.from_array(newarr, sdfg.arrays[newarr]))
+        newarr = out
+    return newarr
 
 
 @oprepo.replaces_method('Array', 'conj')
@@ -5320,6 +5461,7 @@ def _vsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
 
 ############################################################################################################
 # Fast Fourier Transform numpy package (numpy.fft)
+
 
 def _real_to_complex(real_type: dace.typeclass):
     if real_type == dace.float32:

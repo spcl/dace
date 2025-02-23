@@ -22,7 +22,7 @@ def partialclass(cls, *args, **kwds):
     return NewCls
 
 
-def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: bool = True):
+def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: bool = True, compress: bool = True):
     """
     View an sdfg in the system's HTML viewer
 
@@ -33,6 +33,7 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
                     served using a basic web server on that port,
                     blocking the current thread.
     :param verbose: Be verbose.
+    :param compress: Use compression for the temporary file.
     """
     # If vscode is open, try to open it inside vscode
     if filename is None:
@@ -41,8 +42,9 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
             or 'VSCODE_IPC_HOOK_CLI' in os.environ
             or 'VSCODE_GIT_IPC_HANDLE' in os.environ
         ):
-            fd, filename = tempfile.mkstemp(suffix='.sdfg')
-            sdfg.save(filename)
+            suffix = '.sdfgz' if compress else '.sdfg'
+            fd, filename = tempfile.mkstemp(suffix=suffix)
+            sdfg.save(filename, compress=compress)
             if platform.system() == 'Darwin':
                 # Special case for MacOS
                 os.system(f'open {filename}')

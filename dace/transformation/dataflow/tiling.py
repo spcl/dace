@@ -56,7 +56,7 @@ class MapTiling(transformation.SingleStateTransformation):
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.strip_mining import StripMining
         stripmine_subgraph = {StripMining.map_entry: self.subgraph[MapTiling.map_entry]}
-        cfg_id = sdfg.cfg_id
+        cfg_id = graph.parent_graph.cfg_id
         last_map_entry = None
         removed_maps = 0
 
