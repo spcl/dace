@@ -23,7 +23,7 @@ def parse_and_improve(sources: Dict[str, str], entry_points: Optional[Iterable[S
     return ast
 
 
-def test_spec_mapping():
+def test_spec_mapping_of_abstract_interface():
     sources, main = SourceCodeBuilder().add_file("""
 module lib  ! should be present
   abstract interface  ! should NOT be present
@@ -35,10 +35,56 @@ end module lib
     ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
 
     ident_map = identifier_specs(ast)
-    assert ident_map.keys() == {('lib',), ('lib', 'fun')}
+    assert ident_map.keys() == {('lib',), ('lib', '__interface__', 'fun')}
 
     alias_map = alias_specs(ast)
-    assert alias_map.keys() == {('lib',), ('lib', 'fun')}
+    assert alias_map.keys() == {('lib',), ('lib', '__interface__', 'fun')}
+
+
+def test_spec_mapping_of_type_extension():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type base
+    integer :: a
+  end type base
+  type, extends(base) :: ext
+    integer :: b
+  end type ext
+end module lib
+""").check_with_gfortran().get()
+    ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
+
+    ident_map = identifier_specs(ast)
+    assert ident_map.keys() == {('lib',), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b')}
+
+    alias_map = alias_specs(ast)
+    assert alias_map.keys() == {('lib',), ('lib', 'base'), ('lib', 'base', 'a'), ('lib', 'ext'), ('lib', 'ext', 'b'),
+                                ('lib', 'ext', 'base'), ('lib', 'ext', 'base', 'a')}
+
+
+def test_spec_mapping_of_procedure_pointers():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  type T
+    procedure(fun), nopass, pointer :: fun
+    procedure(fun), nopass, pointer :: nofun
+  end type T
+  procedure(fun), pointer :: real_fun => null()
+contains
+  real function fun()
+    fun = 1.1
+  end function fun
+end module lib
+""").check_with_gfortran().get()
+    ast = construct_full_ast(sources, ParserFactory().create(std="f2008"))
+
+    ident_map = identifier_specs(ast)
+    assert (ident_map.keys() ==
+            {('lib',), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'), ('lib', 'real_fun')})
+
+    alias_map = alias_specs(ast)
+    assert (alias_map.keys() ==
+            {('lib',), ('lib', 'T'), ('lib', 'T', 'fun'), ('lib', 'T', 'nofun'), ('lib', 'fun'), ('lib', 'real_fun')})
 
 
 def test_procedure_replacer():
@@ -766,6 +812,93 @@ END MODULE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_use_consolidation_with_potential_ambiguity():
+    sources, main = SourceCodeBuilder().add_file("""
+module A
+  integer, parameter :: mod = 1
+end module A
+
+module B
+  integer, parameter :: mod = 2
+  contains
+  subroutine foo
+    use A
+    print *, mod
+  end subroutine foo
+end module B
+
+subroutine main
+  use B
+  call foo
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = consolidate_uses(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE A
+  INTEGER, PARAMETER :: mod = 1
+END MODULE A
+MODULE B
+  INTEGER, PARAMETER :: mod = 2
+  CONTAINS
+  SUBROUTINE foo
+    USE A, ONLY: mod
+    PRINT *, mod
+  END SUBROUTINE foo
+END MODULE B
+SUBROUTINE main
+  USE B, ONLY: foo
+  CALL foo
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_use_consolidation_with_type_extension():
+    sources, main = SourceCodeBuilder().add_file("""
+module A
+  type, abstract :: AA
+  end type AA
+end module A
+
+module B
+  use A
+  type, extends(AA) :: BB
+  end type BB
+end module B
+
+subroutine main
+  use B
+  type(BB) :: c = BB()
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = consolidate_uses(ast)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE A
+  TYPE, ABSTRACT :: AA
+  END TYPE AA
+END MODULE A
+MODULE B
+  USE A, ONLY: AA
+  TYPE, EXTENDS(AA) :: BB
+  END TYPE BB
+END MODULE B
+SUBROUTINE main
+  USE B, ONLY: BB
+  TYPE(BB) :: c = BB()
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_enum_bindings_become_constants():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main
@@ -865,6 +998,9 @@ module lib
   interface not_fun
     module procedure not_real_fun
   end interface not_fun
+  interface same_name
+    module procedure same_name, real_fun
+  end interface same_name
 contains
   real function real_fun()
     implicit none
@@ -875,14 +1011,20 @@ contains
     real, intent(out) :: a
     a = 1.0
   end subroutine not_real_fun
+  real function same_name(x)
+    implicit none
+    real, intent(in) :: x
+    same_name = x
+  end function same_name
 end module lib
 
 subroutine main
-  use lib, only: fun, not_fun
+  use lib, only: fun, not_fun, same_name
   implicit none
   real d(4)
   d(2) = fun()
   call not_fun(d(3))
+  d(4) = same_name(2.0)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -892,6 +1034,15 @@ end subroutine main
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE fun
+    MODULE PROCEDURE real_fun
+  END INTERFACE fun
+  INTERFACE not_fun
+    MODULE PROCEDURE not_real_fun
+  END INTERFACE not_fun
+  INTERFACE same_name
+    MODULE PROCEDURE same_name, real_fun
+  END INTERFACE same_name
   CONTAINS
   REAL FUNCTION real_fun()
     IMPLICIT NONE
@@ -902,14 +1053,19 @@ MODULE lib
     REAL, INTENT(OUT) :: a
     a = 1.0
   END SUBROUTINE not_real_fun
+  REAL FUNCTION same_name(x)
+    IMPLICIT NONE
+    REAL, INTENT(IN) :: x
+    same_name = x
+  END FUNCTION same_name
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: not_real_fun_deconiface_1 => not_real_fun
-  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  USE lib, ONLY: not_real_fun_deconiface_1 => not_real_fun, real_fun_deconiface_0 => real_fun, same_name_deconiface_2 => same_name
   IMPLICIT NONE
   REAL :: d(4)
   d(2) = real_fun_deconiface_0()
   CALL not_real_fun_deconiface_1(d(3))
+  d(4) = same_name_deconiface_2(2.0)
 END SUBROUTINE main
 """.strip()
     assert got == want
@@ -948,6 +1104,12 @@ end subroutine fun
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE
+    SUBROUTINE fun(z)
+      IMPLICIT NONE
+      REAL, INTENT(OUT) :: z
+    END SUBROUTINE fun
+  END INTERFACE
 END MODULE lib
 SUBROUTINE main
   IMPLICIT NONE
@@ -1004,6 +1166,9 @@ end subroutine main
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE fun
+    MODULE PROCEDURE real_fun, integer_fun
+  END INTERFACE fun
   CONTAINS
   REAL FUNCTION real_fun(x)
     IMPLICIT NONE
@@ -1021,9 +1186,7 @@ MODULE lib
   END FUNCTION integer_fun
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: real_fun_deconiface_2 => real_fun
-  USE lib, ONLY: integer_fun_deconiface_1 => integer_fun
-  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  USE lib, ONLY: integer_fun_deconiface_1 => integer_fun, real_fun_deconiface_0 => real_fun, real_fun_deconiface_2 => real_fun
   IMPLICIT NONE
   REAL :: d(4)
   d(2) = real_fun_deconiface_0()
@@ -1073,6 +1236,9 @@ end subroutine main
     want = """
 MODULE lib
   IMPLICIT NONE
+  INTERFACE fun
+    MODULE PROCEDURE real_fun
+  END INTERFACE fun
   CONTAINS
   REAL FUNCTION real_fun(w, x, y, z)
     IMPLICIT NONE
@@ -1088,9 +1254,7 @@ MODULE lib
   END FUNCTION real_fun
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: real_fun_deconiface_2 => real_fun
-  USE lib, ONLY: real_fun_deconiface_1 => real_fun
-  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  USE lib, ONLY: real_fun_deconiface_0 => real_fun, real_fun_deconiface_1 => real_fun, real_fun_deconiface_2 => real_fun
   IMPLICIT NONE
   REAL :: d(3)
   d(1) = real_fun_deconiface_0(1.0, 2.0, 3.0, 4.0)
