@@ -302,7 +302,7 @@ class BackwardPassGenerator:
 
         #: Mapping from the backward access nodes that will be zeroed out
         # to the transients that contain the values before they are zeroed out
-        self.zeroed_out: Dict[nodes.AccessNode, nodes.AccessNode] = {}
+        self.zeroed_out: Dict[nodes.AccessNode, List[nodes.AccessNode]] = {}
 
         #: A set of edges to avoid having a write-conflict-resolution for
         self.no_wcr_edges: Set[dstate.MultiConnectorEdge] = set()
@@ -390,8 +390,7 @@ class BackwardPassGenerator:
 
         # Connect the new reversed states to the other states correctly
         self._connect_reversed_states()
-
-        self.sdfg.save("log_sdfgs/before_fill_interstate.sdfg")
+        
         # Fill the interstate edges with the correct conditions
         self._fill_interstate_edge_conditions()
 
@@ -1030,8 +1029,10 @@ class BackwardPassGenerator:
 
             # Add an empty edge from the transient to the map entry
             backward_state.add_edge(transient_node, None, map_entry, None, dace.Memlet())
-
-            self.zeroed_out[backward_node] = transient_node
+            if backward_node not in self.zeroed_out:
+                self.zeroed_out[backward_node] = [transient_node]
+            else:
+                self.zeroed_out[backward_node].append(transient_node)
         else:
             raise AutoDiffException("Unsupported data descriptor {}".format(array_desc))
 
@@ -2701,7 +2702,19 @@ class BackwardPassGenerator:
             if backward_dst_node in self.zeroed_out:
                 # The values will be zeroed out in the backward node
                 # We use the transient array instead
-                backward_dst_node = self.zeroed_out[backward_dst_node]
+                copied_zeroed_nodes = self.zeroed_out[backward_dst_node]
+                if len(copied_zeroed_nodes) == 1: 
+                    backward_dst_node = copied_zeroed_nodes[0]
+                else:
+                    for node in copied_zeroed_nodes:
+                        # Get the memlet to this node
+                        zero_in_dege = backward_state.in_edges(node)
+                        assert len(zero_in_dege) == 1
+                        zeroed_memlet = zero_in_dege[0].data
+                        if zeroed_memlet.subset == edge.data.subset:
+                            backward_dst_node = node
+                            break
+                            
                 memlet.data = backward_dst_node.data
                 
                 
@@ -2750,7 +2763,8 @@ class BackwardPassGenerator:
                 source_access_node = list(path)[0].src
                 if isinstance(source_access_node, nodes.AccessNode):
                     # Check if this is a zeroed out node
-                    if source_access_node.data != memlet.data and source_access_node in self.zeroed_out.values():
+                    in_values = any(source_access_node in values for values in self.zeroed_out.values())
+                    if source_access_node.data != memlet.data and in_values:
                         memlet.data = source_access_node.data
             self._set_wcr_if_needed(backward_state=backward_state,
                                     backward_node=self.reverse_map[forward_node],
