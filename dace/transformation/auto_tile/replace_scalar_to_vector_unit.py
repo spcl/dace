@@ -76,6 +76,7 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
                 params_to_update = set(entry.map.params).union(outer_entry.map.params)
                 params_to_update = [dace.symbol(p) for p in params_to_update]
                 # self.increase_memlet_range(state, entry, params_to_update, factor=self.mmu_size)
+                self.propagate_compute_unit(state, dev_entry, entry, "MMU")
 
         nodes_to_check = state.all_nodes_between(dev_entry, dev_exit)
         found_assign_patterns = set()
@@ -119,7 +120,22 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
             self.increase_map_step_size(
                 map_entry, self.vector_unit_size, params=vars_used_in_contig_access
             )
+            self.propagate_compute_unit(state, dev_entry, map_entry, "VECTOR")
             # self.increase_memlet_range(state, map_entry, vars_used_in_contig_access, factor=self.vector_unit_size)
+
+    def propagate_compute_unit(self, state : dace.SDFGState, dev_entry: dace.nodes.Node, first_map: dace.nodes.EntryNode, unit_type: str):
+        entry_node = first_map
+        distance = 0
+        while entry_node:
+            # The property is a FrozenSet, so we need to copy it
+            if unit_type not in entry_node.computational_units:
+                entry_node.computational_units[unit_type] = distance
+            else:
+                if entry_node.computational_units[unit_type] != distance:
+                    raise Exception("Multiple distances to the tasklets requiring same computational units in the same scope is not supported")
+            entry_node = state.entry_node(entry_node)
+            distance += 1
+
 
     def _param_appears(self, param_i, ranges):
         for r in ranges:

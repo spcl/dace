@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from ast import Tuple
 import copy
+from itertools import product
 import dace
 from dace import subsets
 from dace.data import Array
@@ -332,12 +333,20 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                      default={}, desc="Name mapping")
     level = Property(dtype=int, default=0, desc="Level of the map")
     pad_contig_dim = Property(dtype=bool, default=False, allow_none=False, desc="Pad contiguous dimension to a prime number bigger than the contig dimension")
+    prepend_purpose_to_name = Property(dtype=bool, default=False, allow_none=False, desc="Prepend the purpose to the name of the array")
+    max_levels = Property(dtype=int, default=2, desc="Maximum number of levels")
+    level_list_reversed = Property(dtype=bool, default=False, desc="Reverse the level list iteraiton")
 
     def __init__(self):
         super().__init__()
 
     def remove_prefix(self, src_arr_name: str):
-        for prefix in self.location_prefixes.values():
+        level_prefixes = []
+        for i in range(1,self.max_levels+1):
+            level_prefixes += [f"A{i}", f"B{i}", f"C{i}"]
+        all_combinations = [f"{a}_{b}" for a, b in product(level_prefixes, self.location_prefixes.values())]
+        #print(all_combinations + list(self.location_prefixes.values()))
+        for prefix in all_combinations + list(self.location_prefixes.values()):
             if src_arr_name.startswith(prefix):
                 return src_arr_name[len(prefix)+1:]
         return src_arr_name
@@ -513,8 +522,22 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             #raise Exception(strides, shape, self.pad_contig_dim, self.tiles_evenly)
 
             pruned_src_arr_name = self.remove_prefix(src_arr_name)
+            print(hasattr(self.device_map_entry, "purpose_dict"))
+            purpose_dict = self.device_map_entry.purpose_dict if self.prepend_purpose_to_name and hasattr(self.device_map_entry, "purpose_dict") else dict()
+            purpose_prefix = "" if not self.prepend_purpose_to_name else f"{purpose_dict.get(pruned_src_arr_name, '')}"
+            if purpose_prefix == "acc":
+                purpose_prefix = f"C{2 - self.level}_"
+            elif purpose_prefix == "A":
+                purpose_prefix = f"A{2 - self.level}_"
+            elif purpose_prefix == "B":
+                purpose_prefix = f"B{2 - self.level}_"
+            elif purpose_prefix == "C":
+                purpose_prefix = f"C{2 - self.level}_"
+            else:
+                if self.prepend_purpose_to_name:
+                    raise Exception(f"?: {purpose_dict}", src_arr_name, pruned_src_arr_name)
             dst_arr_name = (
-                self._location_to_prefix(self.dst_memory_location) + "_" + pruned_src_arr_name
+                purpose_prefix + self._location_to_prefix(self.dst_memory_location) + "_" + pruned_src_arr_name
             )
             c = 0
             while dst_arr_name in sdfg.arrays:
