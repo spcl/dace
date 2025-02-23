@@ -76,6 +76,9 @@ def main():
                            'If nothing is given, then will write to STDOUT.')
     argp.add_argument('--noop', type=str, required=False, action='append', default=[],
                       help='(Optional) Functions or subroutine to make no-op.')
+    argp.add_argument('-d', '--checkpoint_dir', type=str, required=False, default=None,
+                      help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
+                           'Fortran code in there.')
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -88,7 +91,11 @@ def main():
     noops = [tuple(np.split('.')) for np in args.noop]
     print(f"Will be making these as no-ops: {noops}")
 
-    cfg = ParseConfig(sources=input_f90s, entry_points=entry_points, make_noop=noops)
+    checkpoint_dir = args.checkpoint_dir
+    if checkpoint_dir:
+        print(f"Will be writing the checkpoint ASTs in: {checkpoint_dir}")
+
+    cfg = ParseConfig(sources=input_f90s, entry_points=entry_points, make_noop=noops, ast_checkpoint_dir=checkpoint_dir)
     cfg.sources['_stubs.f90'] = STUBS
     cfg.sources['_builtins.f90'] = BUILTINS
 
@@ -101,6 +108,7 @@ def main():
         with open(args.output_ast, 'w') as f:
             f.write(f90)
     else:
+        print('Preprocessed Fortran AST:\n===')
         print(f90)
 
 
