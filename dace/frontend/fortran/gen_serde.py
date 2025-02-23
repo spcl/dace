@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from itertools import chain, combinations
 from pathlib import Path
@@ -8,13 +9,14 @@ from fparser.two.Fortran2003 import Module, Derived_Type_Stmt, Module_Subprogram
     Procedure_Stmt, Interface_Block, Program, Intrinsic_Type_Spec, \
     Dimension_Component_Attr_Spec, Declaration_Type_Spec, Private_Components_Stmt, Component_Part, \
     Derived_Type_Def, Subroutine_Subprogram, Subroutine_Stmt, Main_Program, Function_Subprogram, Use_Stmt, Name, \
-    Only_List, Rename, Generic_Spec
+    Only_List, Rename, Generic_Spec, Specification_Part, Entity_Decl
 from fparser.two.utils import walk
 
 import dace
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
-    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec
+    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec, find_type_of_entity, \
+    find_real_ident_spec, ident_spec
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
 NEW_LINE = "NEW_LINE('A')"
@@ -47,11 +49,8 @@ contains
     character(len=*), intent(in) :: prefix
     character(len=:), allocatable :: path
     character(len=50) :: gen
-    logical, optional, intent(in) :: asis
-    logical :: asis_local
-    asis_local = .false.
-    if (present(asis)) asis_local = asis
-    if (asis_local) then
+    logical, intent(in) :: asis
+    if (asis) then
       path = prefix
     else
       ! NOTE: SINCE WE ARE WRITING TO STRING, WE DON'T ADVANCE.
@@ -65,7 +64,8 @@ contains
     character(len=*), intent(in) :: prefix
     integer :: io
     logical, optional, intent(in) :: asis
-    logical :: asis_local = .false.
+    logical :: asis_local
+    asis_local = .false.
     if (present(asis)) asis_local = asis
     open (NEWUNIT=io, FILE=cat(prefix, asis_local), STATUS="replace", ACTION="write")
   end function at
@@ -366,6 +366,17 @@ end if
             raise NotImplementedError(f"Do not know how to process for type-injection: {dt}/{z}")
 
 
+def _real_ctype(v: dace.data.Data):
+    if isinstance(v, dace.data.Scalar):
+        return f"{v.ctype}"
+    elif isinstance(v, dace.data.Array):
+        return f"{v.ctype}*"
+    elif isinstance(v, dace.data.Structure):
+        return f"{v.ctype}"
+    else:
+        raise NotImplementedError
+
+
 @dataclass(frozen=True)
 class SerdeCode:
     f90_serializer: str
@@ -384,8 +395,106 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
     ]
 
 
+def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
+    uses, ser_ops = [], []
+    gd_struct, des_ops = [], []
+    hack_typs, hack_args, hack_ops, hack_call = [], [], [], []
+    for mod in walk(ast, Module):
+        mname = find_name_of_node(mod)
+        spart = atmost_one(children_of_type(mod, Specification_Part))
+        if not spart:
+            continue
+        for var in walk(spart, Entity_Decl):
+            vname = find_name_of_node(var)
+            # TODO: What if `vname` is in `g.symbols`?
+            if vname not in g.arrays:
+                continue
+            renamed: re.Match = re.match(r'^([a-zA-Z0-9_]+)_var_[0-9]+$', vname)
+            ogvname = renamed.group(1) if renamed else vname
+
+            uses.append(f"""use {mname}, only : {vname} => {ogvname}""")
+            ser_ops.append(f"""
+call serialize(io, "# {vname}", cleanup=.false.)
+call serialize(io, {vname}, cleanup=.false.)
+""")
+            vctyp = _real_ctype(g.arrays[vname])
+            gd_struct.append(f"{vctyp} {vname} = {{}};")
+            if isinstance(g.arrays[vname], dace.data.Array):
+                des_ops.append(f"""
+{{
+    read_line(s, "# {vname}");
+    auto [m, arr] = read_array<{vctyp[:-1]}>(s);
+    g->{vname} = arr;
+}}
+""")
+                hack_typs.append(f"{vctyp}")
+                hack_args.append(f"{vname}")
+                hack_call.append(f"{vname}")
+                hack_ops.append(f"""
+{{
+    auto& m = (*ARRAY_META_DICT())[gdata->{vname}];
+    std::copy(gdata->{vname}, gdata->{vname}+m.volume(), {vname});
+}}
+""")
+            else:
+                des_ops.append(f"""
+read_line(s, "# {vname}");
+deserialize(g->{vname}, s);
+""")
+                hack_typs.append(f"{vctyp}*")
+                hack_args.append(f"{vname}")
+                hack_call.append(f"&{vname}")
+                hack_ops.append(f"""
+*{vname} = gdata->{vname};
+""")
+
+    uses = '\n'.join(uses)
+    ser_ops = '\n'.join(ser_ops)
+    f90_code = f"""
+subroutine serialize_global_data(io)
+{uses}
+integer :: io
+{ser_ops}
+close(UNIT=io)
+end subroutine serialize_global_data
+"""
+
+    gd_struct = '\n'.join(gd_struct)
+    des_ops = '\n'.join(des_ops)
+    hack_sig = ', '.join(f"{t} {a}" for t, a in zip(hack_typs, hack_args))
+    hack_sig_typonly = ', '.join(f"{t}" for t in hack_typs)
+    hack_call = ', '.join(hack_call)
+    hack_ops = '\n'.join(hack_ops)
+    cpp_code = f"""
+struct global_data {{
+    {gd_struct}
+
+    static global_data* singleton() {{
+        static auto* g = new global_data;
+        return g;
+    }}
+}};
+
+void deserialize(global_data* g, std::istream& s) {{
+    {des_ops}
+}}
+
+extern "C" void global_hack({hack_sig}) {{
+    const auto* gdata = global_data::singleton();
+    {hack_ops}
+}}
+
+// HACK DECLARATION: namespace serde {{ extern "C" void global_hack({hack_sig_typonly}); }} // namespace serde
+// HACK CALL: serde::global_hack({hack_call});
+"""
+    return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
+
+
 def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     ast = _keep_only_derived_types(ast)
+
+    # Global data.
+    gdata = _get_global_data_serde_code(ast, g)
 
     # F90 Serializer related data structures.
     f90_mod = gen_f90_serde_module_skeleton()
@@ -413,16 +522,6 @@ def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
                                                                  for k, v in sdfg_structs.items()}
 
-    def _real_ctype(v: dace.data.Data):
-        if isinstance(v, dace.data.Scalar):
-            return f"{v.ctype}"
-        elif isinstance(v, dace.data.Array):
-            return f"{v.ctype}*"
-        elif isinstance(v, dace.data.Structure):
-            return f"{v.ctype}"
-        else:
-            raise NotImplementedError
-
     sdfg_structs: Dict[str, Dict[str, str]] = {
         k: {kk: _real_ctype(vv) for kk, vv in v}
         for k, v in sdfg_structs.items()}
@@ -447,6 +546,27 @@ void deserialize(long long* x, std::istream& s) {{
 }}
 void deserialize(bool* x, std::istream& s) {{
     read_scalar(*x, s);
+}}
+void deserialize(float& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(double& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(long double& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(int& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(long& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(long long& x, std::istream& s) {{
+    read_scalar(x, s);
+}}
+void deserialize(bool& x, std::istream& s) {{
+    read_scalar(x, s);
 }}
 """]
     cpp_serializer_fns: List[str] = [f"""
@@ -721,6 +841,8 @@ void deserialize({dt.name}* x, std::istream& s) {{
     iface = singular(p for p in walk(f90_mod, Interface_Block) if find_name_of_node(p) == 'serialize')
     proc_names = Procedure_Stmt(f"module procedure {', '.join(proc_names)}")
     set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
+    # Global data.
+    append_children(impls, Subroutine_Subprogram(get_reader(gdata.f90_serializer)))
     f90_code = f90_mod.tofortran()
 
     # Conclude the C++ serde code.
@@ -753,6 +875,7 @@ struct {name} {{
 #include <iostream>
 #include <sstream>
 #include <optional>
+#include <algorithm>
 
 #include "{g.name}.h"
 
@@ -865,6 +988,8 @@ namespace serde {{
         (*ARRAY_META_DICT())[buf] = *this;
         return buf;
     }}
+
+    {gdata.cpp_serde}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__
