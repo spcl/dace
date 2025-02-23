@@ -598,15 +598,15 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             # result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' %
             #                     ( dataname, arrsize_malloc))
             result_alloc.write(f"{dataname} = {self.tcdm_offset};\n")
-            if node.setzero:
-                result_alloc.write('// DACE_ACL_CHECK(aclrtMemset(%s, 0, %s));\n' % ( dataname, arrsize_malloc))
-                result_alloc.write(f'''
-                    if(flex_is_dm_core())
-                    {{
-                        flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
-                        flex_dma_async_wait_all();
-                    }}
-                ''')
+            # if node.setzero:
+            #     result_alloc.write('// DACE_ACL_CHECK(aclrtMemset(%s, 0, %s));\n' % ( dataname, arrsize_malloc))
+            #     result_alloc.write(f'''
+            #         if(flex_is_dm_core())
+            #         {{
+            #             flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
+            #             flex_dma_async_wait_all();
+            #         }}
+            #     ''')
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
             self.tcdm_offset += total_size
@@ -1064,7 +1064,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
                         callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
                         callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
-                        callsite_stream.write(f"const int channel_id = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                        callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                        callsite_stream.write(f"const int channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
                         callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
                         callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
                         callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
@@ -1170,7 +1171,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
                         callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
                         callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
-                        callsite_stream.write(f"const int channel_id = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                        callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                        callsite_stream.write(f"const int channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
                         callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
                         callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
                         callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
@@ -1280,7 +1282,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
                     callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
-                    callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), local({src_expr}), {dst_size});")
+                    callsite_stream.write(f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr}), local({src_expr}), {dst_size});")
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
@@ -1293,7 +1295,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         length = (end + 1) - beg
                         callsite_stream.write("if (flex_is_dm_core())")
                         callsite_stream.write("{")
-                        callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), hbm({src_expr}), {length * data_size});")
+                        callsite_stream.write(f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr}), hbm({src_expr}), {length * data_size});")
                         # if is_sync:
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}")
@@ -1330,7 +1332,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
                             callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
                             callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
-                            callsite_stream.write(f"const int channel_id = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                            callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                            callsite_stream.write(f"const int channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
                             callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
                             callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
                             callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
@@ -1341,7 +1344,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             funcname = "flex_dma_async_1d"
                             callsite_stream.write(('    {func}({args});').format(
                                     func=funcname,
-                                    args=', '.join([f'remote_xy({pos_x},{pos_y},{dst_expr})']+ 
+                                    args=', '.join([f'dace_remote_xy({pos_x},{pos_y},{dst_expr})']+ 
                                                 [f'hbm_addr(block_addr)'] + 
                                                 [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
                             )
@@ -1356,7 +1359,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             funcname = "flex_dma_async_2d"
                             callsite_stream.write(('    {func}({args});').format(
                                     func=funcname,
-                                    args=', '.join([f'remote_xy({pos_x},{pos_y},{dst_expr})'] + 
+                                    args=', '.join([f'dace_remote_xy({pos_x},{pos_y},{dst_expr})'] + 
                                                 [f'hbm_addr({src_expr})'] + 
                                                 [f'{length_1}*{data_size}'] +
                                                 [f'{dst_strides[0]}*{data_size}'] +

@@ -194,7 +194,8 @@ class SystolicTransformer(transformation.SingleStateTransformation):
         ##############################
         # init state
         init_state = nsdfg.add_state("init", is_start_block=True)
-
+        # condition_expr=f"_c < ((({gi}+{gj}+1) if (({i} < {M} - {NPE}*{tM}) or ({j} < {N} - {NPE}*{tN})) else ({2*NPE-1})) + ({new_map_rstride}/{map_rstride}))",
+        # condition_expr=f"_c < (({gi}+{gj}+1) + ({new_map_rstride}/{map_rstride}))",
         ##############################
         lr = LoopRegion(
             label="systolic_loop",
