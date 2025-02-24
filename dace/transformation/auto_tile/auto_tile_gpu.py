@@ -353,7 +353,7 @@ def _tile_gpu(
                 copy_inputs_2 = copy.deepcopy(inputs)
                 time = auto_tile_util.run_and_measure_time(
                     kernel_sdfg=kernel_sdfg, inputs=copy_inputs_2,
-                    repeats=6, warmups=1, dev_type=dace.dtypes.ScheduelType.GPU_Device,
+                    repeats=6, warmups=1, dev_type=dace.dtypes.ScheduleType.GPU_Device,
                     instr_type=dace.dtypes.InstrumentationType.GPU_Events)
                 output_from_transformed = copy_inputs_2[output_name]
 
