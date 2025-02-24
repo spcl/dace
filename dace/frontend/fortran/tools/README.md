@@ -340,3 +340,43 @@ Explanation:
   sufficient for "instance injection"), and that the relevant data for _any_ object of `config_type` type will be the
   same for the runtime of the program.
 
+
+## 4. How to generate an FParser preprocessed AST?
+
+> TLDR; 1) We pick one or more functions to preserve in the preprocessed AST, 2) We pick some functions (or none) to
+> make no-op (even if we cannot prune them with static analysis), 3) We generate a Fortran representation of the
+> preprocessed AST that simplifies and prunes the code.
+
+- Suppose we have the C++ preprocessed (but otherwise not transformed or prune) code in
+  `~/gitspace/icon-dace-cpp-preprocessed/` directory.
+- Suppose that we want to _eventually_ create an SDFG from this code with some function as an entry point, for example,
+  the function `velocity_tendencies` from the module `mo_velocity_advection`.
+    - But for now we would just like to generate a preprocessed AST with a Fortran representation in
+      `~/velocity_tendencies.f90`. This AST would be a functional Fortran library, and can be consumed to build an "
+      internal AST".
+- Suppose that we know that only the following directories are needed for this entry point to build:
+    - `~/gitspace/icon-dace-cpp-preprocessed/src`
+    - `~/gitspace/icon-dace-cpp-preprocessed/support`
+    - `~/gitspace/icon-dace-cpp-preprocessed/externals/fortran-support/src`
+    - `~/gitspace/icon-dace-cpp-preprocessed/externals/cdi/src`
+    - `~/gitspace/icon-dace-cpp-preprocessed/externals/mtime/src`
+- Suppose that we also know that certain functions (or subroutines) are not needed in the final SDFG, but it is
+  not possible to prune them in the compile-time (yet). So we want to make them "no-op" during the preprocessing. For
+  example, the following functions:
+    - From the `mo_exception` module, the function `finish`.
+    - From the `mo_real_timer` module, the functions `timer_start`, `timer_stop` and `new_timer`.
+- We then need to run from the root of DaCe repository:
+  ```shell
+  python -m dace.frontend.fortran.tools.create_preprocessed_ast \
+         -i ~/gitspace/icon-dace-cpp-preprocessed/src \
+         -i ~/gitspace/icon-dace-cpp-preprocessed/externals/fortran-support/src \
+         -i ~/gitspace/icon-dace-cpp-preprocessed/externals/cdi/src \
+         -i ~/gitspace/icon-dace-cpp-preprocessed/externals/mtime/src \
+         -i ~/gitspace/icon-dace-cpp-preprocessed/support \
+         -o ~/velocity_tendencies.f90 \
+         -k mo_velocity_advection.velocity_tendencies \
+         --noop mo_exception.finish \
+         --noop mo_real_timer.timer_start \
+         --noop mo_real_timer.timer_stop \
+         --noop mo_real_timer.new_timer
+  ```

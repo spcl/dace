@@ -27,7 +27,8 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
-    Language_Binding_Spec, Type_Attr_Spec, Suffix
+    Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, Proc_Decl, End_Type_Stmt, \
+    End_Interface_Stmt, Procedure_Declaration_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -43,12 +44,14 @@ SCOPE_OBJECT_CLASSES = (
     Subroutine_Body, Function_Body, Stmt_Function_Stmt)
 NAMED_STMTS_OF_INTEREST_TYPES = Union[
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt]
+    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl]
 NAMED_STMTS_OF_INTEREST_CLASSES = (
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt)
+    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt, Proc_Component_Def_Stmt, Proc_Decl)
 SPEC = Tuple[str, ...]
 SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
+
+INTERFACE_NAMESPACE = '__interface__'
 
 
 class TYPE_SPEC:
@@ -75,10 +78,23 @@ class TYPE_SPEC:
     def _parse_shape(attrs: str) -> Tuple[str, ...]:
         if 'DIMENSION' not in attrs:
             return tuple()
-        dims: re.Match = re.search(r'DIMENSION\(([^)]*)\)', attrs, re.IGNORECASE)
-        assert dims
-        dims: str = dims.group(1)
-        return tuple(p.strip().lower() for p in dims.split(','))
+        parts = []
+        dims = attrs.split('DIMENSION')[1]
+        assert dims[0] == '('
+        paren_count, part_start = 1, 1
+        for i in range(1, len(dims)):
+            if dims[i] == '(':
+                paren_count += 1
+            elif dims[i] == ')':
+                paren_count -= 1
+                if paren_count == 0:
+                    parts.append(dims[part_start:i])
+                    break
+            elif dims[i] == ',':
+                if paren_count == 1:
+                    parts.append(dims[part_start:i])
+                    part_start = i + 1
+        return tuple(p.strip().lower() for p in parts)
 
     def __repr__(self):
         attrs = []
@@ -136,6 +152,11 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
         name, = node.children
         if name == 'ABSTRACT':
             return None
+    elif isinstance(node, Proc_Component_Def_Stmt):
+        tgt, attrs, plist = node.children
+        assert len(plist.children) == 1, \
+            f"Only one procedure per statement is accepted due to Fparser bug. Break down the line: {node}"
+        name = singular(children_of_type(plist, Name))
     else:
         # TODO: Test out other type specific ways of finding names.
         name = singular(children_of_type(node, Name))
@@ -220,7 +241,10 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         """
         Constuct a list of identifier strings that can uniquely determine it through the entire AST.
         """
-        ident_base = (find_name_of_stmt(_node),)
+        if isinstance(_node, Interface_Stmt):
+            ident_base = (INTERFACE_NAMESPACE, find_name_of_stmt(_node))
+        else:
+            ident_base = (find_name_of_stmt(_node),)
         # Find the next named ancestor.
         anc = find_named_ancestor(_node.parent)
         if not anc:
@@ -271,6 +295,9 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
 def search_real_local_alias_spec_from_spec(loc: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     while len(loc) > 1 and loc not in alias_map:
         # The name is not immediately available in the current scope, but may be it is in the parent's scope.
+        iface_loc = loc[:-2] + (INTERFACE_NAMESPACE, loc[-1])
+        if iface_loc in alias_map:
+            return iface_loc
         loc = loc[:-2] + (loc[-1],)
     return loc if loc in alias_map else None
 
@@ -324,9 +351,13 @@ def alias_specs(ast: Program):
             # If there is no only list, all the top level (public) symbols are considered aliased.
             alias_updates: SPEC_TABLE = {}
             for k, v in alias_map.items():
-                if len(k) != len(mod_spec) + 1 or k[:len(mod_spec)] != mod_spec:
+                if len(k) < len(mod_spec) + 1 or len(k) > len(mod_spec) + 2 or k[:len(mod_spec)] != mod_spec:
+                    continue
+                if len(k) == len(mod_spec) + 2 and k[len(mod_spec)] != INTERFACE_NAMESPACE:
                     continue
                 alias_spec = scope_spec + k[-1:]
+                if alias_spec in alias_updates and not isinstance(v, Interface_Stmt):
+                    continue
                 alias_updates[alias_spec] = v
             alias_map.update(alias_updates)
         else:
@@ -341,9 +372,30 @@ def alias_specs(ast: Program):
                     src, tgt = c, c
                 src, tgt = f"{src}", f"{tgt}"
                 src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
+                if mod_spec + (INTERFACE_NAMESPACE, tgt) in alias_map:
+                    # If there is an interface and a subroutine of the same name, the interface is selected.
+                    tgt_spec = mod_spec + (INTERFACE_NAMESPACE, tgt)
                 # `tgt_spec` must have already been resolved if we have sorted the modules properly.
                 assert tgt_spec in alias_map, f"{src_spec} => {tgt_spec}"
                 alias_map[src_spec] = alias_map[tgt_spec]
+
+    for dt in walk(ast, Derived_Type_Stmt):
+        attrs, name, _ = dt.children
+        if not attrs:
+            continue
+        dtspec = ident_spec(dt)
+        extends = atmost_one(a.children[1] for a in attrs.children
+                             if isinstance(a, Type_Attr_Spec) and a.children[0] == 'EXTENDS')
+        if not extends:
+            continue
+        scope_spec = find_scope_spec(dt)
+        base_dtspec = find_real_ident_spec(extends.string, scope_spec, alias_map)
+        updates = {}
+        for k, v in alias_map.items():
+            if k[:len(base_dtspec)] != base_dtspec:
+                continue
+            updates[dtspec + k[len(base_dtspec) - 1:]] = v
+        alias_map.update(updates)
 
     assert set(ident_map.keys()).issubset(alias_map.keys())
     return alias_map
@@ -351,6 +403,9 @@ def alias_specs(ast: Program):
 
 def search_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     k = in_spec + (ident,)
+    if k in alias_map:
+        return ident_spec(alias_map[k])
+    k = in_spec + (INTERFACE_NAMESPACE, ident)
     if k in alias_map:
         return ident_spec(alias_map[k])
     if not in_spec:
@@ -701,7 +756,9 @@ def find_type_of_entity(node: Union[Entity_Decl, Component_Decl], alias_map: SPE
         spec = (typ_name,)
     elif isinstance(typ, Declaration_Type_Spec):
         _, typ_name = typ.children
-        spec = find_real_ident_spec(typ_name.string, ident_spec(node), alias_map)
+        if isinstance(typ_name, Name):
+            typ_name = typ_name.string
+        spec = find_real_ident_spec(typ_name, ident_spec(node), alias_map)
 
     is_arg = False
     scope_spec = find_scope_spec(node)
@@ -872,7 +929,7 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
             continue
         ib = ifs.parent
         scope_spec = find_scope_spec(ib)
-        ifspec = scope_spec + (name,)
+        ifspec = ident_spec(ifs)
 
         # Get the spec of all the callable things in this block that may end up as a resolution for this interface.
         fns: List[str] = []
@@ -904,12 +961,12 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
             cscope = scope_spec
             fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
             # If we are resolving the interface back to itself, we need to search a level above.
-            while ifspec == fn_spec:
-                assert cscope
-                cscope = cscope[:-1]
-                fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
-            assert ifspec != fn_spec
-            iface_map[ifspec] = (fn_spec,)
+            fn_impl_spec = search_real_local_alias_spec_from_spec(scope_spec + (fn_name,), alias_map)
+            # We may not have an implementation in the AST itself (e.g., C-binding declares the implementation outside).
+            if fn_impl_spec:
+                iface_map[ifspec] = (fn_impl_spec,)
+            else:
+                iface_map[ifspec] = tuple()
 
     return iface_map
 
@@ -920,7 +977,10 @@ def set_children(par: Base, children: Iterable[Base]):
         par.items = tuple(children)
     elif hasattr(par, 'content'):
         par.content = list(children)
-    _reparent_children(par)
+        if not children:
+            remove_self(par)
+    if children:
+        _reparent_children(par)
 
 
 def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
@@ -982,6 +1042,9 @@ def correct_for_function_calls(ast: Program):
         lv, _, _ = asgn.children
         if not isinstance(lv, (Part_Ref, Structure_Constructor, Function_Reference)):
             continue
+        if walk(lv, Subscript_Triplet):
+            # If we have a subscript triplet here, it cannot possibly be a statement function.
+            continue
         lv, _ = lv.children
         lvloc = search_real_local_alias_spec(lv, alias_map)
         if not lvloc:
@@ -1007,8 +1070,8 @@ def correct_for_function_calls(ast: Program):
 
     # TODO: Looping over and over is not ideal. But `Function_Reference(...)` sometimes generate inner `Part_Ref`s. We
     #  should figure out a way to avoid this clutter.
-    changed = True
-    while changed:
+    changed = None
+    while changed is None or changed:
         changed = False
         for pr in walk(ast, Part_Ref):
             scope_spec = find_scope_spec(pr)
@@ -1313,6 +1376,30 @@ def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC
 def deconstruct_interface_calls(ast: Program) -> Program:
     SUFFIX, COUNTER = 'deconiface', 0
 
+    # We need to temporarily rename the interface imports to avoid shadowing the implementation.
+    alias_map = alias_specs(ast)
+    for olist in walk(ast, Only_List):
+        use = olist.parent
+        assert isinstance(use, Use_Stmt)
+        scope_spec = find_scope_spec(use)
+        mod = singular(children_of_type(use, Name))
+        assert isinstance(mod, Name)
+        for c in children_of_type(olist, Name):
+            tgt_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
+            if len(tgt_spec) < 2 or tgt_spec[-2] != INTERFACE_NAMESPACE:
+                continue
+            replace_node(c, Rename(f"{c.string}_{SUFFIX}_tmp => {c.string}"))
+
+            for nm in walk(use.parent.parent, Name):
+                if nm.string != c.string or isinstance(nm.parent, (Only_List, Rename)):
+                    continue
+                local_spec = search_real_local_alias_spec(nm, alias_map)
+                if not local_spec:
+                    continue
+                real_spec = ident_spec(alias_map[local_spec])
+                if real_spec == tgt_spec:
+                    replace_node(nm, Name(f"{c.string}_{SUFFIX}_tmp"))
+
     alias_map = alias_specs(ast)
     iface_map = interface_specs(ast, alias_map)
 
@@ -1329,6 +1416,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         assert fref_spec in alias_map, f"cannot find: {fref_spec}"
         if fref_spec not in iface_map:
             # We are only interested in calls to interfaces here.
+            continue
+        if not iface_map[fref_spec]:
+            # We cannot resolve this one, because there is no candidate.
+            print(f"{fref_spec} does not have any candidate to resolve to; moving on", file=sys.stderr)
             continue
 
         # Find the nearest execution and its correpsonding specification parts.
@@ -1368,10 +1459,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
                 conc_spec = cand_spec
                 break
         if conc_spec not in alias_map:
-            print(f"{ifc_spec}/{conc_spec} / {args_sig}")
+            print(f"[in: {fref_spec}] {ifc_spec}/{conc_spec} not found; moving on", file=sys.stderr)
             for c in all_cand_sigs:
-                print(f"...> {c}")
-        assert conc_spec and conc_spec in alias_map, f"[in: {fref_spec}] {ifc_spec}/{conc_spec} not found"
+                print(f"...> {c}", file=sys.stderr)
+            continue
 
         # We are assumping that it's either a toplevel subprogram or a subprogram defined directly inside a module.
         assert 1 <= len(conc_spec) <= 2
@@ -1395,54 +1486,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         replace_node(name, Name(pname_alias))
 
-    # TODO: Figure out a way without rebuilding here.
-    # Rebuild the maps because aliasing may have changed.
-    alias_map = alias_specs(ast)
-
-    # At this point, we must have replaced all the interface calls with concrete calls.
-    for use in walk(ast, Use_Stmt):
-        mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
-        olist = atmost_one(children_of_type(use, Only_List))
-        if not olist:
-            # There is nothing directly referring to the interface.
-            continue
-
-        survivors = []
-        for c in olist.children:
-            assert isinstance(c, (Name, Rename))
-            if isinstance(c, Name):
-                src, tgt = c, c
-            elif isinstance(c, Rename):
-                _, src, tgt = c.children
-            src, tgt = src.string, tgt.string
-            tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
-            assert tgt_spec in alias_map
-            if tgt_spec not in iface_map:
-                # Leave the non-interface usages alone.
-                survivors.append(c)
-
-        if survivors:
-            olist.items = survivors
-            _reparent_children(olist)
-        else:
-            remove_self(use)
-
-    # At this point, we must have replaced all references to the interfaces.
-    for k in iface_map.keys():
-        assert k in alias_map
-        ib = None
-        if isinstance(alias_map[k], Interface_Stmt):
-            ib = alias_map[k].parent
-        elif isinstance(alias_map[k], (Function_Stmt, Subroutine_Stmt)):
-            ib = alias_map[k].parent.parent
-        assert isinstance(ib, Interface_Block)
-        sppart = ib.parent
-        assert isinstance(sppart, Specification_Part)
-        remove_self(ib)
-        if not sppart.children:
-            remove_self(sppart)
-
+    ast = consolidate_uses(ast)
     return ast
 
 
@@ -1619,6 +1663,157 @@ def _reparent_children(node: Base):
     for c in node.children:
         if isinstance(c, Base):
             c.parent = node
+
+
+def prune_coarsely(ast: Program, keepers: Iterable[SPEC]) -> Program:
+    removed_something = None
+    while removed_something is None or removed_something:
+        removed_something = False
+        ast = consolidate_uses(ast)
+        ast = keep_sorted_used_modules(ast, keepers)
+        ident_map = identifier_specs(ast)
+        alias_map = alias_specs(ast)
+        iface_map = interface_specs(ast, alias_map)
+
+        used_fns: Set[SPEC] = set(keepers)
+        for k, v in ident_map.items():
+            if len(k) < 2 or not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-2] if k[-2] == INTERFACE_NAMESPACE else k[:-1]].parent
+            for nm in walk(box, Name):
+                if (nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt))
+                        or isinstance(nm.parent, (Function_Stmt, End_Function_Stmt, Subroutine_Stmt,
+                                                  End_Subroutine_Stmt))):
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k:
+                    continue
+                used_fns.add(k)
+                break
+        for k, v in alias_map.items():
+            if not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
+                continue
+            if k not in ident_map:
+                used_fns.add(ident_spec(v))
+        for fref in walk(ast, (Function_Reference, Call_Stmt)):
+            scope_spec = find_scope_spec(fref)
+            name, _ = fref.children
+            if isinstance(name, Intrinsic_Name):
+                continue
+            fref_spec = search_real_ident_spec(name.string, scope_spec, alias_map)
+            if fref_spec and len(fref_spec) == 1:
+                # Free-floating functions do not need to be imported.
+                used_fns.add(fref_spec)
+        for k, vs in iface_map.items():
+            for v in vs:
+                used_fns.add(v)
+        for k, v in ident_map.items():
+            if not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
+                continue
+            if k not in used_fns:
+                remove_self(v.parent)
+                removed_something = True
+
+        used_types: Set[SPEC] = set()
+        for k, v in ident_map.items():
+            if not isinstance(v, Derived_Type_Stmt):
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-1]].parent
+            for nm in walk(box, Name):
+                if nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)):
+                    continue
+                if isinstance(nm.parent, (Derived_Type_Stmt, End_Type_Stmt)) and nm.parent.parent is v.parent:
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k:
+                    continue
+                used_types.add(k)
+                break
+        for k, v in alias_map.items():
+            if not isinstance(v, Derived_Type_Stmt):
+                continue
+            if k not in ident_map:
+                used_types.add(ident_spec(v))
+        for k, v in ident_map.items():
+            if not isinstance(v, Derived_Type_Stmt):
+                continue
+            if k not in used_types:
+                remove_self(v.parent)
+                removed_something = True
+
+        used_ifaces: Set[SPEC] = set()
+        for k, v in ident_map.items():
+            if len(k) < 2 or k[-2] != INTERFACE_NAMESPACE:
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-2]].parent
+            for nm in walk(box, Name):
+                if nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)):
+                    continue
+                if isinstance(nm.parent, (Interface_Stmt, End_Interface_Stmt)) and nm.parent.parent is v.parent:
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k or scope_spec == k[:-2] + k[-1:]:
+                    continue
+                used_ifaces.add(k)
+                break
+        for k, v in alias_map.items():
+            vspec = ident_spec(v)
+            if len(vspec) < 2 or vspec[-2] != INTERFACE_NAMESPACE:
+                continue
+            if k not in ident_map:
+                used_ifaces.add(vspec)
+        for k, v in ident_map.items():
+            if len(k) < 2 or k[-2] != INTERFACE_NAMESPACE:
+                continue
+            if k not in used_ifaces:
+                remove_self(v.parent)
+                removed_something = True
+
+        used_vars: Set[SPEC] = set()
+        for k, v in ident_map.items():
+            if not isinstance(v, (Entity_Decl, Proc_Decl)):
+                continue
+            vname = find_name_of_stmt(v)
+            box = alias_map[k[:-1]].parent
+            for nm in walk(box, Name):
+                if nm.string != vname or isinstance(nm.parent, (Rename, Use_Stmt)) or nm.parent is v:
+                    continue
+                scope_spec = search_scope_spec(nm)
+                if scope_spec == k:
+                    continue
+                used_vars.add(k)
+                break
+        for k, v in alias_map.items():
+            if not isinstance(v, (Entity_Decl, Proc_Decl)):
+                continue
+            if k not in ident_map:
+                used_vars.add(ident_spec(v))
+        for k, v in ident_map.items():
+            if not isinstance(v, (Entity_Decl, Proc_Decl)):
+                continue
+            if k not in used_vars:
+                elist = v.parent
+                remove_self(v)
+                elist_tdecl = elist.parent
+                assert isinstance(elist_tdecl, (Type_Declaration_Stmt, Procedure_Declaration_Stmt))
+                if not elist.children:
+                    remove_self(elist_tdecl)
+                removed_something = True
+
+    # Clearout empty abstract interfaces.
+    for iface in walk(ast, Interface_Stmt):
+        name, = iface.children
+        if name and name != 'ABSTRACT':
+            continue
+        idef = iface.parent
+        if not idef.children[1:-1]:
+            remove_self(idef)
+
+    ast = keep_sorted_used_modules(ast, keepers)
+    return ast
 
 
 def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
@@ -2674,22 +2869,33 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
         use_map: Dict[str, Set[str]] = {}
         # Build the table to keep the use statements only if they are actually necessary.
         for nm in walk(sp.parent, Name):
-            if isinstance(nm.parent, (Only_List, Rename)):
+            if isinstance(nm.parent, (Use_Stmt, Only_List, Rename)):
                 # The identifiers in the use statements themselves are not of concern.
                 continue
             # Where did we _really_ import `nm` from? Find the definition module.
-            sc_spec = search_scope_spec(nm.parent)
+            sc_spec = search_scope_spec(nm)
             if not sc_spec:
+                continue
+            box = alias_map[sc_spec].parent
+            if box is not sp.parent and isinstance(box, (Function_Subprogram, Subroutine_Subprogram, Main_Program)):
+                # If `nm` is imported, it should happen in a deeper subprogram.
                 continue
             spec = search_real_ident_spec(nm.string, sc_spec, alias_map)
             if not spec or spec not in alias_map:
                 continue
-            if len(spec) != 2:
+            if alias_map[spec].parent is sp.parent:
+                # If `nm` is just referring to the subprogram that `sp` is a part of, then just leave it be.
                 continue
-            if not isinstance(alias_map[spec[:-1]], Module_Stmt):
+            if len(spec) == 2:
+                mod_spec = spec[:-1]
+            elif len(spec) == 3 and spec[-2] == INTERFACE_NAMESPACE:
+                mod_spec = spec[:-2]
+            else:
+                continue
+            if not isinstance(alias_map[mod_spec], Module_Stmt):
                 # Objects defined inside a free function cannot be imported; so we must already be in that function.
                 continue
-            nm_mod = spec[0]
+            nm_mod = mod_spec[0]
             # And which module are we in right now?
             sp_mod = sp
             while sp_mod and not isinstance(sp_mod, (Module, Main_Program)):
@@ -2707,8 +2913,7 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
         # Build new use statements.
         nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(sorted(use_map[k]))}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
-        sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
-        _reparent_children(sp)
+        set_children(sp, nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)])
     return ast
 
 
@@ -2826,7 +3031,8 @@ def const_eval_nodes(ast: Program) -> Program:
         _const_eval_node(kind)
 
     NON_EXPRESSION_CLASSES = (
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization)
+        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
+        Section_Subscript_List)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
