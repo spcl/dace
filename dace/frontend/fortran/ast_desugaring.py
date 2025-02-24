@@ -3032,7 +3032,7 @@ def const_eval_nodes(ast: Program) -> Program:
 
     NON_EXPRESSION_CLASSES = (
         Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
-        Section_Subscript_List)
+        Section_Subscript_List, Write_Stmt)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
