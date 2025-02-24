@@ -3431,9 +3431,117 @@ def lower_identifier_names(ast: Program) -> Program:
     return ast
 
 
+GLOBAL_DATA_OBJ_NAME = 'global_data'
+GLOBAL_DATA_TYPE_NAME = 'global_data_type'
+
+
+def consolidate_global_data_into_arg(ast: Program) -> Program:
+    """
+    Move all the global data into one structure and use it from there.
+    """
+    alias_map = alias_specs(ast)
+    GLOBAL_DATA_MOD_NAME = 'global_mod'
+    if (GLOBAL_DATA_MOD_NAME,) in alias_map:
+        # We already have the global initialisers.
+        return ast
+
+    all_derived_types, all_global_vars = [], []
+    # Collect all the derived types into a global module.
+    for dt in walk(ast, Derived_Type_Def):
+        dtname = find_name_of_node(dt)
+        spart = dt.parent
+        assert isinstance(spart, Specification_Part)
+        all_derived_types.append(dt.tofortran())
+        prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {dtname}"))
+        remove_self(dt)
+    # Collect all the global variables into a single global data structure.
+    for m in walk(ast, Module):
+        spart = atmost_one(children_of_type(m, Specification_Part))
+        if not spart:
+            continue
+        for tdecl in children_of_type(spart, Type_Declaration_Stmt):
+            all_global_vars.append(tdecl.tofortran())
+
+    # Then, replace all the instances of references to global variables with corresponding data-refs.
+    for nm in walk(ast, Name):
+        par = nm.parent
+        if isinstance(par, (Entity_Decl, Use_Stmt, Rename, Only_List)):
+            continue
+        if isinstance(par, (Part_Ref, Data_Ref)):
+            while par and isinstance(par.parent, (Part_Ref, Data_Ref)):
+                par = par.parent
+            scope_spec = search_scope_spec(par)
+            root, _, _ = _dataref_root(par, scope_spec, alias_map)
+            if root is not nm:
+                continue
+        local_spec = search_real_local_alias_spec(nm, alias_map)
+        if not local_spec:
+            continue
+        assert local_spec in alias_map
+        if not isinstance(alias_map[local_spec], Entity_Decl):
+            continue
+        edecl_spec = ident_spec(alias_map[local_spec])
+        assert len(edecl_spec) >= 2,\
+            f"Fortran cannot possibly have a top-level global variable, outside any module; got {edecl_spec}"
+        if len(edecl_spec) != 2:
+            # We cannot possibly have a module level variable declaration.
+            continue
+        mod, var = edecl_spec
+        assert (mod,) in alias_map
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            continue
+        box = nm.parent
+        while box and not isinstance(box, (Module, Main_Program, Function_Subprogram, Subroutine_Subprogram)):
+            box = box.parent
+        spart = singular(children_of_type(box, Specification_Part))
+        replace_node(nm, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}"))
+
+    # Make `global_data` an argument to every defined function.
+    for fn in walk(ast, (Function_Subprogram, Subroutine_Subprogram)):
+        stmt = singular(children_of_type(fn, NAMED_STMTS_OF_INTEREST_CLASSES))
+        assert isinstance(stmt, (Function_Stmt, Subroutine_Stmt))
+        prefix, name, dummy_args, whatever = stmt.children
+        if dummy_args:
+            prepend_children(dummy_args, Name(GLOBAL_DATA_OBJ_NAME))
+        else:
+            set_children(stmt, (prefix, name, Dummy_Arg_Name_List(GLOBAL_DATA_OBJ_NAME), whatever))
+        spart = atmost_one(children_of_type(fn, Specification_Part))
+        assert spart
+        prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"))
+        append_children(spart, Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}"))
+    for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+        fn, args = fcall.children
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        if not fnspec:
+            continue
+        fnstmt = alias_map[fnspec]
+        assert isinstance(fnstmt, (Function_Stmt, Subroutine_Stmt))
+        if args:
+            prepend_children(args, Name(GLOBAL_DATA_OBJ_NAME))
+        else:
+            set_children(fcall, (fn, Actual_Arg_Spec_List(GLOBAL_DATA_OBJ_NAME)))
+
+    # NOTE: We do not remove the variables themselves, and let them be pruned later on.
+    all_derived_types = '\n'.join(all_derived_types)
+    all_global_vars = '\n'.join(all_global_vars)
+    global_mod = Module(get_reader(f"""
+module {GLOBAL_DATA_MOD_NAME}
+  {all_derived_types}
+
+  type {GLOBAL_DATA_TYPE_NAME}
+    {all_global_vars}
+  end type {GLOBAL_DATA_TYPE_NAME}
+end module {GLOBAL_DATA_MOD_NAME}
+"""))
+    prepend_children(ast, global_mod)
+
+    ast = consolidate_uses(ast)
+    return ast
+
+
 def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Program:
     # TODO: Ordering of the initializations may matter, but for that we need to find how Fortran's global initialization
-    # works and then reorder the initialization calls appropriately.
+    #  works and then reorder the initialization calls appropriately.
 
     ident_map = identifier_specs(ast)
     GLOBAL_INIT_FN_NAME = 'global_init_fn'

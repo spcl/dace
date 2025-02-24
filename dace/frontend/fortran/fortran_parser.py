@@ -34,7 +34,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
     create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
-    assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, prune_coarsely
+    assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, prune_coarsely, consolidate_global_data_into_arg
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
@@ -2831,12 +2831,17 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
     _checkpoint_ast(cfg, 'ast_v3.f90', ast)
 
+    print("FParser Op: Consolidating the global variables of the AST...")
+    ast = consolidate_global_data_into_arg(ast)
+    ast = prune_coarsely(ast, cfg.do_not_prune)
+    _checkpoint_ast(cfg, 'ast_v4.f90', ast)
+
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
     ast = assign_globally_unique_subprogram_names(ast, set(cfg.entry_points))
     ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
     ast = consolidate_uses(ast)
-    _checkpoint_ast(cfg, 'ast_v4.f90', ast)
+    _checkpoint_ast(cfg, 'ast_v5.f90', ast)
 
     return ast
 

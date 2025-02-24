@@ -126,12 +126,6 @@ end subroutine f2
             g.compile()
         serde_code = generate_serde_code(ast, g)
         ti_code = generate_type_injection_code(ast)
-        hack_decl = singular(l.removeprefix('// HACK DECLARATION: ')
-                             for l in serde_code.cpp_serde.splitlines()
-                             if '// HACK DECLARATION: ' in l).strip()
-        hack_call = singular(l.removeprefix('// HACK CALL: ')
-                             for l in serde_code.cpp_serde.splitlines()
-                             if '// HACK CALL: ' in l).strip()
 
         # Modify the AST to use the serializer.
         # 1. Reconstruct the original AST, since we have run some preprocessing on the existing one.
@@ -248,7 +242,8 @@ int main() {{
     std::ifstream data_gdata("{s_data.name}.gdata");
     assert (data_gdata.good());
 
-    serde::deserialize(serde::global_data::singleton(), data_gdata);
+    global_data_type g;
+    serde::deserialize(&g, data_gdata);
 
     t x;
     serde::deserialize(&x, data);
@@ -256,35 +251,14 @@ int main() {{
     auto [m, y] = serde::read_array<float>(data_bbz);
 
     assert(x.name->w->a == 141); // This should be changed to `141 + 42 + 99 => 282` after the call.
-    auto* h = __dace_init_f2(&x);
-    __program_f2(h, &x);
+    auto* h = __dace_init_f2(&g, &x);
+    __program_f2(h, &g, &x);
 
     std::cout << serde::serialize(&x) << std::endl;
 
     return __dace_exit_f2(h);
 }}
 """
-
-        # HACK ALERT: But we will also "hack" the generated code to insert the global data setup code.
-        g_cpp = Path(t_dir).joinpath(f'src/cpu/{g.name}.cpp')
-        g_cpp_code = g_cpp.read_text().splitlines()
-        # Find where the real main starts.
-        pline = singular(i for i, l in enumerate(g_cpp_code) if f'void __program_{g.name}_internal' in l)
-        # The next line must be a `{`.
-        pline += 1
-        assert g_cpp_code[pline].strip() == '{'
-        # Find the next empty line, which follows the declarations.
-        pline += 1
-        while g_cpp_code[pline].strip():
-            pline += 1
-        # Find the next empty line, which follows the array allocations.
-        while g_cpp_code[pline].strip():
-            pline += 1
-        # Now we can inject our lines here and overwrite the generated file.
-        g_cpp_code = [hack_decl] + g_cpp_code[:pline] + [hack_call] + g_cpp_code[pline:]
-        g_cpp_code = '\n'.join(g_cpp_code)
-        with open(g_cpp, 'w') as f:
-            f.write(g_cpp_code)
 
         # Finally, we can actually run the thing.
         output = run_main_cpp(cpp_code, t_dir, g.name)
@@ -372,10 +346,11 @@ int main() {{
         ast = create_fparser_ast(cfg)
         ast = run_fparser_transformations(ast, cfg)
         assert f"""
-LOGICAL FUNCTION f1(s)
-  USE lib, ONLY: t3
+LOGICAL FUNCTION f1(global_data, s)
+  USE global_mod, ONLY: global_data_type, t3
   IMPLICIT NONE
   TYPE(t3) :: s
+  TYPE(global_data_type) :: global_data
   f1 = .TRUE.
 END FUNCTION f1
 """.strip() in ast.tofortran()

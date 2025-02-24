@@ -15,8 +15,8 @@ from fparser.two.utils import walk
 import dace
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
-    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec, find_type_of_entity, \
-    find_real_ident_spec, ident_spec
+    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec, GLOBAL_DATA_OBJ_NAME, \
+    GLOBAL_DATA_TYPE_NAME
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
 NEW_LINE = "NEW_LINE('A')"
@@ -399,52 +399,54 @@ def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     uses, ser_ops = [], []
     gd_struct, des_ops = [], []
     hack_typs, hack_args, hack_ops, hack_call = [], [], [], []
-    for mod in walk(ast, Module):
-        mname = find_name_of_node(mod)
-        spart = atmost_one(children_of_type(mod, Specification_Part))
-        if not spart:
-            continue
-        for var in walk(spart, Entity_Decl):
-            vname = find_name_of_node(var)
-            # TODO: What if `vname` is in `g.symbols`?
-            if vname not in g.arrays:
+    if GLOBAL_DATA_OBJ_NAME in g.arrays:
+        gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
+        for mod in walk(ast, Module):
+            mname = find_name_of_node(mod)
+            spart = atmost_one(children_of_type(mod, Specification_Part))
+            if not spart:
                 continue
-            renamed: re.Match = re.match(r'^([a-zA-Z0-9_]+)_var_[0-9]+$', vname)
-            ogvname = renamed.group(1) if renamed else vname
+            for var in walk(spart, Entity_Decl):
+                vname = find_name_of_node(var)
+                assert vname
+                if vname not in gdata:
+                    continue
+                renamed: re.Match = re.match(r'^([a-zA-Z0-9_]+)_var_[0-9]+$', vname)
+                ogvname = renamed.group(1) if renamed else vname
 
-            uses.append(f"""use {mname}, only : {vname} => {ogvname}""")
-            ser_ops.append(f"""
+                uses.append(f"""use {mname}, only : {vname} => {ogvname}""")
+                ser_ops.append(f"""
 call serialize(io, "# {vname}", cleanup=.false.)
 call serialize(io, {vname}, cleanup=.false.)
 """)
-            vctyp = _real_ctype(g.arrays[vname])
-            gd_struct.append(f"{vctyp} {vname} = {{}};")
-            if isinstance(g.arrays[vname], dace.data.Array):
-                des_ops.append(f"""
+                vctyp = _real_ctype(gdata[vname])
+                gd_struct.append(f"{vctyp} {vname} = {{}};")
+                if isinstance(gdata[vname], dace.data.Array):
+                    des_ops.append(f"""
 {{
     read_line(s, "# {vname}");
     auto [m, arr] = read_array<{vctyp[:-1]}>(s);
     g->{vname} = arr;
 }}
 """)
-                hack_typs.append(f"{vctyp}")
-                hack_args.append(f"{vname}")
-                hack_call.append(f"{vname}")
-                hack_ops.append(f"""
+                    hack_typs.append(f"{vctyp}")
+                    hack_args.append(f"{vname}")
+                    hack_call.append(f"{vname}")
+                    hack_ops.append(f"""
 {{
     auto& m = (*ARRAY_META_DICT())[gdata->{vname}];
     std::copy(gdata->{vname}, gdata->{vname}+m.volume(), {vname});
 }}
 """)
-            else:
-                des_ops.append(f"""
+                else:
+                    des_ops.append(f"""
 read_line(s, "# {vname}");
 deserialize(g->{vname}, s);
 """)
-                hack_typs.append(f"{vctyp}*")
-                hack_args.append(f"{vname}")
-                hack_call.append(f"&{vname}")
-                hack_ops.append(f"""
+                    hack_typs.append(f"{vctyp}*")
+                    hack_args.append(f"{vname}")
+                    hack_call.append(f"&{vname}")
+                    hack_ops.append(f"""
 *{vname} = gdata->{vname};
 """)
 
@@ -476,6 +478,10 @@ struct global_data {{
 }};
 
 void deserialize(global_data* g, std::istream& s) {{
+    {des_ops}
+}}
+
+void deserialize({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
 }}
 
@@ -617,8 +623,6 @@ std::string serialize(bool x) {{
 
     # Actual code generation begins here.
     ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast)
-    derived_type_map = {dt.spec: dt for dt in iterate_over_derived_types(ident_map)}
     for dt in iterate_over_derived_types(ident_map):
         if dt.name not in sdfg_structs:
             # The type is not present in the final SDFG, so we don't care for it.
