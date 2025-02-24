@@ -541,6 +541,8 @@ class StructToContainerGroups(ppl.Pass):
         self._interface_with_struct_copy = interface_with_struct_copy
         self._verbose = verbose
         self._struct_replacements = dict()
+        self._flattener_codestr = ""
+        self._deflattener_codestr = ""
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -714,8 +716,8 @@ class StructToContainerGroups(ppl.Pass):
 {copy_strs_reverse}
 """
 
-        self._flattener_codestr = flattener_codestr
-        self._deflattener_codestr = deflattener_codestr
+        self._flattener_codestr += flattener_codestr
+        self._deflattener_codestr += deflattener_codestr
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> int:
         generate_container_groups_from_structs(sdfg, self._flattening_mode)
