@@ -201,13 +201,22 @@ def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
 
 
 def search_scope_spec(node: Base) -> Optional[SPEC]:
+    # A basic check to make sure that it is not on the tail of a data-ref.
+    if isinstance(node.parent, (Part_Ref, Data_Ref)):
+        cnode, par = node, node.parent
+        while par and isinstance(par, (Part_Ref, Data_Ref)):
+            if par.children[0] is not cnode:
+                return None
+            cnode, par = par, par.parent
+
     scope = find_scope_ancestor(node)
     if not scope:
         return None
     lin = lineage(scope, node)
     assert lin
-    par = node.parent
+
     # TODO: How many other such cases can there be?
+    par = node.parent
     if (isinstance(scope, Derived_Type_Def)
             and any(
                 isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector))
@@ -1074,9 +1083,9 @@ def correct_for_function_calls(ast: Program):
     while changed is None or changed:
         changed = False
         for pr in walk(ast, Part_Ref):
-            scope_spec = find_scope_spec(pr)
             if isinstance(pr.parent, Data_Ref):
                 dref = pr.parent
+                scope_spec = find_scope_spec(dref)
                 comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
                 comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
                 if not comp_type_spec:
@@ -1091,6 +1100,7 @@ def correct_for_function_calls(ast: Program):
                         replace_node(pr, Function_Reference(pr.tofortran()))
                         changed = True
                 elif isinstance(pr_name, Data_Ref):
+                    scope_spec = find_scope_spec(pr_name)
                     pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
                     if not pr_type_spec:
                         # Cannot find a type, so it must be a function call.
