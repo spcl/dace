@@ -1,5 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from dace.frontend.fortran.config_propagation_data import ecrad_config_injection
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast, \
     create_sdfg_from_fortran_file_with_options
 from dace.frontend.fortran.gen_serde import find_all_f90_files
+
+DIR_PATH = os.path.dirname(os.path.realpath(__file__))
 
 if __name__ == "__main__":
     base_icon_path = sys.argv[1]
@@ -23,15 +26,6 @@ if __name__ == "__main__":
     else:
         entry_point_module = 'radiation_mcica_lw'
         entry_point_function = 'solver_mcica_lw'
-        #entry_points=[('radiation_single_level', 'get_albedos')],
-        #entry_points=[('radiation_ifs_rrtm', 'gas_optics')],
-        #entry_points=[('radiation_cloud', 'crop_cloud_fraction')],
-        #entry_points=[('radiation_cloud_optics', 'cloud_optics_fn_438')],
-        #entry_points=[('radiation_mcica_lw', 'solver_mcica_lw')],
-        #entry_points=[('radiation_mcica_sw', 'solver_mcica_sw')],
-
-        #entry_points=[('radiation_aerosol_optics', 'add_aerosol_optics')],
-        
 
     if already_parsed_ast:
         fortran_files = find_all_f90_files(Path(already_parsed_ast))
@@ -41,9 +35,8 @@ if __name__ == "__main__":
     # Construct the primary ECRAD AST.
     parse_cfg = ParseConfig(
         sources=[Path(f) for f in fortran_files],
-        
         entry_points=[(entry_point_module, entry_point_function)],
-        config_injections=ecrad_config_injection_list('dace/frontend/fortran/conf_files'),
+        config_injections=ecrad_config_injection_list(os.path.join(DIR_PATH, 'conf_files'))
     )
     ecrad_ast = create_fparser_ast(parse_cfg)
 

@@ -2000,8 +2000,11 @@ class InternalFortranAst:
             x = value.split("_")
             value = x[0]
             print(x[1])
+            # FIXME: This depends on custom type `wp` defined only for ICON.
             if x[1] == "wp":
                 return ast_internal_classes.Double_Literal_Node(value=value, type="DOUBLE")
+        if value.endswith("d0"):
+            return ast_internal_classes.Double_Literal_Node(value=value.split("d0")[0], type="DOUBLE")
         return ast_internal_classes.Real_Literal_Node(value=value, type="REAL")
 
     def char_literal_constant(self, node: FASTNode):

@@ -2519,27 +2519,37 @@ class TypeInference(NodeTransformer):
         else:
             return node.type
 
+    def visit_Int_Literal_Node(self, node: ast_internal_classes.Int_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
+    def visit_Double_Literal_Node(self, node: ast_internal_classes.Double_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
+    def visit_Real_Literal_Node(self, node: ast_internal_classes.Real_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
+    def visit_Bool_Literal_Node(self, node: ast_internal_classes.Bool_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
     def _get_offsets(self, node):
 
-        if isinstance(node, ast_internal_classes.Int_Literal_Node):
-            return [1]
-        elif isinstance(node, ast_internal_classes.Real_Literal_Node):
-            return [1]
-        elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
-            return [1]
-        else:
-            return node.offsets
+        if isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node)):
+            node.offsets = [1]
+        return node.offsets
 
     def _get_sizes(self, node):
 
-        if isinstance(node, ast_internal_classes.Int_Literal_Node):
-            return []
-        elif isinstance(node, ast_internal_classes.Real_Literal_Node):
-            return []
-        elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
-            return []
-        else:
-            return node.sizes
+        if isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node)):
+            node.sizes = []
+        return node.sizes
 
 
 class PointerRemoval(NodeTransformer):
