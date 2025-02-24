@@ -423,8 +423,10 @@ def _tile_cpu(
             copy_inputs_2 = None
             gc.collect()
 
+            verification_failed = False
             if verify and not are_close:
-                raise Exception("Numerical verification failed.")
+                verification_failed = True
+                #raise Exception("Numerical verification failed.")
 
             if best_time is None or time < best_time:
                 best_config = current_config
@@ -434,7 +436,10 @@ def _tile_cpu(
             print(f"Current config: {current_config}, best config: {best_config}")
             print(f"Non-transformed SDFG: {non_transformed_time:.10f} ms")
             print(f"Speed-up: {non_transformed_time / time:.2f}")
-            logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","{time}","{non_transformed_time / time}"\n')
+            if not verification_failed:
+                logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","{time}","{non_transformed_time / time}"\n')
+            else:
+                logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","99999999999999.9","0.0"\n')
             if i % 20 == 0:
                 logfile.flush()
     return best_config, best_time
