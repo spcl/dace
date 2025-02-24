@@ -2701,7 +2701,7 @@ def create_fparser_ast(cfg: ParseConfig) -> Program:
     return ast
 
 
-def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, FNode]:
+def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, Program_Node]:
     ast = create_fparser_ast(cfg)
 
     if not cfg.entry_points:

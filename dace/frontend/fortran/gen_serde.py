@@ -396,9 +396,7 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
 
 
 def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
-    uses, ser_ops = [], []
-    gd_struct, des_ops = [], []
-    hack_typs, hack_args, hack_ops, hack_call = [], [], [], []
+    uses, ser_ops, des_ops = [], [], []
     if GLOBAL_DATA_OBJ_NAME in g.arrays:
         gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
         for mod in walk(ast, Module):
@@ -420,7 +418,6 @@ call serialize(io, "# {vname}", cleanup=.false.)
 call serialize(io, {vname}, cleanup=.false.)
 """)
                 vctyp = _real_ctype(gdata[vname])
-                gd_struct.append(f"{vctyp} {vname} = {{}};")
                 if isinstance(gdata[vname], dace.data.Array):
                     des_ops.append(f"""
 {{
@@ -429,25 +426,10 @@ call serialize(io, {vname}, cleanup=.false.)
     g->{vname} = arr;
 }}
 """)
-                    hack_typs.append(f"{vctyp}")
-                    hack_args.append(f"{vname}")
-                    hack_call.append(f"{vname}")
-                    hack_ops.append(f"""
-{{
-    auto& m = (*ARRAY_META_DICT())[gdata->{vname}];
-    std::copy(gdata->{vname}, gdata->{vname}+m.volume(), {vname});
-}}
-""")
                 else:
                     des_ops.append(f"""
 read_line(s, "# {vname}");
 deserialize(g->{vname}, s);
-""")
-                    hack_typs.append(f"{vctyp}*")
-                    hack_args.append(f"{vname}")
-                    hack_call.append(f"&{vname}")
-                    hack_ops.append(f"""
-*{vname} = gdata->{vname};
 """)
 
     uses = '\n'.join(uses)
@@ -461,37 +443,11 @@ close(UNIT=io)
 end subroutine serialize_global_data
 """
 
-    gd_struct = '\n'.join(gd_struct)
     des_ops = '\n'.join(des_ops)
-    hack_sig = ', '.join(f"{t} {a}" for t, a in zip(hack_typs, hack_args))
-    hack_sig_typonly = ', '.join(f"{t}" for t in hack_typs)
-    hack_call = ', '.join(hack_call)
-    hack_ops = '\n'.join(hack_ops)
     cpp_code = f"""
-struct global_data {{
-    {gd_struct}
-
-    static global_data* singleton() {{
-        static auto* g = new global_data;
-        return g;
-    }}
-}};
-
-void deserialize(global_data* g, std::istream& s) {{
-    {des_ops}
-}}
-
 void deserialize({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
 }}
-
-extern "C" void global_hack({hack_sig}) {{
-    const auto* gdata = global_data::singleton();
-    {hack_ops}
-}}
-
-// HACK DECLARATION: namespace serde {{ extern "C" void global_hack({hack_sig_typonly}); }} // namespace serde
-// HACK CALL: serde::global_hack({hack_call});
 """
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
 
