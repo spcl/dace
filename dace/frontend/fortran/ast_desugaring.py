@@ -190,7 +190,7 @@ def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
 
 
 def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
-    if anc == des:
+    if anc is des:
         return (anc,)
     if not des.parent:
         return None
