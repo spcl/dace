@@ -373,7 +373,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
             pool_header = f'''
     cudaMemPool_t mempool;
     cudaDeviceGetDefaultMemPool(&mempool, 0);
-    uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
+    uint32_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
     cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);            
 '''
 
@@ -1052,27 +1052,27 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         num_channels = channel_end - channel_start + 1
                         block_width = length_1
                         block_height = length_0
-                        callsite_stream.write(f"const int tile_width = {src_name}_tile_width;")
-                        callsite_stream.write(f"const int tile_height = {src_name}_tile_height;")
-                        callsite_stream.write(f"const int row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
-                        callsite_stream.write(f"const int col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
-                        callsite_stream.write(f"const int col_start_temp = {col_start} + col_start_offset;")
-                        callsite_stream.write(f"const int col_start = col_start_temp % {src_name}_width;")
-                        callsite_stream.write(f"const int row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
-                        callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
-                        callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
-                        callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
-                        callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
-                        callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
+                        callsite_stream.write(f"const uint32_t tile_width = {src_name}_tile_width;")
+                        callsite_stream.write(f"const uint32_t tile_height = {src_name}_tile_height;")
+                        callsite_stream.write(f"const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
+                        callsite_stream.write(f"const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
+                        callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
+                        callsite_stream.write(f"const uint32_t col_start = col_start_temp % {src_name}_width;")
+                        callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
+                        callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
+                        callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
+                        callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
+                        callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
+                        callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
                         callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
-                        callsite_stream.write(f"const int channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
-                        callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
-                        callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
-                        callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
-                        callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
-                        callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
-                        callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                        callsite_stream.write(f"const int block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                        callsite_stream.write(f"const uint32_t channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
+                        callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+                        callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
+                        callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
+                        callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
+                        callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+                        callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+                        callsite_stream.write(f"const uint32_t block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
                         funcname = "flex_dma_async_1d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
@@ -1152,34 +1152,34 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         num_channels = channel_end - channel_start + 1
                         block_width = length_1
                         block_height = length_0
-                        callsite_stream.write(f"const int tile_width = {dst_name}_tile_width;")
-                        callsite_stream.write(f"const int tile_height = {dst_name}_tile_height;")
+                        callsite_stream.write(f"const uint32_t tile_width = {dst_name}_tile_width;")
+                        callsite_stream.write(f"const uint32_t tile_height = {dst_name}_tile_height;")
                         
-                        # callsite_stream.write(f"const int row_start_offset = 0;")
-                        # callsite_stream.write(f"const int col_start_offset = 0;")
+                        # callsite_stream.write(f"const uint32_t row_start_offset = 0;")
+                        # callsite_stream.write(f"const uint32_t col_start_offset = 0;")
                         
-                        callsite_stream.write(f"const int row_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) / {dst_name}_width;")
-                        callsite_stream.write(f"const int col_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) % {dst_name}_width;")
-                        # callsite_stream.write(f"const int row_start = {row_start};")
-                        # callsite_stream.write(f"const int col_start = {col_start};")
-                        callsite_stream.write(f"const int col_start_temp = {col_start} + col_start_offset;")
-                        callsite_stream.write(f"const int col_start = col_start_temp % {dst_name}_width;")
-                        callsite_stream.write(f"const int row_start = {row_start} + row_start_offset + col_start_temp / {dst_name}_width;")
+                        callsite_stream.write(f"const uint32_t row_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) / {dst_name}_width;")
+                        callsite_stream.write(f"const uint32_t col_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) % {dst_name}_width;")
+                        # callsite_stream.write(f"const uint32_t row_start = {row_start};")
+                        # callsite_stream.write(f"const uint32_t col_start = {col_start};")
+                        callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
+                        callsite_stream.write(f"const uint32_t col_start = col_start_temp % {dst_name}_width;")
+                        callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {dst_name}_width;")
 
-                        callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
-                        callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
-                        callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
-                        callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
-                        callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
+                        callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
+                        callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
+                        callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
+                        callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
+                        callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
                         callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
-                        callsite_stream.write(f"const int channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
-                        callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
-                        callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
-                        callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
-                        callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
-                        callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
-                        callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                        callsite_stream.write(f"const int block_addr = {dst_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                        callsite_stream.write(f"const uint32_t channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
+                        callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+                        callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
+                        callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
+                        callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
+                        callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+                        callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+                        callsite_stream.write(f"const uint32_t block_addr = {dst_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
                         funcname = "flex_dma_async_1d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
@@ -1320,27 +1320,27 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             num_channels = channel_end - channel_start + 1
                             block_width = length_1
                             block_height = length_0
-                            callsite_stream.write(f"const int tile_width = {src_name}_tile_width;")
-                            callsite_stream.write(f"const int tile_height = {src_name}_tile_height;")
-                            callsite_stream.write(f"const int row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
-                            callsite_stream.write(f"const int col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
-                            callsite_stream.write(f"const int col_start_temp = {col_start} + col_start_offset;")
-                            callsite_stream.write(f"const int col_start = col_start_temp % {src_name}_width;")
-                            callsite_stream.write(f"const int row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
-                            callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
-                            callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
-                            callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
-                            callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
-                            callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
+                            callsite_stream.write(f"const uint32_t tile_width = {src_name}_tile_width;")
+                            callsite_stream.write(f"const uint32_t tile_height = {src_name}_tile_height;")
+                            callsite_stream.write(f"const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
+                            callsite_stream.write(f"const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
+                            callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
+                            callsite_stream.write(f"const uint32_t col_start = col_start_temp % {src_name}_width;")
+                            callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
+                            callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
+                            callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
+                            callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
+                            callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
+                            callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
                             callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
-                            callsite_stream.write(f"const int channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
-                            callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
-                            callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
-                            callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
-                            callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
-                            callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
-                            callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                            callsite_stream.write(f"const int block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                            callsite_stream.write(f"const uint32_t channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
+                            callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+                            callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
+                            callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
+                            callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
+                            callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+                            callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+                            callsite_stream.write(f"const uint64_t block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
                             funcname = "flex_dma_async_1d"
                             callsite_stream.write(('    {func}({args});').format(
                                     func=funcname,
@@ -1934,16 +1934,16 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # TODO: Load the arguments(callsite_stream)
     #     callsite_stream.write('''
     #         size_t array_size = 8192;
-    #         std::vector<uint64_t> array1 = {64, 64 + static_cast<uint64_t>(array_size * 2)};
-    #         std::vector<uint64_t> array2;
+    #         std::vector<uint32_t> array1 = {64, 64 + static_cast<uint32_t>(array_size * 2)};
+    #         std::vector<uint32_t> array2;
 
     #         std::vector<float> array2_data(array_size, 0.5f);
     #         for (float val : array2_data) {
-    #             uint64_t scaled_val = static_cast<uint64_t>(std::round(val * 65535));
+    #             uint32_t scaled_val = static_cast<uint32_t>(std::round(val * 65535));
     #             array2.push_back(scaled_val);
     #         }
 
-    #         std::vector<std::vector<uint64_t>> arrays = {array1, array2};
+    #         std::vector<std::vector<uint32_t>> arrays = {array1, array2};
     #         std::vector<std::string> dtypes = {"uint64", "uint64"};
 
     #         ELFGenerator generator;

@@ -33,7 +33,7 @@ def generate_arg_cfg(
     hbm_placement="4,0,0,4",
     hbm_edge_interleaving=0,
     noc_outstanding=64,
-    noc_link_width=512,
+    noc_link_width=1024,
     instruction_mem_base="0x80000000",
     instruction_mem_size="0x00010000",
     soc_register_base="0x90000000",
