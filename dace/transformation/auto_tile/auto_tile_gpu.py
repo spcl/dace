@@ -76,7 +76,9 @@ def _tile_gpu(
 
         copy_inputs = copy.deepcopy(inputs)
         non_transformed_time = auto_tile_util.run_and_measure_time(
-            _kernel_sdfg, copy_inputs
+            kernel_sdfg=_kernel_sdfg, repeats=copy_inputs,
+            repeats=6, warmup=1, dev_type=dace.dtypes.StorageType.GPU_Device,
+            instr_type=dace.dtypes.InstrumentationType.GPU_Events
         )
         output_from_non_transformed = copy_inputs[output_name]
         # Clean memory we do not need anymore
@@ -349,7 +351,10 @@ def _tile_gpu(
                 )
             else:
                 copy_inputs_2 = copy.deepcopy(inputs)
-                time = auto_tile_util.run_and_measure_time(kernel_sdfg, copy_inputs_2)
+                time = auto_tile_util.run_and_measure_time(
+                    kernel_sdfg=kernel_sdfg, repeats=copy_inputs_2,
+                    repeats=6, warmup=1, dev_type=dace.dtypes.StorageType.GPU_Device,
+                    instr_type=dace.dtypes.InstrumentationType.GPU_Events)
                 output_from_transformed = copy_inputs_2[output_name]
 
                 if verify:

@@ -92,7 +92,7 @@ def _tile_cpu(
         non_transformed_time = auto_tile_util.run_and_measure_time(
             kernel_sdfg=_kernel_sdfg,
             inputs=copy_inputs,
-            repeats=2,
+            repeats=6,
             warmups=1,
             dev_type=dace.dtypes.ScheduleType.Default,
             instr_type=dace.dtypes.InstrumentationType.Timer,
@@ -402,7 +402,7 @@ def _tile_cpu(
             time = auto_tile_util.run_and_measure_time(
                 kernel_sdfg=kernel_sdfg,
                 inputs=copy_inputs_2,
-                repeats=2,
+                repeats=6,
                 warmups=1,
                 dev_type=dace.dtypes.ScheduleType.CPU_Persistent,
                 instr_type=dace.dtypes.InstrumentationType.Timer,
