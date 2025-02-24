@@ -3492,10 +3492,11 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
         assert (mod,) in alias_map
         if not isinstance(alias_map[(mod,)], Module_Stmt):
             continue
-        box = nm.parent
-        while box and not isinstance(box, (Module, Main_Program, Function_Subprogram, Subroutine_Subprogram)):
-            box = box.parent
-        replace_node(nm, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}"))
+        if isinstance(nm.parent, Part_Ref):
+            _, subsc = nm.parent.children
+            replace_node(nm.parent, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}({subsc})"))
+        else:
+            replace_node(nm, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}"))
 
     if all_global_vars or always_add_global_data_arg:
         # Make `global_data` an argument to every defined function.
