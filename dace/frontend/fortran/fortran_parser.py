@@ -5,22 +5,19 @@ import os
 import sys
 import warnings
 from copy import deepcopy as dpcp
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 
 import networkx as nx
 from fparser.api import get_reader
-from fparser.common.readfortran import FortranStringReader
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
-from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt
+from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt, Subroutine_Stmt, Function_Stmt, Interface_Stmt, \
+    Execution_Part
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import Base, walk, FortranSyntaxError
 
-import dace
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-from dace.frontend.fortran.ast_internal_classes import Program_Node
 import dace.frontend.fortran.ast_transforms as ast_transforms
 from dace import Language as lang
 from dace import SDFG, InterstateEdge, Memlet, pointer, SDFGState
@@ -37,8 +34,9 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
     create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
-    assign_globally_unique_variable_names, deconstuct_goto_statements
+    assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, prune_coarsely
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
+from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
 from dace.properties import CodeBlock
@@ -2640,7 +2638,9 @@ class ParseConfig:
                  includes: Union[None, List[Path], Dict[str, str]] = None,
                  entry_points: Union[None, SPEC, List[SPEC]] = None,
                  config_injections: Optional[List[ConstInjection]] = None,
-                 do_not_prune: Union[None, SPEC, List[SPEC]] = None):
+                 do_not_prune: Union[None, SPEC, List[SPEC]] = None,
+                 make_noop: Union[None, SPEC, List[SPEC]] = None,
+                 ast_checkpoint_dir: Union[None, str, Path] = None):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2657,12 +2657,20 @@ class ParseConfig:
         elif isinstance(do_not_prune, tuple):
             do_not_prune = [do_not_prune]
         do_not_prune = list({x for x in entry_points + do_not_prune})
+        if not make_noop:
+            make_noop = []
+        elif isinstance(make_noop, tuple):
+            make_noop = [make_noop]
+        if isinstance(ast_checkpoint_dir, str):
+            ast_checkpoint_dir = Path(ast_checkpoint_dir)
 
         self.sources: Dict[str, str] = sources
         self.includes = includes
         self.entry_points: List[SPEC] = entry_points
         self.config_injections: List[ConstInjection] = config_injections or []
         self.do_not_prune: List[SPEC] = do_not_prune
+        self.make_noop: List[SPEC] = make_noop
+        self.ast_checkpoint_dir = ast_checkpoint_dir
 
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
@@ -2725,23 +2733,59 @@ class SDFGConfig:
         self.multiple_sdfgs = multiple_sdfgs
 
 
+def _checkpoint_ast(cfg: ParseConfig, name: str, ast: Program):
+    """
+    If a checkpoint directory was specified in the configs, will dump the AST there in various stages of preprocessing.
+    """
+    if cfg.ast_checkpoint_dir:
+        with open(cfg.ast_checkpoint_dir.joinpath(name), 'w') as f:
+            f.write(ast.tofortran())
+
+
 def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     if not cfg.entry_points:
         cfg.set_all_possible_entry_points_from(ast)
+    _checkpoint_ast(cfg, 'ast_v0.f90', ast)
 
-    print("FParser Op: Removing indirections from AST...")
+    if cfg.make_noop:
+        print("FParser Op: Making certain functions no-op in the AST...")
+        for fn in walk(ast, (Function_Stmt, Subroutine_Stmt)):
+            fnspec = ident_spec(fn)
+            if fnspec not in cfg.make_noop:
+                continue
+            expart = atmost_one(children_of_type(fn.parent, Execution_Part))
+            if expart:
+                remove_self(expart)
+
+    print("FParser Op: Removing local indirections from AST...")
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = remove_access_and_bind_statements(ast)
+    ast = deconstuct_goto_statements(ast)
+    ast = prune_coarsely(ast, cfg.do_not_prune)
+    _checkpoint_ast(cfg, 'ast_v1.f90', ast)
+
+    print("FParser Op: Removing remote indirections from AST...")
     ast = correct_for_function_calls(ast)
     ast = deconstruct_statement_functions(ast)
     ast = deconstruct_procedure_calls(ast)
-    ast = deconstruct_interface_calls(ast)
+    ast = prune_coarsely(ast, cfg.do_not_prune)
+    ast_f90_old, ast_f90_new = None, ast.tofortran()
+    while not ast_f90_old or ast_f90_old != ast_f90_new:
+        if ast_f90_old:
+            print(f"FParser Op: AST-size went from {len(ast_f90_old.splitlines())} lines to"
+                  f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
+        else:
+            print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
+        ast = correct_for_function_calls(ast)
+        ast = deconstruct_interface_calls(ast)
+        ast = prune_coarsely(ast, cfg.do_not_prune)
+        ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
+    if walk(ast, Interface_Stmt):
+        _checkpoint_ast(cfg, 'ast_v1.error.f90', ast)
+        raise RuntimeError(f"Could not remove all the interfaces from AST")
     ast = correct_for_function_calls(ast)
-
-    print("FParser Op: Removing GOTO statements...")
-    ast = deconstuct_goto_statements(ast)
-    ast = correct_for_function_calls(ast)
+    _checkpoint_ast(cfg, 'ast_v2.f90', ast)
 
     ast_f90_old, ast_f90_new = None, ast.tofortran()
     while not ast_f90_old or ast_f90_old != ast_f90_new:
@@ -2750,6 +2794,9 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
                   f" {len(ast_f90_new.splitlines())} lines. Attempting further pruning...")
         else:
             print(f"FParser Op: AST-size is {len(ast_f90_new.splitlines())} lines. Attempting pruning...")
+
+        print("FParser Op: Coarsely pruning the AST...")
+        ast = prune_coarsely(ast, cfg.do_not_prune)
 
         print("FParser Op: Inject configs & prune...")
         ast = inject_const_evals(ast, cfg.config_injections)
@@ -2782,12 +2829,14 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
 
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
     print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
+    _checkpoint_ast(cfg, 'ast_v3.f90', ast)
 
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
     ast = assign_globally_unique_subprogram_names(ast, set(cfg.entry_points))
     ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
     ast = consolidate_uses(ast)
+    _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
     return ast
 

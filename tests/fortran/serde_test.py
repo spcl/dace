@@ -10,7 +10,7 @@ import dace
 from dace.config import Config
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, append_children, prepend_children, \
     identifier_specs
-from dace.frontend.fortran.ast_utils import singular
+from dace.frontend.fortran.ast_utils import singular, atmost_one
 from dace.frontend.fortran.config_propagation_data import deserialize
 from dace.frontend.fortran.fortran_parser import ParseConfig, \
     create_fparser_ast, create_internal_ast, SDFGConfig, create_sdfg_from_internal_ast, \
@@ -31,13 +31,11 @@ def parse_and_improve(sources: Dict[str, str]):
 def run_main_cpp(cpp_code: str, root_dir: str, libname: str) -> str:
     DACE_ROOT = Path(dace.__file__).parent
     return SourceCodeBuilder().add_file(cpp_code, 'main.cc').run_with_gcc([
-        *Config.get_default('compiler', 'cpu', 'args').split(),
+        f"{root_dir}/src/cpu/{libname}.cpp",
+        *Config.get('compiler', 'cpu', 'args').split(),
         f"-std=c++17",
         f"-I{root_dir}/include",
         f"-I{DACE_ROOT}/runtime/include/",
-        f"-L{root_dir}/build",
-        f"-l{libname}",
-        f"-Wl,-rpath,{root_dir}/build",
     ])
 
 
@@ -48,6 +46,8 @@ def test_gen_serde():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
+
+  integer :: G(5)
 
   type T3
     integer :: a = 1
@@ -78,6 +78,7 @@ program main  ! Original entry point.
   implicit none
   real :: d(5, 5)
   type(T), target :: s
+  G = 99
   s%name%w%a = 0
   allocate(s%name%w%bBZ(2,2))
   s%name%w%bBZ = 5.1
@@ -98,7 +99,7 @@ subroutine f2(s)  ! Entry point for the SDFG.
   use lib
   implicit none
   type(T) :: s
-  s%name%w%a = s%name%w%a + 42
+  s%name%w%a = s%name%w%a + 42 + maxval(G)
 end subroutine f2
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -118,8 +119,19 @@ end subroutine f2
         # TODO: We cannot compile with `allocatable` type components, because the generated C++ code is broken.
         g.build_folder = t_dir
         g.compile()
+        g.regenerate_code = False
+        with dace.config.set_temporary(
+                'compiler', 'cpu', 'args',
+                value=f"{Config.get('compiler', 'cpu', 'args')} -undefined dynamic_lookup"):
+            g.compile()
         serde_code = generate_serde_code(ast, g)
         ti_code = generate_type_injection_code(ast)
+        hack_decl = singular(l.removeprefix('// HACK DECLARATION: ')
+                             for l in serde_code.cpp_serde.splitlines()
+                             if '// HACK DECLARATION: ' in l).strip()
+        hack_call = singular(l.removeprefix('// HACK CALL: ')
+                             for l in serde_code.cpp_serde.splitlines()
+                             if '// HACK CALL: ' in l).strip()
 
         # Modify the AST to use the serializer.
         # 1. Reconstruct the original AST, since we have run some preprocessing on the existing one.
@@ -130,7 +142,8 @@ end subroutine f2
         prepend_children(y, [Use_Stmt(f"use serde"), Use_Stmt(f"use type_injection")])
         append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}", .true.), s)'))
         append_children(x, Call_Stmt(f'call serialize(at("{s_data.name}.bbz", .true.), s%name%w%bBZ)'))
-        append_children(x, Call_Stmt(f'call type_inject(at("{s_data.name}.ti"), s%name%w)'))
+        append_children(x, Call_Stmt(f'call serialize_global_data(at("{s_data.name}.gdata", .true.))'))
+        append_children(x, Call_Stmt(f'call type_inject(at("{s_data.name}.ti", .true.), s%name%w)'))
 
         # Now reconstruct the AST again, this time with serde module in place. Then we will run the test and ensure that
         # the serialization is as expected.
@@ -142,7 +155,7 @@ end subroutine f2
 # name
 # w
 # a
-42
+141
 # aa
 # rank
 1
@@ -218,24 +231,31 @@ end subroutine f2
 """.strip()
         assert want == got
 
-        # Now, verify that it can be deserialized from C++ by re-serializing and comparing.
+        # Now, we want to verify that it can be deserialized from C++ by re-serializing and comparing.
         cpp_code = f"""
 {serde_code.cpp_serde}
 #include "{g.name}.h"
 
 #include <fstream>
 #include <iostream>
+#include <cassert>
 
 int main() {{
     std::ifstream data("{s_data.name}");
+    assert (data.good());
     std::ifstream data_bbz("{s_data.name}.bbz");
+    assert (data_bbz.good());
+    std::ifstream data_gdata("{s_data.name}.gdata");
+    assert (data_gdata.good());
 
+    serde::deserialize(serde::global_data::singleton(), data_gdata);
 
     t x;
     serde::deserialize(&x, data);
     // Just checking if we can read the plain array too.
     auto [m, y] = serde::read_array<float>(data_bbz);
 
+    assert(x.name->w->a == 141); // This should be changed to `141 + 42 + 99 => 282` after the call.
     auto* h = __dace_init_f2(&x);
     __program_f2(h, &x);
 
@@ -244,12 +264,35 @@ int main() {{
     return __dace_exit_f2(h);
 }}
 """
+
+        # HACK ALERT: But we will also "hack" the generated code to insert the global data setup code.
+        g_cpp = Path(t_dir).joinpath(f'src/cpu/{g.name}.cpp')
+        g_cpp_code = g_cpp.read_text().splitlines()
+        # Find where the real main starts.
+        pline = singular(i for i, l in enumerate(g_cpp_code) if f'void __program_{g.name}_internal' in l)
+        # The next line must be a `{`.
+        pline += 1
+        assert g_cpp_code[pline].strip() == '{'
+        # Find the next empty line, which follows the declarations.
+        pline += 1
+        while g_cpp_code[pline].strip():
+            pline += 1
+        # Find the next empty line, which follows the array allocations.
+        while g_cpp_code[pline].strip():
+            pline += 1
+        # Now we can inject our lines here and overwrite the generated file.
+        g_cpp_code = [hack_decl] + g_cpp_code[:pline] + [hack_call] + g_cpp_code[pline:]
+        g_cpp_code = '\n'.join(g_cpp_code)
+        with open(g_cpp, 'w') as f:
+            f.write(g_cpp_code)
+
+        # Finally, we can actually run the thing.
         output = run_main_cpp(cpp_code, t_dir, g.name)
         assert output.strip() == (f"""
 # name
 # w
 # a
-84
+282
 # aa
 # rank
 1
