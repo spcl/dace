@@ -3435,7 +3435,7 @@ GLOBAL_DATA_OBJ_NAME = 'global_data'
 GLOBAL_DATA_TYPE_NAME = 'global_data_type'
 
 
-def consolidate_global_data_into_arg(ast: Program) -> Program:
+def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: bool = False) -> Program:
     """
     Move all the global data into one structure and use it from there.
     """
@@ -3461,6 +3461,8 @@ def consolidate_global_data_into_arg(ast: Program) -> Program:
             continue
         for tdecl in children_of_type(spart, Type_Declaration_Stmt):
             all_global_vars.append(tdecl.tofortran())
+    all_derived_types = '\n'.join(all_derived_types)
+    all_global_vars = '\n'.join(all_global_vars)
 
     # Then, replace all the instances of references to global variables with corresponding data-refs.
     for nm in walk(ast, Name):
@@ -3493,37 +3495,35 @@ def consolidate_global_data_into_arg(ast: Program) -> Program:
         box = nm.parent
         while box and not isinstance(box, (Module, Main_Program, Function_Subprogram, Subroutine_Subprogram)):
             box = box.parent
-        spart = singular(children_of_type(box, Specification_Part))
         replace_node(nm, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}"))
 
-    # Make `global_data` an argument to every defined function.
-    for fn in walk(ast, (Function_Subprogram, Subroutine_Subprogram)):
-        stmt = singular(children_of_type(fn, NAMED_STMTS_OF_INTEREST_CLASSES))
-        assert isinstance(stmt, (Function_Stmt, Subroutine_Stmt))
-        prefix, name, dummy_args, whatever = stmt.children
-        if dummy_args:
-            prepend_children(dummy_args, Name(GLOBAL_DATA_OBJ_NAME))
-        else:
-            set_children(stmt, (prefix, name, Dummy_Arg_Name_List(GLOBAL_DATA_OBJ_NAME), whatever))
-        spart = atmost_one(children_of_type(fn, Specification_Part))
-        assert spart
-        prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"))
-        append_children(spart, Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}"))
-    for fcall in walk(ast, (Function_Reference, Call_Stmt)):
-        fn, args = fcall.children
-        fnspec = search_real_local_alias_spec(fn, alias_map)
-        if not fnspec:
-            continue
-        fnstmt = alias_map[fnspec]
-        assert isinstance(fnstmt, (Function_Stmt, Subroutine_Stmt))
-        if args:
-            prepend_children(args, Name(GLOBAL_DATA_OBJ_NAME))
-        else:
-            set_children(fcall, (fn, Actual_Arg_Spec_List(GLOBAL_DATA_OBJ_NAME)))
+    if all_global_vars or always_add_global_data_arg:
+        # Make `global_data` an argument to every defined function.
+        for fn in walk(ast, (Function_Subprogram, Subroutine_Subprogram)):
+            stmt = singular(children_of_type(fn, NAMED_STMTS_OF_INTEREST_CLASSES))
+            assert isinstance(stmt, (Function_Stmt, Subroutine_Stmt))
+            prefix, name, dummy_args, whatever = stmt.children
+            if dummy_args:
+                prepend_children(dummy_args, Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                set_children(stmt, (prefix, name, Dummy_Arg_Name_List(GLOBAL_DATA_OBJ_NAME), whatever))
+            spart = atmost_one(children_of_type(fn, Specification_Part))
+            assert spart
+            prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"))
+            append_children(spart, Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}"))
+        for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+            fn, args = fcall.children
+            fnspec = search_real_local_alias_spec(fn, alias_map)
+            if not fnspec:
+                continue
+            fnstmt = alias_map[fnspec]
+            assert isinstance(fnstmt, (Function_Stmt, Subroutine_Stmt))
+            if args:
+                prepend_children(args, Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                set_children(fcall, (fn, Actual_Arg_Spec_List(GLOBAL_DATA_OBJ_NAME)))
+        # NOTE: We do not remove the variables themselves, and let them be pruned later on.
 
-    # NOTE: We do not remove the variables themselves, and let them be pruned later on.
-    all_derived_types = '\n'.join(all_derived_types)
-    all_global_vars = '\n'.join(all_global_vars)
     global_mod = Module(get_reader(f"""
 module {GLOBAL_DATA_MOD_NAME}
   {all_derived_types}
