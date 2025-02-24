@@ -3519,8 +3519,7 @@ end subroutine {fn_name}
         type_defs[td][1].append(k)
     for t, v in type_defs.items():
         init_fn_name, comps = v
-        if comps:
-            _make_init_fn(init_fn_name, comps, t)
+        _make_init_fn(init_fn_name, comps, t)
 
     global_inited_vars: List[SPEC] = [
         k for k, v in ident_map.items()
