@@ -632,27 +632,28 @@ class CompiledSDFG(object):
                 print('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but not found. Fall back to torch')
             try:
                 import torch
+                import numpy
                 def ndarray(*args, buffer=None, **kwargs):
-                    if buffer is not None:
-                        buffer = buffer.data
+                    cpu_tensor = numpy.ndarray(*args, **kwargs)
+                    gpu_tensor = torch.from_numpy(cpu_tensor).cuda()
+                    return gpu_tensor
 
-                    np_dtype = kwargs.pop('dtype', np.float64)
-                    dtype = torch.from_numpy(np.array([], dtype=np_dtype)).dtype
+                def _zeros(shape, dtype):
+                    dtype_map = {
+                        np.float32: torch.float32,
+                        np.float64: torch.float64,
+                        np.int32: torch.int32,
+                        np.int64: torch.int64,
+                        np.bool_: torch.bool
+                    }
 
-                    shape = args[0] if args else (1,)
+                    _dtype = dtype_map.get(dtype, None)
+                    if dtype is None:
+                        raise TypeError(f"Unsupported dtype: {dtype}")
 
-                    # Create tensor
-                    if 'strides' in kwargs:
-                        strides = kwargs.pop('strides', None)
-                        tensor = torch.empty(shape, dtype=dtype, **kwargs)
+                    return torch.empty(shape, dtype=_dtype).cuda()
 
-                        # Torch in element, numpy/cupy in bytes
-                        strides = [s//tensor.element_size() for s in strides]
-
-                        tensor = tensor.as_strided(shape, strides)
-                    else:
-                        torch.empty(shape, dtype=dtype, **kwargs)
-                    return tensor
+                zeros = _zeros
             except (ImportError, ModuleNotFoundError):
                 raise NotImplementedError('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but both torch and cupy are not found.')
 
