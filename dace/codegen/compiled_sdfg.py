@@ -629,7 +629,7 @@ class CompiledSDFG(object):
 
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but not found. Fall back to torch')
+                print('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but not found. Fall back to torch')
             try:
                 import torch
                 def ndarray(*args, buffer=None, **kwargs):
