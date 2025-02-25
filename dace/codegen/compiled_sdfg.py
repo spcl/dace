@@ -629,7 +629,16 @@ class CompiledSDFG(object):
 
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
+                raise NotImplementedError('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but not found. Fall back to torch')
+            try:
+                import torch
+                def ndarray(*args, buffer=None, **kwargs):
+                    if buffer is not None:
+                        buffer = buffer.data  # In case a buffer is passed, we use its .data attribute
+                    return torch.empty(*args, device=buffer.device if buffer is not None else 'cpu', **kwargs)
+            except (ImportError, ModuleNotFoundError):
+                raise NotImplementedError('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but both torch and cupy are not found.')
+
         if storage is dtypes.StorageType.FPGA_Global:
             raise NotImplementedError('FPGA return values are unsupported')
 
