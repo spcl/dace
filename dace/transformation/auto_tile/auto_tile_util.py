@@ -4,7 +4,7 @@ import random
 import statistics
 from typing import Any, Dict, Type
 import dace
-import cupy
+import torch
 from dace.codegen.compiled_sdfg import CompiledSDFG
 import numpy
 from dace.sdfg.analysis.cutout import SDFGCutout
@@ -209,17 +209,23 @@ def generate_random_data(
             shape = tuple(ns)
             np_dtype = dace.dtypes.typeclass.as_numpy_dtype(arr.dtype)
             if storage_type == dace.StorageType.GPU_Global:
-                new_input = cupy.random.rand(*shape).astype(np_dtype)
+                def func(indices):
+                    return (indices.sum() + 1) / indices.numel()
+
+                new_input = torch.from_function(func, shape, dtype=np_dtype)
             elif storage_type == dace.StorageType.Default:
-                new_input = numpy.random.rand(*shape).astype(np_dtype)
+                new_input = numpy.from_function(func, shape, dtype=np_dtype)
             elif storage_type == None:
                 if (
                     arr.storage == dace.StorageType.Default
                     or arr.storage == dace.StorageType.CPU_Heap
                 ):
-                    new_input = numpy.random.rand(*shape).astype(np_dtype)
+                    new_input = numpy.from_function(func, shape, dtype=np_dtype)
                 elif arr.storage == dace.StorageType.GPU_Global:
-                    new_input = cupy.random.rand(*shape).astype(np_dtype)
+                    def func(indices):
+                        return (indices.sum() + 1) / indices.numel()
+
+                    new_input = torch.from_function(func, shape, dtype=np_dtype)
                 else:
                     raise Exception(f"uwu, {arr.storage}, {storage_type}")
 
