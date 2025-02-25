@@ -634,13 +634,26 @@ class CompiledSDFG(object):
                 import torch
                 def ndarray(*args, buffer=None, **kwargs):
                     if buffer is not None:
-                        if isinstance(buffer, memoryview):
-                            buffer = torch.frombuffer(buffer, dtype=torch.uint8)
-                        else:
-                            buffer = buffer.data
+                        buffer = buffer.data
 
-                    return torch.empty(*args, device=buffer.device if isinstance(buffer, torch.Tensor) else 'cpu', **kwargs)
+                    assert "dtype" in kwargs
+                    np_dtype = kwargs.pop('dtype', np.float64)
+                    dtype = torch.from_numpy(np.array([], dtype=np_dtype)).dtype
 
+                    shape = args[0] if args else (1,)
+
+                    # Create tensor
+                    if 'strides' in kwargs:
+                        strides = kwargs.pop('strides', None)
+                        tensor = torch.empty(shape, dtype=dtype, **kwargs)
+
+                        # Torch in element, numpy/cupy in bytes
+                        strides = [s//tensor.element_size() for s in strides]
+
+                        tensor = tensor.as_strided(shape, strides)
+                    else:
+                        torch.empty(shape, dtype=dtype, **kwargs)
+                    return tensor
             except (ImportError, ModuleNotFoundError):
                 raise NotImplementedError('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but both torch and cupy are not found.')
 
