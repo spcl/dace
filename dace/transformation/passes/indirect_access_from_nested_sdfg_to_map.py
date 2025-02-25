@@ -1,5 +1,5 @@
 import dace
-from dace import properties
+from dace import propagate_memlets_sdfg, properties
 from dace.transformation import pass_pipeline as ppl, transformation
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties, InterstateEdge, SDFGState, properties
@@ -226,6 +226,7 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
 
         # For all in connectors that do not direct to the members, create access nodes
         outside_access_nodes = dict()
+        scalarify_nodes = set()
 
         for in_connector in dst_node.in_connectors:
             if in_connector not in old_symbol_mapping.values():
@@ -235,10 +236,25 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
                 u, uc, v, vc, memlet = list(state.in_edges_by_connector(dst_node, in_connector))[0]
                 if vc not in sdfg.arrays:
                     #print(f"{vc} not in sdfg.arrays")
-                    newdesc = copy.deepcopy(nsdfg.arrays[vc])
-                    newdesc.transient = True
-                    nname = sdfg.add_datadesc(name=vc, datadesc=newdesc)
-                    assert nname == vc
+                    if isinstance(nsdfg.arrays[vc], dace.data.Scalar):
+                        newdesc = copy.deepcopy(nsdfg.arrays[vc])
+                        newdesc.transient = True
+                        newdesc.storage = dace.dtypes.StorageType.Register
+                        nname = sdfg.add_datadesc(name=vc, datadesc=newdesc)
+                        assert nname == vc
+                    else:
+                        newdesc = copy.deepcopy(nsdfg.arrays[vc])
+                        newdesc.transient = True
+                        newdesc.storage = dace.dtypes.StorageType.Register
+                        nname, scal = sdfg.add_scalar(
+                            name=vc,
+                            dtype=newdesc.dtype,
+                            transient=True,
+                            storage=dace.dtypes.StorageType.Register,
+                            find_new_name=False
+                        )
+                        scalarify_nodes.add((nname, scal))
+                        assert nname == vc, f"{nname} != {vc}"
 
                 # Since it is from a map to another map we do need a second access node.
                 #naccess = state.add_access(vc)
@@ -249,40 +265,63 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
         outside_exit_access_nodes = dict()
         for out_connector in dst_node.out_connectors:
             for out_connector in dst_node.out_connectors:
-                #print("Out conn", out_connector)
                 assert len(list(state.out_edges_by_connector(dst_node, out_connector))) == 1
                 u, uc, v, vc, memlet = list(state.out_edges_by_connector(dst_node, out_connector))[0]
                 if uc not in sdfg.arrays:
-                    #print(f"{uc} not in sdfg.arrays")
                     newdesc = copy.deepcopy(nsdfg.arrays[uc])
                     newdesc.transient = True
+                    newdesc.storage = dace.dtypes.StorageType.Register
                     nname = sdfg.add_datadesc(name=uc, datadesc=newdesc)
                     assert nname == uc
                 outside_exit_access_nodes[out_connector] = (v, vc, copy.deepcopy(memlet))
 
         # Redirect the new access nodes to the map
-        inner_map_entry, inner_map_exit = state.add_map(
+        inner_symbol_map_entry, inner_symbol_map_exit = state.add_map(
             name="inner_kernel",
+            ndrange={"__s":dace.subsets.Range([(0,0,1)])},
+            schedule=dace.ScheduleType.Sequential,
+            unroll=True
+        )
+        inner_map_entry, inner_map_exit = state.add_map(
+            name="inner_symbol_kernel",
             ndrange={"__i":dace.subsets.Range([(0,0,1)])},
             schedule=dace.ScheduleType.Sequential,
             unroll=True
         )
-        # Create nodes from outer to inner map
+        # Create the symbols
+        for name, edge in new_symbol_mapping.items():
+            state.add_edge(edge.src, edge.src_conn, inner_symbol_map_entry, name, copy.deepcopy(edge.data))
+            inner_symbol_map_entry.add_in_connector(name)
+
+        data_used = set()
+        # Create nodes from outer to symbol and from symbol to inner
         for data_name, (src, src_conn, memlet) in outside_access_nodes.items():
-            state.add_edge(src, src_conn, inner_map_entry, f"IN_{data_name}", copy.deepcopy(memlet))
+            if memlet.data not in data_used:
+                data_used.add((src, src_conn, memlet, data_name))
+            state.add_edge(inner_symbol_map_entry, f"OUT_{data_name}", inner_map_entry, f"IN_{data_name}", copy.deepcopy(memlet))
+            state.add_edge(src, src_conn, inner_symbol_map_entry, f"IN_{data_name}", copy.deepcopy(memlet))
+            inner_symbol_map_entry.add_in_connector(f"IN_{data_name}")
+            inner_symbol_map_entry.add_out_connector(f"OUT_{data_name}")
             inner_map_entry.add_in_connector(f"IN_{data_name}")
             inner_map_entry.add_out_connector(f"OUT_{data_name}")
 
-        # Create the symbols
-        for name, edge in new_symbol_mapping.items():
-            state.add_edge(edge.src, edge.src_conn, inner_map_entry, name, copy.deepcopy(edge.data))
-            inner_map_entry.add_in_connector(name)
-
+        data_used = set()
         # Create nodes from inner exit map to outer exit map
         for data_name, (dst, dst_conn, memlet) in outside_exit_access_nodes.items():
-            state.add_edge(inner_map_exit, f"OUT_{data_name}", dst, dst_conn, copy.deepcopy(memlet))
+            if data_name not in data_used:
+                data_used.add((dst, dst_conn, memlet, data_name))
+            state.add_edge(inner_map_exit, f"OUT_{data_name}", inner_symbol_map_exit, f"IN_{data_name}", copy.deepcopy(memlet))
             inner_map_exit.add_in_connector(f"IN_{data_name}")
             inner_map_exit.add_out_connector(f"OUT_{data_name}")
+
+        # Create nodes from exit_map to symbol_exit_map
+        for dst, dst_conn, dst_memlet, data_name in data_used:
+            #state.add_edge(inner_map_exit, f"OUT_{data_name}", inner_symbol_map_exit, "IN_{data_name}", copy.deepcopy(dst_memlet))
+            inner_symbol_map_exit.add_in_connector(f"IN_{data_name}")
+            inner_symbol_map_exit.add_out_connector(f"OUT_{data_name}")
+            #Move dst from to map too
+            state.add_edge(inner_symbol_map_exit, f"OUT_{data_name}", dst, dst_conn, dace.memlet.Memlet(expr=f"{dst_memlet.data}"))
+        sdfg.save("a1.sdfg")
 
         # Now iterate through the second state
         # Get start and end nodes.
@@ -313,6 +352,7 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
             if isinstance(node, dace.nodes.AccessNode) and node.data not in sdfg.arrays:
                 newdesc = copy.deepcopy(nsdfg.arrays[node.data])
                 newdesc.transient = True
+                newdesc.storage = dace.dtypes.StorageType.Register
                 sdfg.add_datadesc(name=node.data, datadesc=newdesc)
 
             if node not in state.nodes():
@@ -333,6 +373,36 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
         for edge in edges_to_add:
             if edge not in state.edges():
                 state.add_edge(*edge)
+
+        # Scalarification
+
+        for node in state.nodes():
+            # Need to map A[:] -(:)-> tmp[:] -(i,j)->
+            # To: A[:] -(i,j) -> tmp[0] -(0)->
+            # Here
+            if isinstance(node, dace.nodes.AccessNode) and node in start_nodes:
+                if (node.data, sdfg.arrays[node.data]) in scalarify_nodes:
+                    oes = state.out_edges(node)
+                    assert len(oes) == 1, f"{oes}, len={len(oes)}"
+                    oe = oes[0]
+                    ies = state.in_edges(node)
+                    assert len(ies) == 1, f"{ies}, len={len(ies)}"
+                    ie = ies[0]
+                    ie.data =  dace.Memlet(data=ie.data.data, subset=copy.deepcopy(oe.data.subset))
+                    oe.data = dace.Memlet(expr=f"{oe.data.data}[0]")
+
+        # Propagate accesses one level
+        for node in state.nodes():
+            if node == inner_map_entry:
+                for in_conn in node.in_connectors:
+                    ies = list(state.in_edges_by_connector(node, in_conn))
+                    oes = list(state.out_edges_by_connector(node, in_conn.replace("IN_", "OUT_")))
+                    assert len(ies) == len(oes), f"{ies}, {oes}"
+                    assert len(ies) == 1
+                    ie = ies[0]
+                    oe = oes[0]
+                    if ie.data != oe.data:
+                        ie.data = copy.deepcopy(oe.data)
 
         # Done, remove nested SDFG
         state.remove_node(dst_node)
@@ -361,4 +431,12 @@ class IndirectAccessFromNestedSDFGToMap(ppl.Pass):
                     names = guid_names_map[guid]
                     if self.can_apply(sdfg, s, n, names):
                         self.symbollify(sdfg, s, n, names)
+        sdfg.save("done.sdfg")
         sdfg.validate()
+        sdfg.simplify()
+        #propagate_memlets_sdfg(sdfg)
+        sdfg.save("prop.sdfg")
+
+    @staticmethod
+    def annotates_memlets():
+        return True

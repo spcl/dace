@@ -7,7 +7,8 @@ from pathlib import Path
 import random
 from typing import Dict, List, Tuple, Type, Any
 
-import cupy
+import torch
+
 import numpy as np
 import dace
 from dace.transformation.auto_tile import auto_tile_util
@@ -27,6 +28,7 @@ from dace.transformation.auto_tile.auto_tile_util import find_nodes_by_cond
 from dace.transformation.auto_tile.auto_tile_util import find_state_by_cond
 from dace.transformation.auto_tile.auto_tile_util import get_ref_kernel_nodes_and_edges
 from dace.transformation.auto_tile.auto_tile_util import validate_and_pad_params_to_three
+from dace.transformation.passes.indirect_access_from_nested_sdfg_to_map import IndirectAccessFromNestedSDFGToMap
 
 
 def _tile_gpu(
@@ -49,9 +51,12 @@ def _tile_gpu(
     timeout,
     random_iter,
 ):
+
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
         _kernel_sdfg = copy_sub_scope(state, entry)
+        IndirectAccessFromNestedSDFGToMap().apply_pass(sdfg=_kernel_sdfg, _={})
+
         _kernel_sdfg.name = f"{sdfg.name}_auto_tiled_{call_id}"
         auto_tile_util.convert_inputs_to_gpu_storage(_kernel_sdfg)
         auto_tile_util.set_transient(_kernel_sdfg)
@@ -105,6 +110,7 @@ def _tile_gpu(
             memory_tiling_parameters = [(1,)]
 
     else:
+        IndirectAccessFromNestedSDFGToMap().apply_pass(sdfg=sdfg, _={})
         _kernel_sdfg = sdfg
         _kernel_state = state
         _kernel_entry = entry
@@ -231,7 +237,8 @@ def _tile_gpu(
             lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
             and n.label != "KernelEntryMap"
             and n.label != "ThreadCoarsenedMap"
-            and n.label != dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map",
+            and n.label != dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map"
+            and n.map.range.num_elements_exact() != 1,
         )
         thread_block_map_entry = find_node_by_cond(
             kernel_state,
@@ -249,22 +256,29 @@ def _tile_gpu(
         if not is_assign_kernel:
             for i in range(len(work_maps)):
                 work_map_entry: dace.nodes.MapEntry = work_maps[i]
-                work_map_tile = memory_tiling_params[i % len(memory_tiling_params)]
 
                 # If the passed memory tiling parameter is less than the map dimension, pad
                 # If it longer, then take the first elements
                 tuple_size_needed = len(work_map_entry.map.range)
-                work_map_tile = work_map_tile[:tuple_size_needed] + (1,) * (
+                work_map_tile = memory_tiling_params[:tuple_size_needed] + (1,) * (
                     tuple_size_needed - len(work_map_tile)
                 )
 
-                BlockTiling.apply_to(
-                    sdfg=kernel_sdfg,
-                    options={"block_tile_sizes": work_map_tile},
-                    verify=True,
-                    thread_block_map_entry=thread_block_map_entry,
-                    sequential_map_entry=work_map_entry,
-                )
+                invalid_block_tile = False
+                for _i, (b,e,s) in enumerate(work_map_entry.map.range):
+                    if (e+1-b)//s < work_map_tile[_i]:
+                        # Cane apply
+                        invalid_block_tile = True
+                        break
+
+                if not invalid_block_tile:
+                    BlockTiling.apply_to(
+                        sdfg=kernel_sdfg,
+                        options={"block_tile_sizes": work_map_tile},
+                        verify=True,
+                        thread_block_map_entry=thread_block_map_entry,
+                        sequential_map_entry=work_map_entry,
+                    )
             thread_block_map_entry = find_node_by_cond(
                 kernel_state,
                 kernel_entry,
@@ -279,6 +293,7 @@ def _tile_gpu(
                     and n.map.label == dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map",
                 )
                 print(thread_block_map_entry)
+                kernel_sdfg.save("beforememmove.sdfg")
                 ExplicitMemoryMove.apply_to(
                     sdfg=kernel_sdfg,
                     verify=True,
@@ -353,12 +368,12 @@ def _tile_gpu(
                 copy_inputs_2 = copy.deepcopy(inputs)
                 time = auto_tile_util.run_and_measure_time(
                     kernel_sdfg=kernel_sdfg, inputs=copy_inputs_2,
-                    repeats=6, warmups=1, dev_type=dace.dtypes.ScheduelType.GPU_Device,
+                    repeats=6, warmups=1, dev_type=dace.dtypes.ScheduleType.GPU_Device,
                     instr_type=dace.dtypes.InstrumentationType.GPU_Events)
                 output_from_transformed = copy_inputs_2[output_name]
 
                 if verify:
-                    are_close = cupy.allclose(
+                    are_close = torch.allclose(
                         output_from_transformed,
                         output_from_non_transformed,
                         rtol=1e-3,
