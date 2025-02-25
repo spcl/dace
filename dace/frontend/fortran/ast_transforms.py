@@ -3096,13 +3096,33 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         ParentScopeAssigner().visit(ast)
         self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
+        self.structures = ast.structures
+
+        self.data_ref_stack = []
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        #struct, variable, last_var = self.structures.find_definition(
+        #    self.scope_vars, node
+        #)
+
+        #if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
+        #    return node
+
+        self.data_ref_stack.append(copy.deepcopy(node))
+        node.part_ref = self.visit(node.part_ref)
+        self.data_ref_stack.pop()
+
         return node
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
-        array_var = self.scope_vars.get_var(node.parent, node.name.name)
+        if len(self.data_ref_stack) > 0:
+            _, array_var, _ = self.structures.find_definition(
+                self.scope_vars, self.data_ref_stack[-1], node.name
+            )
+        else:
+            array_var = self.scope_vars.get_var(node.parent, node.name.name)
 
         indices = []
         for idx, actual_index in enumerate(node.indices):

@@ -281,6 +281,48 @@ end subroutine fun
     for i in range(1, 3):
         assert a[i] == ( i) * 2
 
+def test_fortran_frontend_offset_pardecl_struct():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type simple_type
+    double precision :: d(50:54)
+  end type simple_type
+end module lib
+
+subroutine main(in1)
+  use lib
+  implicit none
+  double precision, dimension(50:54) :: in1
+  type(simple_type) :: struct_data
+
+  struct_data%d = in1
+
+  call fun(struct_data%d(51:53))
+
+  in1(51:53) = struct_data%d(51:53)
+end subroutine main
+
+subroutine fun(d)
+  double precision, dimension(3) :: d
+  integer :: i
+  do i = 1, 3
+    d(i) = i*2.0
+  end do
+end subroutine fun
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    a = np.full([5], 42, order="F", dtype=np.float64)
+    sdfg(in1=a)
+    print(a)
+    for i in range(1, 3):
+        assert a[i] == ( i) * 2
 
 if __name__ == "__main__":
     test_fortran_frontend_offset_normalizer_1d()
@@ -291,3 +333,4 @@ if __name__ == "__main__":
     test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
     test_fortran_frontend_offset_normalizer_struct()
     test_fortran_frontend_offset_pardecl()
+    test_fortran_frontend_offset_pardecl_struct()
