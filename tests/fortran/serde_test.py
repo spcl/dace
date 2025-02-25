@@ -243,7 +243,7 @@ int main() {{
     assert (data_gdata.good());
 
     global_data_type g;
-    serde::deserialize(&g, data_gdata);
+    serde::deserialize_global_data(&g, data_gdata);
 
     t x;
     serde::deserialize(&x, data);

@@ -445,7 +445,7 @@ end subroutine serialize_global_data
 
     des_ops = '\n'.join(des_ops)
     cpp_code = f"""
-void deserialize({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
+void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
 }}
 """
