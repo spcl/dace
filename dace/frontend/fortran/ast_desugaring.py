@@ -3438,6 +3438,7 @@ GLOBAL_DATA_TYPE_NAME = 'global_data_type'
 def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: bool = False) -> Program:
     """
     Move all the global data into one structure and use it from there.
+    TODO: We will have circular dependency if there are global objects of derived type. How to handle that?
     """
     alias_map = alias_specs(ast)
     GLOBAL_DATA_MOD_NAME = 'global_mod'
@@ -3625,6 +3626,14 @@ end subroutine {fn_name}
             type_defs[td] = type_init_fn, []
         type_defs[td][1].append(k)
     for t, v in type_defs.items():
+        if len(t) != 2:
+            # Not a type that's globally accessible anyway.
+            continue
+        mod, _ = t
+        assert (mod,) in alias_map
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            # Not a type that's globally accessible anyway.
+            continue
         init_fn_name, comps = v
         _make_init_fn(init_fn_name, comps, t)
 

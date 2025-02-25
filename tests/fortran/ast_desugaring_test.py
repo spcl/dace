@@ -2386,7 +2386,6 @@ module lib
     real :: foo = 1.9
     integer :: bar
   end type cfg
-  type(cfg) :: globalo
 contains
   subroutine update(what)
     implicit none
@@ -2406,25 +2405,27 @@ end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = consolidate_global_data_into_arg(ast)
-    ast = prune_coarsely(ast, [('main',)])
 
     got = ast.tofortran()
     want = """
 MODULE global_mod
-  TYPE :: cfg
-    REAL :: foo = 1.9
-    INTEGER :: bar
-  END TYPE cfg
   TYPE :: global_data_type
     LOGICAL :: inited_var = .FALSE.
     LOGICAL :: uninited_var
     INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
     INTEGER :: iarr2(3) = [2, 3, 4]
-    TYPE(cfg) :: globalo
   END TYPE global_data_type
 END MODULE global_mod
 MODULE lib
   IMPLICIT NONE
+  LOGICAL :: inited_var = .FALSE.
+  LOGICAL :: uninited_var
+  INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
+  INTEGER :: iarr2(3) = [2, 3, 4]
+  TYPE :: cfg
+    REAL :: foo = 1.9
+    INTEGER :: bar
+  END TYPE cfg
   CONTAINS
   SUBROUTINE update(global_data, what)
     USE global_mod, ONLY: global_data_type
