@@ -636,7 +636,6 @@ class CompiledSDFG(object):
                     if buffer is not None:
                         buffer = buffer.data
 
-                    assert "dtype" in kwargs
                     np_dtype = kwargs.pop('dtype', np.float64)
                     dtype = torch.from_numpy(np.array([], dtype=np_dtype)).dtype
 
