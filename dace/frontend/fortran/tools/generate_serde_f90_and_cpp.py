@@ -18,7 +18,7 @@ import argparse
 from pathlib import Path
 
 from dace import SDFG
-from dace.frontend.fortran.ast_desugaring import const_eval_nodes, inject_const_evals
+from dace.frontend.fortran.ast_desugaring import const_eval_nodes, inject_const_evals, consolidate_global_data_into_arg
 from dace.frontend.fortran.config_propagation_data import ecrad_config_injection_list
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 from dace.frontend.fortran.gen_serde import generate_serde_code, _keep_only_derived_types, find_all_f90_files
@@ -50,6 +50,7 @@ def main():
     ast = _keep_only_derived_types(ast)
     ast = const_eval_nodes(ast)
     ast = inject_const_evals(ast, cfg.config_injections)
+    ast = consolidate_global_data_into_arg(ast)
     # Generated serde code from the processed code.
     serde_code = generate_serde_code(ast, g)
 
