@@ -246,19 +246,19 @@ class SystolicTransformer(transformation.SingleStateTransformation):
             for edge in lr_s1.edges():
                 if isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == transient:
                     compute_stream = f"s_{transient}"
-                    s = lr_s1.add_access(compute_stream)
+                    # s = lr_s1.add_access(compute_stream)
                     # remove src node of the edge
                     src_node = edge.src
                     lr_s1.remove_edge(edge)
                     if lr_s1.out_degree(src_node) == 0:
                         lr_s1.remove_node(src_node)
-                    new_subset = copy.deepcopy(edge.data.other_subset)
-                    new_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] + list(new_subset))
-                    new_edge = copy.deepcopy(edge)
-                    new_edge.data.data = compute_stream
-                    new_edge.data.subset = new_subset
-                    new_edge.data.other_subset = None
-                    lr_s1.add_edge(s, None, edge.dst, None, new_edge.data)
+                    # new_subset = copy.deepcopy(edge.data.other_subset)
+                    # new_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] + list(new_subset))
+                    # new_edge = copy.deepcopy(edge)
+                    # new_edge.data.data = compute_stream
+                    # new_edge.data.subset = new_subset
+                    # new_edge.data.other_subset = None
+                    # lr_s1.add_edge(s, None, edge.dst, None, new_edge.data)
 
         compute_expr = symbolic.pystr_to_symbolic('(%s) %% 2' % (lr_param)) 
         sd.replace(lr_s1, '__dace_db_param', compute_expr)
@@ -316,6 +316,13 @@ class SystolicTransformer(transformation.SingleStateTransformation):
                             code=f"(({gj} > 0) and ({gj} < {NPE} - 1))",
                             language=dtypes.Language.Python
                         )
+
+                        # Load from neighbor TCDM
+                        comm_cfg1_local_cond_tcdm_last = CodeBlock(
+                            code=f"({gj} == {NPE} - 1)",
+                            language=dtypes.Language.Python
+                        )
+                        
                     
                     if transient == "local_B":
                         # Load from HBM
@@ -327,6 +334,12 @@ class SystolicTransformer(transformation.SingleStateTransformation):
                         # Load from neighbor TCDM
                         comm_cfg1_local_cond_tcdm = CodeBlock(
                             code=f"(({gi} > 0) and ({gi} < {NPE} - 1))",
+                            language=dtypes.Language.Python
+                        )
+
+                        # Load from neighbor TCDM
+                        comm_cfg1_local_cond_tcdm_last = CodeBlock(
+                            code=f"({gi} == {NPE} - 1)",
                             language=dtypes.Language.Python
                         )
                     
@@ -342,16 +355,16 @@ class SystolicTransformer(transformation.SingleStateTransformation):
                     
                     local_hbm_state = cb_comm_local_hbm_cfg.add_state(f"{transient}_hbm")
                     hbm_an = local_hbm_state.add_access(hbm_src.data)
-                    local_san = local_hbm_state.add_access(f"s_{transient}")
+                    local_an = local_hbm_state.add_access(f"{transient}")
                     
                     if transient == "local_A":
                         range_expr = symbolic.pystr_to_symbolic('(%s) - %s - %s' % (lr_param, gi, gj)) 
-                        hbm_edge.data.subset.ranges[1] = (range_expr * map_rstride, range_expr * map_rstride + map_rstride - 1, map_rstride)
+                        hbm_edge.data.subset.ranges[1] = (range_expr * map_rstride, range_expr * map_rstride + map_rstride - 1, 1)
                     elif transient == "local_B":
                         range_expr = symbolic.pystr_to_symbolic('(%s) - %s - %s' % (lr_param, gi, gj))
-                        hbm_edge.data.subset.ranges[0] = (range_expr * map_rstride, range_expr  * map_rstride + map_rstride - 1, map_rstride)
-                    hbm_edge.data.other_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] + list(hbm_edge.data.other_subset))
-                    local_hbm_state.add_edge(hbm_an, None, local_san, None, hbm_edge.data)
+                        hbm_edge.data.subset.ranges[0] = (range_expr * map_rstride, range_expr  * map_rstride + map_rstride - 1, 1)
+                    # hbm_edge.data.other_subset = subsets.Range([(gi, gi, 1)] + [(gj, gj, 1)] + list(hbm_edge.data.other_subset))
+                    local_hbm_state.add_edge(hbm_an, None, local_an, None, hbm_edge.data)
                     sd.replace(local_hbm_state, '__dace_db_param', '(%s+1) %% 2'%lr_param)
 
                     # Load from neighbor TCDM                        
@@ -380,7 +393,7 @@ class SystolicTransformer(transformation.SingleStateTransformation):
                         local_subset = subsets.Range([(0, s-1, 1) for s in desc.shape])
                         local_subset = subsets.Range(list(curr_buffer_range) + list(local_subset)[1:])
                         stream_subset = subsets.Range([(0, s-1, 1) for s in desc.shape])
-                        stream_subset = subsets.Range(list(next_buffer_range) + list(stream_subset)[1:])
+                        stream_subset = subsets.Range(list(curr_buffer_range) + list(stream_subset)[1:])
                         stream_subset = subsets.Range(list(next_x_pos_range) + list(next_y_pos_range) + list(stream_subset))
                         comm_state.add_edge(local_an, None, remote_san, None, 
                                         memlet=Memlet(
@@ -389,7 +402,42 @@ class SystolicTransformer(transformation.SingleStateTransformation):
                                         other_subset=stream_subset
                                     ),
                                 )
-        
+
+                    # Last TCDM
+                    cb_comm_local_tcdm_last_cfg = ControlFlowRegion(
+                        label=f"cb_comm_{transient}_tcdm_last"
+                    )
+
+                    cb_communication_local.add_branch(
+                        condition=comm_cfg1_local_cond_tcdm_last,
+                        branch=cb_comm_local_tcdm_last_cfg
+                    )
+
+                    local_tcdm_last_state = cb_comm_local_tcdm_last_cfg.add_state(f"{transient}_tcdm_last")
+
+                    for comm_state in [local_tcdm_state, local_tcdm_last_state]:
+                        local_an = comm_state.add_access(f"{transient}")
+                        remote_san = comm_state.add_access(f"s_{transient}")
+                        curr_buffer_range = subsets.Range([(f"{lr_param} % 2", f"{lr_param} % 2", 1)] )
+                        next_buffer_range = subsets.Range([(f"({lr_param}+1) % 2", f"({lr_param}+1) % 2", 1)])
+                        if transient == "local_A":
+                            next_x_pos_range = subsets.Range([(gi, gi, 1)])
+                            next_y_pos_range = subsets.Range([(f"({gj}+{NPE-1}) % {NPE}", f"({gj}+{NPE-1}) % {NPE}", 1)])
+                        if transient == "local_B":
+                            next_x_pos_range = subsets.Range([(f"({gi}+{NPE-1}) % {NPE}", f"({gi}+{NPE-1}) % {NPE}", 1)])
+                            next_y_pos_range = subsets.Range([(gj, gj, 1)])
+                        local_subset = subsets.Range([(0, s-1, 1) for s in desc.shape])
+                        local_subset = subsets.Range(list(next_buffer_range) + list(local_subset)[1:])
+                        stream_subset = subsets.Range([(0, s-1, 1) for s in desc.shape])
+                        stream_subset = subsets.Range(list(curr_buffer_range) + list(stream_subset)[1:])
+                        stream_subset = subsets.Range(list(next_x_pos_range) + list(next_y_pos_range) + list(stream_subset))
+                        comm_state.add_edge(remote_san, None, local_an, None, 
+                                        memlet=Memlet(
+                                        data=f"s_{transient}",
+                                        subset=stream_subset,
+                                        other_subset=local_subset
+                                    ),
+                                )
         # Add edge from emtpy_comm one by one in the order of the local_cb_list
         for idx, cb in enumerate(local_cb_list):
             if idx == 0:

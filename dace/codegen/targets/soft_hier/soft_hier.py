@@ -665,14 +665,14 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             #                     ( dataname, arrsize_malloc))
             result_alloc.write(f"{array_name} = {self.tcdm_offset};\n")
             self.tcdm_offset += total_size
-            if node_to_allocate.setzero:
-                result_alloc.write(f'''
-                    if(flex_is_dm_core())
-                    {{
-                        flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
-                        flex_dma_async_wait_all();
-                    }}
-                ''')
+            # if node_to_allocate.setzero:
+            #     result_alloc.write(f'''
+            #         if(flex_is_dm_core())
+            #         {{
+            #             flex_dma_async_1d(local({dataname}), zomem(0), {total_size});
+            #             flex_dma_async_wait_all();
+            #         }}
+            #     ''')
         declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
 
@@ -1225,35 +1225,68 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
               and src_storage in soft_hier_storage_types and dst_storage in soft_hier_storage_types
               and (isinstance(src_node_desc, dt.Stream) or isinstance(dst_node_desc, dt.Stream))):
             
+            state = state_dfg
+            is_sync = False
+            # check whether the dst node has a out edge
+            if len(state.out_edges(dst_node)) > 0:
+                is_sync = True
+            if len(state.in_edges(src_node)) > 0:
+                is_sync = True
+            copy_shape = edge.data.subset.size_exact()
+            dims = len(copy_shape)
+            
+            self._has_async_dma = (not is_sync) or self._has_async_dma
+            if vconn:
+            # Rm. IN_
+                dst_name = vconn[3:]
+            elif isinstance(v, nodes.AccessNode):
+                dst_name = v.data
+            subset: subsets.Range = memlet.subset
+            if uconn:
+                # Rm. OUT_
+                src_name = uconn[4:]
+            elif isinstance(u, nodes.AccessNode):
+                src_name = u.data
+
             if isinstance(src_node_desc, dt.Stream):
-                pass
-            else:
-                state = state_dfg
-                is_sync = False
-                # check whether the dst node has a out edge
-                if len(state.out_edges(dst_node)) > 0:
-                    is_sync = True
-                if len(state.in_edges(src_node)) > 0:
-                    is_sync = True
-                copy_shape = edge.data.subset.size_exact()
-                dims = len(copy_shape)
                 callsite_stream.write(f'// copy_memory: {src_node} -> {dst_node}')
                 callsite_stream.write(f'// is_sync = {is_sync}')
-                self._has_async_dma = (not is_sync) or self._has_async_dma
-                if vconn:
-                # Rm. IN_
-                    dst_name = vconn[3:]
-                elif isinstance(v, nodes.AccessNode):
-                    dst_name = v.data
-                subset: subsets.Range = memlet.subset
-                if uconn:
-                    # Rm. OUT_
-                    src_name = uconn[4:]
-                elif isinstance(u, nodes.AccessNode):
-                    src_name = u.data
-                data_size = src_node_desc.dtype.bytes
-                # print(f"subset = {subset}") 
+                data_size = dst_node_desc.dtype.bytes
+                dst_subset = memlet.get_dst_subset(edge, state)        
+                is_src_write = not memlet._is_data_src
+                dst_expr = cpp.copy_expr(self._dispatcher,
+                             sdfg,
+                             dst_node.data,
+                             memlet,
+                             is_write=is_src_write,
+                             offset=dst_subset,
+                             relative_offset=False)
+                if dst_expr != dst_name:
+                    dst_expr = dst_expr + "*" + f"{data_size}"
+                src_subset = memlet.get_src_subset(edge, state)
+                pos_x_range = subsets.Range(src_subset[0:1])
+                pos_x = pos_x_range.at([0],[1])
+                pos_y_range = subsets.Range(src_subset[1:2])
+                pos_y = pos_y_range.at([0],[1])
+                pos_x = sym2cpp(pos_x)
+                pos_y = sym2cpp(pos_y)
+                # print(f"pos_x = {pos_x}, pos_y = {pos_y}")
+                src_subset = subsets.Range(src_subset[2:])
+                src_expr = sym2cpp(src_subset.at([0,0,0],[1,1,1]))
+                src_size = src_subset.num_elements() * data_size
+                src_expr = self._stream_name_map[src_node.data] + "+" + src_expr + " * " + str(src_size)
+                if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
+                    callsite_stream.write("if (flex_is_dm_core())")
+                    callsite_stream.write("{")
+                    callsite_stream.write(f"bare_dma_start_1d(local({dst_expr}), dace_remote_xy({pos_x},{pos_y},{src_expr}), {src_size});")
+                    # if is_sync:
+                    callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}")
 
+                pass
+            else:
+                return
+                data_size = src_node_desc.dtype.bytes
                 src_subset = memlet.get_src_subset(edge, state)        
                 is_src_write = not memlet._is_data_src
                 src_expr = cpp.copy_expr(self._dispatcher,
@@ -1270,7 +1303,6 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 pos_x = pos_x_range.at([0],[1])
                 pos_y_range = subsets.Range(dst_subset[1:2])
                 pos_y = pos_y_range.at([0],[1])
-
                 pos_x = sym2cpp(pos_x)
                 pos_y = sym2cpp(pos_y)
                 # print(f"pos_x = {pos_x}, pos_y = {pos_y}")

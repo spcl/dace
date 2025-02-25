@@ -183,8 +183,8 @@ class SplitHBMLoad(transformation.SingleStateTransformation):
             acc_trans_in = nstate.add_access(transient_array)
             schedule_nsdfg_node.add_in_connector(transient_array, force=True)
             input_edge = nstate.add_edge(acc_trans_in, None, schedule_nsdfg_node, transient_array, Memlet(f"{transient_array}"))
-            an_st = nstate.add_access(stream)
-            nstate.add_edge(an_st, None, acc_trans_in, None, input_edge.data)
+            # an_st = nstate.add_access(stream)
+            # nstate.add_edge(an_st, None, acc_trans_in, None, input_edge.data)
 
             acc_trans_out = nstate.add_access(transient_array)
             schedule_nsdfg_node.add_out_connector(transient_array, force=True)
@@ -271,7 +271,7 @@ class SplitHBMLoad(transformation.SingleStateTransformation):
         for transient in transients_to_modify.values():
             desc: data.Array = schedule_nsdfg.arrays[transient]
             for edge in initial_state.edges():
-                if isinstance(edge.dst, nodes.AccessNode) and transients_to_modify[edge.dst.data] == transient:
+                if isinstance(edge.dst, nodes.AccessNode) and edge.dst.data == transient:
                     hbm_src = copy.deepcopy(edge.src)           
                     hbm_edge = copy.deepcopy(edge)        
                     cb_communication_local = ConditionalBlock(
@@ -308,7 +308,7 @@ class SplitHBMLoad(transformation.SingleStateTransformation):
                     
                     local_hbm_state = cb_comm_local_hbm_cfg.add_state(f"{transient}_hbm")
                     hbm_an = local_hbm_state.add_access(hbm_src.data)
-                    local_san = local_hbm_state.add_access(f"s_{transient}")
+                    local_san = local_hbm_state.add_access(f"{transient}")
                     if transient == "local_A":
                         range_expr = symbolic.pystr_to_symbolic('(%s + %s)' % (map_param, map_rstride)) 
                         (r_start, r_end, r_stride) = hbm_edge.data.subset.ranges[1] 
@@ -325,7 +325,7 @@ class SplitHBMLoad(transformation.SingleStateTransformation):
                     local_hbm_state.add_edge(hbm_an, None, local_san, None, hbm_edge.data)
                     hbm_load_expr = f"({map_param} / {map_rstride} + 1) % 4"
                     # print(hbm_load_expr)
-                    sd.replace(local_hbm_state, "__db_local_stream_param", hbm_load_expr)
+                    sd.replace(local_hbm_state, "__db_local_array_param", hbm_load_expr)
                     
 
         for idx, cb in enumerate(local_cb_list):
@@ -338,7 +338,7 @@ class SplitHBMLoad(transformation.SingleStateTransformation):
 
         loop_region.add_edge(cb_hbm_split_load, sync_state, InterstateEdge(None, None))
 
-        sd.replace(initial_state, "__db_local_stream_param", init_hbm_load_expr)
+        sd.replace(initial_state, "__db_local_array_param", init_hbm_load_expr)
 
         for state in loop_region.all_states():
             if state.name == "compute":
@@ -350,8 +350,15 @@ class SplitHBMLoad(transformation.SingleStateTransformation):
                 current_hbm_load_expr = f"({map_param} / {map_rstride} + 1) % 4"
                 current_tcdm_expr = f"({current_hbm_load_expr} + 3 + ({lr_param} % 2) * 3) % 4"
                 next_tcdm_expr = f"({current_hbm_load_expr} + 3 + (({lr_param} + 1) % 2) * 3) % 4"
-                sd.replace(state, "__db_local_stream_param", next_tcdm_expr)
-                sd.replace(state, "__db_local_array_param", current_tcdm_expr)
+                for edge in state.edges():
+                    if isinstance(edge.dst, nodes.AccessNode) and edge.dst.data in transients_to_modify.values():
+                        edge.data.subset = self._replace_in_subset(edge.data.subset, "__db_local_stream_param", current_tcdm_expr)
+                        edge.data.other_subset = self._replace_in_subset(edge.data.other_subset, "__db_local_array_param", next_tcdm_expr)
+                    elif isinstance(edge.src, nodes.AccessNode) and edge.src.data in transients_to_modify.values():
+                        edge.data.subset = self._replace_in_subset(edge.data.subset, "__db_local_array_param", current_tcdm_expr)
+                        edge.data.other_subset = self._replace_in_subset(edge.data.other_subset, "__db_local_stream_param", current_tcdm_expr)
+                
+                
         
         return nsdfg_node
 
