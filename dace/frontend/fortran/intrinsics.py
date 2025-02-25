@@ -1492,7 +1492,7 @@ class Merge(LoopBasedReplacement):
         first_arg = args[0]
         if first_arg.type == 'VOID':
             return None
-
+     
         return first_arg.sizes, first_arg.type
 
 

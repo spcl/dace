@@ -180,10 +180,10 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                     newoffset = offset.name + "_" + name_ + "_" + str(local_counter)
                     sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
                     # prog hack
-                    if name.endswith("prog"):
-                        sdfg.append_init_code(f"{newoffset} = {name}[0]->{offset.name};\n")
-                    else:
-                        sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
+                    #if name.endswith("prog"):
+                    #    sdfg.append_init_code(f"{newoffset} = {name}[0]->{offset.name};\n")
+                    #else:
+                    sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
 
                     sdfg.add_symbol(newoffset, dtypes.int32)
                     offsets_to_replace.append(newoffset)

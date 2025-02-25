@@ -21,8 +21,10 @@ if __name__ == "__main__":
         entry_point_module = sys.argv[5]
         entry_point_function = sys.argv[6]
     else:
-        entry_point_module = 'radiation_mcica_lw'
-        entry_point_function = 'solver_mcica_lw'
+        #entry_point_module = 'radiation_mcica_lw'
+        #entry_point_function = 'solver_mcica_lw'
+        entry_point_function='velocity_tendencies'
+        entry_point_module='mo_velocity_advection'
         #entry_points=[('radiation_single_level', 'get_albedos')],
         #entry_points=[('radiation_ifs_rrtm', 'gas_optics')],
         #entry_points=[('radiation_cloud', 'crop_cloud_fraction')],
@@ -43,7 +45,7 @@ if __name__ == "__main__":
         sources=[Path(f) for f in fortran_files],
         
         entry_points=[(entry_point_module, entry_point_function)],
-        config_injections=ecrad_config_injection_list('dace/frontend/fortran/conf_files'),
+        #config_injections=ecrad_config_injection_list('dace/frontend/fortran/conf_files'),
     )
     ecrad_ast = create_fparser_ast(parse_cfg)
 
