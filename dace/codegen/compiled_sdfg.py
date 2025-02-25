@@ -634,8 +634,13 @@ class CompiledSDFG(object):
                 import torch
                 def ndarray(*args, buffer=None, **kwargs):
                     if buffer is not None:
-                        buffer = buffer.data  # In case a buffer is passed, we use its .data attribute
-                    return torch.empty(*args, device=buffer.device if buffer is not None else 'cpu', **kwargs)
+                        if isinstance(buffer, memoryview):
+                            buffer = torch.frombuffer(buffer, dtype=torch.uint8)
+                        else:
+                            buffer = buffer.data
+
+                    return torch.empty(*args, device=buffer.device if isinstance(buffer, torch.Tensor) else 'cpu', **kwargs)
+
             except (ImportError, ModuleNotFoundError):
                 raise NotImplementedError('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but both torch and cupy are not found.')
 
