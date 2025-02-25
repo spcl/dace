@@ -3448,12 +3448,10 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
     all_derived_types, all_global_vars = [], []
     # Collect all the derived types into a global module.
     for dt in walk(ast, Derived_Type_Def):
-        dtname = find_name_of_node(dt)
-        spart = dt.parent
-        assert isinstance(spart, Specification_Part)
-        all_derived_types.append(dt.tofortran())
-        prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {dtname}"))
-        remove_self(dt)
+        dtspec = ident_spec(singular(children_of_type(dt, Derived_Type_Stmt)))
+        assert len(dtspec) == 2
+        mod, dtname = dtspec
+        all_derived_types.append(f"use {mod}, only : {dtname}")
     # Collect all the global variables into a single global data structure.
     for m in walk(ast, Module):
         spart = atmost_one(children_of_type(m, Specification_Part))
