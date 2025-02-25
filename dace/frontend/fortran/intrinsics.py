@@ -20,6 +20,9 @@ from dace.transformation import transformation as xf
 
 FASTNode = Any
 
+def is_literal(node: ast_internal_classes.FNode) -> bool:
+    return isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Double_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node))
+
 class IntrinsicTransformation:
 
     @staticmethod
@@ -1296,17 +1299,15 @@ class Merge(LoopBasedReplacement):
             return "__dace_merge"
 
         def _update_result_type(self, var: ast_internal_classes.Name_Node):
-            """
-                We can ignore the result type, because we exempted this
-                transformation from generating a result.
-                In MERGE, we write directly to the destination array.
-                Thus, we store this result array for future use.
-            """
-            input_type = self.get_var_declaration(var.parent, self.first_array)
+
+            if is_literal(self.first_array):
+                input_type = self.first_array.type
+            else:
+                input_type = self.get_var_declaration(var.parent, self.first_array).type
 
             var_decl = self.get_var_declaration(var.parent, var)
-            var.type = input_type.type
-            var_decl.type = input_type.type
+            var.type = input_type
+            var_decl.type = input_type
 
         def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
