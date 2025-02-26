@@ -370,8 +370,9 @@ class TaskletWriter:
 
     def unop2string(self, node: ast_internal_classes.UnOp_Node):
         op = node.op
-        if op == ".NOT.":
-            op = "not "
+        if op == '.NOT.':
+            # NOTE: DaCe cannot handle boolean expressions correctly, so this workaround.
+            return '(1 - ' + self.write_code(node.lval) + ')'
         return op + self.write_code(node.lval)
 
     def parenthesis2string(self, node: ast_internal_classes.Parenthesis_Expr_Node):
