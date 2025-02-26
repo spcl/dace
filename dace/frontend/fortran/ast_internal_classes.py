@@ -50,7 +50,7 @@ class FNode(object):
             return str(fnode)
 
         clsname = type(self).__name__.removesuffix('_Node')
-        objname = self.name if hasattr(self, 'name') else '?'
+        objname = self.name if hasattr(self, 'name') else (self.op if hasattr(self, 'op') else '?')
         objtype = f"/{self.type}" if hasattr(self, 'type') else ''
         fieldstrs = {f: _fieldstr(getattr(self, f)) for f in self._fields
                      if hasattr(self, f) and f not in {'name', 'type'}}
