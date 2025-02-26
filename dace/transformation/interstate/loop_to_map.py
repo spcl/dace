@@ -125,6 +125,11 @@ class LoopToMap(xf.MultiStateTransformation):
         loop_states = set(self.loop.all_states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
+        # Cannot have StructView in loop body
+        for loop_state in loop_states:
+            if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
+                return False
+        
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
                                                                              ignore_nonstate_blocks=False))
