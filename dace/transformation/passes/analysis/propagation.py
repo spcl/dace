@@ -302,9 +302,13 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             if iedge.dst_conn in possible_reads:
                 try:
                     inner_entry = possible_reads[iedge.dst_conn]
+                    if isinstance(inner_entry.subset, subsets.SubsetUnion):
+                        inner_subset = inner_entry.subset.to_bounding_box_subset()
+                    else:
+                        inner_subset = inner_entry.subset
                     inner_memlet = Memlet()
                     inner_memlet.data = iedge.dst_conn
-                    inner_memlet.subset = inner_entry.subset
+                    inner_memlet.subset = inner_subset
                     inner_memlet.volume = inner_entry.volume
                     inner_memlet.dynamic = inner_entry.dynamic
                     iedge.data = unsqueeze_memlet(inner_memlet, iedge.data, True)
@@ -326,9 +330,13 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             if oedge.src_conn in possible_writes:
                 try:
                     inner_entry = possible_writes[oedge.src_conn]
+                    if isinstance(inner_entry.subset, subsets.SubsetUnion):
+                        inner_subset = inner_entry.subset.to_bounding_box_subset()
+                    else:
+                        inner_subset = inner_entry.subset
                     inner_memlet = Memlet()
                     inner_memlet.data = oedge.src_conn
-                    inner_memlet.subset = inner_entry.subset
+                    inner_memlet.subset = inner_subset
                     inner_memlet.volume = inner_entry.volume
                     inner_memlet.dynamic = inner_entry.dynamic
                     oedge.data = unsqueeze_memlet(inner_memlet, oedge.data, True)

@@ -96,8 +96,12 @@ class LiftEinsum(xf.SingleStateTransformation):
             expected *= pystr_to_symbolic(iconn)
         if symexpr != expected:
             # alpha != 1
-            ratio = symexpr / expected
-            if not ratio.is_Number and not isinstance(ratio, symbolic.symbol):
+            try:
+                ratio = symexpr / expected
+                if not ratio.is_Number and not isinstance(ratio, symbolic.symbol):
+                    return False
+            except TypeError:
+                # Tasklet code is an expression that cannot be divided and would not result in a numeric result.
                 return False
         # End of tasklet content check
 

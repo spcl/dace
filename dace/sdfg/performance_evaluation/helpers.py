@@ -30,7 +30,7 @@ def ids_to_string(cfg_id, state_id=-1, node_id=-1, edge_id=-1):
             str(edge_id))
 
 
-def get_uuid(element, state=None):
+def get_uuid(element, state: Optional[SDFGState] = None):
     if isinstance(element, SDFG):
         return ids_to_string(element.cfg_id)
     elif isinstance(element, SDFGState):

@@ -130,6 +130,7 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
     result: List[mm.Memlet] = []
     ignore = set()
 
+    parnode = None
     for subnode in ast.walk(node):
         if subnode in ignore:
             continue
@@ -147,7 +148,10 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
             data = astutils.rname(subnode)
             if data in arrays:
                 ignore.add(subnode.value)
-                result.append(mm.Memlet(data=data, subset=sbs.Range.from_string('0')))
+                if parnode is None or not isinstance(parnode, ast.Subscript):
+                    result.append(mm.Memlet(data=data, subset=sbs.Range.from_string('0')))
+
+        parnode = subnode
 
     return result
 
@@ -637,6 +641,10 @@ class SDFG(ControlFlowRegion):
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
         dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
+
+        if 'dataflow_proxy_graphs' in attrs:
+            for k, v in attrs['dataflow_proxy_graphs'].items():
+                ret._dataflow_proxy_graphs[int(k)] = dace.serialize.from_json(v)
 
         nodelist = []
         for n in nodes:
