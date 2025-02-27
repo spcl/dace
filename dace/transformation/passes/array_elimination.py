@@ -259,7 +259,20 @@ class ArrayElimination(ppl.Pass):
         used_names = set()
         view_names = [k for k, v in sdfg.arrays.items() if isinstance(v, data.View)]
         for cfg in sdfg.nodes():
-            if not isinstance(cfg, SDFGState): # Needs to be CFG
+            if isinstance(cfg, ConditionalBlock):
+                        for branch in cfg.branches:
+                            cb = branch[0]
+                            cfg = branch[1]
+                            symbols_to_check = (
+                                set.union(
+                                    cb.get_free_symbols(), cfg.free_symbols
+                                ) if cb is not None else cfg.free_symbols
+                            )
+                            for free_name in symbols_to_check:
+                                if free_name in view_names:
+                                    used_names.add(free_name)
+                                    
+            elif not isinstance(cfg, SDFGState): # Needs to be CFG
                 for node in cfg.nodes():
                     if isinstance(node, LoopRegion):
                         assert node.loop_variable not in view_names
