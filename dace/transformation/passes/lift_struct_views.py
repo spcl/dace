@@ -18,7 +18,6 @@ from dace import dtypes
 import sys
 from typing import Literal
 
-from tests.npbench.misc.stockham_fft_test import R
 dirtype = Literal['in', 'out']
 
 class RecodeAttributeNodes(ast.NodeTransformer):
