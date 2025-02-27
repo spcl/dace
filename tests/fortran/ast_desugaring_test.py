@@ -2668,14 +2668,17 @@ SUBROUTINE main(d)
   IMPLICIT NONE
   REAL, INTENT(INOUT) :: d
   INTEGER :: i
-  LOGICAL :: goto_0 = .FALSE.
-  LOGICAL :: goto_1 = .FALSE.
-  LOGICAL :: goto_2 = .FALSE.
+  LOGICAL :: goto_0
+  LOGICAL :: goto_1
+  LOGICAL :: goto_2
   i = 0
+  goto_0 = .FALSE.
   IF (i > 5) goto_0 = .TRUE.
   IF (.NOT. (goto_0)) i = 7
+  goto_1 = .FALSE.
   IF (.NOT. (goto_0) .AND. i > 5) goto_1 = .TRUE.
   IF (.NOT. (goto_1) .AND. .NOT. (goto_0)) i = 1
+  goto_2 = .FALSE.
   IF (.NOT. (goto_1) .AND. .NOT. (goto_0) .AND. i > 5) THEN
     goto_2 = .TRUE.
     i = 9

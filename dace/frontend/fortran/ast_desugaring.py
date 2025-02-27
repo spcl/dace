@@ -998,7 +998,7 @@ def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
     only_child = bool([c for c in par.children if c is node])
     repls = []
     for c in par.children:
-        if c != node:
+        if c is not node:
             repls.append(c)
             continue
         if subst is None or isinstance(subst, Base):
@@ -3827,6 +3827,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
             raise NotImplementedError
 
         ifc = goto.parent
+        ifc_par = ifc.parent
         assert isinstance(ifc, (If_Stmt, If_Construct)), \
             f"Everything but conditionals are unsupported for goto's parent; got: {ifc}"
         assert ifc.parent is target.parent
@@ -3844,15 +3845,14 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         spec = atmost_one(children_of_type(ex.parent, Specification_Part))
         assert spec
 
-        if isinstance(ifc, (If_Stmt, If_Construct)):
-            goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
-            append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var} = .false."))
-            asgn = Assignment_Stmt(f"{goto_var} = .true.")
-            replace_node(goto, asgn)
-        else:
+        if not isinstance(ifc, (If_Stmt, If_Construct)):
             raise NotImplementedError
 
-        for else_op in ifc.parent.children[ifc_pos + 1: target_pos]:
+        goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
+        append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var}"))
+        replace_node(goto, Assignment_Stmt(f"{goto_var} = .true."))
+
+        for else_op in ifc_par.children[ifc_pos + 1: target_pos]:
             if isinstance(else_op, Continue_Stmt):
                 # Continue statements are no-op, but they may have label attached, so we leave them be.
                 continue
@@ -3881,5 +3881,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
                 nu_if = If_Stmt(f"if (.not.({goto_var})) call x")
                 replace_node(else_op, nu_if)
                 replace_node(singular(nm for nm in walk(nu_if, Call_Stmt)), else_op)
+
+        replace_node(ifc, [Assignment_Stmt(f"{goto_var} = .false."), ifc])
 
     return ast
