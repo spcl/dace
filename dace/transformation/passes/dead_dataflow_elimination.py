@@ -192,8 +192,10 @@ class DeadDataflowElimination(ppl.Pass):
 
             # Update read sets for the predecessor states to reuse
             remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
+            remaining_data_containers = set(node.data for node in remaining_access_nodes)
             removed_data_containers = set(n.data for n in result[state]
-                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes)
+                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes
+                                          and n.data not in remaining_data_containers)
             access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
 
         return result or None
