@@ -153,12 +153,15 @@ class StateFusion(transformation.MultiStateTransformation):
                 path_to = nx.has_path(first_state._nx, node, match)
                 if not path_to:
                     continue
-                path_found = True
+                path_found |= True
                 node2 = next(n for n in second_input if n.data == match.data)
                 if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
                     fail = True
                     break
-            if fail or path_found:
+            # We keep looking for a potential match with a path that fail to find
+            # a path to the second state to make sure we test memlet_intersections
+            # independant of the order of the access nodes in the lists
+            if fail:
                 break
 
         # Check for intersection (if None, fusion is ok)
