@@ -913,7 +913,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     return in_edge
 
 
-def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
+def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge[mm.Memlet]]:
     """
     For a given map entry node, returns a list of dynamic-range input edges.
 
