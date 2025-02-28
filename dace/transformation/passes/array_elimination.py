@@ -14,6 +14,7 @@ from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, Re
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
+from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions
 
 
 @properties.make_properties
@@ -291,11 +292,17 @@ class ArrayElimination(ppl.Pass):
                     else:
                         assert isinstance(node, SDFGState)
 
-        for edge in sdfg.edges():
+        for edge, _ in sdfg.all_edges_recursive():
             interstate_edge: InterstateEdge = edge.data
+            if not isinstance(interstate_edge, InterstateEdge):
+                continue
+            
+            # array reads are treated as functions
+            value_syms = set().union(*(free_symbols_and_functions(pystr_to_symbolic(v)) for v in edge.data.assignments.values()))
+
             for free_name in set.union(interstate_edge.condition.get_free_symbols(),
                                        interstate_edge.assignments.keys(),
-                                       interstate_edge.assignments.values()):
+                                       value_syms):
                 if free_name in view_names:
                     used_names.add(free_name)
 
