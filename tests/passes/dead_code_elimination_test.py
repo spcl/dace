@@ -56,8 +56,8 @@ def test_dse_edge_condition_with_integer_as_boolean_regression():
     state_init = sdfg.add_state()
     state_middle = sdfg.add_state()
     state_end = sdfg.add_state()
-    sdfg.add_edge(state_init, state_end, dace.InterstateEdge(condition='(not ((N > 20) != 0))',
-                                                             assignments={'result': 'N'}))
+    sdfg.add_edge(state_init, state_end,
+                  dace.InterstateEdge(condition='(not ((N > 20) != 0))', assignments={'result': 'N'}))
     sdfg.add_edge(state_init, state_middle, dace.InterstateEdge(condition='((N > 20) != 0)'))
     sdfg.add_edge(state_middle, state_end, dace.InterstateEdge(assignments={'result': '20'}))
 

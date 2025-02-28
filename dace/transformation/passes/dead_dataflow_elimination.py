@@ -159,8 +159,10 @@ class DeadDataflowElimination(ppl.Pass):
                                             for code in leaf.src.code.code:
                                                 ast_find.generic_visit(code)
                                         except astutils.NameFound:
-                                            # then add the hint expression 
-                                            leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body + leaf.src.code.code
+                                            # then add the hint expression
+                                            leaf.src.code.code = ast.parse(
+                                                f'{leaf.src_conn}: dace.{ctype.to_string()}\n'
+                                            ).body + leaf.src.code.code
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
