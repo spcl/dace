@@ -49,3 +49,11 @@ def ecrad_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') 
         'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti']]
     injs = [deserialize(l.strip()) for c in cfgs for l in c.splitlines() if l.strip()]
     return injs
+
+
+def velocity_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstTypeInjection]:
+    cfgs = [Path(root).joinpath(f).read_text() for f in [
+        'p_prog.ti', 'p_diag.ti', 'p_metrics.ti', 'p_int.ti', 'p_patch.ti', 'p_patch-verts.ti', 'p_patch-edges.ti',
+        'p_patch-cells.ti', 'p_patch-cells-decomp_info.ti']]
+    injs = [deserialize(l.strip()) for c in cfgs for l in c.splitlines() if l.strip()]
+    return injs
