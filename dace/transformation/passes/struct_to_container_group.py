@@ -390,6 +390,7 @@ def get_demangled_container_group_member_name(
 def generate_container_groups_from_structs(
     sdfg: dace.SDFG, flattening_mode: ContainerGroupFlatteningMode
 ):
+    added_cgs = 0
     sdfg.container_groups = NestedDict()
     for arr_name, arr in sdfg._arrays.items():
         if isinstance(arr, dace.data.Structure):
@@ -402,7 +403,8 @@ def generate_container_groups_from_structs(
                 shape=(1,),
             )
             sdfg.container_groups[dg_name] = dg
-
+            added_cgs += 1
+    return added_cgs
 
 def clean_container_groups(sdfg: dace.SDFG):
     # assert hasattr(
@@ -720,7 +722,10 @@ class StructToContainerGroups(ppl.Pass):
         self._deflattener_codestr += deflattener_codestr
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> int:
-        generate_container_groups_from_structs(sdfg, self._flattening_mode)
+        new_cgs = generate_container_groups_from_structs(sdfg, self._flattening_mode)
+        if new_cgs == 0:
+            print("No container groups were registered as no structs were found")
+            return
         registered_members = register_container_group_members(
             sdfg, self._flattening_mode, register_as_transient=True if self._interface_with_struct_copy else False
         )
