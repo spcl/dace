@@ -1003,11 +1003,11 @@ def _keep_only_derived_types(ast: Program) -> Program:
     return ast
 
 
-def generate_type_injection_code(ast: Program) -> str:
+def generate_type_injection_code(ast: Program, mod_name: str = 'type_injection') -> str:
     ast = _keep_only_derived_types(ast)
 
     f90_mod = Module(get_reader(f"""
-module type_injection
+module {mod_name}
   use serde
   implicit none
 
@@ -1022,7 +1022,7 @@ contains
   ! A placeholder so that FParser does not remove the module subprogram part.
   subroutine noop()
   end subroutine noop
-end module type_injection
+end module {mod_name}
 """.strip()))
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
 
