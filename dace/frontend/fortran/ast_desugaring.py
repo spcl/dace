@@ -3084,8 +3084,8 @@ def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
     elif type_spec == ('REAL8',):
         val = np.float64(val)
     elif type_spec == ('LOGICAL',):
-        assert val in {'true', 'false'}
-        val = np.bool_(val == 'true')
+        assert val in {'true', 'false', '0', '1'}
+        val = np.bool_(val in {'true', '1'})
     else:
         raise NotImplementedError(
             f"{val} cannot be parsed as the target literal type: {type_spec}")
