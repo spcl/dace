@@ -81,12 +81,13 @@ class SymbolPropagation(ppl.Pass):
             sym_table.update(edge.data.assignments)
 
             for sym, val in sym_table.items():
+                # Add the symbol to the incoming symbols if it is not already present. Cannot propagate arrays accesses
                 if sym not in in_syms:
-                    in_syms[sym] = val
-                else:
-                    # If multiple sources don't agree on the value of a symbol, set it to None
-                    if in_syms[sym] != val:
-                        in_syms[sym] = None
+                    in_syms[sym] = val if val and "[" not in val and "]" not in val else None
+
+                # If multiple sources don't agree on the value of a symbol, set it to None
+                if sym in in_syms and in_syms[sym] != val:
+                    in_syms[sym] = None
 
         # Starting block CFBGs should inherit the symbols from their parent
         pass
@@ -115,12 +116,8 @@ class SymbolPropagation(ppl.Pass):
         out_syms = copy.deepcopy(out_syms[cfgb])
 
         # Remove all symbols that are None
-        for sym, val in in_syms.items():
-            if val is None:
-                del in_syms[sym]
-        for sym, val in out_syms.items():
-            if val is None:
-                del out_syms[sym]
+        in_syms = {sym: val for sym, val in in_syms.items() if val is not None}
+        out_syms = {sym: val for sym, val in out_syms.items() if val is not None}
 
         changed = True
         while changed:
