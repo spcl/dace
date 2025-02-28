@@ -4,3 +4,4 @@ from .new_cannon import CannonTransformer
 from .new_systolic import SystolicTransformer
 from .cannon_split_hbm_load import SplitHBMLoad
 from .systolic_split_hbm_store import SystolicSplitStore
+from .summa import SummaTransformer

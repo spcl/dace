@@ -955,8 +955,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     )
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    if is_sync:
-                        callsite_stream.write("flex_intra_cluster_sync();")
+                    # if is_sync:
+                    #     callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
@@ -980,8 +980,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         )
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
-                        if is_sync:
-                            callsite_stream.write("flex_intra_cluster_sync();")
+                        # if is_sync:
+                        #     callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1002,8 +1002,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     )
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    if is_sync:
-                        callsite_stream.write("flex_intra_cluster_sync();")
+                    # if is_sync:
+                    #     callsite_stream.write("flex_intra_cluster_sync();")
                 else:
                     raise NotImplementedError(
                         f"Unimplemented copy type: {src_storage} -> {dst_storage}"
@@ -1092,11 +1092,11 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                             [f'{src_strides[0]}*{data_size}'] +
                                             [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
                         )
-                    if is_sync:
-                        callsite_stream.write("flex_dma_async_wait_all();")
+                    # if is_sync:
+                    callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    if is_sync:
-                        callsite_stream.write("flex_intra_cluster_sync();")
+                    # if is_sync:
+                    #     callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
@@ -1120,11 +1120,11 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                             [f'{src_strides[0]}*{data_size}'] +
                                             [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
                         )
-                        if is_sync:
-                            callsite_stream.write("flex_dma_async_wait_all();")
+                        # if is_sync:
+                        callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
-                        if is_sync:
-                            callsite_stream.write("flex_intra_cluster_sync();")
+                        # if is_sync:
+                        #     callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1188,8 +1188,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                                             [f'local({src_expr})']+
                                             [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
                                 )
-                        if is_sync:
-                            callsite_stream.write("flex_dma_async_wait_all();")
+                        # if is_sync:
+                        callsite_stream.write("flex_dma_async_wait_all();")
                     else:
                         funcname = "flex_dma_async_2d_dummy"
                         callsite_stream.write(('    {func}({args});').format(
@@ -1204,8 +1204,6 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # if is_sync:
                     #     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    if is_sync:
-                        callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_HBM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1275,17 +1273,18 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 src_expr = sym2cpp(src_subset.at([0,0,0],[1,1,1]))
                 src_size = src_subset.num_elements() * data_size
                 src_expr = self._stream_name_map[src_node.data] + "+" + src_expr + " * " + str(src_size)
+                if src_subset[-3] == dst_subset[-3]:
+                    return
                 if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
                     callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
-                    callsite_stream.write(f"bare_dma_start_1d(local({dst_expr}), dace_remote_xy({pos_x},{pos_y},{src_expr}), {src_size});")
+                    callsite_stream.write(f"bare_dma_start_1d(local({dst_expr}), remote_xy({pos_x},{pos_y},{src_expr}), {src_size});")
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
 
-                pass
             else:
-                return
+                
                 data_size = src_node_desc.dtype.bytes
                 src_subset = memlet.get_src_subset(edge, state)        
                 is_src_write = not memlet._is_data_src
@@ -1309,12 +1308,23 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 dst_subset = subsets.Range(dst_subset[2:])
                 dst_expr = sym2cpp(dst_subset.at([0,0,0],[1,1,1]))
                 dst_size = dst_subset.num_elements() * data_size
-                
                 dst_expr = self._stream_name_map[dst_node.data] + "+" + dst_expr + " * " + str(dst_size)
+                # check whether it is a broadcast
+                (pos_x_start, pos_x_end, pos_x_step) = pos_x_range[0]
+                (pos_y_start, pos_y_end, pos_y_step) = pos_y_range[0]
+                is_broadcast = False
+                if src_subset[-3] == dst_subset[-3] and pos_x_range.num_elements() == 1 and pos_y_range.num_elements() == 1:
+                    return
+                else:
+                    is_broadcast = True
+                    
                 if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
                     callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
-                    callsite_stream.write(f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr}), local({src_expr}), {dst_size});")
+                    if is_broadcast:
+                        callsite_stream.write(f"flex_dma_async_1d_broadcast(remote_xy({pos_x_end},{pos_y_end},{dst_expr}), local({src_expr}), {dst_size});")
+                    else:
+                        callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), local({src_expr}), {dst_size});")
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
@@ -1405,8 +1415,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         raise NotImplementedError(
                             f"Not Implemented Dim > 2: {src_storage} -> {dst_storage}"
                         )
-                if is_sync:
-                    callsite_stream.write("flex_intra_cluster_sync();")
+                # if is_sync:
+                #     callsite_stream.write("flex_intra_cluster_sync();")
         else:
             print(
                 sdfg,
@@ -2917,7 +2927,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # Instrumentation: Post-tasklet
         if instr is not None:
             instr.on_node_end(sdfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
-
+        if is_sync:
+            callsite_stream.write("flex_intra_cluster_sync();", cfg, state_id, node)
         callsite_stream.write(outer_stream_begin.getvalue(), cfg, state_id, node)
         callsite_stream.write("if (flex_is_first_core())", cfg, state_id, node)
         callsite_stream.write('{', cfg, state_id, node)

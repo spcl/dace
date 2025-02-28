@@ -247,6 +247,6 @@ def make_preload_elf_hbm_interleaved(output_file_path, np_arrays, split_schemes,
     # replace the args in split_arrays with new args
     split_arrays[0] = args
 
-    make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses)
+    make_preload_elf(output_file_path, split_arrays, split_arrays_start_addresses, hbm_node_addr_base, hbm_node_addr_space)
 
     return args
