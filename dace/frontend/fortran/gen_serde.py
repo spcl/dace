@@ -1,4 +1,5 @@
 import re
+import subprocess
 from dataclasses import dataclass
 from itertools import chain, combinations
 from pathlib import Path
@@ -950,10 +951,28 @@ namespace serde {{
     }}
 
     {gdata.cpp_serde}
+
+    template<typename T>
+    std::string serialize_array(T* arr) {{
+        const auto m = (*ARRAY_META_DICT())[static_cast<void*>(arr)];
+        std::stringstream s;
+        add_line("# rank", s);
+        add_line(m.rank, s);
+        add_line("# size", s);
+        for (auto i : m.size) add_line(i, s);
+        add_line("# lbound", s);
+        for (auto i : m.lbound) add_line(i, s);
+        add_line("# entries", s);
+        for (int i=0; i<m.volume(); ++i) add_line(serialize(arr[i]), s);
+        return s.str();
+    }}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__
 """
+    result = subprocess.run(['clang-format'], input=cpp_code.strip(), text=True, capture_output=True)
+    if not (result.returncode or result.stderr):
+        cpp_code = result.stdout
 
     return SerdeCode(f90_serializer=f90_code.strip(), cpp_serde=cpp_code.strip())
 
