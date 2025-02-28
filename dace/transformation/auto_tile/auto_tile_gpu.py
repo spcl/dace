@@ -50,6 +50,7 @@ def _tile_gpu(
     loglines,
     timeout,
     random_iter,
+    static_sram_limit = 48 * 1024
 ):
 
     # Copy kernel as a single state SDFG if we are working on the copy
@@ -359,7 +360,7 @@ def _tile_gpu(
                 if arr.storage == dace.dtypes.StorageType.GPU_Shared:
                     shr_mem_needed += arr.total_size * arr.dtype.bytes
 
-            if shr_mem_needed >= 48 * 1024:
+            if shr_mem_needed >= static_sram_limit:
                 print(
                     f"Kernel uses too much shared memory for config {current_config}, skipping."
                 )
@@ -419,7 +420,8 @@ def _tile_search(
     verify: bool,
     call_id: int,
     logfile,
-    loglines
+    loglines,
+    static_sram_limit=48*1024,
 ):
     raise Exception("TODO, this function needs fixes")
     if not re_apply:
@@ -703,7 +705,7 @@ def _tile_search(
                 if arr.storage == dace.dtypes.StorageType.GPU_Shared:
                     shr_mem_needed += arr.total_size * arr.dtype.bytes
 
-            if shr_mem_needed >= 48 * 1024:
+            if shr_mem_needed >= static_sram_limit:
                 print(
                     f"Kernel uses too much shared memory for config {current_config}, skipping."
                 )
@@ -784,6 +786,7 @@ def auto_tile_gpu(
     verbose: bool = False,
     timeout=None,
     random_iter: bool=True,
+    static_sram_limit: int = 48*1024,
 ):
     sdfg_name = sdfg.name
     sym_dict = sdfg.symbols
@@ -850,7 +853,8 @@ def auto_tile_gpu(
                 logfile=f,
                 loglines=logged_lines,
                 timeout=timeout,
-                random_iter=random_iter
+                random_iter=random_iter,
+                static_sram_limit=static_sram_limit,
             )
             found_tilings[(state.guid, kernel_entry.guid)] = best_config
         else:
@@ -864,7 +868,8 @@ def auto_tile_gpu(
                 verify=True,
                 call_id=ii,
                 logfile=f,
-                loglines=logged_lines
+                loglines=logged_lines,
+                static_sram_limit=static_sram_limit,
             )
             found_tilings[(state.guid, kernel_entry.guid)] = tuple(list(best_config) + [(True, False), True])
 
@@ -906,7 +911,8 @@ def auto_tile_gpu(
                 logfile=f,
                 loglines=logged_lines,
                 timeout=None,
-                random_iter=False
+                random_iter=False,
+                static_sram_limit=static_sram_limit,
             )
         else:
             raise Exception("TODO")
@@ -926,7 +932,8 @@ def auto_tile_gpu(
                 verify=False,
                 call_id=len(kernel_guids),
                 logfile=f,
-                loglines=logged_lines
+                loglines=logged_lines,
+                static_sram_limit=static_sram_limit,
             )
 
     # Add missing symbols
