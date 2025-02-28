@@ -1,0 +1,29 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+
+jobs:
+  linting:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    name: pre-commit
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: 'pip'
+
+    - name: Install linting tools
+      run: pip install pre-commit yapf
+
+    - name: Run linting tools
+      run: pre-commit run --all-files
