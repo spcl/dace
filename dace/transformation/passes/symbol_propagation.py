@@ -83,14 +83,23 @@ class SymbolPropagation(ppl.Pass):
             for sym, val in sym_table.items():
                 # Add the symbol to the incoming symbols if it is not already present. Cannot propagate arrays accesses
                 if sym not in in_syms:
-                    in_syms[sym] = val if val and "[" not in val and "]" not in val else None
+                    in_syms[sym] = (
+                        val if val and "[" not in val and "]" not in val else None
+                    )
 
                 # If multiple sources don't agree on the value of a symbol, set it to None
                 if sym in in_syms and in_syms[sym] != val:
                     in_syms[sym] = None
 
         # Starting block CFBGs should inherit the symbols from their parent
-        pass
+        # Ignore SDFGs as nested SDFGs have symbol mappings
+        if (
+            parent.start_block == cfgb
+            and not isinstance(parent, SDFG)
+            and parent in out_syms
+        ):
+            assert in_syms == {}
+            in_syms = copy.deepcopy(out_syms[parent])
 
         return in_syms
 
