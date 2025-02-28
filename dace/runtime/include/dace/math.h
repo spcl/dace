@@ -327,6 +327,16 @@ template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign(const std::complex<T>& x) {
     return (x.real() != 0) ? std::complex<T>(sign(x.real()), 0) : std::complex<T>(sign(x.imag()), 0);
 }
+// Numpy v2.0 or higher for complex inputs: sign(x) = x / abs(x)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T sign_numpy_2(const T& x) {
+    return T( (T(0) < x) - (x < T(0)) );
+    // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0); 
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign_numpy_2(const std::complex<T>& x) {
+    return (x.real() != 0 && x.imag() != 0) ? x / std::abs(x) : std::complex<T>(0, 0);
+}
 
 // Computes the Heaviside step function
 template<typename T>

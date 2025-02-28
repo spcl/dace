@@ -311,7 +311,7 @@ class PatternTransformation(TransformationBase):
 
         If `apply` is `True` then the function will apply the transformation, if `verify`
         is also `True` the function will first call `can_be_applied()` to ensure the
-        transformation can be applied. If not an error is genrated.
+        transformation can be applied. If not, an error is generated.
         If `apply` is `False` the function will only call `can_be_applied()` and
         returns its result.
 

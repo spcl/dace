@@ -34,8 +34,7 @@ def run_vec_sum(vectorize_first: bool):
     X = rng.random(n, dtype=np.float32)
     Y = rng.random(n, dtype=np.float32)
     Z = rng.random(n, dtype=np.float32)
-    ref = np.empty(n, dtype=np.float32)
-    ref[:] = X + Y + Z
+    ref = X + Y + Z
 
     sdfg = vec_sum.to_sdfg()
 
