@@ -165,7 +165,6 @@ def _tile_gpu(
             apply_explicit_memory_transfer_param,
             apply_remainder_loop_param,
         ) = current_config
-        clean_cache()
         curi += 1
         if timeout is not None and curi > timeout:
             logfile.flush()
@@ -405,6 +404,8 @@ def _tile_gpu(
                     logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","99999999999999.9","0.0"\n')
                 if i % 20 == 0:
                     logfile.flush()
+                clean_cache(sdfg.build_folder)
+                clean_cache(kernel_sdfg.build_folder)
     return best_config
 
 

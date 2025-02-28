@@ -14,10 +14,9 @@ import shutil
 from pathlib import Path
 
 
-def clean_cache():
-    script_directory = os.getcwd()
-    cache_dir = Path(f"{script_directory}/.dacecache")
-    print(f"Clean {script_directory}/.dacecache")
+def clean_cache(buildfolder):
+    cache_dir = Path(buildfolder)
+    print(f"Clean {buildfolder}")
     if cache_dir.exists() and cache_dir.is_dir():
         shutil.rmtree(cache_dir)
 
