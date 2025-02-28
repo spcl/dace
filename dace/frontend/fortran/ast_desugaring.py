@@ -190,7 +190,7 @@ def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
 
 
 def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
-    if anc == des:
+    if anc is des:
         return (anc,)
     if not des.parent:
         return None
@@ -201,13 +201,22 @@ def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
 
 
 def search_scope_spec(node: Base) -> Optional[SPEC]:
+    # A basic check to make sure that it is not on the tail of a data-ref.
+    if isinstance(node.parent, (Part_Ref, Data_Ref)):
+        cnode, par = node, node.parent
+        while par and isinstance(par, (Part_Ref, Data_Ref)):
+            if par.children[0] is not cnode:
+                return None
+            cnode, par = par, par.parent
+
     scope = find_scope_ancestor(node)
     if not scope:
         return None
     lin = lineage(scope, node)
     assert lin
-    par = node.parent
+
     # TODO: How many other such cases can there be?
+    par = node.parent
     if (isinstance(scope, Derived_Type_Def)
             and any(
                 isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector))
@@ -989,7 +998,7 @@ def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
     only_child = bool([c for c in par.children if c is node])
     repls = []
     for c in par.children:
-        if c != node:
+        if c is not node:
             repls.append(c)
             continue
         if subst is None or isinstance(subst, Base):
@@ -1074,9 +1083,9 @@ def correct_for_function_calls(ast: Program):
     while changed is None or changed:
         changed = False
         for pr in walk(ast, Part_Ref):
-            scope_spec = find_scope_spec(pr)
             if isinstance(pr.parent, Data_Ref):
                 dref = pr.parent
+                scope_spec = find_scope_spec(dref)
                 comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
                 comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
                 if not comp_type_spec:
@@ -1091,6 +1100,7 @@ def correct_for_function_calls(ast: Program):
                         replace_node(pr, Function_Reference(pr.tofortran()))
                         changed = True
                 elif isinstance(pr_name, Data_Ref):
+                    scope_spec = find_scope_spec(pr_name)
                     pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
                     if not pr_type_spec:
                         # Cannot find a type, so it must be a function call.
@@ -3032,7 +3042,7 @@ def const_eval_nodes(ast: Program) -> Program:
 
     NON_EXPRESSION_CLASSES = (
         Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
-        Section_Subscript_List)
+        Section_Subscript_List, Write_Stmt)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
@@ -3421,9 +3431,117 @@ def lower_identifier_names(ast: Program) -> Program:
     return ast
 
 
+GLOBAL_DATA_OBJ_NAME = 'global_data'
+GLOBAL_DATA_TYPE_NAME = 'global_data_type'
+
+
+def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: bool = False) -> Program:
+    """
+    Move all the global data into one structure and use it from there.
+    TODO: We will have circular dependency if there are global objects of derived type. How to handle that?
+    """
+    alias_map = alias_specs(ast)
+    GLOBAL_DATA_MOD_NAME = 'global_mod'
+    if (GLOBAL_DATA_MOD_NAME,) in alias_map:
+        # We already have the global initialisers.
+        return ast
+
+    all_derived_types, all_global_vars = [], []
+    # Collect all the derived types into a global module.
+    for dt in walk(ast, Derived_Type_Def):
+        dtspec = ident_spec(singular(children_of_type(dt, Derived_Type_Stmt)))
+        assert len(dtspec) == 2
+        mod, dtname = dtspec
+        all_derived_types.append(f"use {mod}, only : {dtname}")
+    # Collect all the global variables into a single global data structure.
+    for m in walk(ast, Module):
+        spart = atmost_one(children_of_type(m, Specification_Part))
+        if not spart:
+            continue
+        for tdecl in children_of_type(spart, Type_Declaration_Stmt):
+            all_global_vars.append(tdecl.tofortran())
+    all_derived_types = '\n'.join(all_derived_types)
+    all_global_vars = '\n'.join(all_global_vars)
+
+    # Then, replace all the instances of references to global variables with corresponding data-refs.
+    for nm in walk(ast, Name):
+        par = nm.parent
+        if isinstance(par, (Entity_Decl, Use_Stmt, Rename, Only_List)):
+            continue
+        if isinstance(par, (Part_Ref, Data_Ref)):
+            while par and isinstance(par.parent, (Part_Ref, Data_Ref)):
+                par = par.parent
+            scope_spec = search_scope_spec(par)
+            root, _, _ = _dataref_root(par, scope_spec, alias_map)
+            if root is not nm:
+                continue
+        local_spec = search_real_local_alias_spec(nm, alias_map)
+        if not local_spec:
+            continue
+        assert local_spec in alias_map
+        if not isinstance(alias_map[local_spec], Entity_Decl):
+            continue
+        edecl_spec = ident_spec(alias_map[local_spec])
+        assert len(edecl_spec) >= 2,\
+            f"Fortran cannot possibly have a top-level global variable, outside any module; got {edecl_spec}"
+        if len(edecl_spec) != 2:
+            # We cannot possibly have a module level variable declaration.
+            continue
+        mod, var = edecl_spec
+        assert (mod,) in alias_map
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            continue
+        if isinstance(nm.parent, Part_Ref):
+            _, subsc = nm.parent.children
+            replace_node(nm.parent, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}({subsc})"))
+        else:
+            replace_node(nm, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}"))
+
+    if all_global_vars or always_add_global_data_arg:
+        # Make `global_data` an argument to every defined function.
+        for fn in walk(ast, (Function_Subprogram, Subroutine_Subprogram)):
+            stmt = singular(children_of_type(fn, NAMED_STMTS_OF_INTEREST_CLASSES))
+            assert isinstance(stmt, (Function_Stmt, Subroutine_Stmt))
+            prefix, name, dummy_args, whatever = stmt.children
+            if dummy_args:
+                prepend_children(dummy_args, Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                set_children(stmt, (prefix, name, Dummy_Arg_Name_List(GLOBAL_DATA_OBJ_NAME), whatever))
+            spart = atmost_one(children_of_type(fn, Specification_Part))
+            assert spart
+            prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"))
+            append_children(spart, Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}"))
+        for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+            fn, args = fcall.children
+            fnspec = search_real_local_alias_spec(fn, alias_map)
+            if not fnspec:
+                continue
+            fnstmt = alias_map[fnspec]
+            assert isinstance(fnstmt, (Function_Stmt, Subroutine_Stmt))
+            if args:
+                prepend_children(args, Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                set_children(fcall, (fn, Actual_Arg_Spec_List(GLOBAL_DATA_OBJ_NAME)))
+        # NOTE: We do not remove the variables themselves, and let them be pruned later on.
+
+    global_mod = Module(get_reader(f"""
+module {GLOBAL_DATA_MOD_NAME}
+  {all_derived_types}
+
+  type {GLOBAL_DATA_TYPE_NAME}
+    {all_global_vars}
+  end type {GLOBAL_DATA_TYPE_NAME}
+end module {GLOBAL_DATA_MOD_NAME}
+"""))
+    prepend_children(ast, global_mod)
+
+    ast = consolidate_uses(ast)
+    return ast
+
+
 def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Program:
     # TODO: Ordering of the initializations may matter, but for that we need to find how Fortran's global initialization
-    # works and then reorder the initialization calls appropriately.
+    #  works and then reorder the initialization calls appropriately.
 
     ident_map = identifier_specs(ast)
     GLOBAL_INIT_FN_NAME = 'global_init_fn'
@@ -3508,9 +3626,16 @@ end subroutine {fn_name}
             type_defs[td] = type_init_fn, []
         type_defs[td][1].append(k)
     for t, v in type_defs.items():
+        if len(t) != 2:
+            # Not a type that's globally accessible anyway.
+            continue
+        mod, _ = t
+        assert (mod,) in alias_map
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            # Not a type that's globally accessible anyway.
+            continue
         init_fn_name, comps = v
-        if comps:
-            _make_init_fn(init_fn_name, comps, t)
+        _make_init_fn(init_fn_name, comps, t)
 
     global_inited_vars: List[SPEC] = [
         k for k, v in ident_map.items()
@@ -3702,6 +3827,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
             raise NotImplementedError
 
         ifc = goto.parent
+        ifc_par = ifc.parent
         assert isinstance(ifc, (If_Stmt, If_Construct)), \
             f"Everything but conditionals are unsupported for goto's parent; got: {ifc}"
         assert ifc.parent is target.parent
@@ -3719,15 +3845,14 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         spec = atmost_one(children_of_type(ex.parent, Specification_Part))
         assert spec
 
-        if isinstance(ifc, (If_Stmt, If_Construct)):
-            goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
-            append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var} = .false."))
-            asgn = Assignment_Stmt(f"{goto_var} = .true.")
-            replace_node(goto, asgn)
-        else:
+        if not isinstance(ifc, (If_Stmt, If_Construct)):
             raise NotImplementedError
 
-        for else_op in ifc.parent.children[ifc_pos + 1: target_pos]:
+        goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
+        append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var}"))
+        replace_node(goto, Assignment_Stmt(f"{goto_var} = .true."))
+
+        for else_op in ifc_par.children[ifc_pos + 1: target_pos]:
             if isinstance(else_op, Continue_Stmt):
                 # Continue statements are no-op, but they may have label attached, so we leave them be.
                 continue
@@ -3756,5 +3881,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
                 nu_if = If_Stmt(f"if (.not.({goto_var})) call x")
                 replace_node(else_op, nu_if)
                 replace_node(singular(nm for nm in walk(nu_if, Call_Stmt)), else_op)
+
+        replace_node(ifc, [Assignment_Stmt(f"{goto_var} = .false."), ifc])
 
     return ast
