@@ -1341,10 +1341,9 @@ class IndexExtractor(NodeTransformer):
 
                                 offset = variable.offsets[idx]
 
-                                # it can be a symbol - Name_Node - or a value
+                                # it can be a symbol, an operator, or a value
 
-                                if not isinstance(offset,
-                                                  (ast_internal_classes.Name_Node, ast_internal_classes.BinOp_Node)):
+                                if not isinstance(offset, ast_internal_classes.FNode):
                                     # check if offset is a number
                                     try:
                                         offset = int(offset)
