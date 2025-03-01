@@ -54,7 +54,7 @@ def main():
     cfg = SDFGConfig({entry_point[-1]: entry_point}, config_injections=config_injections)
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
     assert gmap.keys() == {entry_point[-1]}
-    g: SDFG = singular(gmap.values())
+    g: SDFG = singular(v for v in gmap.values())
     g.save(output_sdfg)
 
 

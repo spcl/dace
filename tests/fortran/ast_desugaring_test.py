@@ -1586,7 +1586,7 @@ subroutine main(out)
   integer, pointer :: ptr(:) => null()
   integer, pointer :: unused_ptr(:) => null()
   integer, intent(out) :: out(4)
-  cfg % ptr => cfg % data
+  cfg % ptr => cfg % data  ! TODO: This too should go away.
   ptr => cfg % ptr
   out = cfg % data
 end subroutine main
