@@ -1569,6 +1569,53 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_pointer_pruning():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type T
+    integer :: data(4) = 8
+    integer, pointer :: ptr(:) => null()
+  end type T
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  type(T), target :: cfg
+  integer, pointer :: ptr(:) => null()
+  integer, pointer :: unused_ptr(:) => null()
+  integer, intent(out) :: out(4)
+  cfg % ptr => cfg % data
+  ptr => cfg % ptr
+  out = cfg % data
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = prune_unused_objects(ast, [('main',)])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: T
+    INTEGER :: data(4) = 8
+    INTEGER, POINTER :: ptr(:) => NULL()
+  END TYPE T
+END MODULE lib
+SUBROUTINE main(out)
+  USE lib, ONLY: T
+  IMPLICIT NONE
+  TYPE(T), TARGET :: cfg
+  INTEGER, INTENT(OUT) :: out(4)
+  cfg % ptr => cfg % data
+  out = cfg % data
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_completely_unsed_modules_are_pruned_early():
     sources, main = SourceCodeBuilder().add_file("""
 module used

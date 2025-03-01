@@ -1858,7 +1858,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
             if not loc or not scope_spec:
                 continue
             nm_spec = ident_spec(alias_map[loc])
-            if isinstance(nm.parent, Entity_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Entity_Decl) and nm is nm.parent.children[0]:
                 fnargs = atmost_one(children_of_type(alias_map[scope_spec], Dummy_Arg_List))
                 fnargs = fnargs.children if fnargs else tuple()
                 if any(a.string == nm.string for a in fnargs):
@@ -1867,8 +1867,12 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                     continue
                 # Otherwise, this is a declaration of the variable, which is not a use, and so a fair game for removal.
                 continue
-            if isinstance(nm.parent, Component_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Component_Decl) and nm is nm.parent.children[0]:
                 # This is a declaration of the component, which is not a use, and so a fair game for removal.
+                continue
+            if isinstance(nm.parent, Pointer_Assignment_Stmt) and nm is nm.parent.children[0]:
+                # A pointer assignment can useless if it is not actually used anywhere otherwise.
+                # TODO: Potential unsoundness in just skipping pointer assignments for tracking usage.
                 continue
 
             # All the scope ancestors of `nm` must live too.
@@ -1919,6 +1923,17 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 break
         if ns in killed:
             continue
+        ns_typ = find_type_of_entity(ns_node, alias_map)
+        if isinstance(ns_node, Entity_Decl) and ns_typ.pointer:
+            # If it is a pointer that we have decided to remove, then clear out all of its assignments.
+            for pa in walk(ast, Pointer_Assignment_Stmt):
+                dst = pa.children[0]
+                if not isinstance(dst, Name):
+                    # TODO: Handle data-refs.
+                    continue
+                dst_spec = search_real_local_alias_spec(dst, alias_map)
+                if dst_spec and alias_map[dst_spec] is ns_node:
+                    remove_self(pa)
         if isinstance(ns_node, Entity_Decl):
             elist = ns_node.parent
             remove_self(ns_node)
