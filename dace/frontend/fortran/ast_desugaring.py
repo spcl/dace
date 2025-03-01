@@ -793,18 +793,21 @@ def find_type_of_entity(node: Union[Entity_Decl, Component_Decl], alias_map: SPE
     return tspec
 
 
-def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE):
+def _dataref_root(dref: Union[Name, Data_Ref, Data_Pointer_Object], scope_spec: SPEC, alias_map: SPEC_TABLE):
     if isinstance(dref, Name):
         root, rest = dref, []
     else:
         assert len(dref.children) >= 2
         root, rest = dref.children[0], dref.children[1:]
+        rest = [r for r in rest if r != '%']
 
     if isinstance(root, Name):
         root_spec = find_real_ident_spec(root.string, scope_spec, alias_map)
         assert root_spec in alias_map, f"canont find: {root_spec} / {dref} in {scope_spec}"
         root_type = find_type_of_entity(alias_map[root_spec], alias_map)
     elif isinstance(root, Data_Ref):
+        root_type = find_type_dataref(root, scope_spec, alias_map)
+    elif isinstance(root, Data_Pointer_Object):
         root_type = find_type_dataref(root, scope_spec, alias_map)
     elif isinstance(root, Part_Ref):
         root_type = find_type_dataref(root, scope_spec, alias_map)
@@ -844,7 +847,7 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
     return comp_spec
 
 
-def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
+def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref, Data_Pointer_Object], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
     _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
     cur_type = root_type
 
@@ -2183,7 +2186,7 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
     plus: Dict[Union[SPEC, Tuple[SPEC, SPEC]], LITERAL_TYPES] = copy(plus) if plus else {}
     minus: Set[Union[SPEC, Tuple[SPEC, SPEC]]] = copy(minus) if minus else set()
 
-    def _root_comp(dref: Data_Ref):
+    def _root_comp(dref: (Data_Ref, Data_Pointer_Object)):
         scope_spec = search_scope_spec(dref)
         assert scope_spec
         if walk(dref, Part_Ref):
@@ -2209,26 +2212,43 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                 minus.remove(k)
             plus[k] = v
 
-    def _inject_knowns(x: Base):
-        if isinstance(x, (*LITERAL_CLASSES, Char_Literal_Constant, Write_Stmt, Close_Stmt, Goto_Stmt)):
+    def _inject_knowns(x: Base, value: bool = True, pointer: bool = True):
+        if isinstance(x, (*LITERAL_CLASSES, Char_Literal_Constant, Write_Stmt, Close_Stmt, Goto_Stmt, Cycle_Stmt)):
             pass
         elif isinstance(x, Assignment_Stmt):
             lv, op, rv = x.children
+            _inject_knowns(lv, value=False, pointer=True)
             _inject_knowns(rv)
         elif isinstance(x, Name):
             loc = search_real_local_alias_spec(x, alias_map)
-            if loc:
-                spec = ident_spec(alias_map[loc])
-                if spec in plus:
-                    assert spec not in minus
-                    replace_node(x, plus[spec])
+            if not loc:
+                return
+            spec = ident_spec(alias_map[loc])
+            if spec not in plus:
+                return
+            assert spec not in minus
+            xdecl = alias_map[loc]
+            xtyp = find_type_of_entity(xdecl, alias_map) if isinstance(xdecl, Entity_Decl) else None
+            if (pointer and xtyp and xtyp.pointer) or value:
+                par = x.parent
+                replace_node(x, plus[spec])
+                if isinstance(par, (Data_Ref, Part_Ref)):
+                    replace_node(par, Data_Ref(par.tofortran()))
         elif isinstance(x, Data_Ref):
             spec = _root_comp(x)
-            if spec in plus:
-                assert spec not in minus
+            if spec not in plus:
+                return
+            assert spec not in minus
+            scope_spec = find_scope_spec(x)
+            xtyp = find_type_dataref(x, scope_spec, alias_map)
+            if (pointer and xtyp.pointer) or value:
+                par = x.parent
                 replace_node(x, plus[spec])
+                if isinstance(par, (Data_Ref, Part_Ref)):
+                    replace_node(par, Data_Ref(par.tofortran()))
         elif isinstance(x, Part_Ref):
             par, subsc = x.children
+            _inject_knowns(par, value=False, pointer=True)
             assert isinstance(subsc, Section_Subscript_List)
             for c in subsc.children:
                 _inject_knowns(c)
@@ -2289,14 +2309,14 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                 plus, minus = {}, set()
     elif isinstance(node, Assignment_Stmt):
         lv, op, rv = node.children
+        _inject_knowns(lv, value=False, pointer=True)
         _inject_knowns(rv)
         lv, op, rv = node.children
-        lspec = None
+        lspec, ltyp = None, None
         if isinstance(lv, Name):
             loc = search_real_local_alias_spec(lv, alias_map)
             assert loc
             lspec = ident_spec(alias_map[loc])
-            ltyp = None
             if isinstance(alias_map[lspec], Entity_Decl):
                 ltyp = find_type_of_entity(alias_map[lspec], alias_map)
         elif isinstance(lv, Data_Ref):
@@ -2311,6 +2331,27 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                 plus[lspec] = numpy_type_to_literal(rval)
                 if lspec in minus:
                     minus.remove(lspec)
+        tp, tm = _track_local_consts(rv, alias_map)
+        _integrate_subresults(tp, tm)
+    elif isinstance(node, Pointer_Assignment_Stmt):
+        lv, _, rv = node.children
+        _inject_knowns(rv, value=False, pointer=True)
+        lv, _, rv = node.children
+        lspec, ltyp = None, None
+        if isinstance(lv, Name):
+            loc = search_real_local_alias_spec(lv, alias_map)
+            assert loc
+            lspec = ident_spec(alias_map[loc])
+            if isinstance(alias_map[lspec], Entity_Decl):
+                ltyp = find_type_of_entity(alias_map[lspec], alias_map)
+        elif isinstance(lv, (Data_Ref, Data_Pointer_Object)):
+            lspec = _root_comp(lv)
+            scope_spec = find_scope_spec(lv)
+            ltyp = find_type_dataref(lv, scope_spec, alias_map)
+        if lspec and ltyp and ltyp.pointer:
+            plus[lspec] = rv
+            if lspec in minus:
+                minus.remove(lspec)
         tp, tm = _track_local_consts(rv, alias_map)
         _integrate_subresults(tp, tm)
     elif isinstance(node, If_Stmt):
@@ -2362,9 +2403,15 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
         assert isinstance(do_stmt, (Label_Do_Stmt, Nonlabel_Do_Stmt))
         assert isinstance(node.children[-1], End_Do_Stmt)
         do_ops = node.children[1:-1]
+        has_pointer_asgns = bool(walk(node, Pointer_Assignment_Stmt))
         for op in do_ops:
             # Inside the do-block don't assume anything is known (a pessimistic, but safe view).
-            tp, tm = _track_local_consts(op, alias_map, {}, set())
+            # TODO: One exception that we make is to resolve the pointers if there is no assignment inside the block.
+            #  But this is not entirely a correct operation, since the pointers can get reassigned in a function call.
+            tp, tm = _track_local_consts(
+                op, alias_map,
+                {k: v for k, v in plus.items() if not isinstance(v, LITERAL_CLASSES)} if not has_pointer_asgns else {},
+                set())
             _integrate_subresults(tp, tm)
 
         _, loop_ctl = do_stmt.children
@@ -2378,11 +2425,11 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             _integrate_subresults({}, {loop_var_spec})
     elif isinstance(node, (
             Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
-            Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt)):
+            Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Cycle_Stmt)):
         # These don't modify variables or give any new information.
         pass
     elif isinstance(node, (Allocate_Stmt, Deallocate_Stmt)):
-        # These are not expected to exit in the pruned AST, so don't bother tracking them.
+        # These are not expected to exist in the pruned AST, so don't bother tracking them.
         pass
     elif isinstance(node, UnaryOpBase):
         _inject_knowns(node)
@@ -3101,13 +3148,13 @@ def _find_real_ident_spec(node: Name, alias_map: SPEC_TABLE) -> SPEC:
     return ident_spec(alias_map[loc])
 
 
-def _lookup_dataref(dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[Tuple[Name, SPEC]]:
+def _lookup_dataref(dr: (Data_Ref, Data_Pointer_Object), alias_map: SPEC_TABLE) -> Optional[Tuple[Name, SPEC]]:
     scope_spec = find_scope_spec(dr)
     root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
     while not isinstance(root, Name):
         root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
         rest = nurest + rest
-    return root, rest
+    return root, tuple(rest)
 
 
 def _item_comp_matches_actual_comp(item_comp: str, actual_comp: str) -> bool:
@@ -3485,7 +3532,7 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
         if not isinstance(alias_map[local_spec], Entity_Decl):
             continue
         edecl_spec = ident_spec(alias_map[local_spec])
-        assert len(edecl_spec) >= 2,\
+        assert len(edecl_spec) >= 2, \
             f"Fortran cannot possibly have a top-level global variable, outside any module; got {edecl_spec}"
         if len(edecl_spec) != 2:
             # We cannot possibly have a module level variable declaration.

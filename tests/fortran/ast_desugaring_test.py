@@ -2374,6 +2374,72 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_exploit_locally_constant_pointers():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main()
+  implicit none
+  type cfg
+    real, pointer :: ptr => null()
+  end type cfg
+  type(cfg) :: c
+  real, target :: data = 0.
+  real, pointer :: ptr => null()
+  integer, target :: i
+  integer, pointer :: iptr => null()
+  integer :: iarr(4) = 0
+
+  ptr => data
+  c % ptr => ptr
+  iptr => i
+  data = 2.
+  ptr = data + 1.
+  c % ptr = c % ptr + 7.
+  if (c % ptr > 0.) c % ptr = 0.
+  iptr = 4
+  do i = 2, 4
+    if (c % ptr > 0.) then
+      c % ptr = c % ptr + 1.5
+      iarr(iptr) = iarr(iptr-1) + 1
+    end if
+  end do
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  TYPE :: cfg
+    REAL, POINTER :: ptr => NULL()
+  END TYPE cfg
+  TYPE(cfg) :: c
+  REAL, TARGET :: data = 0.
+  REAL, POINTER :: ptr => NULL()
+  INTEGER, TARGET :: i
+  INTEGER, POINTER :: iptr => NULL()
+  INTEGER :: iarr(4) = 0
+  ptr => data
+  c % ptr => data
+  iptr => i
+  data = 2.
+  data = 2.0 + 1.
+  data = data + 7.
+  IF (data > 0.) data = 0.
+  i = 4
+  DO i = 2, 4
+    IF (data > 0.) THEN
+      data = data + 1.5
+      iarr(i) = iarr(i - 1) + 1
+    END IF
+  END DO
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_consolidate_global_data():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
