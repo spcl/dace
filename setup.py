@@ -78,7 +78,7 @@ setup(name='dace',
           'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"', 'packaging'
       ] + cmake_requires,
       extras_require={
-          'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
+          'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert'],
           'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1']
       },
       entry_points={
