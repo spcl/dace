@@ -2252,6 +2252,13 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
         elif isinstance(x, Data_Ref):
             spec = _root_comp(x)
             if spec not in plus:
+                for pr in x.children[1:]:
+                    if isinstance(pr, Part_Ref):
+                        _, subsc = pr.children
+                        if subsc:
+                            subsc = subsc.children
+                        for sc in subsc:
+                            _inject_knowns(sc, value, pointer)
                 return
             assert spec not in minus
             scope_spec = find_scope_spec(x)
