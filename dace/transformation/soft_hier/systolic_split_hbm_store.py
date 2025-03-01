@@ -91,7 +91,7 @@ class SystolicSplitStore(transformation.SingleStateTransformation):
                                 }}
                                 flex_intra_cluster_sync();
                                 flex_global_barrier_xy();
-                            }}                            
+                            }}                         
                             ''',
                             language=dtypes.Language.CPP)
       

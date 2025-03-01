@@ -194,6 +194,17 @@ class SystolicTransformer(transformation.SingleStateTransformation):
         ##############################
         # init state
         init_state = nsdfg.add_state("init", is_start_block=True)
+        # init_state.add_tasklet(name="init",
+        #                     inputs=None,
+        #                     outputs=None,
+        #                     code=f'''
+        #                     if (flex_is_dm_core()) {{
+        #                         flex_dma_async_wait_all();
+        #                     }}
+        #                     flex_intra_cluster_sync();
+        #                     ''',
+        #                     language=dtypes.Language.CPP)
+        ##############################
         # condition_expr=f"_c < ((({gi}+{gj}+1) if (({i} < {M} - {NPE}*{tM}) or ({j} < {N} - {NPE}*{tN})) else ({2*NPE-1})) + ({new_map_rstride}/{map_rstride}))",
         # condition_expr=f"_c < (({gi}+{gj}+1) + ({new_map_rstride}/{map_rstride}))",
         ##############################
@@ -450,13 +461,13 @@ class SystolicTransformer(transformation.SingleStateTransformation):
         lr_sync.add_tasklet(name="SoftHier_sync", 
                             inputs=None, 
                             outputs=None, 
-                            code='''
-                            if (flex_is_dm_core()) {
+                            code=f'''
+                            if (flex_is_dm_core()) {{
                                 flex_dma_async_wait_all();
-                            }
+                            }}
                             flex_intra_cluster_sync();
-                            flex_global_barrier_xy();
-                            ''', 
+                            flex_global_barrier();
+                            ''',
                             language=dtypes.Language.CPP)
         
         nsdfg.remove_node(nstate)

@@ -1601,27 +1601,6 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             # print("Cannot schedule %s directly from non-GPU code" % scope_entry.map.schedule)
             raise TypeError('Cannot schedule %s directly from non-GPU code' % str(scope_entry.map.schedule))
 
-        # Modify thread-blocks if dynamic ranges are detected
-        # for node, graph in dfg_scope.all_nodes_recursive():
-        #     if isinstance(node, nodes.MapEntry):
-        #         smap = node.map
-        #         if (smap.schedule == dtypes.ScheduleType.GPU_ThreadBlock and has_dynamic_map_inputs(graph, node)):
-        #             warnings.warn('Thread-block map cannot be used with '
-        #                           'dynamic ranges, switching map "%s" to '
-        #                           'sequential schedule' % smap.label)
-        #             smap.schedule = dtypes.ScheduleType.Sequential
-
-        # Determine whether to create a global (grid) barrier object
-        # create_grid_barrier = False
-        # if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent:
-        #     create_grid_barrier = True
-        # for node in dfg_scope.nodes():
-        #     if scope_entry == node:
-        #         continue
-        #     if (isinstance(node, nodes.EntryNode) and node.map.schedule == dtypes.ScheduleType.GPU_Device):
-        #         # Create grid barrier only if there is a synchronization requirement on nested GPU_Device maps
-        #         if any(p is not scope_entry for p in dfg_scope.predecessors(node)):
-        #             create_grid_barrier = True
 
         # self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, sdfg.node_id(state),
