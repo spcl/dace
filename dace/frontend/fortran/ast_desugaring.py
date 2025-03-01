@@ -28,7 +28,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
     Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, Proc_Decl, End_Type_Stmt, \
-    End_Interface_Stmt, Procedure_Declaration_Stmt
+    End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -66,6 +66,7 @@ class TYPE_SPEC:
         self.spec: SPEC = spec
         self.shape: Tuple[str, ...] = self._parse_shape(attrs)
         self.optional: bool = 'OPTIONAL' in attrs
+        self.pointer: bool = 'POINTER' in attrs
         self.inp: bool = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
         self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
         self.alloc: bool = 'ALLOCATABLE' in attrs
@@ -98,6 +99,8 @@ class TYPE_SPEC:
 
     def __repr__(self):
         attrs = []
+        if self.pointer:
+            attrs.append("*")
         if self.shape:
             attrs.append(f"shape={self.shape}")
         if self.optional:
