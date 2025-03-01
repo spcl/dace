@@ -1,4 +1,5 @@
 import re
+import subprocess
 from dataclasses import dataclass
 from itertools import chain, combinations
 from pathlib import Path
@@ -15,8 +16,8 @@ from fparser.two.utils import walk
 import dace
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
-    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec, find_type_of_entity, \
-    find_real_ident_spec, ident_spec
+    SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec, GLOBAL_DATA_OBJ_NAME, \
+    GLOBAL_DATA_TYPE_NAME
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
 NEW_LINE = "NEW_LINE('A')"
@@ -396,56 +397,40 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
 
 
 def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
-    uses, ser_ops = [], []
-    gd_struct, des_ops = [], []
-    hack_typs, hack_args, hack_ops, hack_call = [], [], [], []
-    for mod in walk(ast, Module):
-        mname = find_name_of_node(mod)
-        spart = atmost_one(children_of_type(mod, Specification_Part))
-        if not spart:
-            continue
-        for var in walk(spart, Entity_Decl):
-            vname = find_name_of_node(var)
-            # TODO: What if `vname` is in `g.symbols`?
-            if vname not in g.arrays:
+    uses, ser_ops, des_ops = [], [], []
+    if GLOBAL_DATA_OBJ_NAME in g.arrays:
+        gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
+        for mod in walk(ast, Module):
+            mname = find_name_of_node(mod)
+            spart = atmost_one(children_of_type(mod, Specification_Part))
+            if not spart:
                 continue
-            renamed: re.Match = re.match(r'^([a-zA-Z0-9_]+)_var_[0-9]+$', vname)
-            ogvname = renamed.group(1) if renamed else vname
+            for var in walk(spart, Entity_Decl):
+                vname = find_name_of_node(var)
+                assert vname
+                if vname not in gdata:
+                    continue
+                renamed: re.Match = re.match(r'^([a-zA-Z0-9_]+)_var_[0-9]+$', vname)
+                ogvname = renamed.group(1) if renamed else vname
 
-            uses.append(f"""use {mname}, only : {vname} => {ogvname}""")
-            ser_ops.append(f"""
+                uses.append(f"""use {mname}, only : {vname} => {ogvname}""")
+                ser_ops.append(f"""
 call serialize(io, "# {vname}", cleanup=.false.)
 call serialize(io, {vname}, cleanup=.false.)
 """)
-            vctyp = _real_ctype(g.arrays[vname])
-            gd_struct.append(f"{vctyp} {vname} = {{}};")
-            if isinstance(g.arrays[vname], dace.data.Array):
-                des_ops.append(f"""
+                vctyp = _real_ctype(gdata[vname])
+                if isinstance(gdata[vname], dace.data.Array):
+                    des_ops.append(f"""
 {{
     read_line(s, "# {vname}");
     auto [m, arr] = read_array<{vctyp[:-1]}>(s);
     g->{vname} = arr;
 }}
 """)
-                hack_typs.append(f"{vctyp}")
-                hack_args.append(f"{vname}")
-                hack_call.append(f"{vname}")
-                hack_ops.append(f"""
-{{
-    auto& m = (*ARRAY_META_DICT())[gdata->{vname}];
-    std::copy(gdata->{vname}, gdata->{vname}+m.volume(), {vname});
-}}
-""")
-            else:
-                des_ops.append(f"""
+                else:
+                    des_ops.append(f"""
 read_line(s, "# {vname}");
 deserialize(g->{vname}, s);
-""")
-                hack_typs.append(f"{vctyp}*")
-                hack_args.append(f"{vname}")
-                hack_call.append(f"&{vname}")
-                hack_ops.append(f"""
-*{vname} = gdata->{vname};
 """)
 
     uses = '\n'.join(uses)
@@ -459,33 +444,11 @@ close(UNIT=io)
 end subroutine serialize_global_data
 """
 
-    gd_struct = '\n'.join(gd_struct)
     des_ops = '\n'.join(des_ops)
-    hack_sig = ', '.join(f"{t} {a}" for t, a in zip(hack_typs, hack_args))
-    hack_sig_typonly = ', '.join(f"{t}" for t in hack_typs)
-    hack_call = ', '.join(hack_call)
-    hack_ops = '\n'.join(hack_ops)
     cpp_code = f"""
-struct global_data {{
-    {gd_struct}
-
-    static global_data* singleton() {{
-        static auto* g = new global_data;
-        return g;
-    }}
-}};
-
-void deserialize(global_data* g, std::istream& s) {{
+void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
 }}
-
-extern "C" void global_hack({hack_sig}) {{
-    const auto* gdata = global_data::singleton();
-    {hack_ops}
-}}
-
-// HACK DECLARATION: namespace serde {{ extern "C" void global_hack({hack_sig_typonly}); }} // namespace serde
-// HACK CALL: serde::global_hack({hack_call});
 """
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
 
@@ -617,8 +580,6 @@ std::string serialize(bool x) {{
 
     # Actual code generation begins here.
     ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast)
-    derived_type_map = {dt.spec: dt for dt in iterate_over_derived_types(ident_map)}
     for dt in iterate_over_derived_types(ident_map):
         if dt.name not in sdfg_structs:
             # The type is not present in the final SDFG, so we don't care for it.
@@ -990,10 +951,28 @@ namespace serde {{
     }}
 
     {gdata.cpp_serde}
+
+    template<typename T>
+    std::string serialize_array(T* arr) {{
+        const auto m = (*ARRAY_META_DICT())[static_cast<void*>(arr)];
+        std::stringstream s;
+        add_line("# rank", s);
+        add_line(m.rank, s);
+        add_line("# size", s);
+        for (auto i : m.size) add_line(i, s);
+        add_line("# lbound", s);
+        for (auto i : m.lbound) add_line(i, s);
+        add_line("# entries", s);
+        for (int i=0; i<m.volume(); ++i) add_line(serialize(arr[i]), s);
+        return s.str();
+    }}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__
 """
+    result = subprocess.run(['clang-format'], input=cpp_code.strip(), text=True, capture_output=True)
+    if not (result.returncode or result.stderr):
+        cpp_code = result.stdout
 
     return SerdeCode(f90_serializer=f90_code.strip(), cpp_serde=cpp_code.strip())
 

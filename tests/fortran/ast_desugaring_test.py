@@ -10,7 +10,7 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, deconstuct_goto_statements, SPEC, remove_access_and_bind_statements, \
-    identifier_specs, alias_specs, consolidate_uses
+    identifier_specs, alias_specs, consolidate_uses, consolidate_global_data_into_arg, prune_coarsely
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -879,7 +879,6 @@ end subroutine main
     ast = consolidate_uses(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE A
   TYPE, ABSTRACT :: AA
@@ -1598,7 +1597,6 @@ end subroutine main
     ast = parse_and_improve(sources, [('main',)])
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE used
   IMPLICIT NONE
@@ -2376,6 +2374,82 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_consolidate_global_data():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  logical :: inited_var = .false.
+  logical :: uninited_var
+  integer, dimension(3) :: iarr1 = [1, 2, 3]
+  integer :: iarr2(3) = [2, 3, 4]
+  type cfg
+    real :: foo = 1.9
+    integer :: bar
+  end type cfg
+contains
+  subroutine update(what)
+    implicit none
+    logical, intent(out) :: what
+    what = .true.
+  end subroutine update
+end module
+
+subroutine main
+  use lib
+  implicit none
+  real :: a = 1.0
+  call update(inited_var)
+  call update(uninited_var)
+  if (inited_var .and. uninited_var) a = 7.1
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = consolidate_global_data_into_arg(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE global_mod
+  TYPE :: global_data_type
+    LOGICAL :: inited_var = .FALSE.
+    LOGICAL :: uninited_var
+    INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
+    INTEGER :: iarr2(3) = [2, 3, 4]
+  END TYPE global_data_type
+END MODULE global_mod
+MODULE lib
+  IMPLICIT NONE
+  LOGICAL :: inited_var = .FALSE.
+  LOGICAL :: uninited_var
+  INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
+  INTEGER :: iarr2(3) = [2, 3, 4]
+  TYPE :: cfg
+    REAL :: foo = 1.9
+    INTEGER :: bar
+  END TYPE cfg
+  CONTAINS
+  SUBROUTINE update(global_data, what)
+    USE global_mod, ONLY: global_data_type
+    IMPLICIT NONE
+    LOGICAL, INTENT(OUT) :: what
+    TYPE(global_data_type) :: global_data
+    what = .TRUE.
+  END SUBROUTINE update
+END MODULE
+SUBROUTINE main(global_data)
+  USE global_mod, ONLY: global_data_type
+  USE lib, ONLY: update
+  IMPLICIT NONE
+  REAL :: a = 1.0
+  TYPE(global_data_type) :: global_data
+  CALL update(global_data, global_data % inited_var)
+  CALL update(global_data, global_data % uninited_var)
+  IF (global_data % inited_var .AND. global_data % uninited_var) a = 7.1
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_create_global_initializers():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -2594,14 +2668,17 @@ SUBROUTINE main(d)
   IMPLICIT NONE
   REAL, INTENT(INOUT) :: d
   INTEGER :: i
-  LOGICAL :: goto_0 = .FALSE.
-  LOGICAL :: goto_1 = .FALSE.
-  LOGICAL :: goto_2 = .FALSE.
+  LOGICAL :: goto_0
+  LOGICAL :: goto_1
+  LOGICAL :: goto_2
   i = 0
+  goto_0 = .FALSE.
   IF (i > 5) goto_0 = .TRUE.
   IF (.NOT. (goto_0)) i = 7
+  goto_1 = .FALSE.
   IF (.NOT. (goto_0) .AND. i > 5) goto_1 = .TRUE.
   IF (.NOT. (goto_1) .AND. .NOT. (goto_0)) i = 1
+  goto_2 = .FALSE.
   IF (.NOT. (goto_1) .AND. .NOT. (goto_0) .AND. i > 5) THEN
     goto_2 = .TRUE.
     i = 9
@@ -2649,7 +2726,6 @@ end subroutine main
     ast = parse_and_improve(sources)
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE lib
   TYPE :: cmplx
@@ -2708,7 +2784,6 @@ end subroutine main
     ast = remove_access_and_bind_statements(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE lib
   TYPE :: cmplx

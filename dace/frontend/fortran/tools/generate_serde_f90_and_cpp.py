@@ -47,9 +47,14 @@ def main():
 
     cfg = ParseConfig(sources=input_f90s, config_injections=ecrad_config_injection_list())
     ast = create_fparser_ast(cfg)
+    # We trim the extra fat from the AST, since we just need the types and the global variables.
     ast = _keep_only_derived_types(ast)
+    # But we may need to propagate the constants and injected configs.
     ast = const_eval_nodes(ast)
     ast = inject_const_evals(ast, cfg.config_injections)
+    # NOTE: There is no need to generate a global structure for serialisation; there is a special function for that.
+    # But, the graph **must** have these global structure if necessary.
+
     # Generated serde code from the processed code.
     serde_code = generate_serde_code(ast, g)
 
