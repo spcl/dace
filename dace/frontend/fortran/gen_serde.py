@@ -23,9 +23,9 @@ from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_o
 NEW_LINE = "NEW_LINE('A')"
 
 
-def gen_f90_serde_module_skeleton() -> Module:
+def gen_f90_serde_module_skeleton(mod_name: str = 'serde') -> Module:
     return Module(get_reader(f"""
-module serde
+module {mod_name}
   implicit none
 
   ! ALWAYS: First argument should be an integer `io` that is an **opened** writeable stream.
@@ -92,7 +92,7 @@ contains
     if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
     if (cleanup_local) close(UNIT=io)
   end subroutine W_string
-end module serde
+end module {mod_name}
 """))
 
 
@@ -453,14 +453,14 @@ void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
 
 
-def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
+def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> SerdeCode:
     ast = _keep_only_derived_types(ast)
 
     # Global data.
     gdata = _get_global_data_serde_code(ast, g)
 
     # F90 Serializer related data structures.
-    f90_mod = gen_f90_serde_module_skeleton()
+    f90_mod = gen_f90_serde_module_skeleton(mod_name)
     proc_names = []
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
     base_serializers = _get_basic_serializers()

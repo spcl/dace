@@ -36,6 +36,8 @@ def main():
                       help='A file to write the generated F90 functions into (absolute path or relative to CWD).')
     argp.add_argument('-c', '--out_cpp', type=str, required=False, default=None,
                       help='A file to write the generated C++ functions into (absolute path or relative to CWD).')
+    argp.add_argument('-m', '--module_name', type=str, required=False, default='serde',
+                      help="The name of the generated serde module's name.")
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -56,7 +58,7 @@ def main():
     # But, the graph **must** have these global structure if necessary.
 
     # Generated serde code from the processed code.
-    serde_code = generate_serde_code(ast, g)
+    serde_code = generate_serde_code(ast, g, args.module_name)
 
     if args.out_f90:
         with open(args.out_f90, 'w') as f:
