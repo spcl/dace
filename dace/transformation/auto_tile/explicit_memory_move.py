@@ -526,15 +526,20 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             dst_arr_strides = None
             if self.pad_contig_dim:
                 dst_arr_stride_0 = 1
-                dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
-                dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
-                if len(shape) > 2:
+
+                if len(shape) == 1:
+                    dst_arr_strides = [dst_arr_stride_0]
+                elif len(shape) == 2:
+                    dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
+                    dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
+                elif len(shape) > 2:
+                    dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
+                    dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
                     for sh in reversed(dst_arr_shape[1:-1]):
                         dst_arr_stride_1 *= sh
                         dst_arr_strides.insert(0, dst_arr_stride_1)
             else:
                 dst_arr_strides = None
-            #raise Exception(strides, shape, self.pad_contig_dim, self.tiles_evenly)
 
 
             dst_arr_name = (

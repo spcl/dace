@@ -372,7 +372,6 @@ class BlockTiling(transformation.SingleStateTransformation):
                     print("AE4:",u,uc,v,vc,tmp_memlet)
 
         # Move tmp allocation before the outer work Map
-        sdfg.save("i.sdfg")
         for (access_node_in_edge, access_node, access_node_out_edge, tasklet, tasklet_out_edge) in assignments_removed:
             _, _, _, in_conn, m1 = access_node_in_edge
             for out_edge in state.out_edges(outer_work_map_entry):

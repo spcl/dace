@@ -72,7 +72,6 @@ def _tile_cpu(
                 break
 
         if output_name is None:
-            _kernel_sdfg.save("uwuowo.sdfg")
             raise Exception(f"The output name could not be deduced.\n{_kernel_entry}\n{_kernel_exit}\n{_kernel_state.out_edges(_kernel_exit)}")
 
         copy_inputs = copy.deepcopy(inputs)
@@ -325,7 +324,6 @@ def _tile_cpu(
             lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
             and n.map.label == dace.dtypes.ScheduleType.CPU_Persistent.name +"Map",
         )
-        kernel_sdfg.save("sdsds.sdfg")
         if apply_remainder_loop_param:
             first_inner_work_map = find_node_by_cond(
                 kernel_state,
