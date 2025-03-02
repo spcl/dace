@@ -883,6 +883,50 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         if (isinstance(dst_node, nodes.AccessNode)):
             dst_node_desc = sdfg.arrays[dst_node.data]
 
+        def _emit_hbm_interleaved_code(nodedesc, src_name, s:subsets.Indices, callsite_stream, cfg, state_id, src_node, dst_node, is_load):   
+            hbm_width = nodedesc.shape[1]
+            hbm_height = nodedesc.shape[0]
+            row_start = sym2cpp(s[0][0])
+            col_start = sym2cpp(s[1][0])
+            height_split = nodedesc.hbm_split_scheme[0]
+            width_split = nodedesc.hbm_split_scheme[1]
+            block_width = length_1
+            block_height = length_0
+            callsite_stream.write(f"const uint32_t tile_width = {src_name}_tile_width;")
+            callsite_stream.write(f"const uint32_t tile_height = {src_name}_tile_height;")
+            callsite_stream.write(f"const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
+            callsite_stream.write(f"const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
+            callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
+            callsite_stream.write(f"const uint32_t col_start = col_start_temp % {src_name}_width;")
+            callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
+            callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
+            callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
+            callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
+            callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
+            callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
+            callsite_stream.write(f"const uint32_t channel_id = {src_name}_placement_info[tile_index].channel_id;")
+            callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+            callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = {src_name}_placement_info[tile_index].tile_offset * num_blocks_per_tile;")
+            callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
+            callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
+            callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+            callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+            callsite_stream.write(f"const uint64_t block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+            funcname = "flex_dma_async_1d"
+            if is_load:
+                callsite_stream.write(('    {func}({args});').format(
+                        func=funcname,
+                        args=', '.join([f'local({dst_expr})']+ 
+                                    [f'hbm_addr(block_addr)'] + 
+                                    [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                )
+            else:
+                callsite_stream.write(('    {func}({args});').format(
+                        func=funcname,
+                        args=', '.join([f'hbm_addr(block_addr)'] + 
+                                    [f'local({src_expr})'] + 
+                                    [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                )
 
         if (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
                 and not SoftHierCodeGen._in_device_code
@@ -1038,48 +1082,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     callsite_stream.write("{", cfg, state_id, src_node)
 
                     if(nodedesc.is_hbm_interleaved):
-                        # print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
-                        # print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
-                        hbm_width = nodedesc.shape[1]
-                        hbm_height = nodedesc.shape[0]
-                        row_start = sym2cpp(s[0][0])
-                        col_start = sym2cpp(s[1][0])
-                        height_split = nodedesc.hbm_split_scheme[0]
-                        width_split = nodedesc.hbm_split_scheme[1]
-                        channel_start = nodedesc.hbm_placement_scheme[0]
-                        channel_end = nodedesc.hbm_placement_scheme[1]
-                        channel_stride = nodedesc.hbm_placement_scheme[2]
-                        num_channels = channel_end - channel_start + 1
-                        block_width = length_1
-                        block_height = length_0
-                        callsite_stream.write(f"const uint32_t tile_width = {src_name}_tile_width;")
-                        callsite_stream.write(f"const uint32_t tile_height = {src_name}_tile_height;")
-                        callsite_stream.write(f"const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
-                        callsite_stream.write(f"const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
-                        callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
-                        callsite_stream.write(f"const uint32_t col_start = col_start_temp % {src_name}_width;")
-                        callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
-                        callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
-                        callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
-                        callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
-                        callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
-                        callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
-                        callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
-                        callsite_stream.write(f"const uint32_t channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
-                        callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
-                        callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
-                        callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
-                        callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
-                        callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
-                        callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                        callsite_stream.write(f"const uint64_t block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
-                        funcname = "flex_dma_async_1d"
-                        callsite_stream.write(('    {func}({args});').format(
-                                func=funcname,
-                                args=', '.join([f'local({dst_expr})']+ 
-                                            [f'hbm_addr(block_addr)'] + 
-                                            [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                        )
+                        _emit_hbm_interleaved_code(nodedesc, src_name, s, callsite_stream, cfg, state_id, src_node, dst_node, True)
 
                     else:
                         funcname = "flex_dma_async_2d"
@@ -1138,56 +1141,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     )
                     callsite_stream.write("{", cfg, state_id, src_node)
                     if(nodedesc.is_hbm_interleaved):
-                        # print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
-                        # print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
-                        hbm_width = nodedesc.shape[1]
-                        hbm_height = nodedesc.shape[0]
-                        row_start = sym2cpp(s[0][0])
-                        col_start = sym2cpp(s[1][0])
-                        height_split = nodedesc.hbm_split_scheme[0]
-                        width_split = nodedesc.hbm_split_scheme[1]
-                        channel_start = nodedesc.hbm_placement_scheme[0]
-                        channel_end = nodedesc.hbm_placement_scheme[1]
-                        channel_stride = nodedesc.hbm_placement_scheme[2]
-                        num_channels = channel_end - channel_start + 1
-                        block_width = length_1
-                        block_height = length_0
-                        callsite_stream.write(f"const uint32_t tile_width = {dst_name}_tile_width;")
-                        callsite_stream.write(f"const uint32_t tile_height = {dst_name}_tile_height;")
-                        
-                        # callsite_stream.write(f"const uint32_t row_start_offset = 0;")
-                        # callsite_stream.write(f"const uint32_t col_start_offset = 0;")
-                        
-                        callsite_stream.write(f"const uint32_t row_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) / {dst_name}_width;")
-                        callsite_stream.write(f"const uint32_t col_start_offset = (({dst_name} - {dst_name}_base) / {data_size}) % {dst_name}_width;")
-                        # callsite_stream.write(f"const uint32_t row_start = {row_start};")
-                        # callsite_stream.write(f"const uint32_t col_start = {col_start};")
-                        callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
-                        callsite_stream.write(f"const uint32_t col_start = col_start_temp % {dst_name}_width;")
-                        callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {dst_name}_width;")
-
-                        callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
-                        callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
-                        callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
-                        callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
-                        callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
-                        callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
-                        callsite_stream.write(f"const uint32_t channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
-                        callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
-                        callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
-                        callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
-                        callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
-                        callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
-                        callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                        callsite_stream.write(f"const uint64_t block_addr = {dst_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
-                        funcname = "flex_dma_async_1d"
-                        callsite_stream.write(('    {func}({args});').format(
-                                func=funcname,
-                                args=', '.join( 
-                                            [f'hbm_addr(block_addr)'] + 
-                                            [f'local({src_expr})']+
-                                            [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                                )
+                        _emit_hbm_interleaved_code(nodedesc, dst_name, s, callsite_stream, cfg, state_id, src_node, dst_node, False)
                         # if is_sync:
                         callsite_stream.write("flex_dma_async_wait_all();")
                     else:
@@ -1332,6 +1286,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 elif src_storage == dtypes.StorageType.SoftHier_HBM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
                     name = memlet.data
                     nodedesc = sdfg.arrays[name]
+                    raise NotImplementedError(
+                        f"Unimplemented copy type: {src_storage} -> {dst_storage}"
+                    )
                     if dims == 1:
                         beg, end, step = subset.ranges[0]
                         length = (end + 1) - beg
@@ -1350,46 +1307,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             callsite_stream.write("if (flex_is_dm_core())")
                             callsite_stream.write("{")
                             s = subsets.Indices(memlet.src_subset)
-                            hbm_width = nodedesc.shape[1]
-                            hbm_height = nodedesc.shape[0]
-                            row_start = sym2cpp(s[0][0])
-                            col_start = sym2cpp(s[1][0])
-                            height_split = nodedesc.hbm_split_scheme[0]
-                            width_split = nodedesc.hbm_split_scheme[1]
-                            channel_start = nodedesc.hbm_placement_scheme[0]
-                            channel_end = nodedesc.hbm_placement_scheme[1]
-                            channel_stride = nodedesc.hbm_placement_scheme[2]
-                            num_channels = channel_end - channel_start + 1
-                            block_width = length_1
-                            block_height = length_0
-                            callsite_stream.write(f"const uint32_t tile_width = {src_name}_tile_width;")
-                            callsite_stream.write(f"const uint32_t tile_height = {src_name}_tile_height;")
-                            callsite_stream.write(f"const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
-                            callsite_stream.write(f"const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
-                            callsite_stream.write(f"const uint32_t col_start_temp = {col_start} + col_start_offset;")
-                            callsite_stream.write(f"const uint32_t col_start = col_start_temp % {src_name}_width;")
-                            callsite_stream.write(f"const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
-                            callsite_stream.write(f"const uint32_t tile_row_index = row_start/tile_height;")
-                            callsite_stream.write(f"const uint32_t tile_col_index = col_start/tile_width;")
-                            callsite_stream.write(f"const uint32_t tile_row_offset = row_start%tile_height;")
-                            callsite_stream.write(f"const uint32_t tile_col_offset = col_start%tile_width;")
-                            callsite_stream.write(f"const uint32_t tile_index = tile_row_index*{width_split} + tile_col_index;")
-                            callsite_stream.write(f"const int channel_id_tmp = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
-                            callsite_stream.write(f"const uint32_t channel_id = (channel_id_tmp >= 0) ? channel_id_tmp : (ARCH_NUM_CLUSTER_X * 2 + ARCH_NUM_CLUSTER_Y * 2 + channel_id_tmp);")
-                            callsite_stream.write(f"const uint32_t num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
-                            callsite_stream.write(f"const uint32_t num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
-                            callsite_stream.write(f"const uint32_t block_row_index = tile_row_offset/{block_height};")
-                            callsite_stream.write(f"const uint32_t block_col_index = tile_col_offset/{block_width};")
-                            callsite_stream.write(f"const uint32_t block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
-                            callsite_stream.write(f"const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-                            callsite_stream.write(f"const uint64_t block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
-                            funcname = "flex_dma_async_1d"
-                            callsite_stream.write(('    {func}({args});').format(
-                                    func=funcname,
-                                    args=', '.join([f'dace_remote_xy({pos_x},{pos_y},{dst_expr})']+ 
-                                                [f'hbm_addr(block_addr)'] + 
-                                                [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                            )
+                            _emit_hbm_interleaved_code(nodedesc, src_name, s, callsite_stream, cfg, state_id, src_node, dst_node)
                             # if is_sync:
                             callsite_stream.write("flex_dma_async_wait_all();")
                             callsite_stream.write("}")
@@ -1674,6 +1592,21 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         prototype_kernel_args = {}
         hbm_interleaved_args = {}
         for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
+            def _generate_placement_info(aname, placement_scheme, split_scheme):
+                            num_tiles = split_scheme[0] * split_scheme[1]
+                            define_str = f"const PlacementInfo {aname}_placement_info[{num_tiles}] = \n"
+                            define_str += "{\n"
+                            assign_str = ""
+                            tiling_offset_dic = {}
+                            for i in range(num_tiles):
+                                if placement_scheme[i] not in tiling_offset_dic.keys():
+                                    tiling_offset_dic[placement_scheme[i]] = 0
+                                assign_str += "{"
+                                assign_str += f".channel_id = {placement_scheme[i]},"
+                                assign_str += f".tile_offset = {tiling_offset_dic[placement_scheme[i]]},"
+                                assign_str += "},\n"
+                                tiling_offset_dic[placement_scheme[i]] += 1
+                            return define_str + assign_str + "};\n"
             if aname in const_params:
                 defined_type, ctype = None, None
                 if aname in sdfg.arrays:
@@ -1714,6 +1647,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         self._globalcode.write(f"uint32_t {aname}_width;")
                         self._globalcode.write(f"uint32_t {aname}_tile_height;")
                         self._globalcode.write(f"uint32_t {aname}_tile_width;")
+                        split_scheme = data_desc.hbm_split_scheme
+                        placement_scheme = data_desc.hbm_placement_scheme
+                        self._globalcode.write(_generate_placement_info(aname, placement_scheme, split_scheme))
                         self._dispatcher.defined_vars.add(f"{aname}_base", defined_type, ctype, allow_shadowing=True)         
                         hbm_interleaved_args[aname] = arg
             else:
@@ -1737,6 +1673,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         self._globalcode.write(f"uint32_t {aname}_width;")
                         self._globalcode.write(f"uint32_t {aname}_tile_height;")
                         self._globalcode.write(f"uint32_t {aname}_tile_width;")
+                        split_scheme = data_desc.hbm_split_scheme
+                        placement_scheme = data_desc.hbm_placement_scheme
+                        self._globalcode.write(_generate_placement_info(aname, placement_scheme, split_scheme))
                         self._dispatcher.defined_vars.add(f"{aname}_base", defined_type, ctype, allow_shadowing=True)
                         hbm_interleaved_args[aname] = arg     
 

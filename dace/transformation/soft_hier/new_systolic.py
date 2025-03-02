@@ -290,7 +290,7 @@ class SystolicTransformer(transformation.SingleStateTransformation):
 
         # condition when to communicate
         comm_cfg1_cond = CodeBlock(
-            code=f"(({lr_param} >= {gi} + {gj}) and ({lr_param} <= {gi} + {gj} + {new_map_rstride}/{map_rstride}))",
+            code=f"(({lr_param} >= {gi} + {gj}) and ({lr_param} < {gi} + {gj} + {new_map_rstride}/{map_rstride}))",
             language=dtypes.Language.Python
         )
 
