@@ -55,7 +55,12 @@ def main():
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
     assert gmap.keys() == {entry_point[-1]}
     g: SDFG = singular(v for v in gmap.values())
+    # Save once simplifying, in case simplification fails.
     g.save(output_sdfg)
+    g.simplify()
+    # Save once before compiling, in case compilation fails.
+    g.save(output_sdfg)
+    g.compile()
 
 
 if __name__ == "__main__":
