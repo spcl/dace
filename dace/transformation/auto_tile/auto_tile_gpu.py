@@ -58,6 +58,35 @@ def _tile_gpu(
         _kernel_sdfg = copy_sub_scope(state, entry)
         IndirectAccessFromNestedSDFGToMap().apply_pass(sdfg=_kernel_sdfg, _={})
 
+        for arr_name, arr in sdfg.arrays.items():
+            if arr_name not in inputs:
+                assert(arr.transient)
+                if isinstance(arr, dace.data.Array):
+                    shape = arr.shape
+                    newshape = []
+                    strides = []
+                    for s in shape:
+                        if isinstance(dace.symbolic.SymExpr(s), int):
+                            ss = int(dace.symbolic.SymExpr(s))
+                        else:
+                            ss = int(dace.symbolic.SymExpr(s).subs([(k,v) for k, v in inputs.items()
+                                                            if isinstance(v, int) or isinstance(v, float)]))
+                        newshape.append(ss)
+                    for s in arr.strides:
+                        if isinstance(dace.symbolic.SymExpr(s), int):
+                            ss = int(dace.symbolic.SymExpr(s))
+                        else:
+                            ss = int(dace.symbolic.SymExpr(s).subs([(k,v) for k, v in inputs.items()
+                                                            if isinstance(v, int) or isinstance(v, float)]))
+                        strides.append(ss)
+                    #raise Exception(shape, ns)
+                    tensor = torch.rand(*newshape, device='cuda')
+                    tensor = tensor.as_strided(size=newshape, stride=strides)
+                    inputs[arr_name] = tensor
+                else:
+                    inputs[arr_name] = 42
+
+
         _kernel_sdfg.name = f"{sdfg.name}_auto_tiled_{call_id}"
         auto_tile_util.convert_inputs_to_gpu_storage(_kernel_sdfg)
         auto_tile_util.set_transient(_kernel_sdfg)
