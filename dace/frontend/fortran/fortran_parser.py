@@ -2633,7 +2633,8 @@ class ParseConfig:
                  config_injections: Optional[List[ConstInjection]] = None,
                  do_not_prune: Union[None, SPEC, List[SPEC]] = None,
                  make_noop: Union[None, SPEC, List[SPEC]] = None,
-                 ast_checkpoint_dir: Union[None, str, Path] = None):
+                 ast_checkpoint_dir: Union[None, str, Path] = None,
+                 consolidate_global_data: bool = True):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2664,6 +2665,7 @@ class ParseConfig:
         self.do_not_prune: List[SPEC] = do_not_prune
         self.make_noop: List[SPEC] = make_noop
         self.ast_checkpoint_dir = ast_checkpoint_dir
+        self.consolidate_global_data = consolidate_global_data
 
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
@@ -2824,10 +2826,11 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
     _checkpoint_ast(cfg, 'ast_v3.f90', ast)
 
-    print("FParser Op: Consolidating the global variables of the AST...")
-    ast = consolidate_global_data_into_arg(ast)
-    ast = prune_coarsely(ast, cfg.do_not_prune)
-    _checkpoint_ast(cfg, 'ast_v4.f90', ast)
+    if cfg.consolidate_global_data:
+        print("FParser Op: Consolidating the global variables of the AST...")
+        ast = consolidate_global_data_into_arg(ast)
+        ast = prune_coarsely(ast, cfg.do_not_prune)
+        _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)

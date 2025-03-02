@@ -79,6 +79,8 @@ def main():
     argp.add_argument('-d', '--checkpoint_dir', type=str, required=False, default=None,
                       help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
                            'Fortran code in there.')
+    argp.add_argument('--consolidate_global_data', type=bool, required=False, default=False,
+                      help='Whther to consolidate the global data into one structure.')
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -95,7 +97,17 @@ def main():
     if checkpoint_dir:
         print(f"Will be writing the checkpoint ASTs in: {checkpoint_dir}")
 
-    cfg = ParseConfig(sources=input_f90s, entry_points=entry_points, make_noop=noops, ast_checkpoint_dir=checkpoint_dir)
+    consolidate_global_data = args.consolidate_global_data
+    if consolidate_global_data:
+        print(f"Will be consolidating the global data into one structure")
+    else:
+        print(f"Will be leave the global data in their own modules")
+
+    cfg = ParseConfig(sources=input_f90s,
+                      entry_points=entry_points,
+                      make_noop=noops,
+                      ast_checkpoint_dir=checkpoint_dir,
+                      consolidate_global_data=consolidate_global_data)
     cfg.sources['_stubs.f90'] = STUBS
     cfg.sources['_builtins.f90'] = BUILTINS
 
