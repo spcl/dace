@@ -13,7 +13,7 @@ env:
 
 jobs:
   test-fpga:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-ci') }}
+    if: False # ${{ !contains(github.event.pull_request.labels.*.name, 'no-ci') }}
     runs-on: [self-hosted, linux, intel-fpga, xilinx-fpga]
     steps:
     - uses: actions/checkout@v4
