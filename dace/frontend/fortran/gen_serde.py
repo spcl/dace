@@ -186,9 +186,10 @@ end if
 if (associated({ptr})) then
   kmeta = 0
   {cand_checks}
-  if (kmeta == 0) then
-    call serialize(io, "=> missing", cleanup=.false.)
-  end if
+  call serialize(io, "# missing", cleanup=.false.)
+  call serialize(io, (kmeta == 0), cleanup=.false.)
+  ! We are dumping the pointer content anyway for now.
+  call serialize(io, {ptr}, cleanup=.false.)
 end if
 """.strip().split('\n')
 
@@ -663,8 +664,7 @@ deserialize(&yep, s);
 """)
                 # TODO: Currenly we do nothing but this is the flag of associated values, so `nullptr` anyway.
                 cpp_deser_ops.append(f"""
-read_line(s, {{"=>"}});  // Should contain '=> ...'
-x->{z.name} = nullptr;
+x->{z.name} = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
             else:
                 if z.alloc:
@@ -938,6 +938,16 @@ namespace serde {{
 
     {cpp_deserializer_fns}
     {cpp_serializer_fns}
+
+    template<typename T>
+    T* read_pointer(std::istream& s) {{
+        read_line(s, {{"# missing"}});  // Should contain '# missing'
+        int missing;
+        deserialize(&missing, s);
+        auto [m, arr] = read_array<T>(s);
+        return arr;
+    }}
+
 
     template<typename T>
     T* array_meta::read(std::istream& s) const {{
