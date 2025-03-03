@@ -101,7 +101,7 @@ def main():
     if consolidate_global_data:
         print(f"Will be consolidating the global data into one structure")
     else:
-        print(f"Will be leave the global data in their own modules")
+        print(f"Will leave the global data in their own modules")
 
     cfg = ParseConfig(sources=input_f90s,
                       entry_points=entry_points,
