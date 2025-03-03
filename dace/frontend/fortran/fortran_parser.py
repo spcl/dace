@@ -2759,6 +2759,7 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast = deconstruct_associations(ast)
     ast = remove_access_and_bind_statements(ast)
     ast = deconstuct_goto_statements(ast)
+    ast = convert_data_statements_into_assignments(ast)
     ast = prune_coarsely(ast, cfg.do_not_prune)
     _checkpoint_ast(cfg, 'ast_v1.f90', ast)
 
@@ -2795,35 +2796,24 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         print("FParser Op: Coarsely pruning the AST...")
         ast = prune_coarsely(ast, cfg.do_not_prune)
 
-        print("FParser Op: Inject configs & prune...")
+        print("FParser Op: Inject configs...")
         ast = inject_const_evals(ast, cfg.config_injections)
-        ast = const_eval_nodes(ast)
-        ast = convert_data_statements_into_assignments(ast)
-
         if cfg.fix_and_propagate_global_vars:
-            print("FParser Op: Fix global vars & prune...")
-            # Prune things once after fixing global variables.
+            print("FParser Op: Fix global vars...")
             # NOTE: Global vars fixing, if done, has to be done before any variable-level pruning, because otherwise
             # some assignments may get lost.
             ast = make_practically_constant_global_vars_constants(ast)
-            ast = const_eval_nodes(ast)
-            ast = prune_branches(ast)
-            ast = prune_unused_objects(ast, cfg.do_not_prune)
-
-        print("FParser Op: Fix arguments & prune...")
-        # Another round of pruning after fixing the practically constant arguments, just in case.
+        print("FParser Op: Fix arguments...")
+        # Fix the practically constant arguments, just in case.
         ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
-        ast = const_eval_nodes(ast)
-        ast = prune_branches(ast)
-        ast = prune_unused_objects(ast, cfg.do_not_prune)
-
-        print("FParser Op: Fix local vars & prune...")
-        # Another round of pruning after fixing the locally constant variables, just in case.
+        print("FParser Op: Fix local vars...")
+        # Fix the locally constant variables, just in case.
         ast = exploit_locally_constant_variables(ast)
+
+        print("FParser Op: Pruning...")
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.do_not_prune)
-
         ast = consolidate_uses(ast)
 
         ast_f90_old, ast_f90_new = ast_f90_new, ast.tofortran()
