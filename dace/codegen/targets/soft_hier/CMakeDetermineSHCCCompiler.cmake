@@ -30,12 +30,12 @@ if(SHCC_COMPILER)
     message(STATUS "SHCC compiler found at: ${SHCC_COMPILER}")
 
     # Set default compiler flags (adjust as necessary for your use case)
-    if(NOT CMAKE_SHCC_FLAGS_INIT)
-        set(CMAKE_SHCC_FLAGS_INIT "-Wall" CACHE STRING "Initial SHCC compiler flags")
-    endif()
+    #if(NOT CMAKE_SHCC_FLAGS_INIT)
+    #    set(CMAKE_SHCC_FLAGS_INIT "-Wall" CACHE STRING "Initial SHCC compiler flags")
+    #endif()
 
     # Add any specific additional settings for the SHCC compiler here
-    set(CMAKE_SHCC_FLAGS "${CMAKE_SHCC_FLAGS_INIT}" CACHE STRING "Compiler flags for SHCC")
+    #set(CMAKE_SHCC_FLAGS "${CMAKE_SHCC_FLAGS_INIT}" CACHE STRING "Compiler flags for SHCC")
 
     # Get CMake version components to generate the correct path for CMakeSHCCCompiler.cmake
     if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.0")
