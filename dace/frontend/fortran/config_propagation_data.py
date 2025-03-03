@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Any, Dict, Optional
+from typing import List, Any, Dict, Optional, Generator, Iterable
 
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection, ConstInjection, SPEC
 
@@ -20,7 +20,7 @@ def deserialize(s: str) -> ConstInjection:
     assert d['type'] in {'ConstTypeInjection', 'ConstInstanceInjection'}
     scope = tuple(d['scope'].split('.')) if d['scope'] else None
     root = tuple(d['root'].split('.'))
-    component = tuple(d['component'].split('.')) if d['component'] else None
+    component = tuple(d['component'].split('.')) if d['component'] else tuple()
     value = d['value']
     return ConstTypeInjection(scope, root, component, value) \
         if d['type'] == 'ConstTypeInjection' \
@@ -41,6 +41,22 @@ def deserialize_v2(s: str,
             v = 'false'
         injs.append(ConstTypeInjection(scope, typ, kparts, v))
     return injs
+
+
+def find_all_config_injection_files(root: Path) -> Generator[Path, None, None]:
+    if root.is_file():
+        yield root
+    else:
+        for f in root.rglob('*.ti'):
+            yield f
+
+
+def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstTypeInjection, None, None]:
+    for f in ti_files:
+        for l in f.read_text().strip().splitlines():
+            if not l.strip():
+                continue
+            yield deserialize(l.strip())
 
 
 def ecrad_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstTypeInjection]:

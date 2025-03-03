@@ -177,11 +177,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                 if offset.name.startswith('__f2dace_SOA'):
                     newoffset = offset.name + "_" + name_ + "_" + str(local_counter)
                     sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
-                    # prog hack
-                    if name.endswith("prog"):
-                        sdfg.append_init_code(f"{newoffset} = {name}[0]->{offset.name};\n")
-                    else:
-                        sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
+                    sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
 
                     sdfg.add_symbol(newoffset, dtypes.int32)
                     offsets_to_replace.append(newoffset)
@@ -212,10 +208,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                         names_to_replace[size.name] = newsize
                         # var_type.sizes[var_type.sizes.index(size)]=newsize
                         sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n")
-                        if name.endswith("prog"):
-                            sdfg.append_init_code(f"{newsize} = {name}[0]->{size.name};\n")
-                        else:
-                            sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
+                        sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
                         sdfg.add_symbol(newsize, dtypes.int32)
                         if isinstance(object, dat.Structure):
                             shape2 = dpcp(object.members[ast_struct_type.name].shape)
@@ -2640,7 +2633,9 @@ class ParseConfig:
                  config_injections: Optional[List[ConstInjection]] = None,
                  do_not_prune: Union[None, SPEC, List[SPEC]] = None,
                  make_noop: Union[None, SPEC, List[SPEC]] = None,
-                 ast_checkpoint_dir: Union[None, str, Path] = None):
+                 ast_checkpoint_dir: Union[None, str, Path] = None,
+                 consolidate_global_data: bool = True,
+                 fix_and_propagate_global_vars: bool = False):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2671,6 +2666,8 @@ class ParseConfig:
         self.do_not_prune: List[SPEC] = do_not_prune
         self.make_noop: List[SPEC] = make_noop
         self.ast_checkpoint_dir = ast_checkpoint_dir
+        self.consolidate_global_data = consolidate_global_data
+        self.fix_and_propagate_global_vars = fix_and_propagate_global_vars
 
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
@@ -2803,13 +2800,15 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         ast = const_eval_nodes(ast)
         ast = convert_data_statements_into_assignments(ast)
 
-        print("FParser Op: Fix global vars & prune...")
-        # Prune things once after fixing global variables.
-        # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
-        ast = make_practically_constant_global_vars_constants(ast)
-        ast = const_eval_nodes(ast)
-        ast = prune_branches(ast)
-        ast = prune_unused_objects(ast, cfg.do_not_prune)
+        if cfg.fix_and_propagate_global_vars:
+            print("FParser Op: Fix global vars & prune...")
+            # Prune things once after fixing global variables.
+            # NOTE: Global vars fixing, if done, has to be done before any variable-level pruning, because otherwise
+            # some assignments may get lost.
+            ast = make_practically_constant_global_vars_constants(ast)
+            ast = const_eval_nodes(ast)
+            ast = prune_branches(ast)
+            ast = prune_unused_objects(ast, cfg.do_not_prune)
 
         print("FParser Op: Fix arguments & prune...")
         # Another round of pruning after fixing the practically constant arguments, just in case.
@@ -2831,10 +2830,11 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     print(f"FParser Op: AST-size settled at {len(ast_f90_new.splitlines())} lines.")
     _checkpoint_ast(cfg, 'ast_v3.f90', ast)
 
-    print("FParser Op: Consolidating the global variables of the AST...")
-    ast = consolidate_global_data_into_arg(ast)
-    ast = prune_coarsely(ast, cfg.do_not_prune)
-    _checkpoint_ast(cfg, 'ast_v4.f90', ast)
+    if cfg.consolidate_global_data:
+        print("FParser Op: Consolidating the global variables of the AST...")
+        ast = consolidate_global_data_into_arg(ast)
+        ast = prune_coarsely(ast, cfg.do_not_prune)
+        _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
     print("FParser Op: Create global initializers & rename uniquely...")
     ast = create_global_initializers(ast, cfg.entry_points)
@@ -2931,7 +2931,8 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
 
     array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
     array_dims_info.visit(program)
-    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(
+        array_dims_info, [ci for ci in cfg.config_injections if isinstance(ci, ConstTypeInjection)]).visit(program)
 
     program = ast_transforms.ParDeclNonContigArrayExpander(program).visit(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)

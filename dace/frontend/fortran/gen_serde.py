@@ -23,9 +23,9 @@ from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_o
 NEW_LINE = "NEW_LINE('A')"
 
 
-def gen_f90_serde_module_skeleton() -> Module:
+def gen_f90_serde_module_skeleton(mod_name: str = 'serde') -> Module:
     return Module(get_reader(f"""
-module serde
+module {mod_name}
   implicit none
 
   ! ALWAYS: First argument should be an integer `io` that is an **opened** writeable stream.
@@ -92,7 +92,7 @@ contains
     if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
     if (cleanup_local) close(UNIT=io)
   end subroutine W_string
-end module serde
+end module {mod_name}
 """))
 
 
@@ -186,9 +186,10 @@ end if
 if (associated({ptr})) then
   kmeta = 0
   {cand_checks}
-  if (kmeta == 0) then
-    call serialize(io, "=> missing", cleanup=.false.)
-  end if
+  call serialize(io, "# missing", cleanup=.false.)
+  call serialize(io, (kmeta == 0), cleanup=.false.)
+  ! We are dumping the pointer content anyway for now.
+  call serialize(io, {ptr}, cleanup=.false.)
 end if
 """.strip().split('\n')
 
@@ -453,14 +454,14 @@ void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
 
 
-def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
+def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> SerdeCode:
     ast = _keep_only_derived_types(ast)
 
     # Global data.
     gdata = _get_global_data_serde_code(ast, g)
 
     # F90 Serializer related data structures.
-    f90_mod = gen_f90_serde_module_skeleton()
+    f90_mod = gen_f90_serde_module_skeleton(mod_name)
     proc_names = []
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
     base_serializers = _get_basic_serializers()
@@ -663,8 +664,7 @@ deserialize(&yep, s);
 """)
                 # TODO: Currenly we do nothing but this is the flag of associated values, so `nullptr` anyway.
                 cpp_deser_ops.append(f"""
-read_line(s, {{"=>"}});  // Should contain '=> ...'
-x->{z.name} = nullptr;
+x->{z.name} = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
 """)
             else:
                 if z.alloc:
@@ -936,6 +936,15 @@ namespace serde {{
         return {{m, y}};
     }}
 
+    template<typename T>
+    T* read_pointer(std::istream& s) {{
+        read_line(s, {{"# missing"}});  // Should contain '# missing'
+        int missing;
+        read_scalar(missing, s);
+        auto [m, arr] = read_array<T>(s);
+        return arr;
+    }}
+
     {cpp_deserializer_fns}
     {cpp_serializer_fns}
 
@@ -1003,11 +1012,11 @@ def _keep_only_derived_types(ast: Program) -> Program:
     return ast
 
 
-def generate_type_injection_code(ast: Program) -> str:
+def generate_type_injection_code(ast: Program, mod_name: str = 'type_injection') -> str:
     ast = _keep_only_derived_types(ast)
 
     f90_mod = Module(get_reader(f"""
-module type_injection
+module {mod_name}
   use serde
   implicit none
 
@@ -1022,7 +1031,7 @@ contains
   ! A placeholder so that FParser does not remove the module subprogram part.
   subroutine noop()
   end subroutine noop
-end module type_injection
+end module {mod_name}
 """.strip()))
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
 

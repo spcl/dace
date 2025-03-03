@@ -1,0 +1,6 @@
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_decomposition_tools.t_grid_domain_decomp_info", "component": "owner_mask_a", "value": "true" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_decomposition_tools.t_grid_domain_decomp_info", "component": "__f2dace_SA_owner_mask_d_0_s", "value": "32" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_decomposition_tools.t_grid_domain_decomp_info", "component": "__f2dace_SA_owner_mask_d_1_s", "value": "640" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_decomposition_tools.t_grid_domain_decomp_info", "component": "__f2dace_SOA_owner_mask_d_0_s", "value": "1" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_decomposition_tools.t_grid_domain_decomp_info", "component": "__f2dace_SOA_owner_mask_d_1_s", "value": "1" }
+

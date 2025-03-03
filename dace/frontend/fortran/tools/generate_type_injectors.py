@@ -25,6 +25,8 @@ def main():
                            'Can be repeated to include multiple files and directories.')
     argp.add_argument('-f', '--out_f90', type=str, required=False, default=None,
                       help='A file to write the generated F90 module into (absolute path or relative to CWD).')
+    argp.add_argument('-m', '--module_name', type=str, required=False, default='type_injection',
+                      help="The name of the generated type injection module's name.")
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -32,7 +34,7 @@ def main():
     print(f"Will be reading from {len(input_f90s)} Fortran files in directories: {input_dirs}")
 
     ast = create_fparser_ast(ParseConfig(sources=input_f90s))
-    ti_code = generate_type_injection_code(ast)
+    ti_code = generate_type_injection_code(ast, args.module_name)
 
     if args.out_f90:
         with open(args.out_f90, 'w') as f:
