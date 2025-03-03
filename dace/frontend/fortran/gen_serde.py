@@ -936,18 +936,17 @@ namespace serde {{
         return {{m, y}};
     }}
 
-    {cpp_deserializer_fns}
-    {cpp_serializer_fns}
-
     template<typename T>
     T* read_pointer(std::istream& s) {{
         read_line(s, {{"# missing"}});  // Should contain '# missing'
         int missing;
-        deserialize(&missing, s);
+        read_scalar(missing, s);
         auto [m, arr] = read_array<T>(s);
         return arr;
     }}
 
+    {cpp_deserializer_fns}
+    {cpp_serializer_fns}
 
     template<typename T>
     T* array_meta::read(std::istream& s) const {{
