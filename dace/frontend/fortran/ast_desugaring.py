@@ -3489,6 +3489,13 @@ def inject_const_evals(ast: Program,
             tspec = find_type_of_entity(alias_map[loc], alias_map)
             # NOTE: We should replace only when it is not an output of the function. However, here we pass the
             # responsibilty to the user to provide valid injections.
+            if isinstance(nm.parent, Assignment_Stmt) and nm is nm.parent.children[0]:
+                # We're violating the rule of valid injection already: If we are assigning anything to this variable, we
+                # can just ignore it, since it has to be treated as a constant anyway.
+                print(f"`{nm} = {item.value}` is supposed to be a constant injection, yet found `{nm.parent}`; "
+                      f"dropping the assignment and moving on...", file=sys.stderr)
+                remove_self(nm.parent)
+                continue
             replace_node(nm, _val_2_lit(item.value, tspec.spec))
     return ast
 
