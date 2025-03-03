@@ -2426,14 +2426,30 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
         assert isinstance(node.children[-1], End_Do_Stmt)
         do_ops = node.children[1:-1]
         has_pointer_asgns = bool(walk(node, Pointer_Assignment_Stmt))
+
+        net_tpm = set()
+        for op in do_ops:
+            tp, tm = _track_local_consts(op, alias_map, {}, set())
+            net_tpm.update(tp.keys())
+            net_tpm.update(tm)
+        loop_control = singular(children_of_type(do_stmt, Loop_Control))
+        _, cntexpr, _, _ = loop_control.children
+        if cntexpr:
+            loopvar, _ = cntexpr
+            loopvar_spec = _find_real_ident_spec(loopvar, alias_map)
+            net_tpm.add(loopvar_spec)
         for op in do_ops:
             # Inside the do-block don't assume anything is known (a pessimistic, but safe view).
             # TODO: One exception that we make is to resolve the pointers if there is no assignment inside the block.
             #  But this is not entirely a correct operation, since the pointers can get reassigned in a function call.
-            tp, tm = _track_local_consts(
-                op, alias_map,
-                {k: v for k, v in plus.items() if not isinstance(v, LITERAL_CLASSES)} if not has_pointer_asgns else {},
-                set())
+            if not has_pointer_asgns:
+                # We're assuming that all the non-literals in the dictionary are pointers.
+                pointers = {k: v for k, v in plus.items() if not isinstance(v, LITERAL_CLASSES)}
+                tp, tm = _track_local_consts(op, alias_map, pointers, set())
+                _integrate_subresults(tp, tm)
+            tp, tm = _track_local_consts(op, alias_map,
+                                         {k: v for k, v in plus.items() if k not in net_tpm},
+                                         net_tpm | minus)
             _integrate_subresults(tp, tm)
 
         _, loop_ctl = do_stmt.children
