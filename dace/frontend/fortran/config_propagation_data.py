@@ -20,7 +20,7 @@ def deserialize(s: str) -> ConstInjection:
     assert d['type'] in {'ConstTypeInjection', 'ConstInstanceInjection'}
     scope = tuple(d['scope'].split('.')) if d['scope'] else None
     root = tuple(d['root'].split('.'))
-    component = tuple(d['component'].split('.')) if d['component'] else None
+    component = tuple(d['component'].split('.')) if d['component'] else tuple()
     value = d['value']
     return ConstTypeInjection(scope, root, component, value) \
         if d['type'] == 'ConstTypeInjection' \
