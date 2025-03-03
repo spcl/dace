@@ -662,9 +662,18 @@ add_line(serialize(x->{z.name} != nullptr), s);
 read_line(s, {{"# assoc"}});  // Should contain '# assoc'
 deserialize(&yep, s);
 """)
-                # TODO: Currenly we do nothing but this is the flag of associated values, so `nullptr` anyway.
+                if z.rank:
+                    sa_vars = [all_sa_vars[f"__f2dace_SA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
+                    sa_vars = '\n'.join([f"x->{v} = m.size.at({dim});" for dim, v in enumerate(sa_vars)])
+                    soa_vars = [all_soa_vars[f"__f2dace_SOA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
+                    soa_vars = '\n'.join([f"x->{v} = m.lbound.at({dim});" for dim, v in enumerate(soa_vars)])
                 cpp_deser_ops.append(f"""
-x->{z.name} = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
+{{
+    auto [m, arr] = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
+    {sa_vars}
+    {soa_vars}
+    x->{z.name} = arr;
+}}
 """)
             else:
                 if z.alloc:
@@ -697,7 +706,7 @@ if (yep) {{  // BEGINING IF
                         sa_vars, soa_vars = '', ''
                     cpp_ser_ops.append(f"""
 {{
-    const array_meta& m = (*ARRAY_META_DICT())[x->{z.name}];
+    const array_meta& m = ARRAY_META_DICT()->at(x->{z.name});
     add_line("# rank", s);
     add_line(m.rank, s);
     add_line("# size", s);
@@ -938,12 +947,12 @@ namespace serde {{
     }}
 
     template<typename T>
-    T* read_pointer(std::istream& s) {{
+    std::pair<array_meta, T*> read_pointer(std::istream& s) {{
         read_line(s, {{"# missing"}});  // Should contain '# missing'
         int missing;
         read_scalar(missing, s);
-        auto [m, arr] = read_array<T>(s);
-        return arr;
+        assert(missing == 1);
+        return read_array<T>(s);
     }}
 
     {cpp_deserializer_fns}
@@ -964,7 +973,7 @@ namespace serde {{
 
     template<typename T>
     std::string serialize_array(T* arr) {{
-        const auto m = (*ARRAY_META_DICT())[static_cast<void*>(arr)];
+        const auto m = ARRAY_META_DICT()->at(static_cast<void*>(arr));
         std::stringstream s;
         add_line("# rank", s);
         add_line(m.rank, s);
