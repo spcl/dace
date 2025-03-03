@@ -2142,7 +2142,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                    "for (int %s = %s; %s < %s; %s += %s) {\n" %
                     (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,

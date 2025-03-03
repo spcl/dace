@@ -3,7 +3,7 @@ import numpy as np
 from .interleave_handler import InterleaveHandler
 
 
-def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node_addr_base=0xc0000000, hbm_node_addr_space=0x02000000):
+def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node_addr_base=0xc0000000, hbm_node_addr_space=0x04000000):
     """
     Generate an ELF file preloading numpy arrays.
 
@@ -29,7 +29,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
     
     ENV_PATH = os.environ.get("PATH")
     # Add RISC-V toolchain to PATH /scratch/dace4softhier/gvsoc/third_party/toolchain/v1.0.16-pulp-riscv-gcc-centos-7/bin/
-    os.environ["PATH"] = f"{ENV_PATH}:/scratch/dace4softhier/gvsoc/third_party/toolchain/v1.0.16-pulp-riscv-gcc-centos-7/bin/"
+    # os.environ["PATH"] = f"{ENV_PATH}:/scratch/dace4softhier/gvsoc/third_party/toolchain/install/bin/"
     
     # Handle default for start_addresses
     if start_addresses is None:
@@ -113,7 +113,7 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
                                          Handler_list: list[InterleaveHandler],
                                          KMN=None, 
                                          hbm_node_addr_base=0xc0000000, 
-                                         hbm_node_addr_space=0x02000000, 
+                                         hbm_node_addr_space=0x04000000, 
                                          args_only=True):
     """
     Split np arrays into tiles and blocks and then use make_preload_elf to generate an ELF file preloading numpy arrays.
@@ -174,7 +174,7 @@ def make_preload_elf_hbm_interleaved_new(output_file_path,
         # Grab the start address for the "first" channel in the group
         start_channel = placement_scheme[0]
         array_start_addr_in_channel = start_addr_in_each_channel[start_channel]
-
+        print(f"array_start_addr_in_channel: {hex(array_start_addr_in_channel)}")
         # 5) Store that start address in the array's original position
         start_addresses_in_original_order[idx] = array_start_addr_in_channel
 

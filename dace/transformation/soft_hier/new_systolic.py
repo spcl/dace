@@ -466,7 +466,7 @@ class SystolicTransformer(transformation.SingleStateTransformation):
                                 flex_dma_async_wait_all();
                             }}
                             flex_intra_cluster_sync();
-                            flex_global_barrier();
+                            flex_global_barrier_xy();
                             ''',
                             language=dtypes.Language.CPP)
         

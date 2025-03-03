@@ -5,4 +5,4 @@ mv ../output.elf ./
 bash -c "cd @GVSOC_DIR@ && \
 source sourceme.sh && \
 cd @GVSOC_INSTALL_PATH@ && \
-./install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ${CUR_DIR}/softhier.elf run --preload ${CUR_DIR}/output.elf"
+./install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ${CUR_DIR}/softhier.elf run --preload ${CUR_DIR}/output.elf | tee -a ${CUR_DIR}/../log"

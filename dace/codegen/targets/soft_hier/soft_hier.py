@@ -1853,7 +1853,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             flex_global_barrier_xy();
             flex_timer_end();
             flex_eoc(eoc_val);
-            return 0;'''
+            return;'''
             .format(kname=kernel_name,
                     kargs=', '.join([arg for arg in prototype_kernel_args] + extra_kernel_args),
                     gdims=gdims,
@@ -2199,7 +2199,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             var = kernel_map.params[i]
             begin, end, skip = r
             kernel_stream.write(
-                "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                "for (int %s = %s; %s < %s; %s += %s) {\n" %
                 (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                 cfg,
                 state_id,
@@ -2285,45 +2285,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         callsite_stream.write('{', cfg, state_id, scope_entry)
         callsite_stream.write("// TEST DEVICE SCOPE\n")
         # Emit internal array allocation (deallocation handled at MapExit)
-        
-        # Collect arrays to allocate
-        # arrays_to_allocate = []
-        # for node, parent in dfg_scope.all_nodes_recursive():
-        #     if isinstance(node, nodes.AccessNode):
-        #         desc = node.desc(parent)
-        #         if desc.storage == dtypes.StorageType.SoftHier_TCDM and (node.data, desc) not in arrays_to_allocate and desc.transient == True:
-        #             arrays_to_allocate.append((node.data, desc))
-        # # Generate size and address macros
-        # current_address = '0'  # Base address is 0
-        # array_addresses = {}
-        # for desc_name, desc in arrays_to_allocate:
-        #     # Compute total size in bytes without using sizeof()
-        #     data_size = desc.dtype.bytes  # Number of bytes per element
-        #     total_size = desc.total_size * data_size  # Total size in bytes
-
-        #     # Convert total_size to C++ code (string), accounting for symbolic expressions
-        #     size_expr = cpp.sym2cpp(total_size)
-        #     size_macro = f'#define {desc_name.upper()}_SIZE ({size_expr})\n'
-        #     address_macro = f'#define {desc_name.upper()}_ADDR ({current_address})\n'
-        #     current_address = f'({current_address} + {desc_name.upper()}_SIZE)'
-
-        #     self._globalcode.write(size_macro, sdfg, state_id, scope_entry)
-        #     self._globalcode.write(address_macro, sdfg, state_id, scope_entry)
-
-        #     array_addresses[desc_name] = f'{desc_name.upper()}_ADDR'
-
-        # # Proceed to declare addresses in the device kernel
-        # for desc_name, desc in arrays_to_allocate:
-        #     ptr_name = cpp.ptr(desc_name, desc, sdfg, self._frame)
-        #     ctypedef = f'{desc.dtype.ctype} *'
-
-        #     # Declare the pointer (if needed)
-        #     # self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctypedef)
-
-        #     # Declare uint32_t address variable and assign from macro
-        #     address_macro = array_addresses[desc_name]
-        #     addr_var = f'{desc_name}'
-        #     callsite_stream.write(f'uint32_t {addr_var} = {address_macro};', sdfg, state_id, scope_entry)
 
         self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
@@ -2427,26 +2388,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # callsite_stream.write("flex_global_barrier_xy();\n")
         callsite_stream.write("flex_intra_cluster_sync();\n")
         callsite_stream.write("// Finished deivelevel scope\n")
-        # If there are any other threadblock maps down the road,
-        # synchronize the thread-block / grid
-        # parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
-        # if (len(next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
-        #     # Thread-block synchronization
-        #     if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-        #         callsite_stream.write('__syncthreads();', cfg, state_id, scope_entry)
-        #     # Grid synchronization (kernel fusion)
-        #     elif scope_entry.map.schedule == dtypes.ScheduleType.GPU_Device \
-        #             and self._kernel_map.schedule == dtypes.ScheduleType.GPU_Device:
-        #         # Escape grid conditions
-        #         for _ in self._kernel_grid_conditions:
-        #             callsite_stream.write('}', cfg, state_id, scope_entry)
 
-        #         # Synchronize entire grid
-        #         callsite_stream.write('__gbar.Sync();', cfg, state_id, scope_entry)
-
-        #         # Rewrite grid conditions
-        #         for cond in self._kernel_grid_conditions:
-        #             callsite_stream.write(cond, cfg, state_id, scope_entry)
 
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:

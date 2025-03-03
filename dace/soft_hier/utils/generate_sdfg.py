@@ -4,7 +4,9 @@ import os
 import numpy as np
 from dace.transformation.dataflow import DoubleBuffering, MapTiling
 from dace.transformation.soft_hier import SystolocTransformer, SystolicTransformer, SystolicSplitStore, SummaTransformer
-
+M = dace.symbol("M")
+N = dace.symbol("N")
+K = dace.symbol("K")
 def _my_gen_summa_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      global_storage: dace.dtypes.StorageType,
                      local_storage: dace.dtypes.StorageType,

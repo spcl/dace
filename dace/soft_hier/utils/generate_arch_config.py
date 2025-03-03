@@ -28,7 +28,7 @@ def generate_arg_cfg(
     idma_outstand_txn=16,
     idma_outstand_burst=256,
     hbm_start_base="0xc0000000",
-    hbm_node_addr_space="0x02000000",
+    hbm_node_addr_space="0x20000000",
     num_node_per_ctrl=1,
     hbm_placement="8,0,0,8",
     hbm_edge_interleaving=0,
@@ -125,3 +125,98 @@ class FlexClusterArch:
         f.write(code)
 
     print(f"\n[INFO] The file '{output_path}' has been created.\n")
+
+
+def _check_combo(combo, tcdm_usage_func=None):
+    '''
+    Check if the combination is valid
+    '''
+    (
+        M_val,
+        N_val,
+        K_val,
+        hwM,
+        hwN,
+        hwK,
+        thread_group_dims,
+        tcdm_size
+    ) = combo
+    # print(f"Checking combo: {combo}")
+    dim_x = thread_group_dims[0]
+    dim_y = thread_group_dims[1]
+    
+    if M_val % hwM != 0:
+        return False
+    if N_val % hwN != 0:
+        return False
+    if K_val % hwK != 0:
+        return False
+    if M_val % dim_x != 0:
+        return False
+    if N_val % dim_y != 0:
+        return False
+    if M_val % (hwM * dim_x) != 0:
+        return False
+    if N_val % (hwN * dim_y) != 0:
+        return False
+    if (hwM * dim_x) > M_val:
+        return False
+    if (hwN * dim_y) > N_val:
+        return False
+    
+    # Use provided function or default calculation
+    if tcdm_usage_func is None:
+        tcdm_usage_func = lambda m, n, k: 2 * (2 * m * k + 2 * k * n + m * n)
+    
+    tcdm_usage = tcdm_usage_func(hwM, hwN, hwK)
+    if tcdm_usage > tcdm_size:
+        return False
+    if tcdm_usage < (tcdm_size // 2):
+        if (hwM * dim_x >= M_val // 2) and (hwN * dim_y >= N_val // 2):
+            pass
+        else:   
+            return False
+    return True
+
+
+def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, tcdm_usage_func=None):
+    # Default TCDM usage calculation if none provided
+    if tcdm_usage_func is None:
+        tcdm_usage_func = lambda m, n, k: 2 * (2 * m * k + 2 * k * n + m * n)
+    
+    # Unpack thread group dimensions
+    dim_x, dim_y = thread_group_dims
+    combos = []
+    
+    hw_M_list = [2**i for i in range(6, 11) if 2**i <= M_val // dim_x]
+    hw_N_list = [2**i for i in range(6, 20) if 2**i <= N_val // dim_y]
+    hw_K_list = [2**i for i in range(6, 11) if 2**i <= K_val]
+
+    print(f"hw_M_list: {hw_M_list}")
+    print(f"hw_N_list: {hw_N_list}")
+    print(f"hw_K_list: {hw_K_list}")
+
+    # Iterate over all combinations of hardware tile sizes.
+    for hw_M in hw_M_list:
+        for hw_N in hw_N_list:
+            for hw_K in hw_K_list:
+                # If the estimated memory footprint exceeds TCDM size,
+                # break out of the innermost loop (assuming hw_K_list is in ascending order).
+                if tcdm_usage_func(hw_M, hw_N, hw_K) > tcdm_size:
+                    break
+
+                # Build the configuration tuple.
+                combo = (M_val, N_val, K_val, hw_M, hw_N, hw_K,
+                        thread_group_dims, tcdm_size)
+                combos.append(combo)
+    
+    if combos:
+        combos = [combo for combo in combos if _check_combo(combo, tcdm_usage_func)]
+
+    # Filter combinations based on the maximum product of hw_M and hw_N.
+    if combos:
+        max_OI = min(1 / combo[3] + 1 / combo[4] for combo in combos)
+        filtered_combos = [combo for combo in combos if (1 / combo[3] + 1 / combo[4]) == max_OI]
+        return filtered_combos
+    return combos
+
