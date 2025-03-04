@@ -1,1 +1,1 @@
-{ "type": "ConstInstanceInjection", "scope": null, "root": "mo_parallel_config.nproma", "component": "", "value": "48" }
+{ "type": "ConstInstanceInjection", "scope": null, "root": "mo_parallel_config.nproma", "component": "", "value": "32" }
