@@ -347,11 +347,11 @@ int main() {{
         ast = run_fparser_transformations(ast, cfg)
         assert f"""
 LOGICAL FUNCTION f1(global_data, s)
-  USE lib, ONLY: t3
   USE global_mod, ONLY: global_data_type
+  USE lib, ONLY: t3
   IMPLICIT NONE
-  TYPE(t3) :: s
   TYPE(global_data_type) :: global_data
+  TYPE(t3) :: s
   f1 = .TRUE.
 END FUNCTION f1
 """.strip() in ast.tofortran()
