@@ -19,16 +19,16 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Level_2_Unary_Expr, And_Operand, Parenthesis, Level_2_Expr, Level_3_Expr, Array_Constructor, Execution_Part, \
     Specification_Part, Interface_Block, Association, Procedure_Designator, Type_Bound_Procedure_Part, \
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
-    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List, Section_Subscript_List, \
-    Char_Selector, Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, \
-    If_Then_Stmt, Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, \
-    Mult_Operand, Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, \
-    Contains_Stmt, Implicit_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, \
-    Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
-    Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
-    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
-    Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, Proc_Decl, End_Type_Stmt, \
-    End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt
+    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List, Data_Stmt_Object_List, \
+    Data_Stmt_Value_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, Explicit_Shape_Spec, \
+    Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, Else_Stmt, If_Construct, \
+    Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt, Loop_Control, \
+    Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, Implicit_Part, End_Module_Stmt, \
+    Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, \
+    Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, \
+    Deallocate_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, \
+    Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, \
+    Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -3778,6 +3778,14 @@ def convert_data_statements_into_assignments(ast: Program) -> Program:
             repls: List[Assignment_Stmt] = []
             for ds in dst.children:
                 assert isinstance(ds, Data_Stmt_Set)
+                varz, valz = ds.children
+                assert isinstance(varz, Data_Stmt_Object_List)
+                assert isinstance(valz, Data_Stmt_Value_List)
+                if len(varz.children) != len(valz.children):
+                    assert len(varz.children) == 1
+                    singular_varz, = varz.children
+                    new_varz = [f"{singular_varz}({i+1})" for i in range(len(valz.children))]
+                    replace_node(varz, Data_Stmt_Object_List(', '.join(new_varz)))
                 varz, valz = ds.children
                 varz, valz = varz.children, valz.children
                 assert len(varz) == len(valz)

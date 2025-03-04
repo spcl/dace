@@ -2658,6 +2658,7 @@ subroutine fun(res)
   real, dimension(2), intent(out) :: res
   data val/1.0/, d/2*4.2/
   data d(1:2)/2*4.2/
+  data d/5.1, 5.2/
   res(:) = val*d(:)
 end subroutine fun
 
@@ -2680,6 +2681,8 @@ SUBROUTINE fun(res)
   val = 1.0
   d(:) = 4.2
   d(1 : 2) = 4.2
+  d(1) = 5.1
+  d(2) = 5.2
   res(:) = val * d(:)
 END SUBROUTINE fun
 SUBROUTINE main(res)
