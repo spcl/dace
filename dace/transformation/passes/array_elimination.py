@@ -262,6 +262,9 @@ class ArrayElimination(ppl.Pass):
         for cfg in sdfg.nodes():
             if isinstance(cfg, LoopRegion):
                         assert cfg.loop_variable not in view_names
+                        for free_name in cfg.free_symbols:
+                            if free_name in view_names:
+                                used_names.add(free_name)
 
             elif isinstance(cfg, ConditionalBlock):
                         for branch in cfg.branches:
@@ -280,6 +283,9 @@ class ArrayElimination(ppl.Pass):
                 for node in cfg.nodes():
                     if isinstance(node, LoopRegion):
                         assert node.loop_variable not in view_names
+                        for free_name in cfg.free_symbols:
+                            if free_name in view_names:
+                                used_names.add(free_name)
                     elif isinstance(node, ConditionalBlock):
                         for branch in node.branches:
                             cb = branch[0]

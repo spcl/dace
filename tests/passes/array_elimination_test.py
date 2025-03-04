@@ -81,7 +81,7 @@ def test_nested_edge_view():
     sdfg.add_edge(loop, s, dace.InterstateEdge())
 
     sdfg.validate()
-    prev_nodes = list(sdfg.all_nodes_recursive())
+    prev_arrays = list(sdfg.arrays.keys())
 
     # Apply ArrayElimination
     try:
@@ -97,7 +97,7 @@ def test_nested_edge_view():
         assert False, f"ArrayElimination failed: {e}"
 
     # Should not remove anything
-    assert len(list(sdfg.all_nodes_recursive())) == len(prev_nodes)
+    assert len(list(sdfg.arrays.keys())) == len(prev_arrays)
 
 
 def test_view():
@@ -134,8 +134,47 @@ def test_view():
     assert len(list(sdfg.all_nodes_recursive())) == 1
     assert isinstance(sdfg.nodes()[0], dace.sdfg.SDFGState)
 
+def test_loop_header():
+    """
+    Tests if the ArrayElimination pass considers uses in loop headers.
+    """
+    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_view("A_view", [1], dace.float32)
+
+    s = sdfg.add_state()
+    access = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access, None, access_view, "views", dace.Memlet("A[0]"))
+
+    loop = LoopRegion("loop1", "i < A_view", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    loop.add_state(is_start_block=True)
+    sdfg.add_edge(s, loop, dace.InterstateEdge())
+
+    sdfg.validate()
+    prev_arrays = list(sdfg.all_nodes_recursive())
+
+    # Apply ArrayElimination
+    try:
+        res1 = ap.StateReachability().apply_pass(sdfg, {})
+        res2 = ap.FindAccessStates().apply_pass(sdfg, {})
+        # combine both dicts
+        pipe_res = {
+            ap.StateReachability.__name__: res1,
+            ap.FindAccessStates.__name__: res2,
+        }
+        ArrayElimination().apply_pass(sdfg, pipe_res)
+    except Exception as e:
+        assert False, f"ArrayElimination failed: {e}"
+
+    # Should not remove anything
+    assert len(list(sdfg.all_nodes_recursive())) == len(prev_arrays)
+
 if __name__ == '__main__':
     test_redundant_simple()
     test_merge_simple()
     test_nested_edge_view()
     test_view()
+    test_loop_header()
