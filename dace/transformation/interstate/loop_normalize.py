@@ -51,7 +51,7 @@ def _can_normalize_step(loop: LoopRegion, sdfg: SDFG) -> bool:
 
 
 # Modifies the condition of a loop by a shift and scale
-def _modify_cond(condition, var, step, start):
+def _modify_cond(condition, var, step, start, norm_start, norm_step):
     condition = pystr_to_symbolic(condition.as_string)
     itersym = pystr_to_symbolic(var)
     # Find condition by matching expressions
@@ -80,7 +80,14 @@ def _modify_cond(condition, var, step, start):
     if len(op) == 0:
         raise ValueError('Cannot match loop condition for loop normalization')
 
-    return f"{itersym} {op} (({end}) - {start}) / {step}"
+    if norm_start and norm_step:
+        return f"{itersym} {op} (({end}) - {start}) / {step}"
+    elif norm_start:
+        return f"{itersym} {op} ({end}) - {start}"
+    elif norm_step:
+      return f"{itersym} {op} ({end}) / {step}"
+    
+    raise ValueError("At least one of norm_start or norm_step must be True")
 
 
 @properties.make_properties
@@ -154,4 +161,4 @@ class LoopNormalize(xf.MultiStateTransformation):
             self.loop.init_statement = CodeBlock(f"{itervar} = 0")
         if norm_step:
             self.loop.update_statement = CodeBlock(f"{itervar} += 1")
-        self.loop.loop_condition = CodeBlock(_modify_cond(self.loop.loop_condition, itervar, step, start))
+        self.loop.loop_condition = CodeBlock(_modify_cond(self.loop.loop_condition, itervar, step, start, norm_init, norm_step))
