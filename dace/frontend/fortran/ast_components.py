@@ -259,6 +259,7 @@ class InternalFortranAst:
             "Return_Stmt": self.return_stmt,
             "Stop_Stmt": self.stop_stmt,
             "Dummy_Arg_List": self.dummy_arg_list,
+            "Dummy_Arg_Name_List": self.dummy_arg_list,
             "Part_Ref": self.part_ref,
             "Level_2_Expr": self.level_2_expr,
             "Equiv_Operand": self.level_2_expr,

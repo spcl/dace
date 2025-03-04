@@ -884,27 +884,23 @@ class FunctionToSubroutineDefiner(NodeTransformer):
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
         assert node.ret
         ret = node.ret
+        ret_name, subr_name = f"{node.name.name}__ret", f"{node.name.name}_srt"
 
         found = False
-        if node.specification_part is not None:
+        if node.specification_part:
             for j in node.specification_part.specifications:
-
                 for k in j.vardecl:
-                    if node.ret != None:
+                    if node.ret is not None:
                         if k.name == ret.name:
-                            j.vardecl[j.vardecl.index(k)].name = node.name.name + "__ret"
+                            j.vardecl[j.vardecl.index(k)].name = ret_name
                             found = True
                     if k.name == node.name.name:
-                        j.vardecl[j.vardecl.index(k)].name = node.name.name + "__ret"
+                        j.vardecl[j.vardecl.index(k)].name = ret_name
                         found = True
                         break
 
         if not found:
-
-            var = ast_internal_classes.Var_Decl_Node(
-                name=node.name.name + "__ret",
-                type='VOID'
-            )
+            var = ast_internal_classes.Var_Decl_Node(name=ret_name, type='VOID')
             stmt_node = ast_internal_classes.Decl_Stmt_Node(vardecl=[var], line_number=node.line_number)
 
             if node.specification_part is not None:
@@ -922,11 +918,11 @@ class FunctionToSubroutineDefiner(NodeTransformer):
         # We should always be able to tell a functions return _variable_ (i.e., not type, which we also should be able
         # to tell).
         assert node.ret
-        execution_part = NameReplacer(ret.name, node.name.name + "__ret").visit(node.execution_part)
+        execution_part = NameReplacer(ret.name, ret_name).visit(node.execution_part)
         args = node.args
-        args.append(ast_internal_classes.Name_Node(name=node.name.name + "__ret", type=node.type))
+        args.append(ast_internal_classes.Name_Node(name=ret_name, type=node.type))
         return ast_internal_classes.Subroutine_Subprogram_Node(
-            name=ast_internal_classes.Name_Node(name=node.name.name + "_srt", type=node.type),
+            name=ast_internal_classes.Name_Node(name=subr_name, type=node.type),
             args=args,
             specification_part=node.specification_part,
             execution_part=execution_part,
