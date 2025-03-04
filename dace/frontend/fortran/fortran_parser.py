@@ -2634,8 +2634,7 @@ class ParseConfig:
                  do_not_prune: Union[None, SPEC, List[SPEC]] = None,
                  make_noop: Union[None, SPEC, List[SPEC]] = None,
                  ast_checkpoint_dir: Union[None, str, Path] = None,
-                 consolidate_global_data: bool = True,
-                 fix_and_propagate_global_vars: bool = False):
+                 consolidate_global_data: bool = True):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2667,7 +2666,6 @@ class ParseConfig:
         self.make_noop: List[SPEC] = make_noop
         self.ast_checkpoint_dir = ast_checkpoint_dir
         self.consolidate_global_data = consolidate_global_data
-        self.fix_and_propagate_global_vars = fix_and_propagate_global_vars
 
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
@@ -2798,11 +2796,6 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
 
         print("FParser Op: Inject configs...")
         ast = inject_const_evals(ast, cfg.config_injections)
-        if cfg.fix_and_propagate_global_vars:
-            print("FParser Op: Fix global vars...")
-            # NOTE: Global vars fixing, if done, has to be done before any variable-level pruning, because otherwise
-            # some assignments may get lost.
-            ast = make_practically_constant_global_vars_constants(ast)
         print("FParser Op: Fix arguments...")
         # Fix the practically constant arguments, just in case.
         ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
@@ -2826,8 +2819,7 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         ast = prune_coarsely(ast, cfg.do_not_prune)
         _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
-    print("FParser Op: Create global initializers & rename uniquely...")
-    ast = create_global_initializers(ast, cfg.entry_points)
+    print("FParser Op: Rename uniquely...")
     ast = assign_globally_unique_subprogram_names(ast, set(cfg.entry_points))
     ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
     ast = consolidate_uses(ast)
