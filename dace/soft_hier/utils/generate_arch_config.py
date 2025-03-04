@@ -188,9 +188,9 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, tcdm_usag
     dim_x, dim_y = thread_group_dims
     combos = []
     
-    hw_M_list = [2**i for i in range(6, 11) if 2**i <= M_val // dim_x]
-    hw_N_list = [2**i for i in range(6, 20) if 2**i <= N_val // dim_y]
-    hw_K_list = [2**i for i in range(6, 11) if 2**i <= K_val]
+    hw_M_list = [2**i for i in range(5, 11) if 2**i <= M_val // dim_x]
+    hw_N_list = [2**i for i in range(5, 20) if 2**i <= N_val // dim_y]
+    hw_K_list = [2**i for i in range(5, 11) if 2**i <= K_val]
 
     print(f"hw_M_list: {hw_M_list}")
     print(f"hw_N_list: {hw_N_list}")
