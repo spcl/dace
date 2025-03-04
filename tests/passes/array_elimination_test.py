@@ -6,6 +6,8 @@ import dace
 from dace.sdfg import utils as sdutil
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.array_elimination import ArrayElimination
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes import analysis as ap
 
 
 def test_redundant_simple():
@@ -53,7 +55,87 @@ def test_merge_simple():
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
     assert len(state.data_nodes()) == 2
 
+def test_nested_edge_view():
+    """
+    Tests if the ArrayElimination pass works correctly with nested eges using views.
+    """
+    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_view("A_view", [1], dace.float32)
+
+    loop = LoopRegion("loop1", "i < 64", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    s = loop.add_state(is_start_block=True)
+    access = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access, None, access_view, "views", dace.Memlet("A[0]"))
+    s2 = loop.add_state()
+    loop.add_edge(s, s2, dace.InterstateEdge(assignments={"v": "A_view[0]"}))
+
+    s = sdfg.add_state()
+    access = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access, None, access_view, "views", dace.Memlet("A[0]"))
+    sdfg.add_edge(loop, s, dace.InterstateEdge())
+
+    sdfg.validate()
+    prev_nodes = list(sdfg.all_nodes_recursive())
+
+    # Apply ArrayElimination
+    try:
+        res1 = ap.StateReachability().apply_pass(sdfg, {})
+        res2 = ap.FindAccessStates().apply_pass(sdfg, {})
+        # combine both dicts
+        pipe_res = {
+            ap.StateReachability.__name__: res1,
+            ap.FindAccessStates.__name__: res2,
+        }
+        ArrayElimination().apply_pass(sdfg, pipe_res)
+    except Exception as e:
+        assert False, f"ArrayElimination failed: {e}"
+
+    # Should not remove anything
+    assert len(list(sdfg.all_nodes_recursive())) == len(prev_nodes)
+
+
+def test_view():
+    """
+    Tests if the ArrayElimination pass works correctly with views.
+    """
+    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_view("A_view", [1], dace.float32)
+
+    s = sdfg.add_state()
+    access = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access, None, access_view, "views", dace.Memlet("A[0]"))
+
+    sdfg.validate()
+
+    # Apply ArrayElimination
+    try:
+        res1 = ap.StateReachability().apply_pass(sdfg, {})
+        res2 = ap.FindAccessStates().apply_pass(sdfg, {})
+        # combine both dicts
+        pipe_res = {
+            ap.StateReachability.__name__: res1,
+            ap.FindAccessStates.__name__: res2,
+        }
+        ArrayElimination().apply_pass(sdfg, pipe_res)
+        sdfg.validate()
+    except Exception as e:
+        assert False, f"ArrayElimination failed: {e}"
+
+    # Should remove everything
+    assert len(list(sdfg.all_nodes_recursive())) == 1
+    assert isinstance(sdfg.nodes()[0], dace.sdfg.SDFGState)
 
 if __name__ == '__main__':
     test_redundant_simple()
     test_merge_simple()
+    test_nested_edge_view()
+    test_view()
