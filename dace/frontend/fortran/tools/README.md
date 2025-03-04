@@ -14,6 +14,7 @@ Clone `icon-dace` and switch to branch `yakup/ICON_24_10_merge_v2`.
 ## 1. How to build ICON?
 
 Briefly speaking, there are three options:
+
 1. Dockerized build and dedicated build pipeline.
 2. Out-of-build runs of ICON which do not currently work.
 3. In-source build and run.
@@ -26,8 +27,11 @@ make -j16
 ```
 
 Then, modify the experiment script `run/exp.exclaim_ape_R2B09.run`:
-- In `atmo_dyn_grid`, change the hardcoded path to refer to `icon-model/grids/icon_grid_${atmos_gridID}_${atmos_refinement}_G.nc` inside the `icon-dace` from previous step.
-- To perform a quick experiment, we decrease the simulation to four timestamps: `end_date=${end_date:="2000-01-01T00:03:00Z"}`.
+
+- In `atmo_dyn_grid`, change the hardcoded path to refer to
+  `icon-model/grids/icon_grid_${atmos_gridID}_${atmos_refinement}_G.nc` inside the `icon-dace` from previous step.
+- To perform a quick experiment, we decrease the simulation to four timestamps:
+  `end_date=${end_date:="2000-01-01T00:03:00Z"}`.
 
 We execute the experiment by entering `run` directory and running `bash exp.exclaim_ape_R2B09.run`.
 
@@ -65,13 +69,14 @@ By "release" ECRAD, we mean the ICON repository from step 1.
 
 ## 3. How to generate input and output data of ICON?
 
-Once the serialization module is placed inside ICON, we modify the code to serialize and output data necessary to execute our DaCe implementation.
+Once the serialization module is placed inside ICON, we modify the code to serialize and output data necessary to
+execute our DaCe implementation.
 
 First, we insert imports:
 
 ```fortran
-  subroutine radiation(ncol, nlev, istartcol, iendcol, config, &
-       &  single_level, thermodynamics, gas, cloud, aerosol, flux)
+subroutine radiation(ncol, nlev, istartcol, iendcol, config, &
+        &  single_level, thermodynamics, gas, cloud, aerosol, flux)
 
     use serde
     use type_injection
@@ -80,28 +85,28 @@ First, we insert imports:
 Then, we generate the input arguments needed for a selected ICON function:
 
 ```fortran
-    if (lhook) call dr_hook('radiation_interface:radiation',0,hook_handle)
+if (lhook) call dr_hook('radiation_interface:radiation', 0, hook_handle)
 
-    call tic()
-    if (generation ==1) then
-      call serialize(at("config.data", asis=.true.), config)
-      call serialize(at("single_level.data", asis=.true.), single_level)
-      call serialize(at("istartcol.data", asis=.true.), istartcol)
-      call serialize(at("iendcol.data", asis=.true.), iendcol)
-      call serialize(at("sw_albedo_direct.data", asis=.true.), sw_albedo_direct)
-      call serialize(at("sw_albedo_diffuse.data", asis=.true.), sw_albedo_diffuse)
-      call serialize(at("lw_albedo.data", asis=.true.), lw_albedo)
-    endif
+call tic()
+if (generation ==1) then
+    call serialize(at("config.data", asis = .true.), config)
+    call serialize(at("single_level.data", asis = .true.), single_level)
+    call serialize(at("istartcol.data", asis = .true.), istartcol)
+    call serialize(at("iendcol.data", asis = .true.), iendcol)
+    call serialize(at("sw_albedo_direct.data", asis = .true.), sw_albedo_direct)
+    call serialize(at("sw_albedo_diffuse.data", asis = .true.), sw_albedo_diffuse)
+    call serialize(at("lw_albedo.data", asis = .true.), lw_albedo)
+endif
 ```
 
 Finally, we serialize and save the output data of the function once it has been executed.
 
 ```fortran
-      if (generation ==1) then
-        call serialize(at("sw_albedo_direct.after.data", asis=.true.), sw_albedo_direct)
-        call serialize(at("sw_albedo_diffuse.after.data", asis=.true.), sw_albedo_diffuse)
-        call serialize(at("lw_albedo.after.data", asis=.true.), lw_albedo)
-      endif
+if (generation ==1) then
+    call serialize(at("sw_albedo_direct.after.data", asis = .true.), sw_albedo_direct)
+    call serialize(at("sw_albedo_diffuse.after.data", asis = .true.), sw_albedo_diffuse)
+    call serialize(at("lw_albedo.after.data", asis = .true.), lw_albedo)
+endif
 ```
 
 We execute the experiment using `bash exp.exclaim_ape_R2B09.run` inside `run`, and the results
@@ -116,6 +121,7 @@ and compare the obtained results with the outputs from ICON.
 Below, you can find an example of the `get_albedos` function of the `radiation_single` interface.
 
 Build it as:
+
 ```
 g++ -Iinclude -I .dacecache/get_albedos/include/ -I<dace-dir>/dace/runtime/include test.cpp -L .dacecache/get_albedos/build/ -lget_albedos -o test
 ```
@@ -124,6 +130,7 @@ where `include` contains `serde.h` from step 1, and `.dacecache` refers to the D
 directory where SDFG was built.
 
 We execute it as:
+
 ```
 LD_LIBRARY_PATH=.dacecache/get_albedos/build/ ./test icon-dace/experiments/exclaim_ape_R2B09/
 ```
@@ -277,16 +284,17 @@ _release_ ECRAD, 3) manually instrument `radiation_interface.F90` to use it, 4) 
 - Suppose we want to generate a module `ti.F90` that can write down `config` etc. objects for "configuration injection"
   in SDFG optimisation for ECRAD, and we will keep this module in `externals/ecrad/utilities` directory of the real
   ECRAD.
+- Suppose we want the generated module to have the name `type_injection`.
 - We then need to run from the root of DaCe repository:
   ```shell
   python -m dace.frontend.fortran.tools.generate_type_injectors \
       -i ~/gitspace/icon-dace-cpp-preprocessed/externals/ecrad \
-      -f ~/gitspace/icon-dace/externals/ecrad/utilities/ti.F90
+      -f ~/gitspace/icon-dace/externals/ecrad/utilities/ti.F90 \
+      -m type_injection
   ```
 
 > NOTE: This module relies on the `serde.F90` module for some basic serialisation functionality. Such functionality
 > is present in any serialisation module as a baseline, so anything generated (at the same version of DaCe) will work.
-
 
 ## 42a. How to instrument the type injection module in the real ECRAD?
 
@@ -340,8 +348,7 @@ Explanation:
   sufficient for "instance injection"), and that the relevant data for _any_ object of `config_type` type will be the
   same for the runtime of the program.
 
-
-## 4. How to generate an FParser preprocessed AST?
+## 4. How to generate an FParser-preprocessed AST?
 
 > TLDR; 1) We pick one or more functions to preserve in the preprocessed AST, 2) We pick some functions (or none) to
 > make no-op (even if we cannot prune them with static analysis), 3) We generate a Fortran representation of the
@@ -349,18 +356,18 @@ Explanation:
 
 - Suppose we have the C++ preprocessed (but otherwise not transformed or prune) code in
   `~/gitspace/icon-dace-cpp-preprocessed/` directory.
-- Suppose that we want to _eventually_ create an SDFG from this code with some function as an entry point, for example,
+- Suppose we want to _eventually_ create an SDFG from this code with some function as an entry point, for example,
   the function `velocity_tendencies` from the module `mo_velocity_advection`.
     - But for now we would just like to generate a preprocessed AST with a Fortran representation in
       `~/velocity_tendencies.f90`. This AST would be a functional Fortran library, and can be consumed to build an "
       internal AST".
-- Suppose that we know that only the following directories are needed for this entry point to build:
+- Suppose we know that only the following directories are needed for this entry point to build:
     - `~/gitspace/icon-dace-cpp-preprocessed/src`
     - `~/gitspace/icon-dace-cpp-preprocessed/support`
     - `~/gitspace/icon-dace-cpp-preprocessed/externals/fortran-support/src`
     - `~/gitspace/icon-dace-cpp-preprocessed/externals/cdi/src`
     - `~/gitspace/icon-dace-cpp-preprocessed/externals/mtime/src`
-- Suppose that we also know that certain functions (or subroutines) are not needed in the final SDFG, but it is
+- Suppose we also know that certain functions (or subroutines) are not needed in the final SDFG, but it is
   not possible to prune them in the compile-time (yet). So we want to make them "no-op" during the preprocessing. For
   example, the following functions:
     - From the `mo_exception` module, the function `finish`.
@@ -379,4 +386,23 @@ Explanation:
          --noop mo_real_timer.timer_start \
          --noop mo_real_timer.timer_stop \
          --noop mo_real_timer.new_timer
+  ```
+
+## 5. How to generate an SDFG from an FParser-preprocessed AST?
+
+> TLDR; 1) We already have a preprocessed AST, 2) And we also have the config injection files, 3) We generate an SDFG
+> using these.
+
+- Suppose we have a self-contained FParser-preprocessed AST in `~/velocity_tendencies.f90`.
+- Suppose we want to create a single SDFG in `~/velocity_tendencies.sdfg` from this AST with some entry point, for
+  example, the function `velocity_tendencies` from the module `mo_velocity_advection`.
+- Suppose we have already generated the config injection data (i.e., the `.ti` files) using the method described
+  earlier, and all these files are now in the `~/dace/dace/frontend/fortran/conf_files` directory.
+- We then need to run from the root of DaCe repository:
+  ```shell
+  python -m dace.frontend.fortran.tools.create_singular_sdfg_from_ast \
+         -i ~/velocity_tendencies.f90 \
+         -k mo_velocity_advection.velocity_tendencies \
+         -o ~/velocity_tendencies.sdfg \
+         -c ~/dace/dace/frontend/fortran/conf_files
   ```
