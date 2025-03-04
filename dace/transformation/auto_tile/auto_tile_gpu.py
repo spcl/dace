@@ -417,6 +417,7 @@ def _tile_gpu(
                 verification_failed = False
                 if verify and not are_close:
                     verification_failed = True
+                    print(f"Numerical verification failed for: {sdfg.label}, {entry.label}, {current_config}")
                     #raise Exception("Numerical verification failed.")
 
                 if best_time is None or time < best_time:

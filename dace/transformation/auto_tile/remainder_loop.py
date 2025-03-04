@@ -62,6 +62,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
         # S2. one special case if memory is moved from global to shared memory
         #     then we need preserve the mapping of shrA -> glbA when checking any entry
         #     this can be done by going through library nodes whr data was moved from glb to shr
+        sdfg.save("rb.sdfg")
+
         inner_work_map_entry = self.inner_work_map_entry
         map_entry = self.inner_work_map_entry
         dev_entry = None
@@ -381,7 +383,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 _state.add_node(an)
                 u, u_conn, v, v_conn, memlet = edge
                 _state.add_edge(an, None, node, in_arr, Memlet(
-                    data=in_arr, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
+                    data=in_arr, subset=Range(memlet.subset)))
         for out_arr in outs:
             for (_state, _sdfg, node) in [
                 (state1, inner_loop_kernel_sdfg, lnsdfg),
@@ -485,6 +487,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             kernel_sdfg.add_array(
                                 name=n.data,
                                 shape=arr.shape,
+                                stride=arr.stride,
                                 transient=True,
                                 dtype=arr.dtype,
                                 storage=arr.storage,
@@ -573,6 +576,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         for in_arr in set.union(ins, outs):
                             _sdfg.add_array(name=in_arr,
                                             shape=sdfg.arrays[in_arr].shape,
+                                            strides=sdfg.arrays[in_arr].strides,
                                             transient=False,
                                             dtype=sdfg.arrays[in_arr].dtype)
 
@@ -712,6 +716,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
             if isinstance(n, nodes.MapEntry):
                 params = params.union(n.map.params)
 
+        sdfg.save("rl.sdfg")
+
     def create_offsets(self, edges):
         offsets = dict()
         for edge in edges:
@@ -749,6 +755,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     name=arr_name,
                     shape=arr.shape,
                     transient=convert_to_transient or arr.transient,
+                    strides=arr.shape,
                     dtype=arr.dtype,
                     storage=arr.storage,
                     lifetime=arr.lifetime

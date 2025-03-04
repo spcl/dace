@@ -441,9 +441,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 continue
 
             src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
-            print(src_arrstorage_type, self.src_memory_location, isinstance(
-                sdfg.arrays[src_arr_name], dace.data.Scalar
-            ))
 
             if src_arrstorage_type != self.src_memory_location or isinstance(
                 sdfg.arrays[src_arr_name], dace.data.Scalar
@@ -451,7 +448,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 continue
 
             pruned_src_arr_name = self.remove_prefix(src_arr_name)
-            print(hasattr(self.device_map_entry, "purpose_dict"))
             purpose_dict = self.device_map_entry.purpose_dict if self.prepend_purpose_to_name and hasattr(self.device_map_entry, "purpose_dict") else dict()
             if src_arr_name in purpose_dict:
                 if (str(self.dst_memory_location) + "@" + purpose_dict[pruned_src_arr_name]) in self.locations_with_purpose:
@@ -502,7 +498,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                     smys_to_rm.add(dace.symbol(p))
 
                 subset_to_pass = []
-                print("CCCCCc", memlet.subset)
                 for i, (beg, end, step) in enumerate(memlet.subset):
                     subs_dict = {sym: 0 for sym in smys_to_rm}
                     _beg = beg.subs(subs_dict)
@@ -511,8 +506,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                     subset_to_pass.append((_beg, _end, _step))
 
                 shape = [(end + 1 - beg)//step for beg, end, step in subset_to_pass]
-                print("BBBBBBB", memlet)
-            print("AAAAAAA", subset_to_pass, shape, to_replace)
             # End Mapping
 
             mem_loc_a = parsedstorage_type
