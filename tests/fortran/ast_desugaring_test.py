@@ -2543,8 +2543,8 @@ MODULE lib
   SUBROUTINE update(global_data, what)
     USE global_mod, ONLY: global_data_type
     IMPLICIT NONE
-    LOGICAL, INTENT(OUT) :: what
     TYPE(global_data_type) :: global_data
+    LOGICAL, INTENT(OUT) :: what
     what = .TRUE.
   END SUBROUTINE update
 END MODULE
@@ -2552,8 +2552,8 @@ SUBROUTINE main(global_data)
   USE global_mod, ONLY: global_data_type
   USE lib, ONLY: update
   IMPLICIT NONE
-  REAL :: a = 1.0
   TYPE(global_data_type) :: global_data
+  REAL :: a = 1.0
   CALL update(global_data, global_data % inited_var)
   CALL update(global_data, global_data % uninited_var)
   IF (global_data % inited_var .AND. global_data % uninited_var) a = 7.1

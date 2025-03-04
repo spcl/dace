@@ -3605,7 +3605,12 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
             spart = atmost_one(children_of_type(fn, Specification_Part))
             assert spart
             prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"))
-            append_children(spart, Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}"))
+            decl_idx = [idx for idx, v in enumerate(spart.children) if isinstance(v, Type_Declaration_Stmt)]
+            decl_idx = decl_idx[0] if decl_idx else len(spart.children)
+            set_children(
+                spart, spart.children[:decl_idx]
+                       + [Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}")]
+                       + spart.children[decl_idx:])
         for fcall in walk(ast, (Function_Reference, Call_Stmt)):
             fn, args = fcall.children
             fnspec = search_real_local_alias_spec(fn, alias_map)
