@@ -1669,6 +1669,10 @@ class RemoveSliceView(pm.SingleStateTransformation):
         # Remove view node
         state.remove_node(self.view)
 
+        # If the viewed node is now isolated, remove it
+        if len(state.all_edges(viewed)) == 0:
+            state.remove_node(viewed)
+
     def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
         # Get offset and size from the space of the view to compose
         old_subset = edge_subset.min_element()
