@@ -398,7 +398,7 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
 
 
 def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
-    uses, ser_ops, des_ops = [], [], []
+    uses, ser_ops, ser_ops_cpp, des_ops = [], [], [], []
     if GLOBAL_DATA_OBJ_NAME in g.arrays:
         gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
         for mod in walk(ast, Module):
@@ -421,6 +421,9 @@ call serialize(io, {vname}, cleanup=.false.)
 """)
                 vctyp = _real_ctype(gdata[vname])
                 if isinstance(gdata[vname], dace.data.Array):
+                    ser_ops_cpp.append(f"""
+add_line(serialize_array(g->{vname}), s);
+""")
                     des_ops.append(f"""
 {{
     read_line(s, "# {vname}");
@@ -429,6 +432,9 @@ call serialize(io, {vname}, cleanup=.false.)
 }}
 """)
                 else:
+                    ser_ops_cpp.append(f"""
+add_line(serialize(g->{vname}), s);
+""")
                     des_ops.append(f"""
 read_line(s, "# {vname}");
 deserialize(g->{vname}, s);
@@ -446,9 +452,16 @@ end subroutine serialize_global_data
 """
 
     des_ops = '\n'.join(des_ops)
+    ser_ops_cpp = '\n'.join(ser_ops_cpp)
     cpp_code = f"""
 void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
+}}
+
+std::string serialize_global_data(const {GLOBAL_DATA_TYPE_NAME}* g) {{
+    std::stringstream s;
+    {ser_ops_cpp}
+    return s.str();
 }}
 """
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
@@ -969,8 +982,6 @@ namespace serde {{
         return buf;
     }}
 
-    {gdata.cpp_serde}
-
     template<typename T>
     std::string serialize_array(T* arr) {{
         const auto m = ARRAY_META_DICT()->at(static_cast<void*>(arr));
@@ -985,6 +996,8 @@ namespace serde {{
         for (int i=0; i<m.volume(); ++i) add_line(serialize(arr[i]), s);
         return s.str();
     }}
+
+    {gdata.cpp_serde}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__
