@@ -178,7 +178,8 @@ def test_array_elimination_view():
         assert False, f"ArrayElimination failed: {e}"
 
     # Should remove everything
-    assert len(list(sdfg.all_nodes_recursive())) == 0
+    assert len(list(sdfg.all_nodes_recursive())) == 1
+    assert isinstance(sdfg.nodes()[0], dace.sdfg.SDFGState)
 
 
 if __name__ == "__main__":

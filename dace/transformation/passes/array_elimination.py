@@ -300,6 +300,14 @@ class ArrayElimination(ppl.Pass):
             if not isinstance(interstate_edge, InterstateEdge):
                 continue
             
+            # Get parents if possible
+            dst_parent = None if not hasattr(edge.dst, 'parent') else edge.dst.parent
+            src_parent = None if not hasattr(edge.src, 'parent') else edge.src.parent
+            
+            # Skip edges in nested SDFGs
+            if not (dst_parent is sdfg and src_parent is sdfg):
+                continue
+            
             # array reads are treated as functions
             value_syms = set().union(*(free_symbols_and_functions(pystr_to_symbolic(v)) for v in edge.data.assignments.values()))
 
