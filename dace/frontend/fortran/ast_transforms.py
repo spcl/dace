@@ -1341,10 +1341,9 @@ class IndexExtractor(NodeTransformer):
 
                                 offset = variable.offsets[idx]
 
-                                # it can be a symbol - Name_Node - or a value
+                                # it can be a symbol, an operator, or a value
 
-                                if not isinstance(offset,
-                                                  (ast_internal_classes.Name_Node, ast_internal_classes.BinOp_Node)):
+                                if not isinstance(offset, ast_internal_classes.FNode):
                                     # check if offset is a number
                                     try:
                                         offset = int(offset)
@@ -2519,27 +2518,37 @@ class TypeInference(NodeTransformer):
         else:
             return node.type
 
+    def visit_Int_Literal_Node(self, node: ast_internal_classes.Int_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
+    def visit_Double_Literal_Node(self, node: ast_internal_classes.Double_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
+    def visit_Real_Literal_Node(self, node: ast_internal_classes.Real_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
+    def visit_Bool_Literal_Node(self, node: ast_internal_classes.Bool_Literal_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
     def _get_offsets(self, node):
 
-        if isinstance(node, ast_internal_classes.Int_Literal_Node):
-            return [1]
-        elif isinstance(node, ast_internal_classes.Real_Literal_Node):
-            return [1]
-        elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
-            return [1]
-        else:
-            return node.offsets
+        if isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node)):
+            node.offsets = [1]
+        return node.offsets
 
     def _get_sizes(self, node):
 
-        if isinstance(node, ast_internal_classes.Int_Literal_Node):
-            return []
-        elif isinstance(node, ast_internal_classes.Real_Literal_Node):
-            return []
-        elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
-            return []
-        else:
-            return node.sizes
+        if isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node)):
+            node.sizes = []
+        return node.sizes
 
 
 class PointerRemoval(NodeTransformer):
@@ -3086,13 +3095,33 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         ParentScopeAssigner().visit(ast)
         self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
+        self.structures = ast.structures
+
+        self.data_ref_stack = []
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        #struct, variable, last_var = self.structures.find_definition(
+        #    self.scope_vars, node
+        #)
+
+        #if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
+        #    return node
+
+        self.data_ref_stack.append(copy.deepcopy(node))
+        node.part_ref = self.visit(node.part_ref)
+        self.data_ref_stack.pop()
+
         return node
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
-        array_var = self.scope_vars.get_var(node.parent, node.name.name)
+        if len(self.data_ref_stack) > 0:
+            _, array_var, _ = self.structures.find_definition(
+                self.scope_vars, self.data_ref_stack[-1], node.name
+            )
+        else:
+            array_var = self.scope_vars.get_var(node.parent, node.name.name)
 
         indices = []
         for idx, actual_index in enumerate(node.indices):

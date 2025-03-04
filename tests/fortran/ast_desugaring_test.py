@@ -10,7 +10,7 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, deconstuct_goto_statements, SPEC, remove_access_and_bind_statements, \
-    identifier_specs, alias_specs, consolidate_uses
+    identifier_specs, alias_specs, consolidate_uses, consolidate_global_data_into_arg, prune_coarsely
 from dace.frontend.fortran.fortran_parser import construct_full_ast
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -879,7 +879,6 @@ end subroutine main
     ast = consolidate_uses(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE A
   TYPE, ABSTRACT :: AA
@@ -1570,6 +1569,53 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_pointer_pruning():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type T
+    integer :: data(4) = 8
+    integer, pointer :: ptr(:) => null()
+  end type T
+end module lib
+
+subroutine main(out)
+  use lib
+  implicit none
+  type(T), target :: cfg
+  integer, pointer :: ptr(:) => null()
+  integer, pointer :: unused_ptr(:) => null()
+  integer, intent(out) :: out(4)
+  cfg % ptr => cfg % data  ! TODO: This too should go away.
+  ptr => cfg % ptr
+  out = cfg % data
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = prune_unused_objects(ast, [('main',)])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: T
+    INTEGER :: data(4) = 8
+    INTEGER, POINTER :: ptr(:) => NULL()
+  END TYPE T
+END MODULE lib
+SUBROUTINE main(out)
+  USE lib, ONLY: T
+  IMPLICIT NONE
+  TYPE(T), TARGET :: cfg
+  INTEGER, INTENT(OUT) :: out(4)
+  cfg % ptr => cfg % data
+  out = cfg % data
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_completely_unsed_modules_are_pruned_early():
     sources, main = SourceCodeBuilder().add_file("""
 module used
@@ -1598,7 +1644,6 @@ end subroutine main
     ast = parse_and_improve(sources, [('main',)])
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE used
   IMPLICIT NONE
@@ -2376,6 +2421,148 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_exploit_locally_constant_pointers():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main()
+  implicit none
+  type cfg
+    real, pointer :: ptr => null()
+  end type cfg
+  type(cfg) :: c
+  real, target :: data = 0.
+  real, pointer :: ptr => null()
+  integer, target :: i
+  integer, pointer :: iptr => null()
+  integer :: iarr(4) = 0
+
+  ptr => data
+  c % ptr => ptr
+  iptr => i
+  data = 2.
+  ptr = data + 1.
+  c % ptr = c % ptr + 7.
+  if (c % ptr > 0.) c % ptr = 0.
+  iptr = 4
+  do i = 2, 4
+    if (c % ptr > 0.) then
+      c % ptr = c % ptr + 1.5
+      iarr(iptr) = iarr(iptr-1) + 1
+    end if
+  end do
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  TYPE :: cfg
+    REAL, POINTER :: ptr => NULL()
+  END TYPE cfg
+  TYPE(cfg) :: c
+  REAL, TARGET :: data = 0.
+  REAL, POINTER :: ptr => NULL()
+  INTEGER, TARGET :: i
+  INTEGER, POINTER :: iptr => NULL()
+  INTEGER :: iarr(4) = 0
+  ptr => data
+  c % ptr => data
+  iptr => i
+  data = 2.
+  data = 2.0 + 1.
+  data = data + 7.
+  IF (data > 0.) data = 0.
+  i = 4
+  DO i = 2, 4
+    IF (data > 0.) THEN
+      data = data + 1.5
+      iarr(i) = iarr(i - 1) + 1
+    END IF
+  END DO
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_consolidate_global_data():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  logical :: inited_var = .false.
+  logical :: uninited_var
+  integer, dimension(3) :: iarr1 = [1, 2, 3]
+  integer :: iarr2(3) = [2, 3, 4]
+  type cfg
+    real :: foo = 1.9
+    integer :: bar
+  end type cfg
+contains
+  subroutine update(what)
+    implicit none
+    logical, intent(out) :: what
+    what = .true.
+  end subroutine update
+end module
+
+subroutine main
+  use lib
+  implicit none
+  real :: a = 1.0
+  call update(inited_var)
+  call update(uninited_var)
+  if (inited_var .and. uninited_var) a = 7.1
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = consolidate_global_data_into_arg(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE global_mod
+  TYPE :: global_data_type
+    LOGICAL :: inited_var = .FALSE.
+    LOGICAL :: uninited_var
+    INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
+    INTEGER :: iarr2(3) = [2, 3, 4]
+  END TYPE global_data_type
+END MODULE global_mod
+MODULE lib
+  IMPLICIT NONE
+  LOGICAL :: inited_var = .FALSE.
+  LOGICAL :: uninited_var
+  INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
+  INTEGER :: iarr2(3) = [2, 3, 4]
+  TYPE :: cfg
+    REAL :: foo = 1.9
+    INTEGER :: bar
+  END TYPE cfg
+  CONTAINS
+  SUBROUTINE update(global_data, what)
+    USE global_mod, ONLY: global_data_type
+    IMPLICIT NONE
+    TYPE(global_data_type) :: global_data
+    LOGICAL, INTENT(OUT) :: what
+    what = .TRUE.
+  END SUBROUTINE update
+END MODULE
+SUBROUTINE main(global_data)
+  USE global_mod, ONLY: global_data_type
+  USE lib, ONLY: update
+  IMPLICIT NONE
+  TYPE(global_data_type) :: global_data
+  REAL :: a = 1.0
+  CALL update(global_data, global_data % inited_var)
+  CALL update(global_data, global_data % uninited_var)
+  IF (global_data % inited_var .AND. global_data % uninited_var) a = 7.1
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_create_global_initializers():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -2471,6 +2658,7 @@ subroutine fun(res)
   real, dimension(2), intent(out) :: res
   data val/1.0/, d/2*4.2/
   data d(1:2)/2*4.2/
+  data d/5.1, 5.2/
   res(:) = val*d(:)
 end subroutine fun
 
@@ -2493,6 +2681,8 @@ SUBROUTINE fun(res)
   val = 1.0
   d(:) = 4.2
   d(1 : 2) = 4.2
+  d(1) = 5.1
+  d(2) = 5.2
   res(:) = val * d(:)
 END SUBROUTINE fun
 SUBROUTINE main(res)
@@ -2594,14 +2784,17 @@ SUBROUTINE main(d)
   IMPLICIT NONE
   REAL, INTENT(INOUT) :: d
   INTEGER :: i
-  LOGICAL :: goto_0 = .FALSE.
-  LOGICAL :: goto_1 = .FALSE.
-  LOGICAL :: goto_2 = .FALSE.
+  LOGICAL :: goto_0
+  LOGICAL :: goto_1
+  LOGICAL :: goto_2
   i = 0
+  goto_0 = .FALSE.
   IF (i > 5) goto_0 = .TRUE.
   IF (.NOT. (goto_0)) i = 7
+  goto_1 = .FALSE.
   IF (.NOT. (goto_0) .AND. i > 5) goto_1 = .TRUE.
   IF (.NOT. (goto_1) .AND. .NOT. (goto_0)) i = 1
+  goto_2 = .FALSE.
   IF (.NOT. (goto_1) .AND. .NOT. (goto_0) .AND. i > 5) THEN
     goto_2 = .TRUE.
     i = 9
@@ -2649,7 +2842,6 @@ end subroutine main
     ast = parse_and_improve(sources)
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE lib
   TYPE :: cmplx
@@ -2708,7 +2900,6 @@ end subroutine main
     ast = remove_access_and_bind_statements(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE lib
   TYPE :: cmplx

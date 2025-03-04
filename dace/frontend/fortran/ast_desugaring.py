@@ -19,16 +19,16 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Level_2_Unary_Expr, And_Operand, Parenthesis, Level_2_Expr, Level_3_Expr, Array_Constructor, Execution_Part, \
     Specification_Part, Interface_Block, Association, Procedure_Designator, Type_Bound_Procedure_Part, \
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
-    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List, Section_Subscript_List, \
-    Char_Selector, Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, \
-    If_Then_Stmt, Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, \
-    Mult_Operand, Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, \
-    Contains_Stmt, Implicit_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, \
-    Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
-    Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
-    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, Private_Components_Stmt, Generic_Spec, \
-    Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, Proc_Decl, End_Type_Stmt, \
-    End_Interface_Stmt, Procedure_Declaration_Stmt
+    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List, Data_Stmt_Object_List, \
+    Data_Stmt_Value_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, Explicit_Shape_Spec, \
+    Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, Else_Stmt, If_Construct, \
+    Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt, Loop_Control, \
+    Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, Implicit_Part, End_Module_Stmt, \
+    Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, \
+    Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, \
+    Deallocate_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, \
+    Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, \
+    Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
 
@@ -66,6 +66,7 @@ class TYPE_SPEC:
         self.spec: SPEC = spec
         self.shape: Tuple[str, ...] = self._parse_shape(attrs)
         self.optional: bool = 'OPTIONAL' in attrs
+        self.pointer: bool = 'POINTER' in attrs
         self.inp: bool = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
         self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
         self.alloc: bool = 'ALLOCATABLE' in attrs
@@ -98,6 +99,8 @@ class TYPE_SPEC:
 
     def __repr__(self):
         attrs = []
+        if self.pointer:
+            attrs.append("*")
         if self.shape:
             attrs.append(f"shape={self.shape}")
         if self.optional:
@@ -190,7 +193,7 @@ def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
 
 
 def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
-    if anc == des:
+    if anc is des:
         return (anc,)
     if not des.parent:
         return None
@@ -201,13 +204,22 @@ def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
 
 
 def search_scope_spec(node: Base) -> Optional[SPEC]:
+    # A basic check to make sure that it is not on the tail of a data-ref.
+    if isinstance(node.parent, (Part_Ref, Data_Ref)):
+        cnode, par = node, node.parent
+        while par and isinstance(par, (Part_Ref, Data_Ref)):
+            if par.children[0] is not cnode:
+                return None
+            cnode, par = par, par.parent
+
     scope = find_scope_ancestor(node)
     if not scope:
         return None
     lin = lineage(scope, node)
     assert lin
-    par = node.parent
+
     # TODO: How many other such cases can there be?
+    par = node.parent
     if (isinstance(scope, Derived_Type_Def)
             and any(
                 isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector))
@@ -781,18 +793,21 @@ def find_type_of_entity(node: Union[Entity_Decl, Component_Decl], alias_map: SPE
     return tspec
 
 
-def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE):
+def _dataref_root(dref: Union[Name, Data_Ref, Data_Pointer_Object], scope_spec: SPEC, alias_map: SPEC_TABLE):
     if isinstance(dref, Name):
         root, rest = dref, []
     else:
         assert len(dref.children) >= 2
         root, rest = dref.children[0], dref.children[1:]
+        rest = [r for r in rest if r != '%']
 
     if isinstance(root, Name):
         root_spec = find_real_ident_spec(root.string, scope_spec, alias_map)
         assert root_spec in alias_map, f"canont find: {root_spec} / {dref} in {scope_spec}"
         root_type = find_type_of_entity(alias_map[root_spec], alias_map)
     elif isinstance(root, Data_Ref):
+        root_type = find_type_dataref(root, scope_spec, alias_map)
+    elif isinstance(root, Data_Pointer_Object):
         root_type = find_type_dataref(root, scope_spec, alias_map)
     elif isinstance(root, Part_Ref):
         root_type = find_type_dataref(root, scope_spec, alias_map)
@@ -832,7 +847,7 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
     return comp_spec
 
 
-def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
+def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref, Data_Pointer_Object], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
     _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
     cur_type = root_type
 
@@ -989,7 +1004,7 @@ def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
     only_child = bool([c for c in par.children if c is node])
     repls = []
     for c in par.children:
-        if c != node:
+        if c is not node:
             repls.append(c)
             continue
         if subst is None or isinstance(subst, Base):
@@ -1074,9 +1089,9 @@ def correct_for_function_calls(ast: Program):
     while changed is None or changed:
         changed = False
         for pr in walk(ast, Part_Ref):
-            scope_spec = find_scope_spec(pr)
             if isinstance(pr.parent, Data_Ref):
                 dref = pr.parent
+                scope_spec = find_scope_spec(dref)
                 comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
                 comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
                 if not comp_type_spec:
@@ -1091,6 +1106,7 @@ def correct_for_function_calls(ast: Program):
                         replace_node(pr, Function_Reference(pr.tofortran()))
                         changed = True
                 elif isinstance(pr_name, Data_Ref):
+                    scope_spec = find_scope_spec(pr_name)
                     pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
                     if not pr_type_spec:
                         # Cannot find a type, so it must be a function call.
@@ -1842,7 +1858,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
             if not loc or not scope_spec:
                 continue
             nm_spec = ident_spec(alias_map[loc])
-            if isinstance(nm.parent, Entity_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Entity_Decl) and nm is nm.parent.children[0]:
                 fnargs = atmost_one(children_of_type(alias_map[scope_spec], Dummy_Arg_List))
                 fnargs = fnargs.children if fnargs else tuple()
                 if any(a.string == nm.string for a in fnargs):
@@ -1851,8 +1867,12 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                     continue
                 # Otherwise, this is a declaration of the variable, which is not a use, and so a fair game for removal.
                 continue
-            if isinstance(nm.parent, Component_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Component_Decl) and nm is nm.parent.children[0]:
                 # This is a declaration of the component, which is not a use, and so a fair game for removal.
+                continue
+            if isinstance(nm.parent, Pointer_Assignment_Stmt) and nm is nm.parent.children[0]:
+                # A pointer assignment can useless if it is not actually used anywhere otherwise.
+                # TODO: Potential unsoundness in just skipping pointer assignments for tracking usage.
                 continue
 
             # All the scope ancestors of `nm` must live too.
@@ -1903,6 +1923,17 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 break
         if ns in killed:
             continue
+        ns_typ = find_type_of_entity(ns_node, alias_map)
+        if isinstance(ns_node, Entity_Decl) and ns_typ.pointer:
+            # If it is a pointer that we have decided to remove, then clear out all of its assignments.
+            for pa in walk(ast, Pointer_Assignment_Stmt):
+                dst = pa.children[0]
+                if not isinstance(dst, Name):
+                    # TODO: Handle data-refs.
+                    continue
+                dst_spec = search_real_local_alias_spec(dst, alias_map)
+                if dst_spec and alias_map[dst_spec] is ns_node:
+                    remove_self(pa)
         if isinstance(ns_node, Entity_Decl):
             elist = ns_node.parent
             remove_self(ns_node)
@@ -2170,7 +2201,7 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
     plus: Dict[Union[SPEC, Tuple[SPEC, SPEC]], LITERAL_TYPES] = copy(plus) if plus else {}
     minus: Set[Union[SPEC, Tuple[SPEC, SPEC]]] = copy(minus) if minus else set()
 
-    def _root_comp(dref: Data_Ref):
+    def _root_comp(dref: (Data_Ref, Data_Pointer_Object)):
         scope_spec = search_scope_spec(dref)
         assert scope_spec
         if walk(dref, Part_Ref):
@@ -2196,26 +2227,50 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                 minus.remove(k)
             plus[k] = v
 
-    def _inject_knowns(x: Base):
-        if isinstance(x, (*LITERAL_CLASSES, Char_Literal_Constant, Write_Stmt, Close_Stmt, Goto_Stmt)):
+    def _inject_knowns(x: Base, value: bool = True, pointer: bool = True):
+        if isinstance(x, (*LITERAL_CLASSES, Char_Literal_Constant, Write_Stmt, Close_Stmt, Goto_Stmt, Cycle_Stmt)):
             pass
         elif isinstance(x, Assignment_Stmt):
             lv, op, rv = x.children
+            _inject_knowns(lv, value=False, pointer=True)
             _inject_knowns(rv)
         elif isinstance(x, Name):
             loc = search_real_local_alias_spec(x, alias_map)
-            if loc:
-                spec = ident_spec(alias_map[loc])
-                if spec in plus:
-                    assert spec not in minus
-                    replace_node(x, plus[spec])
+            if not loc:
+                return
+            spec = ident_spec(alias_map[loc])
+            if spec not in plus:
+                return
+            assert spec not in minus
+            xdecl = alias_map[loc]
+            xtyp = find_type_of_entity(xdecl, alias_map) if isinstance(xdecl, Entity_Decl) else None
+            if (pointer and xtyp and xtyp.pointer) or value:
+                par = x.parent
+                replace_node(x, plus[spec])
+                if isinstance(par, (Data_Ref, Part_Ref)):
+                    replace_node(par, Data_Ref(par.tofortran()))
         elif isinstance(x, Data_Ref):
             spec = _root_comp(x)
-            if spec in plus:
-                assert spec not in minus
+            if spec not in plus:
+                for pr in x.children[1:]:
+                    if isinstance(pr, Part_Ref):
+                        _, subsc = pr.children
+                        if subsc:
+                            subsc = subsc.children
+                        for sc in subsc:
+                            _inject_knowns(sc, value, pointer)
+                return
+            assert spec not in minus
+            scope_spec = find_scope_spec(x)
+            xtyp = find_type_dataref(x, scope_spec, alias_map)
+            if (pointer and xtyp.pointer) or value:
+                par = x.parent
                 replace_node(x, plus[spec])
+                if isinstance(par, (Data_Ref, Part_Ref)):
+                    replace_node(par, Data_Ref(par.tofortran()))
         elif isinstance(x, Part_Ref):
             par, subsc = x.children
+            _inject_knowns(par, value=False, pointer=True)
             assert isinstance(subsc, Section_Subscript_List)
             for c in subsc.children:
                 _inject_knowns(c)
@@ -2276,14 +2331,14 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                 plus, minus = {}, set()
     elif isinstance(node, Assignment_Stmt):
         lv, op, rv = node.children
+        _inject_knowns(lv, value=False, pointer=True)
         _inject_knowns(rv)
         lv, op, rv = node.children
-        lspec = None
+        lspec, ltyp = None, None
         if isinstance(lv, Name):
             loc = search_real_local_alias_spec(lv, alias_map)
             assert loc
             lspec = ident_spec(alias_map[loc])
-            ltyp = None
             if isinstance(alias_map[lspec], Entity_Decl):
                 ltyp = find_type_of_entity(alias_map[lspec], alias_map)
         elif isinstance(lv, Data_Ref):
@@ -2298,6 +2353,27 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                 plus[lspec] = numpy_type_to_literal(rval)
                 if lspec in minus:
                     minus.remove(lspec)
+        tp, tm = _track_local_consts(rv, alias_map)
+        _integrate_subresults(tp, tm)
+    elif isinstance(node, Pointer_Assignment_Stmt):
+        lv, _, rv = node.children
+        _inject_knowns(rv, value=False, pointer=True)
+        lv, _, rv = node.children
+        lspec, ltyp = None, None
+        if isinstance(lv, Name):
+            loc = search_real_local_alias_spec(lv, alias_map)
+            assert loc
+            lspec = ident_spec(alias_map[loc])
+            if isinstance(alias_map[lspec], Entity_Decl):
+                ltyp = find_type_of_entity(alias_map[lspec], alias_map)
+        elif isinstance(lv, (Data_Ref, Data_Pointer_Object)):
+            lspec = _root_comp(lv)
+            scope_spec = find_scope_spec(lv)
+            ltyp = find_type_dataref(lv, scope_spec, alias_map)
+        if lspec and ltyp and ltyp.pointer:
+            plus[lspec] = rv
+            if lspec in minus:
+                minus.remove(lspec)
         tp, tm = _track_local_consts(rv, alias_map)
         _integrate_subresults(tp, tm)
     elif isinstance(node, If_Stmt):
@@ -2349,9 +2425,31 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
         assert isinstance(do_stmt, (Label_Do_Stmt, Nonlabel_Do_Stmt))
         assert isinstance(node.children[-1], End_Do_Stmt)
         do_ops = node.children[1:-1]
+        has_pointer_asgns = bool(walk(node, Pointer_Assignment_Stmt))
+
+        net_tpm = set()
+        for op in do_ops:
+            tp, tm = _track_local_consts(op, alias_map, {}, set())
+            net_tpm.update(tp.keys())
+            net_tpm.update(tm)
+        loop_control = singular(children_of_type(do_stmt, Loop_Control))
+        _, cntexpr, _, _ = loop_control.children
+        if cntexpr:
+            loopvar, _ = cntexpr
+            loopvar_spec = _find_real_ident_spec(loopvar, alias_map)
+            net_tpm.add(loopvar_spec)
         for op in do_ops:
             # Inside the do-block don't assume anything is known (a pessimistic, but safe view).
-            tp, tm = _track_local_consts(op, alias_map, {}, set())
+            # TODO: One exception that we make is to resolve the pointers if there is no assignment inside the block.
+            #  But this is not entirely a correct operation, since the pointers can get reassigned in a function call.
+            if not has_pointer_asgns:
+                # We're assuming that all the non-literals in the dictionary are pointers.
+                pointers = {k: v for k, v in plus.items() if not isinstance(v, LITERAL_CLASSES)}
+                tp, tm = _track_local_consts(op, alias_map, pointers, set())
+                _integrate_subresults(tp, tm)
+            tp, tm = _track_local_consts(op, alias_map,
+                                         {k: v for k, v in plus.items() if k not in net_tpm},
+                                         net_tpm | minus)
             _integrate_subresults(tp, tm)
 
         _, loop_ctl = do_stmt.children
@@ -2365,11 +2463,11 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             _integrate_subresults({}, {loop_var_spec})
     elif isinstance(node, (
             Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
-            Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt)):
+            Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Cycle_Stmt)):
         # These don't modify variables or give any new information.
         pass
     elif isinstance(node, (Allocate_Stmt, Deallocate_Stmt)):
-        # These are not expected to exit in the pruned AST, so don't bother tracking them.
+        # These are not expected to exist in the pruned AST, so don't bother tracking them.
         pass
     elif isinstance(node, UnaryOpBase):
         _inject_knowns(node)
@@ -3032,7 +3130,7 @@ def const_eval_nodes(ast: Program) -> Program:
 
     NON_EXPRESSION_CLASSES = (
         Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
-        Section_Subscript_List)
+        Section_Subscript_List, Write_Stmt)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
@@ -3074,8 +3172,8 @@ def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
     elif type_spec == ('REAL8',):
         val = np.float64(val)
     elif type_spec == ('LOGICAL',):
-        assert val in {'true', 'false'}
-        val = np.bool_(val == 'true')
+        assert val in {'true', 'false', '0', '1'}
+        val = np.bool_(val in {'true', '1'})
     else:
         raise NotImplementedError(
             f"{val} cannot be parsed as the target literal type: {type_spec}")
@@ -3088,13 +3186,13 @@ def _find_real_ident_spec(node: Name, alias_map: SPEC_TABLE) -> SPEC:
     return ident_spec(alias_map[loc])
 
 
-def _lookup_dataref(dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[Tuple[Name, SPEC]]:
+def _lookup_dataref(dr: (Data_Ref, Data_Pointer_Object), alias_map: SPEC_TABLE) -> Optional[Tuple[Name, SPEC]]:
     scope_spec = find_scope_spec(dr)
     root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
     while not isinstance(root, Name):
         root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
         rest = nurest + rest
-    return root, rest
+    return root, tuple(rest)
 
 
 def _item_comp_matches_actual_comp(item_comp: str, actual_comp: str) -> bool:
@@ -3407,6 +3505,13 @@ def inject_const_evals(ast: Program,
             tspec = find_type_of_entity(alias_map[loc], alias_map)
             # NOTE: We should replace only when it is not an output of the function. However, here we pass the
             # responsibilty to the user to provide valid injections.
+            if isinstance(nm.parent, Assignment_Stmt) and nm is nm.parent.children[0]:
+                # We're violating the rule of valid injection already: If we are assigning anything to this variable, we
+                # can just ignore it, since it has to be treated as a constant anyway.
+                print(f"`{nm} = {item.value}` is supposed to be a constant injection, yet found `{nm.parent}`; "
+                      f"dropping the assignment and moving on...", file=sys.stderr)
+                remove_self(nm.parent)
+                continue
             replace_node(nm, _val_2_lit(item.value, tspec.spec))
     return ast
 
@@ -3421,9 +3526,122 @@ def lower_identifier_names(ast: Program) -> Program:
     return ast
 
 
+GLOBAL_DATA_OBJ_NAME = 'global_data'
+GLOBAL_DATA_TYPE_NAME = 'global_data_type'
+
+
+def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: bool = False) -> Program:
+    """
+    Move all the global data into one structure and use it from there.
+    TODO: We will have circular dependency if there are global objects of derived type. How to handle that?
+    """
+    alias_map = alias_specs(ast)
+    GLOBAL_DATA_MOD_NAME = 'global_mod'
+    if (GLOBAL_DATA_MOD_NAME,) in alias_map:
+        # We already have the global initialisers.
+        return ast
+
+    all_derived_types, all_global_vars = [], []
+    # Collect all the derived types into a global module.
+    for dt in walk(ast, Derived_Type_Def):
+        dtspec = ident_spec(singular(children_of_type(dt, Derived_Type_Stmt)))
+        assert len(dtspec) == 2
+        mod, dtname = dtspec
+        all_derived_types.append(f"use {mod}, only : {dtname}")
+    # Collect all the global variables into a single global data structure.
+    for m in walk(ast, Module):
+        spart = atmost_one(children_of_type(m, Specification_Part))
+        if not spart:
+            continue
+        for tdecl in children_of_type(spart, Type_Declaration_Stmt):
+            all_global_vars.append(tdecl.tofortran())
+    all_derived_types = '\n'.join(all_derived_types)
+    all_global_vars = '\n'.join(all_global_vars)
+
+    # Then, replace all the instances of references to global variables with corresponding data-refs.
+    for nm in walk(ast, Name):
+        par = nm.parent
+        if isinstance(par, (Entity_Decl, Use_Stmt, Rename, Only_List)):
+            continue
+        if isinstance(par, (Part_Ref, Data_Ref)):
+            while par and isinstance(par.parent, (Part_Ref, Data_Ref)):
+                par = par.parent
+            scope_spec = search_scope_spec(par)
+            root, _, _ = _dataref_root(par, scope_spec, alias_map)
+            if root is not nm:
+                continue
+        local_spec = search_real_local_alias_spec(nm, alias_map)
+        if not local_spec:
+            continue
+        assert local_spec in alias_map
+        if not isinstance(alias_map[local_spec], Entity_Decl):
+            continue
+        edecl_spec = ident_spec(alias_map[local_spec])
+        assert len(edecl_spec) >= 2, \
+            f"Fortran cannot possibly have a top-level global variable, outside any module; got {edecl_spec}"
+        if len(edecl_spec) != 2:
+            # We cannot possibly have a module level variable declaration.
+            continue
+        mod, var = edecl_spec
+        assert (mod,) in alias_map
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            continue
+        if isinstance(nm.parent, Part_Ref):
+            _, subsc = nm.parent.children
+            replace_node(nm.parent, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}({subsc})"))
+        else:
+            replace_node(nm, Data_Ref(f"{GLOBAL_DATA_OBJ_NAME} % {var}"))
+
+    if all_global_vars or always_add_global_data_arg:
+        # Make `global_data` an argument to every defined function.
+        for fn in walk(ast, (Function_Subprogram, Subroutine_Subprogram)):
+            stmt = singular(children_of_type(fn, NAMED_STMTS_OF_INTEREST_CLASSES))
+            assert isinstance(stmt, (Function_Stmt, Subroutine_Stmt))
+            prefix, name, dummy_args, whatever = stmt.children
+            if dummy_args:
+                prepend_children(dummy_args, Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                set_children(stmt, (prefix, name, Dummy_Arg_Name_List(GLOBAL_DATA_OBJ_NAME), whatever))
+            spart = atmost_one(children_of_type(fn, Specification_Part))
+            assert spart
+            prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"))
+            decl_idx = [idx for idx, v in enumerate(spart.children) if isinstance(v, Type_Declaration_Stmt)]
+            decl_idx = decl_idx[0] if decl_idx else len(spart.children)
+            set_children(
+                spart, spart.children[:decl_idx]
+                       + [Type_Declaration_Stmt(f"type({GLOBAL_DATA_TYPE_NAME}) :: {GLOBAL_DATA_OBJ_NAME}")]
+                       + spart.children[decl_idx:])
+        for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+            fn, args = fcall.children
+            fnspec = search_real_local_alias_spec(fn, alias_map)
+            if not fnspec:
+                continue
+            fnstmt = alias_map[fnspec]
+            assert isinstance(fnstmt, (Function_Stmt, Subroutine_Stmt))
+            if args:
+                prepend_children(args, Name(GLOBAL_DATA_OBJ_NAME))
+            else:
+                set_children(fcall, (fn, Actual_Arg_Spec_List(GLOBAL_DATA_OBJ_NAME)))
+        # NOTE: We do not remove the variables themselves, and let them be pruned later on.
+
+    global_mod = Module(get_reader(f"""
+module {GLOBAL_DATA_MOD_NAME}
+  {all_derived_types}
+
+  type {GLOBAL_DATA_TYPE_NAME}
+    {all_global_vars}
+  end type {GLOBAL_DATA_TYPE_NAME}
+end module {GLOBAL_DATA_MOD_NAME}
+"""))
+    prepend_children(ast, global_mod)
+
+    ast = consolidate_uses(ast)
+    return ast
+
+
 def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Program:
     # TODO: Ordering of the initializations may matter, but for that we need to find how Fortran's global initialization
-    # works and then reorder the initialization calls appropriately.
+    #  works and then reorder the initialization calls appropriately.
 
     ident_map = identifier_specs(ast)
     GLOBAL_INIT_FN_NAME = 'global_init_fn'
@@ -3508,9 +3726,16 @@ end subroutine {fn_name}
             type_defs[td] = type_init_fn, []
         type_defs[td][1].append(k)
     for t, v in type_defs.items():
+        if len(t) != 2:
+            # Not a type that's globally accessible anyway.
+            continue
+        mod, _ = t
+        assert (mod,) in alias_map
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            # Not a type that's globally accessible anyway.
+            continue
         init_fn_name, comps = v
-        if comps:
-            _make_init_fn(init_fn_name, comps, t)
+        _make_init_fn(init_fn_name, comps, t)
 
     global_inited_vars: List[SPEC] = [
         k for k, v in ident_map.items()
@@ -3553,6 +3778,14 @@ def convert_data_statements_into_assignments(ast: Program) -> Program:
             repls: List[Assignment_Stmt] = []
             for ds in dst.children:
                 assert isinstance(ds, Data_Stmt_Set)
+                varz, valz = ds.children
+                assert isinstance(varz, Data_Stmt_Object_List)
+                assert isinstance(valz, Data_Stmt_Value_List)
+                if len(varz.children) != len(valz.children):
+                    assert len(varz.children) == 1
+                    singular_varz, = varz.children
+                    new_varz = [f"{singular_varz}({i+1})" for i in range(len(valz.children))]
+                    replace_node(varz, Data_Stmt_Object_List(', '.join(new_varz)))
                 varz, valz = ds.children
                 varz, valz = varz.children, valz.children
                 assert len(varz) == len(valz)
@@ -3702,6 +3935,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
             raise NotImplementedError
 
         ifc = goto.parent
+        ifc_par = ifc.parent
         assert isinstance(ifc, (If_Stmt, If_Construct)), \
             f"Everything but conditionals are unsupported for goto's parent; got: {ifc}"
         assert ifc.parent is target.parent
@@ -3719,15 +3953,14 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         spec = atmost_one(children_of_type(ex.parent, Specification_Part))
         assert spec
 
-        if isinstance(ifc, (If_Stmt, If_Construct)):
-            goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
-            append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var} = .false."))
-            asgn = Assignment_Stmt(f"{goto_var} = .true.")
-            replace_node(goto, asgn)
-        else:
+        if not isinstance(ifc, (If_Stmt, If_Construct)):
             raise NotImplementedError
 
-        for else_op in ifc.parent.children[ifc_pos + 1: target_pos]:
+        goto_var, COUNTER = f"goto_{COUNTER}", COUNTER + 1
+        append_children(spec, Type_Declaration_Stmt(f"LOGICAL :: {goto_var}"))
+        replace_node(goto, Assignment_Stmt(f"{goto_var} = .true."))
+
+        for else_op in ifc_par.children[ifc_pos + 1: target_pos]:
             if isinstance(else_op, Continue_Stmt):
                 # Continue statements are no-op, but they may have label attached, so we leave them be.
                 continue
@@ -3756,5 +3989,7 @@ def deconstuct_goto_statements(ast: Program) -> Program:
                 nu_if = If_Stmt(f"if (.not.({goto_var})) call x")
                 replace_node(else_op, nu_if)
                 replace_node(singular(nm for nm in walk(nu_if, Call_Stmt)), else_op)
+
+        replace_node(ifc, [Assignment_Stmt(f"{goto_var} = .false."), ifc])
 
     return ast

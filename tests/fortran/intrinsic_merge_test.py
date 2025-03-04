@@ -510,6 +510,47 @@ def test_fortran_frontend_merge_scalar3():
     sdfg(input1=first, input2=second, mask=mask, mask2=mask2, res=res)
     assert res[0] == 13
 
+
+def test_fortran_frontend_merge_literal():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM merge_test
+                    implicit none
+                    double precision :: input1
+                    double precision :: input2
+                    double precision, dimension(1) :: res
+                    CALL merge_test_function(input1, input2, res)
+                    end
+
+                    SUBROUTINE merge_test_function(input1, input2, res)
+                    double precision :: input1
+                    double precision :: input2
+                    double precision, dimension(1) :: res
+
+                    res = MERGE(1.0D0, input2, input2 .lt. 3)
+
+                    END SUBROUTINE merge_test_function
+                    """
+
+    # Now test to verify it executes correctly with no offset normalization
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    # Minimum is in the beginning
+    res = np.full([1], 40, order="F", dtype=np.float64)
+
+    sdfg(input1=13, input2=42, res=res)
+    assert res[0] == 42
+
+    sdfg(input1=13, input2=10, res=res)
+    assert res[0] == 10
+
+    sdfg(input1=13, input2=2, res=res)
+    assert res[0] == 1
+
 if __name__ == "__main__":
 
     test_fortran_frontend_merge_1d()
@@ -522,3 +563,4 @@ if __name__ == "__main__":
     test_fortran_frontend_merge_scalar()
     test_fortran_frontend_merge_scalar2()
     test_fortran_frontend_merge_scalar3()
+    test_fortran_frontend_merge_literal()
