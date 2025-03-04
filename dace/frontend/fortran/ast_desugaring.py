@@ -3603,8 +3603,13 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
             else:
                 set_children(stmt, (prefix, name, Dummy_Arg_Name_List(GLOBAL_DATA_OBJ_NAME), whatever))
             spart = atmost_one(children_of_type(fn, Specification_Part))
-            assert spart
-            prepend_children(spart, Use_Stmt(f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"))
+            use_stmt = f"use {GLOBAL_DATA_MOD_NAME}, only : {GLOBAL_DATA_TYPE_NAME}"
+            if spart:
+                prepend_children(spart, Use_Stmt(use_stmt))
+            else:
+                set_children(
+                    fn, fn.children[:1] + [Specification_Part(get_reader(use_stmt))] + fn.children[1:])
+            spart = atmost_one(children_of_type(fn, Specification_Part))
             decl_idx = [idx for idx, v in enumerate(spart.children) if isinstance(v, Type_Declaration_Stmt)]
             decl_idx = decl_idx[0] if decl_idx else len(spart.children)
             set_children(

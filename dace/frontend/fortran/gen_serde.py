@@ -549,15 +549,15 @@ void deserialize(bool& x, std::istream& s) {{
     cpp_serializer_fns: List[str] = [f"""
 template<typename T>
 void add_line(const T& x, std::ostream& s, bool trailing_newline=true) {{
-    s << std::format("{{}}", x);
+    s << x;
     if (trailing_newline) s << std::endl;
 }}
 void add_line(long long x, std::ostream& s, bool trailing_newline=true) {{
-    s << std::format("{{}}", x);
+    s << x;
     if (trailing_newline) s << std::endl;
 }}
 void add_line(long double x, std::ostream& s, bool trailing_newline=true) {{
-    s << std::format("{{:.16f}}", x);
+    s << std::setprecision(16) << x;
     if (trailing_newline) s << std::endl;
 }}
 void add_line(bool x, std::ostream& s, bool trailing_newline=true) {{
@@ -570,22 +570,34 @@ std::string serialize(const T* x) {{
     return s.str();
 }}
 std::string serialize(int x) {{
-    return std::format("{{}}", x);
+    std::stringstream s;
+    s << x;
+    return s.str();
 }}
 std::string serialize(long x) {{
-    return std::format("{{}}", x);
+    std::stringstream s;
+    s << x;
+    return s.str();
 }}
 std::string serialize(long long x) {{
-    return std::format("{{}}", x);
+    std::stringstream s;
+    s << x;
+    return s.str();
 }}
 std::string serialize(float x) {{
-    return std::format("{{:.16f}}", x);
+    std::stringstream s;
+    s << std::setprecision(16) << x;
+    return s.str();
 }}
 std::string serialize(double x) {{
-    return std::format("{{:.16f}}", x);
+    std::stringstream s;
+    s << std::setprecision(16) << x;
+    return s.str();
 }}
 std::string serialize(long double x) {{
-    return std::format("{{:.16f}}", x);
+    std::stringstream s;
+    s << std::setprecision(16) << x;
+    return s.str();
 }}
 std::string serialize(bool x) {{
     return serialize(int(x));

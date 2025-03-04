@@ -12,7 +12,7 @@ def test_fortran_frontend_empty():
     """
     sources, main = SourceCodeBuilder().add_file("""
 module module_mpi
-  integer :: process_mpi_all_size = 0
+  integer, parameter :: process_mpi_all_size = 0
 contains
   logical function fun_with_no_arguments()
     fun_with_no_arguments = (process_mpi_all_size <= 1)
