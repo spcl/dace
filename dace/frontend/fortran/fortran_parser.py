@@ -31,10 +31,10 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, remove_access_and_bind_statements, ident_spec, ConstTypeInjection, ConstInjection, \
-    make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
-    create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
-    assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, prune_coarsely, consolidate_global_data_into_arg
+    make_practically_constant_arguments_constants, exploit_locally_constant_variables, \
+    assign_globally_unique_subprogram_names, convert_data_statements_into_assignments, \
+    deconstruct_statement_functions, assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, \
+    prune_coarsely, consolidate_global_data_into_arg
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
@@ -2779,15 +2779,18 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
                 remove_self(expart)
 
     print("FParser Op: Removing local indirections from AST...")
+    # NOTE: The local indirection removal operations should not need full resolution (e.g., build an alias map).
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = remove_access_and_bind_statements(ast)
     ast = deconstuct_goto_statements(ast)
-    ast = convert_data_statements_into_assignments(ast)
+    # NOTE: We need a coarse pruning as early (and as often) as reasonably possible to make it easier on the operations
+    # that rely on full resolution (e.g., builds an alias map). After this pruning, a full resolution is expected.
     ast = prune_coarsely(ast, cfg.do_not_prune)
     _checkpoint_ast(cfg, 'ast_v1.f90', ast)
 
     print("FParser Op: Removing remote indirections from AST...")
+    ast = convert_data_statements_into_assignments(ast)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_statement_functions(ast)
     ast = deconstruct_procedure_calls(ast)
