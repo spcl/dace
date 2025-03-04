@@ -6,6 +6,7 @@ from dace.sdfg.state import (
     ControlFlowBlock,
     ControlFlowRegion,
     ConditionalBlock,
+    LoopRegion,
 )
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, properties
@@ -93,6 +94,13 @@ class SymbolPropagation(ppl.Pass):
                 if sym in new_in_syms and new_in_syms[sym] != val:
                     new_in_syms[sym] = None
 
+        # For LoopRegions, remove loop carried variables from the incoming symbols
+        if isinstance(cfgb, LoopRegion):
+            for edge in cfgb.edges():
+                for sym in edge.data.assignments.keys():
+                    if sym in new_in_syms:
+                        new_in_syms[sym] = None
+
         # Nested starting CFBGs should inherit the symbols from their parent
         # Ignore SDFGs as nested SDFGs have symbol mappings
         if (
@@ -146,6 +154,13 @@ class SymbolPropagation(ppl.Pass):
         while changed:
             changed = False
             free_sym = cfgb.free_symbols
+            free_edge_sym = set(
+                [
+                    sym
+                    for edge in parent.out_edges(cfgb)
+                    for sym in edge.data.free_symbols
+                ]
+            )
 
             # Replace all symbols in the CFGB with their values
             cfgb.replace_dict(new_in_syms)
@@ -155,5 +170,12 @@ class SymbolPropagation(ppl.Pass):
                 edge.data.replace_dict(new_out_syms, replace_keys=False)
 
             # Check if the symbols have changed
-            if free_sym != cfgb.free_symbols:
+            new_free_edge_sym = set(
+                [
+                    sym
+                    for edge in parent.out_edges(cfgb)
+                    for sym in edge.data.free_symbols
+                ]
+            )
+            if free_sym != cfgb.free_symbols or free_edge_sym != new_free_edge_sym:
                 changed = True
