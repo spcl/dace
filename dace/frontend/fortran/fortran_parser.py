@@ -997,7 +997,7 @@ class AST_translator:
         # Sanity check to make sure the parameter numbers match
         if not ((len(variables_in_call) == len(parameters)) or
                 (len(variables_in_call) == len(parameters) + 1
-                 and not isinstance(node.result_type, ast_internal_classes.Void))):
+                 and not isinstance(node.type, ast_internal_classes.Void))):
             print("Subroutine", node.name.name)
             print('Variables in call', len(variables_in_call))
             print('Parameters', len(parameters))
