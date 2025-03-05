@@ -569,7 +569,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
                 if (not arr.transient) and (not only_empty_inputs):
                     if node_data not in nsdfg_node.out_connectors:
-                        print(node_data, node.data, state, node)
                         raise InvalidSDFGNodeError(
                             'Data descriptor %s is '
                             'written to, but only given to nested SDFG as an '
