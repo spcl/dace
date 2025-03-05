@@ -1,5 +1,6 @@
 import numpy as np
 
+import dace
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -34,7 +35,8 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
-    sdfg(d=a, outside_init=0)
+    gdata_type = sdfg.arrays['global_data'].dtype.base_type.as_ctypes()
+    sdfg(d=a, global_data=gdata_type(outside_init=0))
     assert (a[0] == 42)
     assert (a[1] == 5.5)
     assert (a[2] == 42)
@@ -74,6 +76,5 @@ end subroutine main
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_init()
     test_fortran_frontend_init2()

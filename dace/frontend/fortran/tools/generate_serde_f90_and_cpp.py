@@ -19,7 +19,8 @@ from pathlib import Path
 
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import const_eval_nodes, inject_const_evals
-from dace.frontend.fortran.config_propagation_data import ecrad_config_injection_list
+from dace.frontend.fortran.config_propagation_data import ecrad_config_injection_list, find_all_config_injections, \
+    find_all_config_injection_files
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 from dace.frontend.fortran.gen_serde import generate_serde_code, _keep_only_derived_types, find_all_f90_files
 
@@ -32,10 +33,15 @@ def main():
     argp.add_argument('-g', '--in_sdfg', type=str, required=True, default=None,
                       help='The SDFG file containing the final product of DaCe. We need this to know the structures '
                            'and their members that are present in the end (aftre further pruning etc.)')
+    argp.add_argument('--config_inject', type=str, required=False, action='append', default=[],
+                      help='The files or directories containing config injection data. '
+                           'Can be repeated to include multiple files or directories.')
     argp.add_argument('-f', '--out_f90', type=str, required=False, default=None,
                       help='A file to write the generated F90 functions into (absolute path or relative to CWD).')
     argp.add_argument('-c', '--out_cpp', type=str, required=False, default=None,
                       help='A file to write the generated C++ functions into (absolute path or relative to CWD).')
+    argp.add_argument('-m', '--module_name', type=str, required=False, default='serde',
+                      help="The name of the generated serde module's name.")
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -45,13 +51,22 @@ def main():
     print(f"Will be using the SDFG as the deserializer target: {args.in_sdfg}")
     g = SDFG.from_file(args.in_sdfg)
 
-    cfg = ParseConfig(sources=input_f90s, config_injections=ecrad_config_injection_list())
+    ti_dirs = [Path(p) for p in args.config_inject]
+    ti_files = [f for p in ti_dirs for f in find_all_config_injection_files(p)]
+    config_injections = list(find_all_config_injections(ti_files))
+
+    cfg = ParseConfig(sources=input_f90s, config_injections=config_injections)
     ast = create_fparser_ast(cfg)
+    # We trim the extra fat from the AST, since we just need the types and the global variables.
     ast = _keep_only_derived_types(ast)
+    # But we may need to propagate the constants and injected configs.
     ast = const_eval_nodes(ast)
     ast = inject_const_evals(ast, cfg.config_injections)
+    # NOTE: There is no need to generate a global structure for serialisation; there is a special function for that.
+    # But, the graph **must** have these global structure if necessary.
+
     # Generated serde code from the processed code.
-    serde_code = generate_serde_code(ast, g)
+    serde_code = generate_serde_code(ast, g, args.module_name)
 
     if args.out_f90:
         with open(args.out_f90, 'w') as f:
