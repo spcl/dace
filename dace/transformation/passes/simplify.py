@@ -36,16 +36,16 @@ SIMPLIFY_PASSES = [
     PruneEmptyLoops,
     RemoveUnusedSymbols,
     ReferenceToView,
-    ArrayElimination,
+    #ArrayElimination,
     ConsolidateEdges,
-    
+
 ]
 
 _nonrecursive_passes = [
     ScalarToSymbolPromotion,
     DeadDataflowElimination,
     DeadStateElimination,
-    ArrayElimination,
+    #ArrayElimination,
     ConsolidateEdges,
     ReferenceToView,
 ]
@@ -123,7 +123,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
                               '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                               'for more information.')
                 return None
-        
+
         if self.verbose:
             print(f'Applying {p.__class__.__name__}...')
 

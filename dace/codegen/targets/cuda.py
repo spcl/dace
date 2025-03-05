@@ -208,7 +208,7 @@ class CUDACodeGen(TargetCodeGenerator):
             if (isinstance(node, nodes.MapEntry)
                     and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
                 if state.parent not in shared_transients:
-                    shared_transients[state.parent] = state.parent.shared_transients()   
+                    shared_transients[state.parent] = state.parent.shared_transients()
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
@@ -616,7 +616,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('DACE_GPU_CHECK(%sMallocHost(&%s, %s));\n' % (self.backend, dataname, arrsize_malloc))
+            result_alloc.write('DACE_GPU_CHECK(%sMallocManaged(&%s, %s));\n' % (self.backend, dataname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:

@@ -628,4 +628,5 @@ class TargetDispatcher(object):
 
         # Dispatch
         self._used_targets.add(target)
+        print(src_node, dst_node)
         target.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)

@@ -229,6 +229,7 @@ def register_container_group_members(
             container_group_or_array=dg,
             prefix_name=f"__CG_{name}",
             acc_shape=(),
+            acc_strides=(),
             register_as_transient=register_as_transient
         )
     return registered
@@ -252,6 +253,7 @@ def _register_container_group_members(
     container_group_or_array: typing.Union["ContainerGroup", dace.data.ContainerArray],
     prefix_name: str,
     acc_shape: tuple,
+    acc_strides: tuple,
     register_as_transient: bool,
 ):
     added_descriptors = []
@@ -265,12 +267,14 @@ def _register_container_group_members(
                     else:
                         dg_prefix = prefix_name + f"__CA_{member.name}"
                         acc_shape += member.shape
+                        acc_strides += member.strides
                     added_descriptors += _register_container_group_members(
                         sdfg=sdfg,
                         flattening_mode=flattening_mode,
                         container_group_or_array=member,
                         prefix_name=dg_prefix,
                         acc_shape=acc_shape,
+                        acc_strides=acc_strides,
                         register_as_transient=register_as_transient
                     )
                 elif isinstance(member, dace.data.ContainerArray):
@@ -283,6 +287,7 @@ def _register_container_group_members(
                             datadesc = dace.data.Array(
                                 dtype=member.dtype,
                                 shape=(1,),
+                                strides=(1,),
                                 transient=member.transient if not register_as_transient else True,
                                 allow_conflicts=member.allow_conflicts,
                                 storage=member.storage,
@@ -292,9 +297,12 @@ def _register_container_group_members(
                                 may_alias=False,
                             )
                         else:
+                            if acc_strides != ():
+                                raise Exception(f"TODO {acc_strides}")
                             datadesc = dace.data.Array(
                                 dtype=member.dtype,
                                 shape=acc_shape,
+                                strides=acc_strides,
                                 transient=member.transient if not register_as_transient else True,
                                 allow_conflicts=member.allow_conflicts,
                                 storage=member.storage,
@@ -305,11 +313,13 @@ def _register_container_group_members(
                                 start_offset=member.start_offset,
                             )
                     elif isinstance(member, dace.data.Array):
-                        strides = _get_fused_strides(member, acc_shape)
+                        if acc_strides != ():
+                            raise Exception(f"TODO {acc_strides}")
+                        #strides = _get_fused_strides(member, acc_shape)
                         datadesc = dace.data.Array(
                             dtype=member.dtype,
                             shape=acc_shape + member.shape,
-                            strides=strides,
+                            strides=acc_strides + member.strides,
                             transient=member.transient if not register_as_transient else True,
                             allow_conflicts=member.allow_conflicts,
                             storage=member.storage,
@@ -831,6 +841,7 @@ class StructToContainerGroups(ppl.Pass):
                 entry_interface.add_node(an)
                 entry_interface.add_edge(an, None, flatten_lib_node, None,
                                          dace.Memlet(expr=inname))
+                sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
                 #if inname.lower() not in flatten_lib_node.in_connectors:
                 #    flatten_lib_node.add_in_connector(inname)
             for outname in set(registered_names):
@@ -849,7 +860,7 @@ class StructToContainerGroups(ppl.Pass):
 
                 if outname.lower() not in flatten_lib_node.out_connectors:
                     flatten_lib_node.add_out_connector(outname.lower())
-
+                sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
 
             end_nodes = set()
             for cfg in sdfg.nodes():
@@ -1254,8 +1265,8 @@ class StructToContainerGroups(ppl.Pass):
                     access = all_data[0]
                     true_name = view_to_name_map[access]
                     assert len(all_data) == 1
-                    name_hierarchy.append(last_member.stype.name)
-                    member_hierarchy.append((last_member.stype.name, last_member.stype))
+                    name_hierarchy.append(access)
+                    member_hierarchy.append((access, last_member.stype))
                     assert access_node != view_chain[-1]
                     if access_node != view_chain[-1]:
                         view_to_name_map[access_node.data] = last_member.stype.name
@@ -1266,10 +1277,10 @@ class StructToContainerGroups(ppl.Pass):
                         continue
                     access2 = all_data[-1]
                     if access_node != view_chain[-1]:
-                        name_hierarchy.append(last_member.members[access2].name)
+                        name_hierarchy.append(access2)
                         member_hierarchy.append(
                             (
-                                last_member.members[access2].name,
+                                access2,
                                 last_member.members[access2],
                             )
                         )
