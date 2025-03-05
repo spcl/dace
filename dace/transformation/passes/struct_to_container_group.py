@@ -1200,6 +1200,16 @@ class StructToContainerGroups(ppl.Pass):
             else:
                 return view_accesses
 
+    def _get_name(self, data: dace.data, access_str: str):
+        if isinstance(data, dace.data.Array) or isinstance(data, dace.data.Scalar):
+            name = access_str
+        elif isinstance(data, dace.data.Structure):
+            name = data.name
+        elif isinstance(data, dace.data.ContainerArray):
+            name = data.stype.name
+        assert name is not None
+        return name
+
     def _process_edges(
         self,
         sdfg: dace.SDFG,
@@ -1228,7 +1238,7 @@ class StructToContainerGroups(ppl.Pass):
             else:
                 last_member = member_hierarchy[-1][1]
                 if isinstance(last_member, dace.data.ContainerArray):
-                    name_hierarchy.append(last_member.stype.members[access])
+                    name_hierarchy.append(last_member.stype.members[access].name)
                     member_hierarchy.append(
                         (
                             last_member.stype.members[access].name,
@@ -1239,7 +1249,7 @@ class StructToContainerGroups(ppl.Pass):
                     name_hierarchy.append(access)
                     member_hierarchy.append((access, last_member.members[access]))
                 else:
-                    raise Exception("This should not happen.")
+                    raise Exception("If last member is not a struct or array, we can't append a new name to the hierarchy (_process_edges, first_access)")
             ite += 1
         view_to_name_map[first_access.data] = name_hierarchy[-1]
 
@@ -1251,45 +1261,46 @@ class StructToContainerGroups(ppl.Pass):
                     all_data = data.split(".")
                 else:
                     all_data = [data]
-                if len(all_data) == 2:
-                    pass
-                if len(all_data) == 1:
-                    pass
                 last_member = member_hierarchy[-1][1]
                 last_name = name_hierarchy[-1]
+
                 if isinstance(last_member, dace.data.ContainerArray):
                     access = all_data[0]
-                    true_name = view_to_name_map[access]
                     assert len(all_data) == 1
-                    name_hierarchy.append(access)
-                    member_hierarchy.append((access, last_member.stype))
+                    name = self._get_name(last_member.stype, access)
+
+                    name_hierarchy.append(name)
+                    member_hierarchy.append((name, last_member.stype))
                     assert access_node != view_chain[-1]
                     if access_node != view_chain[-1]:
-                        view_to_name_map[access_node.data] = last_member.stype.name
+                        view_to_name_map[access_node.data] = name
                 elif isinstance(last_member, dace.data.Structure):
-                    assert len(all_data) == 2 or  len(all_data) == 1
-                    if len(all_data) == 1:
-                        # This is accessing the whole struct does not change anything in the name hierarchy
+                    if len(all_data) != 2:
+                        # If previous one is an struct then we have
+                        # A - s[0] -> vA - s[0] -> pattern here, it means reduntant naming and we should continue
                         continue
+                    assert len(all_data) == 1 or len(all_data) == 2
+                    access1 = all_data[0]
                     access2 = all_data[-1]
-                    if access_node != view_chain[-1]:
-                        name_hierarchy.append(access2)
-                        member_hierarchy.append(
-                            (
-                                access2,
-                                last_member.members[access2],
-                            )
+                    #print(access1, access2, last_member, last_member.members[access2])
+
+                    name = self._get_name(last_member.members[access2], access2)
+
+                    name_hierarchy.append(name)
+                    member_hierarchy.append(
+                        (
+                            name,
+                            last_member.members[access2],
                         )
-                        print(name_hierarchy)
-                        print(member_hierarchy)
-                        print(last_member)
-                        view_to_name_map[access_node.data] = access2
-                    else:
-                        name_hierarchy.append(access2)
-                        member_hierarchy.append((access2, last_member.members[access2]))
-                        view_to_name_map[access_node.data] = access2
+                    )
+
+                    view_to_name_map[access_node.data] = name
                 else:
-                    raise Exception(f"This should not happen. {member_hierarchy}, {last_member}, {type(last_member)}")
+                    # Last member was an array but we have another view, this means we should not continue on forward
+                    assert len(all_data) == 1 # Access to array view should not have a dot inside
+                    view_to_name_map[access_node.data] = all_data[0]
+                    # We should not extend the view hierarchy
+                    assert access_node == view_chain[-1]
 
         return name_hierarchy, member_hierarchy
 
@@ -1351,36 +1362,42 @@ class StructToContainerGroups(ppl.Pass):
                 last_name = name_hierarchy[-1]
                 if isinstance(last_member, dace.data.ContainerArray):
                     access = all_data[0]
-                    true_name = view_to_name_map[access]
+                    name = self._get_name(last_member.stype, access)
                     assert len(all_data) == 1
-                    name_hierarchy.append(last_member.stype.name)
-                    member_hierarchy.append((last_member.stype.name, last_member.stype))
+                    name_hierarchy.append(name)
+                    member_hierarchy.append((name, last_member.stype))
                     assert access_node != view_chain[-1]
                     if access_node != view_chain[-1]:
-                        view_to_name_map[access_node.data] = last_member.stype.name
+                        view_to_name_map[access_node.data] = name
                 elif isinstance(last_member, dace.data.Structure):
                     if len(all_data) != 2:
+                        # If previous one is an struct then we have
+                        # A - s[0] -> vA - s[0] -> pattern here, it means reduntant naming and we should continue
                         continue
                     else:
                         access1 = all_data[0]
                         access2 = all_data[1]
-                    if access_node != view_chain[0]:
-                        name_hierarchy.append(last_member.members[access2].name)
-                        member_hierarchy.append(
-                            (
-                                last_member.members[access2].name,
-                                last_member.members[access2],
-                            )
+
+                    #if access_node != view_chain[0]:
+                    name = self._get_name(last_member.members[access2], access2)
+                    name_hierarchy.append(name)
+                    member_hierarchy.append(
+                        (
+                            name,
+                            last_member.members[access2],
                         )
-                        view_to_name_map[access_node.data] = last_member.members[
-                            access2
-                        ].name
-                    else:
-                        name_hierarchy.append(access2)
-                        member_hierarchy.append((access2, last_member.members[access2]))
-                        view_to_name_map[access_node.data] = access2
+                    )
+                    view_to_name_map[access_node.data] = name
+                    #else:
+                    #    name_hierarchy.append(access2)
+                    #    member_hierarchy.append((access2, last_member.members[access2]))
+                    #    view_to_name_map[access_node.data] = access2
                 else:
-                    raise Exception("This should not happen.")
+                    assert len(all_data) == 1 # Access to array view should not have a dot inside
+                    view_to_name_map[access_node.data] = all_data[0]
+                    # We should not extend the view hierarchy
+                    assert access_node == view_chain[0]
+
 
         return name_hierarchy, member_hierarchy
 
@@ -1475,6 +1492,7 @@ class StructToContainerGroups(ppl.Pass):
             )
 
         # If the length is less than 2 then we have only one view and one source struct
+        #print([struct_access] + view_chain[:-1])
         if self._flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
             memlet_shape = ()
             # We need calculate the dimension of the new array
@@ -1499,7 +1517,17 @@ class StructToContainerGroups(ppl.Pass):
                             sdfg.arrays[vc.data], dace.data.Scalar
                         ):
                             continue
+                        # If it is an array to array view continue, ti should not be added to the shape
+                        if not isinstance(
+                            sdfg.arrays[vc.data], (dace.data.Structure, dace.data.ContainerArray)
+                        ) and not isinstance(
+                            sdfg.arrays[_dst_edge.dst.data], (dace.data.ContainerArray, dace.data.Structure)
+                        ):
+                            continue
+                        #print()
+                        #print(not isinstance(sdfg.arrays[_dst_edge.dst.data], (dace.data.ContainerArray, dace.data.Structure)))
                         memlet_shape += tuple(_dst_edge.data.subset.ranges)
+                        #print(f"add {memlet_shape}")
 
             if view_to_struct:
                 assert len(view_to_struct_edges) == 1
@@ -1521,9 +1549,17 @@ class StructToContainerGroups(ppl.Pass):
                             sdfg.arrays[_src_edge.src.data], dace.data.Scalar
                         ):
                             continue
+                        # If it is an array to array view continue, ti should not be added to the shape
+                        if not isinstance(
+                            sdfg.arrays[vc.data], (dace.data.Structure, dace.data.ContainerArray)
+                        ) and not isinstance(
+                            sdfg.arrays[_src_edge.src.data], (dace.data.ContainerArray, dace.data.Structure)
+                        ):
+                            continue
                         memlet_shape += tuple(_src_edge.data.subset.ranges)
         else:
             raise Exception("ArrayOfStructs mode is not implemented yet")
+
 
         assert isinstance(sdfg.arrays[demangled_name], dace.data.Array)
         if memlet_shape == ():
