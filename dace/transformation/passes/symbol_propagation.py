@@ -98,8 +98,7 @@ class SymbolPropagation(ppl.Pass):
         # Nested starting CFBGs should inherit the symbols from their parent
         # Ignore SDFGs as nested SDFGs have symbol mappings
         if (parent.start_block == cfgb and not isinstance(parent, SDFG)) or (
-            isinstance(parent, ConditionalBlock)
-            and any([cfgb in b for b in parent.sub_regions()])
+            isinstance(parent, ConditionalBlock) and cfgb in parent.sub_regions()
         ):
             assert new_in_syms == {}
             new_in_syms = in_syms[parent]
