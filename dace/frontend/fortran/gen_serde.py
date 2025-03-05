@@ -23,9 +23,9 @@ from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_o
 NEW_LINE = "NEW_LINE('A')"
 
 
-def gen_f90_serde_module_skeleton() -> Module:
+def gen_f90_serde_module_skeleton(mod_name: str = 'serde') -> Module:
     return Module(get_reader(f"""
-module serde
+module {mod_name}
   implicit none
 
   ! ALWAYS: First argument should be an integer `io` that is an **opened** writeable stream.
@@ -92,7 +92,7 @@ contains
     if (nline_local)  write (io, '(g0)', advance='no') {NEW_LINE}
     if (cleanup_local) close(UNIT=io)
   end subroutine W_string
-end module serde
+end module {mod_name}
 """))
 
 
@@ -186,9 +186,10 @@ end if
 if (associated({ptr})) then
   kmeta = 0
   {cand_checks}
-  if (kmeta == 0) then
-    call serialize(io, "=> missing", cleanup=.false.)
-  end if
+  call serialize(io, "# missing", cleanup=.false.)
+  call serialize(io, (kmeta == 0), cleanup=.false.)
+  ! We are dumping the pointer content anyway for now.
+  call serialize(io, {ptr}, cleanup=.false.)
 end if
 """.strip().split('\n')
 
@@ -397,7 +398,7 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
 
 
 def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
-    uses, ser_ops, des_ops = [], [], []
+    uses, ser_ops, ser_ops_cpp, des_ops = [], [], [], []
     if GLOBAL_DATA_OBJ_NAME in g.arrays:
         gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
         for mod in walk(ast, Module):
@@ -420,6 +421,9 @@ call serialize(io, {vname}, cleanup=.false.)
 """)
                 vctyp = _real_ctype(gdata[vname])
                 if isinstance(gdata[vname], dace.data.Array):
+                    ser_ops_cpp.append(f"""
+add_line(serialize_array(g->{vname}), s);
+""")
                     des_ops.append(f"""
 {{
     read_line(s, "# {vname}");
@@ -428,6 +432,9 @@ call serialize(io, {vname}, cleanup=.false.)
 }}
 """)
                 else:
+                    ser_ops_cpp.append(f"""
+add_line(serialize(g->{vname}), s);
+""")
                     des_ops.append(f"""
 read_line(s, "# {vname}");
 deserialize(g->{vname}, s);
@@ -445,22 +452,29 @@ end subroutine serialize_global_data
 """
 
     des_ops = '\n'.join(des_ops)
+    ser_ops_cpp = '\n'.join(ser_ops_cpp)
     cpp_code = f"""
 void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
+}}
+
+std::string serialize_global_data(const {GLOBAL_DATA_TYPE_NAME}* g) {{
+    std::stringstream s;
+    {ser_ops_cpp}
+    return s.str();
 }}
 """
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
 
 
-def generate_serde_code(ast: Program, g: SDFG) -> SerdeCode:
+def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> SerdeCode:
     ast = _keep_only_derived_types(ast)
 
     # Global data.
     gdata = _get_global_data_serde_code(ast, g)
 
     # F90 Serializer related data structures.
-    f90_mod = gen_f90_serde_module_skeleton()
+    f90_mod = gen_f90_serde_module_skeleton(mod_name)
     proc_names = []
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
     base_serializers = _get_basic_serializers()
@@ -543,7 +557,7 @@ void add_line(long long x, std::ostream& s, bool trailing_newline=true) {{
     if (trailing_newline) s << std::endl;
 }}
 void add_line(long double x, std::ostream& s, bool trailing_newline=true) {{
-    s << x;
+    s << std::setprecision(16) << x;
     if (trailing_newline) s << std::endl;
 }}
 void add_line(bool x, std::ostream& s, bool trailing_newline=true) {{
@@ -556,22 +570,34 @@ std::string serialize(const T* x) {{
     return s.str();
 }}
 std::string serialize(int x) {{
-    return std::to_string(x);
+    std::stringstream s;
+    s << x;
+    return s.str();
 }}
 std::string serialize(long x) {{
-    return std::to_string(x);
+    std::stringstream s;
+    s << x;
+    return s.str();
 }}
 std::string serialize(long long x) {{
-    return std::to_string(x);
+    std::stringstream s;
+    s << x;
+    return s.str();
 }}
 std::string serialize(float x) {{
-    return std::to_string(x);
+    std::stringstream s;
+    s << std::setprecision(16) << x;
+    return s.str();
 }}
 std::string serialize(double x) {{
-    return std::to_string(x);
+    std::stringstream s;
+    s << std::setprecision(16) << x;
+    return s.str();
 }}
 std::string serialize(long double x) {{
-    return std::to_string(x);
+    std::stringstream s;
+    s << std::setprecision(16) << x;
+    return s.str();
 }}
 std::string serialize(bool x) {{
     return serialize(int(x));
@@ -661,10 +687,18 @@ add_line(serialize(x->{z.name} != nullptr), s);
 read_line(s, {{"# assoc"}});  // Should contain '# assoc'
 deserialize(&yep, s);
 """)
-                # TODO: Currenly we do nothing but this is the flag of associated values, so `nullptr` anyway.
+                if z.rank:
+                    sa_vars = [all_sa_vars[f"__f2dace_SA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
+                    sa_vars = '\n'.join([f"x->{v} = m.size.at({dim});" for dim, v in enumerate(sa_vars)])
+                    soa_vars = [all_soa_vars[f"__f2dace_SOA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
+                    soa_vars = '\n'.join([f"x->{v} = m.lbound.at({dim});" for dim, v in enumerate(soa_vars)])
                 cpp_deser_ops.append(f"""
-read_line(s, {{"=>"}});  // Should contain '=> ...'
-x->{z.name} = nullptr;
+{{
+    auto [m, arr] = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
+    {sa_vars}
+    {soa_vars}
+    x->{z.name} = arr;
+}}
 """)
             else:
                 if z.alloc:
@@ -697,7 +731,7 @@ if (yep) {{  // BEGINING IF
                         sa_vars, soa_vars = '', ''
                     cpp_ser_ops.append(f"""
 {{
-    const array_meta& m = (*ARRAY_META_DICT())[x->{z.name}];
+    const array_meta& m = ARRAY_META_DICT()->at(x->{z.name});
     add_line("# rank", s);
     add_line(m.rank, s);
     add_line("# size", s);
@@ -837,6 +871,7 @@ struct {name} {{
 #include <sstream>
 #include <optional>
 #include <algorithm>
+#include <format>
 
 #include "{g.name}.h"
 
@@ -936,6 +971,15 @@ namespace serde {{
         return {{m, y}};
     }}
 
+    template<typename T>
+    std::pair<array_meta, T*> read_pointer(std::istream& s) {{
+        read_line(s, {{"# missing"}});  // Should contain '# missing'
+        int missing;
+        read_scalar(missing, s);
+        assert(missing == 1);
+        return read_array<T>(s);
+    }}
+
     {cpp_deserializer_fns}
     {cpp_serializer_fns}
 
@@ -950,11 +994,9 @@ namespace serde {{
         return buf;
     }}
 
-    {gdata.cpp_serde}
-
     template<typename T>
     std::string serialize_array(T* arr) {{
-        const auto m = (*ARRAY_META_DICT())[static_cast<void*>(arr)];
+        const auto m = ARRAY_META_DICT()->at(static_cast<void*>(arr));
         std::stringstream s;
         add_line("# rank", s);
         add_line(m.rank, s);
@@ -966,6 +1008,8 @@ namespace serde {{
         for (int i=0; i<m.volume(); ++i) add_line(serialize(arr[i]), s);
         return s.str();
     }}
+
+    {gdata.cpp_serde}
 }}  // namesepace serde
 
 #endif // __DACE_SERDE__
@@ -1003,11 +1047,11 @@ def _keep_only_derived_types(ast: Program) -> Program:
     return ast
 
 
-def generate_type_injection_code(ast: Program) -> str:
+def generate_type_injection_code(ast: Program, mod_name: str = 'type_injection') -> str:
     ast = _keep_only_derived_types(ast)
 
     f90_mod = Module(get_reader(f"""
-module type_injection
+module {mod_name}
   use serde
   implicit none
 
@@ -1022,7 +1066,7 @@ contains
   ! A placeholder so that FParser does not remove the module subprogram part.
   subroutine noop()
   end subroutine noop
-end module type_injection
+end module {mod_name}
 """.strip()))
     impls = singular(sp for sp in walk(f90_mod, Module_Subprogram_Part))
 
