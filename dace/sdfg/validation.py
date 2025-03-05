@@ -533,7 +533,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if view_node is node:
                     raise InvalidSDFGNodeError("View node points to itself", sdfg, state_id, nid)
                 if not isinstance(view_node, nd.AccessNode):
-                    print(sdfg, state, state_id, nid, node, view_node)
                     raise InvalidSDFGNodeError("View node must point to an AccessNode", sdfg, state_id, nid)
 
             # Find uninitialized transients

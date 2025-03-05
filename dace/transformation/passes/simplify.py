@@ -36,7 +36,7 @@ SIMPLIFY_PASSES = [
     PruneEmptyLoops,
     RemoveUnusedSymbols,
     ReferenceToView,
-    #ArrayElimination,
+    ArrayElimination,
     ConsolidateEdges,
 
 ]
@@ -45,7 +45,7 @@ _nonrecursive_passes = [
     ScalarToSymbolPromotion,
     DeadDataflowElimination,
     DeadStateElimination,
-    #ArrayElimination,
+    ArrayElimination,
     ConsolidateEdges,
     ReferenceToView,
 ]
