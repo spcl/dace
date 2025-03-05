@@ -1415,6 +1415,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
     alias_map = alias_specs(ast)
     iface_map = interface_specs(ast, alias_map)
+    unused_ifaces = set(iface_map.keys())
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
@@ -1430,6 +1431,8 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         if fref_spec not in iface_map:
             # We are only interested in calls to interfaces here.
             continue
+        if fref_spec in unused_ifaces:
+            unused_ifaces.remove(fref_spec)
         if not iface_map[fref_spec]:
             # We cannot resolve this one, because there is no candidate.
             print(f"{fref_spec} does not have any candidate to resolve to; moving on", file=sys.stderr)
@@ -1498,6 +1501,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         replace_node(name, Name(pname_alias))
+
+    for ui in unused_ifaces:
+        assert ui in alias_map and isinstance(alias_map[ui], Interface_Stmt)
+        remove_self(alias_map[ui].parent)
 
     ast = consolidate_uses(ast)
     return ast
