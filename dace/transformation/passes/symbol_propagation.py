@@ -95,13 +95,6 @@ class SymbolPropagation(ppl.Pass):
             else:
                 self._combine_syms(new_in_syms, sym_table)
 
-        # For LoopRegions, remove loop carried variables from the incoming symbols
-        if isinstance(cfgb, LoopRegion):
-            for edge in cfgb.edges():
-                for sym in edge.data.assignments.keys():
-                    if sym in new_in_syms:
-                        new_in_syms[sym] = None
-
         # Nested starting CFBGs should inherit the symbols from their parent
         # Ignore SDFGs as nested SDFGs have symbol mappings
         if (parent.start_block == cfgb and not isinstance(parent, SDFG)) or (
@@ -110,6 +103,16 @@ class SymbolPropagation(ppl.Pass):
         ):
             assert new_in_syms == {}
             new_in_syms = in_syms[parent]
+
+            # For LoopRegions, remove loop carried variables from the incoming symbols
+            if isinstance(parent, LoopRegion):
+                new_in_syms = copy.deepcopy(new_in_syms)
+                all_syms = set(
+                    [s for e in parent.edges() for s in e.data.assignments.keys()]
+                )
+                for sym in all_syms:
+                    if sym in new_in_syms:
+                        new_in_syms[sym] = None
 
         return new_in_syms
 
@@ -212,9 +215,7 @@ class SymbolPropagation(ppl.Pass):
                 changed = True
 
     # Combines two symbol dictionaries, setting the value to None if they don't agree. Directly modifies sym1
-    def _combine_syms(
-        self, sym1: Dict[str, Any], sym2: Dict[str, Any]
-    ) -> None:
+    def _combine_syms(self, sym1: Dict[str, Any], sym2: Dict[str, Any]) -> None:
         for sym, val in sym2.items():
             if sym not in sym1 or sym1[sym] != val:
                 sym1[sym] = None
