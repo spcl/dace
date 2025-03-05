@@ -59,7 +59,7 @@ def test_nested_edge_view():
     """
     Tests if the ArrayElimination pass works correctly with nested eges using views.
     """
-    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg = dace.SDFG("tester")
     sdfg.add_array("A", [64], dace.float32)
     sdfg.add_view("A_view", [1], dace.float32)
 
@@ -104,7 +104,7 @@ def test_view():
     """
     Tests if the ArrayElimination pass works correctly with views.
     """
-    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg = dace.SDFG("tester")
     sdfg.add_array("A", [64], dace.float32)
     sdfg.add_view("A_view", [1], dace.float32)
 
@@ -138,7 +138,7 @@ def test_loop_header():
     """
     Tests if the ArrayElimination pass considers uses in loop headers.
     """
-    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg = dace.SDFG("tester")
     sdfg.add_array("A", [64], dace.float32)
     sdfg.add_view("A_view", [1], dace.float32)
 

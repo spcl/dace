@@ -9,7 +9,7 @@ from dace.sdfg.state import (
     LoopRegion,
 )
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace import SDFG, properties
+from dace import SDFG, properties, SDFGState
 from typing import Any, Dict, Set, Optional
 
 
@@ -79,20 +79,21 @@ class SymbolPropagation(ppl.Pass):
     ) -> Dict[str, Any]:
         # Combine the outgoing symbols of all incoming edges with their assignments to the CFGB
         new_in_syms = {}
-        for edge in parent.in_edges(cfgb):
+        for i, edge in enumerate(parent.in_edges(cfgb)):
             sym_table = copy.deepcopy(out_syms[edge.src])
             sym_table.update(edge.data.assignments)
+            # Filter out symbols containin arrays accesses as they cannot be propagated
+            sym_table = {
+                k: v
+                for k, v in sym_table.items()
+                if v is None or ("[" not in v and "]" not in v)
+            }
 
-            for sym, val in sym_table.items():
-                # Add the symbol to the incoming symbols if it is not already present. Cannot propagate arrays accesses
-                if sym not in new_in_syms:
-                    new_in_syms[sym] = (
-                        val if val and "[" not in val and "]" not in val else None
-                    )
-
-                # If multiple sources don't agree on the value of a symbol, set it to None
-                if sym in new_in_syms and new_in_syms[sym] != val:
-                    new_in_syms[sym] = None
+            # Combine the symbols
+            if i == 0:
+                new_in_syms = sym_table
+            else:
+                self._combine_syms(new_in_syms, sym_table)
 
         # For LoopRegions, remove loop carried variables from the incoming symbols
         if isinstance(cfgb, LoopRegion):
@@ -103,22 +104,12 @@ class SymbolPropagation(ppl.Pass):
 
         # Nested starting CFBGs should inherit the symbols from their parent
         # Ignore SDFGs as nested SDFGs have symbol mappings
-        if (
-            parent.start_block == cfgb
-            and not isinstance(parent, SDFG)
-            and parent in in_syms
-        ):
-            assert new_in_syms == {}
-            new_in_syms = copy.deepcopy(in_syms[parent])
-
-        # Special care for branches of conditional blocks (no edges and not starting block)
-        if (
+        if (parent.start_block == cfgb and not isinstance(parent, SDFG)) or (
             isinstance(parent, ConditionalBlock)
-            and any([cfgb in b for b in parent.branches])
-            and parent in out_syms
+            and any([cfgb in b for b in parent.sub_regions()])
         ):
             assert new_in_syms == {}
-            new_in_syms = copy.deepcopy(out_syms[parent])
+            new_in_syms = in_syms[parent]
 
         return new_in_syms
 
@@ -130,8 +121,40 @@ class SymbolPropagation(ppl.Pass):
         in_syms: Dict[ControlFlowBlock, Dict[str, Any]],
         out_syms: Dict[ControlFlowBlock, Dict[str, Any]],
     ) -> Dict[str, Any]:
-        # Since symbols cannot be changed in a CFGB, the outgoing symbols are the same as the incoming symbols
-        return in_syms[cfgb]
+        if isinstance(cfgb, LoopRegion):
+            # Any symbol that is assigned in the loop region is not propagated out
+            new_out_syms = copy.deepcopy(in_syms[cfgb])
+            for edge in cfgb.edges():
+                for sym in edge.data.assignments.keys():
+                    if sym in new_out_syms:
+                        new_out_syms[sym] = None
+            return new_out_syms
+
+        elif isinstance(cfgb, ConditionalBlock):
+            # Combine all outgoing symbols of the branches
+            new_out_syms = copy.deepcopy(out_syms[cfgb.sub_regions()[0]])
+            for b in cfgb.sub_regions():
+                self._combine_syms(new_out_syms, out_syms[b])
+            return new_out_syms
+
+        elif isinstance(cfgb, SDFGState):
+            # Cannot change symbols in SDFGStates
+            return in_syms[cfgb]
+
+        else:
+            # Use sink symbols as outgoing symbols
+            sink_nodes = [
+                n
+                for n in cfgb.nodes()
+                if cfgb.out_degree(n) == 0 and isinstance(n, ControlFlowBlock)
+            ]
+            if len(sink_nodes) == 0:
+                return in_syms[cfgb]
+
+            new_out_syms = copy.deepcopy(out_syms[sink_nodes[0]])
+            for n in sink_nodes:
+                self._combine_syms(new_out_syms, out_syms[n])
+            return new_out_syms
 
     # Given a CFGB, updates the symbols in the CFGB
     def _update_syms(
@@ -163,7 +186,15 @@ class SymbolPropagation(ppl.Pass):
             )
 
             # Replace all symbols in the CFGB with their values
-            cfgb.replace_dict(new_in_syms)
+            if isinstance(cfgb, LoopRegion):
+                cfgb.replace_meta_accesses(new_in_syms)
+            elif isinstance(cfgb, ConditionalBlock):
+                cfgb.replace_meta_accesses(new_in_syms)
+            elif isinstance(cfgb, SDFGState):
+                cfgb.replace_dict(new_in_syms)
+            else:
+                # Don't replace, as the nested CFBGs should inherit the symbols from their parent
+                pass
 
             # Also replace all symbols in the outgoing edges with their values
             for edge in parent.out_edges(cfgb):
@@ -179,3 +210,11 @@ class SymbolPropagation(ppl.Pass):
             )
             if free_sym != cfgb.free_symbols or free_edge_sym != new_free_edge_sym:
                 changed = True
+
+    # Combines two symbol dictionaries, setting the value to None if they don't agree. Directly modifies sym1
+    def _combine_syms(
+        self, sym1: Dict[str, Any], sym2: Dict[str, Any]
+    ) -> None:
+        for sym, val in sym2.items():
+            if sym not in sym1 or sym1[sym] != val:
+                sym1[sym] = None

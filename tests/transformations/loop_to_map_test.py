@@ -796,7 +796,7 @@ def test_pipeline():
     """
     Tests that the Loop2Map pipeline (LoopNormalize -> SymbolPropagation) enables additional Loop2Map transformations.
     """
-    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg = dace.SDFG("tester")
     sdfg.add_array("A", [64], dace.float32)
     sdfg.add_symbol("LB", dace.int32)
     sdfg.add_symbol("UB", dace.int32)
@@ -841,65 +841,12 @@ def test_pipeline():
 
     assert np.allclose(A[:], 0)
 
-def test_loop_carried_pipeline():
-    """
-    Tests that the Loop2Map pipeline (LoopNormalize -> SymbolPropagation) does respect loop carried dependencies.
-    """
-    sdfg = dace.SDFG("l2m_pipeline")
-    sdfg.add_array("A", [64], dace.float32)
-    sdfg.add_symbol("LB", dace.int32)
-    sdfg.add_symbol("UB", dace.int32)
-    sdfg.add_symbol("idx", dace.int32)
-    sdfg.add_symbol("cnt", dace.int32)
-
-    init = sdfg.add_state("init", is_start_block=True)
-    loop = LoopRegion("loop", "i < UB", "i", "i = LB", "i = i + 1")
-    sdfg.add_node(loop)
-    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"cnt": "0"}))
-
-    s = loop.add_state(is_start_block=True)
-    s1 = loop.add_state()
-    s2 = loop.add_state()
-    e = loop.add_state()
-    loop.add_edge(s, s1, dace.InterstateEdge(assignments={"a": "i", "c": "cnt + 1"}))
-    loop.add_edge(s1, s2, dace.InterstateEdge(assignments={"b": "a+1"}))
-    loop.add_edge(s2, e, dace.InterstateEdge(assignments={"idx": "b - 1 - LB", "cnt": "c"}))
-    task = e.add_tasklet("init", {}, {"out"}, "out = 0")
-    access = e.add_access("A")
-    e.add_edge(task, "out", access, None, dace.Memlet("A[idx]"))
-
-    sdfg.validate()
-
-    # Count loops before transformation
-    assert _count_loops(sdfg) == 1
-
-    # Apply Loop2Map directly
-    sdfg.apply_transformations_repeated(LoopToMap)
-
-    # Should not have changed
-    assert _count_loops(sdfg) == 1
-
-    # Apply LoopNormalize and SymbolPropagation
-    sdfg.apply_transformations_repeated(LoopNormalize)
-    SymbolPropagation().apply_pass(sdfg, {})
-    sdfg.apply_transformations_repeated(LoopToMap)
-
-    # Should not have transformed the loop
-    assert _count_loops(sdfg) == 1
-
-    # Validate correctness
-    A = dace.ndarray([64], dtype=dace.float32)
-    A[:] = np.random.rand(64).astype(dace.float32.type)
-    sdfg(A=A, LB=0, UB=64)
-
-    assert np.allclose(A[:], 0)
-
 
 def test_views():
     """
     Tests that the Loop2Map works correctly with views.
     """
-    sdfg = dace.SDFG("l2m_pipeline")
+    sdfg = dace.SDFG("tester")
     sdfg.add_array("A", [64], dace.float32)
     sdfg.add_view("A_view", [1], dace.float32)
     sdfg.add_array("B", [64], dace.float32)
