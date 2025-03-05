@@ -842,9 +842,9 @@ def test_pipeline():
     assert np.allclose(A[:], 0)
 
 
-def test_views():
+def test_views_in_body():
     """
-    Tests that the Loop2Map works correctly with views.
+    Tests that the Loop2Map works correctly with views in the loop body.
     """
     sdfg = dace.SDFG("tester")
     sdfg.add_array("A", [64], dace.float32)
@@ -881,6 +881,38 @@ def test_views():
 
     for i in range(32):
         assert np.isclose(A[i*2], B[i])
+
+
+def test_views_in_header():
+    """
+    Tests that the Loop2Map works correctly with views in the loop header.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.int32)
+    sdfg.add_view("A_view", [1], dace.int32)
+    sdfg.add_symbol("A_view", dace.int32)
+
+    loop2 = LoopRegion("loop2", "i < 1", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop2)
+
+    s = loop2.add_state()
+    access_A = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access_A, None, access_view, "views", dace.Memlet("A[0]"))
+
+    loop = LoopRegion("loop", "i < A_view", "i", "i = 0", "i = i + 1")
+    loop.add_state("loop_body",is_start_block=True)
+    loop2.add_node(loop)
+    loop2.add_edge(s, loop, dace.InterstateEdge())
+    sdfg.validate()
+
+    # Try to apply Loop2Map directly
+    try:
+        sdfg.apply_transformations_repeated(LoopToMap)
+        sdfg.validate()
+    except Exception as e:
+        assert False, f"LoopToMap failed: {e}"
 
 
 if __name__ == "__main__":
@@ -923,4 +955,5 @@ if __name__ == "__main__":
     test_rotated_loop_to_map(True)
     test_self_loop_to_map()
     test_pipeline()
-    test_views()
+    test_views_in_body()
+    test_views_in_header()

@@ -12,7 +12,7 @@ from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -399,6 +399,15 @@ class LoopToMap(xf.MultiStateTransformation):
                     for e in state.edges_between(src_node, dst_node):
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
+
+        # Add headers of any nested loops and conditional blocks
+        for node in self.loop.nodes():
+            if isinstance(node, (LoopRegion, ConditionalBlock)):
+                code_blocks = node.get_meta_codeblocks()
+                free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
+                free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
+                read_set |= set(free_syms)
+
         # Add data from edges
         for edge in self.loop.all_interstate_edges():
             for s in edge.data.free_symbols:
