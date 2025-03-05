@@ -540,6 +540,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
+        # Filter out views
+        containers_to_read = {c for c in containers_to_read if not isinstance(sdfg.arrays[c], dt.View)}
         for rd in containers_to_read:
             # We are guaranteed that this is always a scalar, because
             # can_be_applied makes sure there are no sympy functions in each of
