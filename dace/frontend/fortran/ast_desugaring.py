@@ -120,9 +120,10 @@ class TYPE_SPEC:
             'REAL4': 'REAL(kind=4)',
             'REAL8': 'REAL(kind=8)',
             'REAL': 'REAL(kind=4)',
+            'LOGICAL': 'LOGICAL',
         }
         typ = self.spec[-1]
-        typ = TYPE_MAP.get(typ, typ)
+        typ = TYPE_MAP.get(typ, f"type({typ})")
 
         bits: List[str] = [typ]
         if self.alloc:
