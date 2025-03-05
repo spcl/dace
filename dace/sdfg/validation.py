@@ -533,6 +533,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if view_node is node:
                     raise InvalidSDFGNodeError("View node points to itself", sdfg, state_id, nid)
                 if not isinstance(view_node, nd.AccessNode):
+                    print(sdfg, state, state_id, nid, node, view_node)
                     raise InvalidSDFGNodeError("View node must point to an AccessNode", sdfg, state_id, nid)
 
             # Find uninitialized transients
@@ -569,6 +570,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
                 if (not arr.transient) and (not only_empty_inputs):
                     if node_data not in nsdfg_node.out_connectors:
+                        print(node_data, node.data, state, node)
                         raise InvalidSDFGNodeError(
                             'Data descriptor %s is '
                             'written to, but only given to nested SDFG as an '
