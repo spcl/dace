@@ -14,6 +14,7 @@ from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, Re
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
+from dace.symbolic import pystr_to_symbolic, free_symbols_and_functions
 
 
 @properties.make_properties
@@ -259,10 +260,32 @@ class ArrayElimination(ppl.Pass):
         used_names = set()
         view_names = [k for k, v in sdfg.arrays.items() if isinstance(v, data.View)]
         for cfg in sdfg.nodes():
-            if not isinstance(cfg, SDFGState): # Needs to be CFG
+            if isinstance(cfg, LoopRegion):
+                        assert cfg.loop_variable not in view_names
+                        for free_name in cfg.free_symbols:
+                            if free_name in view_names:
+                                used_names.add(free_name)
+
+            elif isinstance(cfg, ConditionalBlock):
+                        for branch in cfg.branches:
+                            cb = branch[0]
+                            cfg = branch[1]
+                            symbols_to_check = (
+                                set.union(
+                                    cb.get_free_symbols(), cfg.free_symbols
+                                ) if cb is not None else cfg.free_symbols
+                            )
+                            for free_name in symbols_to_check:
+                                if free_name in view_names:
+                                    used_names.add(free_name)
+                                    
+            elif not isinstance(cfg, SDFGState): # Needs to be CFG
                 for node in cfg.nodes():
                     if isinstance(node, LoopRegion):
                         assert node.loop_variable not in view_names
+                        for free_name in cfg.free_symbols:
+                            if free_name in view_names:
+                                used_names.add(free_name)
                     elif isinstance(node, ConditionalBlock):
                         for branch in node.branches:
                             cb = branch[0]
@@ -278,11 +301,25 @@ class ArrayElimination(ppl.Pass):
                     else:
                         assert isinstance(node, SDFGState)
 
-        for edge in sdfg.edges():
+        for edge, _ in sdfg.all_edges_recursive():
             interstate_edge: InterstateEdge = edge.data
+            if not isinstance(interstate_edge, InterstateEdge):
+                continue
+            
+            # Get parents if possible
+            dst_parent = None if not hasattr(edge.dst, 'parent') else edge.dst.parent
+            src_parent = None if not hasattr(edge.src, 'parent') else edge.src.parent
+            
+            # Skip edges in nested SDFGs
+            if not (dst_parent is sdfg and src_parent is sdfg):
+                continue
+            
+            # array reads are treated as functions
+            value_syms = set().union(*(free_symbols_and_functions(pystr_to_symbolic(v)) for v in edge.data.assignments.values()))
+
             for free_name in set.union(interstate_edge.condition.get_free_symbols(),
                                        interstate_edge.assignments.keys(),
-                                       interstate_edge.assignments.values()):
+                                       value_syms):
                 if free_name in view_names:
                     used_names.add(free_name)
 
