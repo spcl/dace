@@ -12,7 +12,7 @@ from dace.libraries.standard import CodeLibraryNode
 from dace.sdfg import SDFG, NestedDict, SDFGState
 from dace.properties import make_properties
 from dace.sdfg import nodes
-from dace.data import Structure, View
+from dace.data import ContainerArray, Structure, View
 from dace.transformation import pass_pipeline as ppl
 
 from collections import OrderedDict
@@ -58,14 +58,16 @@ class ContainerGroup:
     )
     is_cg = Property(dtype=bool, default=False, allow_none=False)
     is_ca = Property(dtype=bool, default=False, allow_none=False)
-    shape = Property(dtype=tuple, default=(1,), allow_none=False)
+    shape = Property(dtype=tuple, default=(1, ), allow_none=False)
+    strides = Property(dtype=tuple, default=(1, ), allow_none=False)
 
-    def __init__(self, name, is_cg, is_ca, shape):
+    def __init__(self, name, is_cg, is_ca, shape, strides):
         self.name = name
         self.members = OrderedDict()
         self.is_cg = is_cg
         self.is_ca = is_ca
         self.shape = shape
+        self.strides = strides
         self._validate()
 
     def add_member(self, name: str, member: Union[Data, "ContainerGroup"]):
@@ -118,13 +120,13 @@ class ContainerGroup:
         members_repr = ", ".join(
             f"{k}: {v.__repr__()}" for k, v in self.members.items()
         )
-        return f"ContainerGroup(name='{self.name}', is_cg={self.is_cg}, is_ca={self.is_ca}, shape={self.shape}, members={{ {members_repr} }})"
+        return f"ContainerGroup(name='{self.name}', is_cg={self.is_cg}, is_ca={self.is_ca}, shape={self.shape}, strides={self.strides}, members={{ {members_repr} }})"
 
     def __str__(self):
         return self.__repr__()
 
-    def _soa_from_struct(self, name, structure, acc_shape):
-        self._add_members(name, structure, acc_shape=None)
+    def _soa_from_struct(self, name, structure):
+        self._add_members(name, structure, acc_shape=(), acc_strides=())
 
     @classmethod
     def from_struct(
@@ -134,8 +136,9 @@ class ContainerGroup:
         is_cg: bool,
         is_ca: bool,
         shape: tuple,
+        strides: tuple,
     ) -> "ContainerGroup":
-        dg = cls(name=name, is_cg=is_cg, is_ca=is_ca, shape=shape)
+        dg = cls(name=name, is_cg=is_cg, is_ca=is_ca, shape=shape, strides=strides)
         assert is_cg ^ is_ca
 
         if isinstance(struct_or_container_array, data.Structure) and not isinstance(
@@ -151,6 +154,7 @@ class ContainerGroup:
                         is_cg=True,
                         is_ca=False,
                         shape=(1,),
+                        strides=(1, ),
                     )
                 elif isinstance(member, data.ContainerArray):
                     new_member = cls.from_struct(
@@ -159,6 +163,7 @@ class ContainerGroup:
                         is_cg=False,
                         is_ca=True,
                         shape=member.shape,
+                        strides=member.strides,
                     )
                 elif isinstance(member, (data.Array, data.Scalar)):
                     new_member = member
@@ -189,7 +194,8 @@ class ContainerGroup:
                     struct_or_container_array=member,
                     is_cg=True,
                     is_ca=False,
-                    shape=(1,),
+                    shape=(1, ),
+                    strides=(1, ),
                 )
             elif isinstance(member, data.ContainerArray):
                 raise Exception(
@@ -256,6 +262,7 @@ def _register_container_group_members(
     acc_strides: tuple,
     register_as_transient: bool,
 ):
+    assert len(acc_shape) == len(acc_strides)
     added_descriptors = []
     if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
         if isinstance(container_group_or_array, ContainerGroup):
@@ -266,8 +273,10 @@ def _register_container_group_members(
                         dg_prefix = prefix_name + f"__CG_{member.name}"
                     else:
                         dg_prefix = prefix_name + f"__CA_{member.name}"
-                        acc_shape += member.shape
-                        acc_strides += member.strides
+                        acc_shape = acc_shape + copy.deepcopy(member.shape)
+                        # lets say strides is [A, 1] and new shape is [B, 1] (shape MxN)
+                        # then acc strides will be [A*B*N, B*M, B, 1]
+                        acc_strides = tuple([v*(member.strides[0]*member.shape[0]) for v in acc_strides]) + copy.deepcopy(member.strides)
                     added_descriptors += _register_container_group_members(
                         sdfg=sdfg,
                         flattening_mode=flattening_mode,
@@ -297,8 +306,8 @@ def _register_container_group_members(
                                 may_alias=False,
                             )
                         else:
-                            if acc_strides != ():
-                                raise Exception(f"TODO {acc_strides}")
+                            #if acc_strides != ():
+                            #    raise Exception(f"TODO {acc_strides}")
                             datadesc = dace.data.Array(
                                 dtype=member.dtype,
                                 shape=acc_shape,
@@ -313,13 +322,13 @@ def _register_container_group_members(
                                 start_offset=member.start_offset,
                             )
                     elif isinstance(member, dace.data.Array):
-                        if acc_strides != ():
-                            raise Exception(f"TODO {acc_strides}")
-                        #strides = _get_fused_strides(member, acc_shape)
+                        _acc_shape = acc_shape + member.shape
+                        _acc_strides = tuple([v*(member.strides[0]*member.shape[0]) for v in acc_strides]) + member.strides
+                        assert len(acc_shape) == len(acc_strides)
                         datadesc = dace.data.Array(
                             dtype=member.dtype,
-                            shape=acc_shape + member.shape,
-                            strides=acc_strides + member.strides,
+                            shape=_acc_shape,
+                            strides=_acc_strides,
                             transient=member.transient if not register_as_transient else True,
                             allow_conflicts=member.allow_conflicts,
                             storage=member.storage,
@@ -410,7 +419,8 @@ def generate_container_groups_from_structs(
                 struct_or_container_array=arr,
                 is_cg=True,
                 is_ca=False,
-                shape=(1,),
+                shape=(1, ),
+                strides=(1, ),
             )
             sdfg.container_groups[dg_name] = dg
             added_cgs += 1
@@ -575,21 +585,6 @@ class StructToContainerGroups(ppl.Pass):
         desc: dace.data.Structure,
         registered_members: typing.List[typing.Tuple[str, dace.data.Data]],
     ):
-        #if self._verbose:
-        #    #print("Registered members:")
-        #    for mem in registered_members:
-        #        #print("  ", mem)
-        #        pass
-
-        main_comment = "\n".join(
-            [
-                f"//{name}, {desc}, {_get_name_hierarchy_from_name(name)}"
-                for name, desc in registered_members
-            ]
-        )
-
-        #print(main_comment)
-
         def _gen_loop(
             sdfg: SDFG,
             structname: str,
@@ -963,10 +958,11 @@ class StructToContainerGroups(ppl.Pass):
         (struct_access, view_access, struct_data, view_data) = (
             self._assign_src_dst_to_struct_view(sdfg, src_access, dst_access)
         )
+
         if struct_access is None or view_access is None:
             return False
 
-        if not (isinstance(struct_data, Structure)):
+        if not (isinstance(struct_data, Structure)) and not (isinstance(view_data, ContainerArray)):
             return False
         if not (isinstance(view_data, View)):
             return False
@@ -984,10 +980,10 @@ class StructToContainerGroups(ppl.Pass):
         src_data = sdfg.arrays[src_access.data]
         dst_data = sdfg.arrays[dst_access.data]
 
-        if isinstance(src_data, Structure):
+        if (isinstance(src_data, Structure) or isinstance(src_data, ContainerArray)) and not isinstance(src_data, View):
             struct_access = src_access
             struct_data = src_data
-        elif isinstance(dst_data, Structure):
+        elif (isinstance(dst_data, Structure) or isinstance(dst_data, ContainerArray)) and not isinstance(dst_data, View):
             struct_access = dst_access
             struct_data = dst_data
 
@@ -1036,6 +1032,7 @@ class StructToContainerGroups(ppl.Pass):
 
         struct_to_view_pattern = False
         view_to_struct_pattern = False
+
 
         if len(struct_to_view_edges) == 0 and len(view_to_struct_edges) == 0:
             return (False, False)
@@ -1139,7 +1136,6 @@ class StructToContainerGroups(ppl.Pass):
 
             if not reverse:
                 # Last Node (to Non-Views)
-                print(state, path[-1])
                 assert len(state.in_edges(path[-1])) <= 1, f"{state.in_edges(path[-1])}"
                 for oe in state.out_edges(path[-1]):
                     edges_to_add.add((old_node_to_new_node[oe.src], oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data)))
@@ -1284,15 +1280,16 @@ class StructToContainerGroups(ppl.Pass):
                                 last_member.members[access2],
                             )
                         )
-                        view_to_name_map[access_node.data] = last_member.members[
-                            access2
-                        ].name
+                        print(name_hierarchy)
+                        print(member_hierarchy)
+                        print(last_member)
+                        view_to_name_map[access_node.data] = access2
                     else:
                         name_hierarchy.append(access2)
                         member_hierarchy.append((access2, last_member.members[access2]))
                         view_to_name_map[access_node.data] = access2
                 else:
-                    raise Exception("This should not happen.")
+                    raise Exception(f"This should not happen. {member_hierarchy}, {last_member}, {type(last_member)}")
 
         return name_hierarchy, member_hierarchy
 
@@ -1362,9 +1359,11 @@ class StructToContainerGroups(ppl.Pass):
                     if access_node != view_chain[-1]:
                         view_to_name_map[access_node.data] = last_member.stype.name
                 elif isinstance(last_member, dace.data.Structure):
-                    assert len(all_data) == 2
-                    access1 = all_data[0]
-                    access2 = all_data[1]
+                    if len(all_data) != 2:
+                        continue
+                    else:
+                        access1 = all_data[0]
+                        access2 = all_data[1]
                     if access_node != view_chain[0]:
                         name_hierarchy.append(last_member.members[access2].name)
                         member_hierarchy.append(
@@ -1429,7 +1428,6 @@ class StructToContainerGroups(ppl.Pass):
 
         assert len(view_chain) >= 1
         name_hierarchy = []
-        #print(view_chain, struct_to_view, view_access)
 
         # Create the sequence of accesses A.B[4].C becomes [A, B, C]
         if struct_to_view:
@@ -1517,7 +1515,7 @@ class StructToContainerGroups(ppl.Pass):
                         if isinstance(
                             sdfg.arrays[_src_edge.src.data], dace.data.Structure
                         ):
-                            if _dst_edge.data.subset.ranges == [(0,0,1)]:
+                            if _src_edge.data.subset.ranges == [(0,0,1)]:
                                 continue
                         if isinstance(
                             sdfg.arrays[_src_edge.src.data], dace.data.Scalar
