@@ -59,9 +59,12 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
             # Apply MapFusion for the more trivial cases
+            #  For backwards compatibility we only perform serial map fusion.
             full_map_fusion_pass = FullMapFusion(
                     strict_dataflow=True,
                     validate_all=validate_all,
+                    allow_serial_map_fusion=True,
+                    allow_parallel_map_fusion=False,
             )
             full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
             full_map_fusion_pileline.apply_pass(graph_or_subgraph, {})
@@ -83,9 +86,12 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
             # Apply MapFusion for the more trivial cases
+            #  For backwards compatibility we only perform serial map fusion.
             full_map_fusion_pass = FullMapFusion(
                     strict_dataflow=True,
                     validate_all=validate_all,
+                    allow_serial_map_fusion=True,
+                    allow_parallel_map_fusion=False,
             )
             full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
             full_map_fusion_pileline.apply_pass(sdfg, {})
