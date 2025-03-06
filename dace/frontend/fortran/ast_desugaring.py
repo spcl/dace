@@ -851,7 +851,8 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
     return comp_spec
 
 
-def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref, Data_Pointer_Object], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
+def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref, Data_Pointer_Object], scope_spec: SPEC,
+                      alias_map: SPEC_TABLE) -> TYPE_SPEC:
     _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
     cur_type = root_type
 
@@ -3336,10 +3337,9 @@ def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
 
 
 def _type_injection_applies_to_component(item: ConstTypeInjection, defn_spec: SPEC, comp: str) -> bool:
-    if len(item.component_spec) > 1:
-        print(f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec} "
-              f"to match against {comp}; moving on...", file=sys.stderr)
-        return False
+    assert len(item.component_spec) > 1, \
+        (f"Unimplemented: type injection must have just one-level of component for now; "
+         f"got {item.component_spec} to match against {comp}")
     item_comp = item.component_spec[-1]
 
     if item.type_spec != defn_spec:
@@ -3388,6 +3388,9 @@ def inject_const_evals(ast: Program,
                 print(f"{item}/{item.scope_spec} does not refer to a valid object; moving on...", file=sys.stderr)
                 continue
         if isinstance(item, ConstTypeInjection):
+            if len(item.component_spec) > 1:
+                print(f"{item}/{item.component_spec} must have just one-level for now; moving on...", file=sys.stderr)
+                continue
             if item.type_spec not in alias_map or not isinstance(alias_map[item.type_spec].parent, Derived_Type_Def):
                 print(f"{item}/{item.type_spec} does not refer to a valid type; moving on...", file=sys.stderr)
                 continue
