@@ -585,6 +585,8 @@ def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant
 def _eval_real_literal(x: Union[Signed_Real_Literal_Constant, Real_Literal_Constant],
                        alias_map: SPEC_TABLE) -> NUMPY_REALS_TYPES:
     num, kind = x.children
+    if isinstance(kind, Name):
+        kind = kind.string
     if kind is None:
         if 'D' in num:
             num = num.replace('D', 'e')
