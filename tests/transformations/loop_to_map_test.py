@@ -552,7 +552,6 @@ def test_thread_local_transient_single_state():
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    assert not ('A' in sdfg.arrays)
 
     ref = (np.arange(10, dtype=np.int32) + 6) * 2
     val = sdfg()
@@ -633,7 +632,6 @@ def test_thread_local_transient_multi_state():
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    assert not ('A' in sdfg.arrays)
 
     ref = (np.arange(10, dtype=np.int32) + 6) * 2
     val = sdfg()

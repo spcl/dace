@@ -478,13 +478,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set:
-            if '.' in name:
-                root_data_name = name.split('.')[0]
-                name = root_data_name
-            nsdfg.arrays[name] = sdfg.arrays[name]
-            del sdfg.arrays[name]
-        for name in view_set - unique_set:
+        for name in unique_set | view_set:
             if '.' in name:
                 root_data_name = name.split('.')[0]
                 name = root_data_name
