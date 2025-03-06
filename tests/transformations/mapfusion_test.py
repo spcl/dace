@@ -41,6 +41,9 @@ def apply_fusion(
         unspecific: bool = False,
         apply_once: bool = False,
         strict_dataflow: bool = True,
+        allow_serial_map_fusion: bool = True,
+        allow_parallel_map_fusion: bool = False,
+        only_if_common_ancestor: bool = False,
 ) -> SDFG:
     """Applies the Map fusion transformation.
 
@@ -60,13 +63,23 @@ def apply_fusion(
             dace.Config.set("optimizer", "match_exception", value=True)
             if apply_once:
                 sdfg.apply_transformations(
-                    MapFusion(strict_dataflow=strict_dataflow),
+                    MapFusion(
+                        strict_dataflow=strict_dataflow,
+                        allow_serial_map_fusion=allow_serial_map_fusion,
+                        allow_parallel_map_fusion=allow_parallel_map_fusion,
+                        only_if_common_ancestor=only_if_common_ancestor,
+                    ),
                     validate=True,
                     validate_all=True
                 )
             else:
                 sdfg.apply_transformations_repeated(
-                    MapFusion(strict_dataflow=strict_dataflow),
+                    MapFusion(
+                        strict_dataflow=strict_dataflow,
+                        allow_serial_map_fusion=allow_serial_map_fusion,
+                        allow_parallel_map_fusion=allow_parallel_map_fusion,
+                        only_if_common_ancestor=only_if_common_ancestor,
+                    ),
                     validate=True,
                     validate_all=True
                 )
@@ -345,6 +358,7 @@ def test_multiple_fusions():
 def test_fusion_chain():
     sdfg = fusion_chain.to_sdfg(simplify=True)
     sdfg.simplify()
+    assert count_node(sdfg, nodes.MapEntry) > 1
     sdfg = apply_fusion(sdfg, final_maps=1)
 
     A = np.random.rand(10, 20).astype(np.float32)
@@ -354,6 +368,20 @@ def test_fusion_chain():
     print('Difference:', diff)
     assert diff <= 1e-4
 
+
+def test_fusion_chain_parallel():
+    sdfg = fusion_chain.to_sdfg(simplify=True)
+    sdfg.simplify()
+    initial_maps = count_node(sdfg, nodes.MapEntry)
+    assert initial_maps > 1
+
+    # This is a chain so parallel map fusion should not apply.
+    sdfg = apply_fusion(
+            sdfg,
+            removed_maps=0,
+            allow_parallel_map_fusion=True,
+            allow_serial_map_fusion=False,
+    )
 
 
 def test_fusion_with_transient():
@@ -2021,6 +2049,87 @@ def test_possible_cycle_if_fuesed_sdfg():
     assert not would_transformation_apply
 
 
+def _make_parallel_sdfg() -> dace.SDFG:
+    """Creates maps that are parallel and can only be handled by parallel map fusion.
+    """
+    sdfg = dace.SDFG("parallel_maps_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    names = ["A", "B", "C", "D", "out"]
+    for name in names:
+        sdfg.add_array(
+                name,
+                shape=((10, 4) if name == "out" else (10,)),
+                dtype=dace.float64,
+                transient=False,
+        )
+
+    out = state.add_access("out")
+
+    for i, name in enumerate(["A", "B", "C", "D"]):
+        it = f"__{i}"
+        state.add_mapped_tasklet(
+                f"comp_{i}",
+                map_ranges={it: "0:10"},
+                inputs={"__in": dace.Memlet(f"{name}[{it}]")},
+                code=f"__out = __in + {i}.0",
+                outputs={"__out": dace.Memlet(f"out[{it}, {i}]")},
+                output_nodes={out},
+                external_edges=True,
+        )
+
+    sdfg.validate()
+    return sdfg
+
+
+
+def test_parallel_map_fusion_simple():
+    sdfg = _make_parallel_sdfg()
+    args_ref = {
+            "A": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            "B": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            "C": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            "D": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            "out": np.array(np.random.rand(10, 4), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    csdfg_ref = sdfg.compile()
+    csdfg_ref(**args_ref)
+
+    # In serial map fusion nothing will be done.
+    sdfg = apply_fusion(
+            sdfg,
+            removed_maps=0,
+            allow_serial_map_fusion=True,
+            allow_parallel_map_fusion=False,
+    )
+
+    # Because there is no common ancestor the transformation will not apply.
+    sdfg = apply_fusion(
+            sdfg,
+            removed_maps=0,
+            allow_serial_map_fusion=False,
+            allow_parallel_map_fusion=True,
+            only_if_common_ancestor=True,
+    )
+
+    # In parallel map fusion it will be fused away.
+    sdfg = apply_fusion(
+            sdfg,
+            final_maps=1,
+            allow_serial_map_fusion=False,
+            allow_parallel_map_fusion=True,
+            only_if_common_ancestor=False,
+    )
+
+    # Now look if the code is the same.
+    csdfg_res = sdfg.compile()
+    csdfg_res(**args_res)
+
+    assert all(np.allclose(args_ref[arg], args_res[arg]) for arg in args_ref.keys())
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -2041,6 +2150,7 @@ if __name__ == '__main__':
     test_fusion_simple()
     test_multiple_fusions()
     test_fusion_chain()
+    test_fusion_chain_parallel()
     test_fusion_with_transient_scalar()
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
@@ -2055,3 +2165,4 @@ if __name__ == '__main__':
     test_inner_map_dependency()
     test_inner_map_dependency_resolved()
     test_possible_cycle_if_fuesed_sdfg()
+    test_parallel_map_fusion_simple()
