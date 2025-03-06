@@ -2969,6 +2969,14 @@ def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
 def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Program:
     alias_map = alias_map or alias_specs(ast)
     for sp in reversed(walk(ast, Specification_Part)):
+        # First, we do a surgery to fix the kind parameter of the literals that refer to a variable, but FParser leaves
+        # them as plain strings instead of making them `Name`s.
+        for lit in walk(sp.parent, LITERAL_CLASSES):
+            val, kind = lit.children
+            if not isinstance(kind, str):
+                continue
+            set_children(lit, (val, Name(kind)))
+
         use_map: Dict[str, Set[str]] = {}
         # Build the table to keep the use statements only if they are actually necessary.
         for nm in walk(sp.parent, Name):
