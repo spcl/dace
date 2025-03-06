@@ -12,7 +12,7 @@ from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -125,6 +125,11 @@ class LoopToMap(xf.MultiStateTransformation):
         loop_states = set(self.loop.all_states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
+        # Cannot have StructView in loop body
+        for loop_state in loop_states:
+            if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
+                return False
+        
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
                                                                              ignore_nonstate_blocks=False))
@@ -394,11 +399,32 @@ class LoopToMap(xf.MultiStateTransformation):
                     for e in state.edges_between(src_node, dst_node):
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
+
+        # Add headers of any nested loops and conditional blocks
+        for node in self.loop.nodes():
+            if isinstance(node, (LoopRegion, ConditionalBlock)):
+                code_blocks = node.get_meta_codeblocks()
+                free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
+                free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
+                read_set |= set(free_syms)
+
         # Add data from edges
         for edge in self.loop.all_interstate_edges():
             for s in edge.data.free_symbols:
                 if s in sdfg.arrays:
                     read_set.add(s)
+
+        # Build mapping of view data to their root data
+        view_to_data = {}
+        for state in states:
+            for node in state.data_nodes():
+                if isinstance(sdfg.arrays[node.data], dt.View):
+                    root_node = sdutil.get_last_view_node(state, node)
+                    assert root_node is not None
+                    if node.data in view_to_data:
+                        assert view_to_data[node.data] == root_node.data
+
+                    view_to_data[node.data] = root_node.data
 
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
@@ -414,12 +440,22 @@ class LoopToMap(xf.MultiStateTransformation):
                     if (isinstance(node, nodes.AccessNode) and node.data == name):
                         found = True
                         break
-            if not found and self._is_array_thread_local(name, itervar, sdfg, states):
+
+            iatl_name = name
+            if name in view_to_data:
+                iatl_name = view_to_data[name]
+
+            if not found and self._is_array_thread_local(iatl_name, itervar, sdfg, states):
                 unique_set.add(name)
 
         # Find NestedSDFG's connectors
         read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
         write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+
+        # Do not route views through the NestedSDFG
+        view_set = set(view_to_data.keys())
+        read_set -= view_set
+        write_set -= view_set
 
         # Create NestedSDFG and add the loop contents to it. Gaher symbols defined in the NestedSDFG.
         fsymbols = set(sdfg.free_symbols)
@@ -442,12 +478,11 @@ class LoopToMap(xf.MultiStateTransformation):
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set:
+        for name in unique_set | view_set:
             if '.' in name:
                 root_data_name = name.split('.')[0]
                 name = root_data_name
-            nsdfg.arrays[name] = sdfg.arrays[name]
-            del sdfg.arrays[name]
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # Add NestedSDFG node
         cnode = body.add_nested_sdfg(nsdfg, body, read_set, write_set)
@@ -503,6 +538,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
+        # Filter out views
+        containers_to_read = {c for c in containers_to_read if not isinstance(sdfg.arrays[c], dt.View)}
         for rd in containers_to_read:
             # We are guaranteed that this is always a scalar, because
             # can_be_applied makes sure there are no sympy functions in each of

@@ -10,6 +10,8 @@ from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated
 from .prune_symbols import RemoveUnusedSymbols
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
+from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
+from .struct_to_container_group import StructToContainerGroups
 
 from .util import available_passes
