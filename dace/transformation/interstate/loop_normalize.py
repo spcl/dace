@@ -79,15 +79,38 @@ def _modify_cond(condition, var, step, start, norm_start, norm_step):
             end = match[a]
     if len(op) == 0:
         raise ValueError('Cannot match loop condition for loop normalization')
+    
+    # Invert the operator for reverse loops
+    is_reverse = step < 0
+    if is_reverse:
+        if op == '<':
+            op = '>='
+        elif op == '<=':
+            op = '>'
+        elif op == '>':
+            op = '<='
+        elif op == '>=':
+            op = '<'
+        
+        # swap start and end
+        start, end = end, start
+
+        # negate step
+        step = -step
 
     if norm_start and norm_step:
-        return f"{itersym} {op} (({end}) - {start}) / {step}"
+        cond = f"{itersym} {op} (({end}) - ({start})) / {step}"
     elif norm_start:
-        return f"{itersym} {op} ({end}) - {start}"
+        cond = f"{itersym} {op} ({end}) - ({start})"
     elif norm_step:
-      return f"{itersym} {op} ({end}) / {step}"
+      cond = f"{itersym} {op} ({end}) / {step}"
+    else:
+      raise ValueError("At least one of norm_start or norm_step must be True")
     
-    raise ValueError("At least one of norm_start or norm_step must be True")
+    if is_reverse:
+        cond = f"{cond} + 1"
+
+    return cond
 
 
 @properties.make_properties
@@ -160,5 +183,5 @@ class LoopNormalize(xf.MultiStateTransformation):
         if norm_init:
             self.loop.init_statement = CodeBlock(f"{itervar} = 0")
         if norm_step:
-            self.loop.update_statement = CodeBlock(f"{itervar} += 1")
+            self.loop.update_statement = CodeBlock(f"{itervar} = {itervar} + 1")
         self.loop.loop_condition = CodeBlock(_modify_cond(self.loop.loop_condition, itervar, step, start, norm_init, norm_step))
