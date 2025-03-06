@@ -1437,8 +1437,6 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         if fref_spec not in iface_map:
             # We are only interested in calls to interfaces here.
             continue
-        if fref_spec in unused_ifaces:
-            unused_ifaces.remove(fref_spec)
         if not iface_map[fref_spec]:
             # We cannot resolve this one, because there is no candidate.
             print(f"{fref_spec} does not have any candidate to resolve to; moving on", file=sys.stderr)
@@ -1509,7 +1507,8 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         replace_node(name, Name(pname_alias))
 
     for ui in unused_ifaces:
-        assert ui in alias_map and isinstance(alias_map[ui], Interface_Stmt)
+        assert ui in alias_map
+        assert isinstance(alias_map[ui], Interface_Stmt) or isinstance(alias_map[ui].parent.parent, Interface_Block)
         remove_self(alias_map[ui].parent)
 
     ast = consolidate_uses(ast)
