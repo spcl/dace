@@ -9,6 +9,7 @@ W = dace.symbol('W')
 H = dace.symbol('H')
 BINS = 256
 
+
 @dace.program
 def histogram(A: dace.float32[H, W], hist: dace.uint32[BINS]):
     for i, j in dace.map[0:H, 0:W]:

@@ -21,7 +21,7 @@ from dace.transformation import helpers as xfh
 
 @library.environment
 class LIKWID:
-    """ 
+    """
     An environment for LIKWID
     """
 
@@ -73,7 +73,9 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         the Likwid tool.
     """
 
-    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential]
+    perf_whitelist_schedules = [
+        dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential
+    ]
 
     def __init__(self):
         self._likwid_used = False
@@ -196,8 +198,8 @@ double time[num_threads];
 
         for (int i = 0; i < nevents; i++)
         {{
-            char* event_name = perfmon_getEventName(gid, i); 
-            
+            char* event_name = perfmon_getEventName(gid, i);
+
             for (int t = 0; t < num_threads; t++)
             {{
                 __state->report.add_counter("{region}", "likwid", event_name, events[t][i], t, {cfg_id}, {state_id}, {node_id});
@@ -386,12 +388,12 @@ LIKWID_NVMARKER_INIT;
     LIKWID_NVMARKER_GET("{region}", &ngpus, &nevents, &events, &time, &count);
 
     __state->report.add_completion("Timer", "likwid_gpu", 0, time * 1000 * 1000, 0, {cfg_id}, {state_id}, {node_id});
-    
+
     int gid = nvmon_getIdOfActiveGroup();
     for (int i = 0; i < nevents; i++)
     {{
-        char* event_name = nvmon_getEventName(gid, i); 
-        
+        char* event_name = nvmon_getEventName(gid, i);
+
         __state->report.add_counter("{region}", "likwid_gpu", event_name, events[i], 0, {cfg_id}, {state_id}, {node_id});
     }}
 

@@ -163,7 +163,6 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             sdutil.consolidate_edges_scope(graph, cnode)
             sdutil.consolidate_edges_scope(graph, exit_node)
 
-
         # If nested graph is designated as sequential, transform schedules and
         # storage from Default to Sequential/Register
         if self.nested_seq and self.expr_index == 0:

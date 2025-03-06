@@ -20,6 +20,7 @@ from dace.sdfg.utils import dfs_topological_sort
 
 
 class TypeInferenceDict(DefaultDict[Tuple[Tasklet, str, bool], dtypes.typeclass]):
+
     def __init__(self):
         super().__init__(lambda: dtypes.typeclass(None))
 
@@ -136,7 +137,8 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node, inferr
     for e in state.out_edges(node):
         cname = e.src_conn
         if cname and inferred[(node, cname, False)].type is None:
-            raise TypeError('Ambiguous or uninferable type in' ' connector "%s" of node "%s"' % (cname, node))
+            raise TypeError('Ambiguous or uninferable type in'
+                            ' connector "%s" of node "%s"' % (cname, node))
 
 
 def infer_connector_types(sdfg: SDFG,

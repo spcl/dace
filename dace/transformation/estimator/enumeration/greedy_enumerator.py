@@ -35,7 +35,7 @@ class QueuedEntry:
 @make_properties
 class GreedyEnumerator(Enumerator):
     """
-    Enumerates all maximally fusible subgraphs in a greedy manner, 
+    Enumerates all maximally fusible subgraphs in a greedy manner,
     each of the corresponding map sets from an iteration being disjoint
     """
 

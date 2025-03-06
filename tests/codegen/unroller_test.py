@@ -6,6 +6,7 @@ import unittest
 
 @dace.program
 def Copy(output: dace.int32[5], input: dace.int32[5]):
+
     @dace.map
     def mytasklet(i: _[0:5]):
         inp << input[i]
@@ -15,6 +16,7 @@ def Copy(output: dace.int32[5], input: dace.int32[5]):
 
 
 class UnrollerTest(unittest.TestCase):
+
     def test_unroller(self):
         sdfg = Copy.to_sdfg()
 

@@ -43,7 +43,9 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     _counters: Optional[Set[str]] = None
 
-    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential]
+    perf_whitelist_schedules = [
+        dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential
+    ]
 
     def __init__(self):
         self._papi_used = False
@@ -161,7 +163,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
             '''
 dace::perf::{pcs} __perf_cpy_{nodeid}_{unique_id};
 auto& __vs_cpy_{nodeid}_{unique_id} = __perf_store.getNewValueSet(
-    __perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size}, 
+    __perf_cpy_{nodeid}_{unique_id}, {nodeid}, PAPI_thread_id(), {size},
     dace::perf::ValueSetType::Copy);
 __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                 pcs=self.perf_counter_string(),
@@ -425,7 +427,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         pcs = self.perf_counter_string()
         return '''dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});
-__perf_{id}.enterCritical();        
+__perf_{id}.enterCritical();
         '''.format(counter_str=pcs, id=unified_id, it=iteration, core=core_str)
 
     @staticmethod
@@ -444,12 +446,13 @@ __perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);''' % (unifi
 
 class PAPIUtils(object):
     """ General-purpose utilities for working with PAPI. """
+
     @staticmethod
     def available_counters() -> Dict[str, int]:
         """
         Returns the available PAPI counters on this machine. Only works on
         *nix based systems with ``grep`` and ``papi-tools`` installed.
-        
+
         :return: A set of available PAPI counters in the form of a dictionary
                  mapping from counter name to the number of native hardware
                  events.
@@ -594,7 +597,7 @@ class PAPIUtils(object):
     def get_memlet_byte_size(sdfg: dace.SDFG, memlet: Memlet):
         """
         Returns the memlet size in bytes, depending on its data type.
-        
+
         :param sdfg: The SDFG in which the memlet resides.
         :param memlet: Memlet to return size in bytes.
         :return: The size as a symbolic expression.
@@ -636,10 +639,7 @@ class PAPIUtils(object):
         return out_costs
 
     @staticmethod
-    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode,
-                                  dfg: DataflowGraphView,
-                                  sdfg: dace.SDFG,
-                                  cfg,
+    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: DataflowGraphView, sdfg: dace.SDFG, cfg,
                                   state_id: int) -> str:
         """ Get the amount of bytes processed by `tasklet`. The formula is
             sum(inedges * size) + sum(outedges * size) """
