@@ -308,7 +308,7 @@ def test_dde_inout_two_states():
     results = {}
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, results)
 
-    dde_results = results["DeadDataflowElimination"]
+    dde_results = results["DeadDataflowElimination"][0]
     assert dde_results.get(start_state) is None, "No changes to `start_state` expected."
     expected_cleanup = dde_results.get(next_state)
     assert expected_cleanup == {s2_write_computed}, "Expected to clean up write to `computed` from `next_state`."
