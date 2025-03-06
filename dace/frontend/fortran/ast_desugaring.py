@@ -3578,6 +3578,10 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
         if not spart:
             continue
         for tdecl in children_of_type(spart, Type_Declaration_Stmt):
+            typ, attr, _ = tdecl.children
+            if 'PARAMETER' in f"{attr}":
+                # This is a constant which should have been propagated away already.
+                continue
             all_global_vars.append(tdecl.tofortran())
     all_derived_types = '\n'.join(all_derived_types)
     all_global_vars = '\n'.join(all_global_vars)
