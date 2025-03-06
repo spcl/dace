@@ -2474,7 +2474,17 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Cycle_Stmt)):
         # These don't modify variables or give any new information.
         pass
-    elif isinstance(node, (Allocate_Stmt, Deallocate_Stmt)):
+    elif isinstance(node, Allocate_Stmt):
+        _, allocs, _ = node.children
+        allocs = allocs.children if allocs else tuple()
+        shape_bounds = []
+        for al in allocs:
+            _, shape = al.children
+            if shape:
+                shape_bounds.extend(sb for sb in shape.children)
+        for sb in shape_bounds:
+            _inject_knowns(sb)
+    elif isinstance(node, Deallocate_Stmt):
         # These are not expected to exist in the pruned AST, so don't bother tracking them.
         pass
     elif isinstance(node, UnaryOpBase):
@@ -3144,7 +3154,7 @@ def const_eval_nodes(ast: Program) -> Program:
 
     NON_EXPRESSION_CLASSES = (
         Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
-        Section_Subscript_List, Write_Stmt)
+        Section_Subscript_List, Write_Stmt, Allocate_Stmt)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
