@@ -914,6 +914,31 @@ def test_views_in_header():
     except Exception as e:
         assert False, f"LoopToMap failed: {e}"
 
+def test_empty_views_in_body():
+    """
+    Tests that the Loop2Map works correctly with views in the loop body, which are not written or read in the body.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_view("A_view", [1], dace.float32)
+
+    loop = LoopRegion("loop", "i < 64", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    s = loop.add_state(is_start_block=True)
+    access_A = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access_A, None, access_view, "views", dace.Memlet("A[i]"))
+    sdfg.validate()
+
+    # Try to apply Loop2Map directly
+    try:
+        sdfg.apply_transformations_repeated(LoopToMap)
+        sdfg.validate()
+    except Exception as e:
+        assert False, f"LoopToMap failed: {e}"
+
+
 
 if __name__ == "__main__":
 
@@ -957,3 +982,4 @@ if __name__ == "__main__":
     test_pipeline()
     test_views_in_body()
     test_views_in_header()
+    test_empty_views_in_body()

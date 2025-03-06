@@ -448,17 +448,12 @@ class LoopToMap(xf.MultiStateTransformation):
             if not found and self._is_array_thread_local(iatl_name, itervar, sdfg, states):
                 unique_set.add(name)
 
-        # Find view data
-        view_set = set()
-        for name in rw_set:
-            if isinstance(sdfg.arrays[name], dt.View):
-                view_set.add(name)
-
         # Find NestedSDFG's connectors
         read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
         write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
 
         # Do not route views through the NestedSDFG
+        view_set = set(view_to_data.keys())
         read_set -= view_set
         write_set -= view_set
 
