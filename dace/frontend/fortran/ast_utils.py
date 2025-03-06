@@ -985,3 +985,7 @@ class TempName(object):
         tmp = TempName()
         name, tmp._counter = f"{tag}_{tmp._counter}", tmp._counter + 1
         return name
+
+def is_literal(node: ast_internal_classes.FNode) -> bool:
+    return isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Double_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node))
+
