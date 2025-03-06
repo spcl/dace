@@ -99,7 +99,6 @@ class FullMapFusion(ppl.Pass):
         validate_all: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        breakpoint()
         super().__init__(**kwargs)
         if only_toplevel_maps is not None:
             self.only_toplevel_maps = only_toplevel_maps
