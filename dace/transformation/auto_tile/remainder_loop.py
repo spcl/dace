@@ -5,7 +5,6 @@
 
 from typing import List, Set, Union
 from dace.data import Property
-from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties
 from dace.sdfg import nodes
@@ -382,8 +381,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             None)
                 _state.add_node(an)
                 u, u_conn, v, v_conn, memlet = edge
-                _state.add_edge(an, None, node, in_arr, Memlet(
-                    data=in_arr, subset=Range(memlet.subset)))
+                _state.add_edge(an, None, node, in_arr, dace.memlet.Memlet(expr=memlet.data))
         for out_arr in outs:
             for (_state, _sdfg, node) in [
                 (state1, inner_loop_kernel_sdfg, lnsdfg),
@@ -397,7 +395,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             None)
                 _state.add_node(an)
                 u, u_conn, v, v_conn, memlet = edge
-                _state.add_edge(node, out_arr, an, None, copy.deepcopy(memlet))
+                _state.add_edge(node, out_arr, an, None, dace.memlet.Memlet(expr=memlet.data))
 
         # Edges that go to and come out nested sdfg
         for in_edge in state.in_edges(first_node_in_microkernel):
@@ -406,7 +404,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 state.add_edge(u, u_conn, nsdfg, None, None)
             else:
                 state.add_edge(u, u_conn, nsdfg, memlet.data,
-                               copy.deepcopy(memlet))
+                               dace.memlet.Memlet(expr=memlet.data))
 
         for out_edge in state.out_edges(last_node_in_microkernel):
             u, u_conn, v, v_conn, memlet = out_edge
@@ -414,7 +412,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 state.add_edge(u, u_conn, nsdfg, None, None)
             else:
                 state.add_edge(nsdfg, memlet.data, v,
-                               v_conn, copy.deepcopy(memlet))
+                               v_conn, dace.memlet.Memlet(expr=memlet.data))
 
         nodes_to_copyover = set()
         edges_to_copyover = set()
@@ -640,13 +638,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     iarr = sdfg.arrays[imemlet.data]
                     aan = nodes.AccessNode(data=imemlet.data)
                     state.add_node(aan)
-                    state.add_edge(i_u, i_uc, aan, None, Memlet(
+                    state.add_edge(i_u, i_uc, aan, None, dace.memlet.Memlet(
                         subset=imemlet.subset, data=imemlet.data))
-                    state.add_edge(aan, None, assign_nsdfg, imemlet.data,  Memlet(
+                    state.add_edge(aan, None, assign_nsdfg, imemlet.data,  dace.memlet.Memlet(
                         subset=imemlet.subset, data=imemlet.data, wcr=imemlet.wcr, wcr_nonatomic=imemlet.wcr_nonatomic, allow_oob=imemlet.allow_oob, debuginfo=imemlet.debuginfo))
                     oarr_name = omemlet.data
                     oarr = sdfg.arrays[omemlet.data]
-                    state.add_edge(assign_nsdfg, omemlet.data, o_v, o_vc, Memlet(
+                    state.add_edge(assign_nsdfg, omemlet.data, o_v, o_vc, dace.memlet.Memlet(
                         subset=omemlet.subset, data=omemlet.data, wcr=omemlet.wcr, wcr_nonatomic=omemlet.wcr_nonatomic, allow_oob=omemlet.allow_oob, debuginfo=omemlet.debuginfo))
 
                     for s, sub_s in [(state1, lnsdfg), (state2, rnsdfg)]:
@@ -654,9 +652,9 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         an_out = nodes.AccessNode(data=oarr_name)
                         s.add_node(an_in)
                         s.add_node(an_out)
-                        s.add_edge(an_in, None, sub_s, iarr_name, Memlet(
+                        s.add_edge(an_in, None, sub_s, iarr_name, dace.memlet.Memlet(
                             subset=imemlet.subset, data=iarr_name, wcr=imemlet.wcr, wcr_nonatomic=imemlet.wcr_nonatomic, allow_oob=imemlet.allow_oob, debuginfo=imemlet.debuginfo))
-                        s.add_edge(sub_s, oarr_name, an_out, None, Memlet(
+                        s.add_edge(sub_s, oarr_name, an_out, None, dace.memlet.Memlet(
                             subset=omemlet.subset, data=oarr_name, wcr=omemlet.wcr, wcr_nonatomic=omemlet.wcr_nonatomic, allow_oob=omemlet.allow_oob, debuginfo=omemlet.debuginfo))
 
                     for sub_s in [lassign, rassign]:
@@ -664,7 +662,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         an_out = nodes.AccessNode(data=oarr_name)
                         sub_s.add_node(an_out)
                         sub_s.add_edge(an_in, None, an_out, None,
-                                       Memlet(subset=omemlet.subset, data=oarr_name, wcr=omemlet.wcr, wcr_nonatomic=omemlet.wcr_nonatomic, allow_oob=omemlet.allow_oob, debuginfo=omemlet.debuginfo))
+                                       dace.memlet.Memlet(subset=omemlet.subset, data=oarr_name, wcr=omemlet.wcr, wcr_nonatomic=omemlet.wcr_nonatomic, allow_oob=omemlet.allow_oob, debuginfo=omemlet.debuginfo))
 
                     # Update ranges in the rassign
                     if len(rassign.edges()) != 1:
@@ -679,18 +677,21 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             new_range = (
                                 beg, beg+symbolic.SymExpr(f"Min({dim} - ({str(beg)}), {l})-1"), 1)
                             new_assign_ranges.append(new_range)
-                        new_memlet = Memlet(subset=Range(
+                        new_memlet = dace.memlet.Memlet(subset=Range(
                             new_assign_ranges), data=memlet.data, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
                         rassign.remove_edge(e0)
                         rassign.add_edge(u, uc, v, vc, new_memlet)
 
+                    """
                     for kernel_parent, kernel, used_offsets in [(lassign_parent_state, lassign, assign_offsets), (rassign_parent_state, rassign, assign_offsets)]:
                         self.substract_offsets(kernel_parent, used_offsets)
                         kernel_parent_offsets = self.create_offsets(
                             kernel_parent.edges())
                         self.substract_offsets(kernel, used_offsets)
                         self.substract_offsets(kernel, kernel_parent_offsets)
+                    """
 
+        """
         # S1.2 Update memlet subsets
         for kernel_parent, kernel, used_offsets in [(lkernel_parent_state, lkernel, offsets), (rkernel_parent_state, rkernel, offsets)]:
             if kernel_parent and kernel and used_offsets:
@@ -700,6 +701,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 self.substract_offsets(kernel, used_offsets)
                 self.substract_offsets(kernel, kernel_parent_offsets)
             # Add the edges that are still missing
+        """
 
         self.prune_unused_data(sdfg)
         self.prune_unused_data(sub_sdfg)
@@ -742,7 +744,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 data_offsets = offsets[memlet.data]
                 new_range = [(beg-data_offset, end-data_offset, step)
                              for data_offset, (beg, end, step) in zip(data_offsets, memlet.subset)]
-                new_memlet = Memlet(subset=Range(new_range), data=memlet.data, wcr=memlet.wcr,
+                new_memlet = dace.memlet.Memlet(subset=Range(new_range), data=memlet.data, wcr=memlet.wcr,
                                     wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
                 state.remove_edge(edge)
                 state.add_edge(u, uc, v, vc, new_memlet)
@@ -755,7 +757,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     name=arr_name,
                     shape=arr.shape,
                     transient=convert_to_transient or arr.transient,
-                    strides=arr.shape,
+                    strides=arr.strides,
                     dtype=arr.dtype,
                     storage=arr.storage,
                     lifetime=arr.lifetime

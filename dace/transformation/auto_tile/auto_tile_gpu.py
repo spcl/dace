@@ -417,6 +417,7 @@ def _tile_gpu(
                 verification_failed = False
                 if verify and not are_close:
                     verification_failed = True
+                    kernel_sdfg.save("failing.sdfgz", compress=True)
                     print(f"Numerical verification failed for: {sdfg.label}, {entry.label}, {current_config}")
                     #raise Exception("Numerical verification failed.")
 
@@ -972,8 +973,8 @@ def auto_tile_gpu(
             else:
                 sdfg.add_symbol(input_sym, dace.dtypes.typeclass(type(sym)))
 
-    for _sdfg, arr_name, arr in sdfg.arrays_recursive():
-        if arr.transient == True and arr.storage == dace.dtypes.StorageType.CPU_Heap:
-            arr.storage = dace.dtypes.StorageType.CPU_Pinned
+    #for _sdfg, arr_name, arr in sdfg.arrays_recursive():
+    #    if arr.transient == True and arr.storage == dace.dtypes.StorageType.CPU_Heap:
+    #        arr.storage = dace.dtypes.StorageType.GPU_Global
 
     return sdfg, found_tilings
