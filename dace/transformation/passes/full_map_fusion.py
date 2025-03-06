@@ -12,20 +12,22 @@ from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class FullMapFusion(ppl.Pass):
-    """
-    Pass that combines `MapFusion` and `FindSingleUseData` into one.
+    """Pass that combines `MapFusion` and `FindSingleUseData` into one.
 
     Essentially, this function runs `FindSingleUseData` before `MapFusion`, this
     will speedup the fusion, as the SDFG has to be scanned only once.
     The pass accepts the same options as `MapFusion`, for a detailed description
     see there.
+    The main difference is that parallel map fusion on by default.
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
     :param assume_always_shared: Assume that all intermediates are shared.
-    :param validate: Validate the SDFG after the pass as finished.
-    :param validate_all: Validate the SDFG after every transformation.
+    :param allow_serial_map_fusion: Allow serial map fusion, by default `True`.
+    :param allow_parallel_map_fusion: Allow to merge parallel maps, by default `True`.
+    :param only_if_common_ancestor: In parallel map fusion mode, only fuse if both map
+        have a common direct ancestor.
 
     :todo: Implement a faster matcher as the pattern is constant.
     """
@@ -36,33 +38,39 @@ class FullMapFusion(ppl.Pass):
     only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
-        desc='Only perform fusing if the Maps are in the top level.',
+        desc="Only perform fusing if the Maps are in the top level.",
     )
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
-        desc='Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.',
+        desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
-        desc='If `True` then the transformation will ensure a more stricter data flow.',
+        desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
-        desc='If `True` then all intermediates will be classified as shared.',
+        desc="If `True` then all intermediates will be classified as shared.",
     )
 
-    validate = properties.Property(
-            dtype=bool,
-            default=True,
-            desc='If True, validates the SDFG after all transformations have been applied.',
-            )
-    validate_all = properties.Property(
-            dtype=bool,
-            default=False,
-            desc='If True, validates the SDFG after each transformation applies.'
+    allow_serial_map_fusion = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If `True`, the default, then allow serial map fusion.",
+    )
+
+    allow_parallel_map_fusion = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If `True`, the default, then also perform parallel map fusion.",
+    )
+    only_if_common_ancestor = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` restrict parallel map fusion to maps that have a direct common ancestor.",
     )
 
 
@@ -72,8 +80,9 @@ class FullMapFusion(ppl.Pass):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
-        validate: Optional[bool] = None,
-        validate_all: Optional[bool] = None,
+        allow_serial_map_fusion: Optional[bool] = None,
+        allow_parallel_map_fusion: Optional[bool] = None,
+        only_if_common_ancestor: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -85,10 +94,12 @@ class FullMapFusion(ppl.Pass):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
-        if validate is not None:
-            self.validate = validate
-        if validate_all is not None:
-            self.validate_all = validate_all
+        if allow_serial_map_fusion is not None:
+            self.allow_serial_map_fusion = allow_serial_map_fusion
+        if allow_parallel_map_fusion is not None:
+            self.allow_parallel_map_fusion = allow_parallel_map_fusion
+        if only_if_common_ancestor is not None:
+            self.only_if_common_ancestor = only_if_common_ancestor
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -114,19 +125,21 @@ class FullMapFusion(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
 
+        # We have to pass the single use data at construction. This is because that
+        #  `fusion._pipeline_results` is only defined, i.e. not `None` during `apply()`
+        #  but during `can_be_applied()` it is not available. Thus we have to set it here.
         fusion = MapFusion(
-                only_inner_maps=self.only_inner_maps,
-                only_toplevel_maps=self.only_toplevel_maps,
-                strict_dataflow=self.strict_dataflow,
-                assume_always_shared=self.assume_always_shared
+            only_inner_maps=self.only_inner_maps,
+            only_toplevel_maps=self.only_toplevel_maps,
+            strict_dataflow=self.strict_dataflow,
+            assume_always_shared=self.assume_always_shared,
+            allow_serial_map_fusion=self.allow_serial_map_fusion,
+            allow_parallel_map_fusion=self.allow_parallel_map_fusion,
+            only_if_common_ancestor=self.only_if_common_ancestor,
+            single_use_data=pipeline_results["FindSingleUseData"]
         )
 
         try:
-            # The short answer why we do this is because  `fusion._pipeline_results` is
-            #  only defined during `apply()` and not during `can_be_applied()`. For more
-            #  information see the note in `MapFusion.is_shared_data()` and/or [issue#1911](https://github.com/spcl/dace/issues/1911).
-            assert fusion._single_use_data is None
-            fusion._single_use_data = pipeline_results["FindSingleUseData"]
             pazz = pmp.PatternMatchAndApplyRepeated(
                     [fusion],
                     permissive=False,
