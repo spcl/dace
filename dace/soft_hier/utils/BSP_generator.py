@@ -150,3 +150,67 @@ local_A [({loop_param+1})%2][:][:] = s_local_A [{gi}][({gj+gN-1})%{gN}][{loop_pa
             BSP_communication_code_block, 
             BSP_sync, 
             post_shift_code_block)
+    
+    
+    
+
+def generate_summa_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K):
+    loop_param = dace.symbol("_c")
+
+    BSP_stride = K
+
+    BSP_init_code_block =  None
+
+    BSP_loop_code_block = CodeBlock(
+        code=f"""
+{loop_param} = 0
+while {loop_param} < {K}/{tK}:
+    {loop_param} = {loop_param} + 1
+            """,
+        language=dace.dtypes.Language.Python
+    )
+
+    BSP_compute_code_block = CodeBlock(
+        code=f"""
+if (({loop_param} > 0) and ({loop_param} <= {K}/{tK})):
+    pass
+""",
+        language=dace.dtypes.Language.Python
+    )
+
+    BSP_communication_code_block = CodeBlock(
+        code=f"""
+if (({loop_param} >= 0) and ({loop_param} < {K}/{tK})):
+    if {gi} == 0:
+        local_B[({loop_param+1})%2][:][:] = B[{tK}*{loop_param}:{tK}*({loop_param+1})][:]
+        s_local_B[{gi}:{gi+gM}][{gj}][({loop_param+1})%2][:][:] = local_B[({loop_param+1})%2][:][:]
+    elif {gi} <= {gM} - 1:
+        local_B[({loop_param+1})%2][:][:] = s_local_B[{gi}][{gj}][({loop_param+1})%2][:][:]
+    
+        
+    if {gj} == 0:
+        local_A[({loop_param+1})%2][:][:] = A[:][{tK}*{loop_param}:{tK}*({loop_param+1})]
+        s_local_A[{gi}][{gj}:{gj+gN}][({loop_param+1})%2][:][:] = local_A[({loop_param+1})%2][:][:]
+    elif {gj} <= {gN} - 1:
+        local_A[({loop_param+1})%2][:][:] = s_local_A[{gi}][{gj}][({loop_param+1})%2][:][:]
+
+""",
+        language=dace.dtypes.Language.Python
+    )
+
+    BSP_sync = True
+
+    pre_shift_code_block = None
+
+    post_shift_code_block = None
+
+
+    return (pre_shift_code_block, 
+            BSP_stride,
+            BSP_init_code_block, 
+            BSP_loop_code_block, 
+            BSP_compute_code_block, 
+            BSP_communication_code_block, 
+            BSP_sync, 
+            post_shift_code_block)
+

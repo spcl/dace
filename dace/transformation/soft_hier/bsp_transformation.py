@@ -472,8 +472,7 @@ class BSPTransformer(transformation.SingleStateTransformation):
     def _generate_assign_sdfg(self, assign_node, state, transients_to_modify, global_arrays, new_streams, nsdfg):
         dst, src = self._process_assignment(assign_node)
         # Add the access nodes to the state
-        dst_an = state.add_access(dst)
-        src_an = state.add_access(src)
+        
         # Process left-hand side (target) and right-hand side (value).
         lhs_base, lhs_indexes = self._extract_subscript_info(assign_node.targets[0])
         rhs_base, rhs_indexes = self._extract_subscript_info(assign_node.value)
@@ -521,6 +520,17 @@ class BSPTransformer(transformation.SingleStateTransformation):
                     new_memlet.subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["lower"]), 
                                                         symbolic.pystr_to_symbolic(idx_info["upper"])-1, 
                                                         symbolic.pystr_to_symbolic(idx_info["step"]))   
+        # check if there is dependency between the two access nodes
+        # NOTE: this is a naive implementation, it only checks if they share same subset.
+        src_an = None
+        for e in state.edges():
+            if isinstance(e.dst, nodes.AccessNode) and e.dst.data == src:
+                # check the memlet of the edge
+                if e.data.other_subset == new_memlet.subset:
+                    src_an = e.dst
+        if src_an is None:
+            src_an = state.add_access(src)            
+        dst_an = state.add_access(dst)
         state.add_edge(src_an, None, dst_an, None, new_memlet)   
 
     def _process_if_node(self, parent, if_node, transients_to_modify, global_arrays, new_streams, nsdfg, is_elif=False):
