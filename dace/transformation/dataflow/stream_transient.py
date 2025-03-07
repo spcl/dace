@@ -185,7 +185,7 @@ class AccumulateTransient(transformation.SingleStateTransformation):
                                                                node_b=outer_map_exit)
 
         if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize ' 'newly-created transient!')
+            warnings.warn('AccumulateTransient did not properly initialize newly-created transient!')
             return
 
         map_entry = graph.entry_node(map_exit)

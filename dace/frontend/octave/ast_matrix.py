@@ -70,7 +70,7 @@ class AST_Matrix(AST_Node):
         dims = -1
         for r in self.rows:
             if (dims > 0) and (r.get_dims() != dims):
-                raise ValueError("Matrices with unequal row lengths are currently not " "supported.")
+                raise ValueError("Matrices with unequal row lengths are currently not supported.")
             else:
                 dims = r.get_dims()
         return [len(self.rows), dims]
@@ -160,7 +160,7 @@ class AST_Transpose(AST_Node):
         name = self.get_name_in_sdfg(sdfg)
         basetype = self.get_basetype()
         if basetype.is_complex():
-            raise NotImplementedError("Transpose of complex matrices not implemented (we might need " "to conjugate)")
+            raise NotImplementedError("Transpose of complex matrices not implemented (we might need to conjugate)")
         if len(dims) != 2:
             raise NotImplementedError("Transpose only implemented for 2D matrices")
         sdfg.add_transient(name, dims, basetype, debuginfo=self.context)
