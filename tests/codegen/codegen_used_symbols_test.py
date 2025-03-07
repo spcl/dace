@@ -13,7 +13,7 @@ n1i, n1j, n1k = (dace.symbol(s, dtype=dace.int64) for s in ('n1i', 'n1j', 'n1k')
 def rprj3(r: dace.float64[n0i, n0j, n0k], s: dace.float64[n1i, n1j, n1k]):
 
     for i, j, k in dace.map[1:s.shape[0] - 1, 1:s.shape[1] - 1, 1:s.shape[2] - 1]:
-
+        # yapf: disable
         s[i, j, k] = (
             0.5000 * r[2 * i, 2 * j, 2 * k] +
             0.2500 * (r[2 * i - 1, 2 * j, 2 * k] + r[2 * i + 1, 2 * j, 2 * k] + r[2 * i, 2 * j - 1, 2 * k] +
@@ -28,7 +28,7 @@ def rprj3(r: dace.float64[n0i, n0j, n0k], s: dace.float64[n1i, n1j, n1k]):
                       r[2 * i - 1, 2 * j + 1, 2 * k - 1] + r[2 * i - 1, 2 * j + 1, 2 * k + 1] +
                       r[2 * i + 1, 2 * j - 1, 2 * k - 1] + r[2 * i + 1, 2 * j - 1, 2 * k + 1] +
                       r[2 * i + 1, 2 * j + 1, 2 * k - 1] + r[2 * i + 1, 2 * j + 1, 2 * k + 1]))
-
+        # yapf: enable
 
 def test_codegen_used_symbols_cpu():
 
