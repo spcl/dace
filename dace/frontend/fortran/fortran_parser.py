@@ -2770,13 +2770,17 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
 
     if cfg.make_noop:
         print("FParser Op: Making certain functions no-op in the AST...")
+        noop_missed: Set[SPEC] = set(cfg.make_noop)
         for fn in walk(ast, (Function_Stmt, Subroutine_Stmt)):
             fnspec = ident_spec(fn)
             if fnspec not in cfg.make_noop:
                 continue
+            noop_missed.remove(fnspec)
             expart = atmost_one(children_of_type(fn.parent, Execution_Part))
             if expart:
                 remove_self(expart)
+        if noop_missed:
+            print(f"The following functions could not be found for making no-op: {noop_missed}", file=sys.stderr)
 
     print("FParser Op: Removing local indirections from AST...")
     # NOTE: The local indirection removal operations should not need full resolution (e.g., build an alias map).

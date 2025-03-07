@@ -3337,7 +3337,7 @@ def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
 
 
 def _type_injection_applies_to_component(item: ConstTypeInjection, defn_spec: SPEC, comp: str) -> bool:
-    assert len(item.component_spec) > 1, \
+    assert len(item.component_spec) == 1, \
         (f"Unimplemented: type injection must have just one-level of component for now; "
          f"got {item.component_spec} to match against {comp}")
     item_comp = item.component_spec[-1]
@@ -3388,9 +3388,6 @@ def inject_const_evals(ast: Program,
                 print(f"{item}/{item.scope_spec} does not refer to a valid object; moving on...", file=sys.stderr)
                 continue
         if isinstance(item, ConstTypeInjection):
-            if len(item.component_spec) > 1:
-                print(f"{item}/{item.component_spec} must have just one-level for now; moving on...", file=sys.stderr)
-                continue
             if item.type_spec not in alias_map or not isinstance(alias_map[item.type_spec].parent, Derived_Type_Def):
                 print(f"{item}/{item.type_spec} does not refer to a valid type; moving on...", file=sys.stderr)
                 continue

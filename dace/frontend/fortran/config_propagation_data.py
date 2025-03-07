@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 from typing import List, Any, Dict, Optional, Generator, Iterable, Tuple
 
@@ -42,6 +43,9 @@ def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstInjec
             if not l.strip():
                 continue
             x = deserialize(l.strip())
+            if len(x.component_spec) > 1:
+                print(f"{x}/{x.component_spec} must have just one-level for now; moving on...", file=sys.stderr)
+                continue
             root = '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec)
             comp = '.'.join(x.component_spec)
             key = (root, comp)
