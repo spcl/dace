@@ -74,9 +74,12 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
         conds = dim_check
         if num_threads > line_len:
             lines_at_a_time = num_threads // line_len
-            real_lines_at_a_time = min(
-                int(lines_at_a_time), int(self.dst_arr.shape[-2])
-            )
+            if len(self.dst_arr.shape) == 1:
+                real_lines_at_a_time = 1
+            else:
+                real_lines_at_a_time = min(
+                    int(lines_at_a_time), int(self.dst_arr.shape[-2])
+                )
             code += f"// load multiple lines at a time {real_lines_at_a_time}\n"
             if len(self.src_arr.shape) == 1:
                 num_active_threads = line_len
@@ -115,6 +118,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
 
                 var_id = 0
                 for dim in conds[:-2]:
+                    code += f"#pragma unroll\n"
                     code += f"for (int i{var_id} = 0; i{var_id} < {cpp.sym2cpp(dim)}; i{var_id} += 1) {{\n"
                     var_id += 1
 
@@ -196,7 +200,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
         else:
             code += f"// load one line at a time\n"
             if len(self.src_arr.shape) == 1:
-                num_active_threads = line_len
+                num_active_threads = num_threads
                 strides = self.src_arr.strides
                 offset_expression_1d = "+".join(
                     [
@@ -206,9 +210,10 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                 )
                 cond = conds[0]
                 code += (
+                    f"#pragma unroll\n" +
                     f"for (int i0 = tid; i0 < {cond}; i0 += {num_active_threads}) {{\n"
                 )
-                code += f"{self.dst_arr_name}[tid] = {self.src_arr_name}[{offset_expression_1d}+tid];\n"
+                code += f"{self.dst_arr_name}[i0] = {self.src_arr_name}[{offset_expression_1d}+i0];\n"
                 code += f"}}\n"
             else:
                 strides = self.src_arr.strides
@@ -222,6 +227,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
 
                 var_id = 0
                 for dim in conds[:-2]:
+                    code += f"#pragma unroll\n"
                     code += f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
                     var_id += 1
 
