@@ -35,7 +35,7 @@ class EinsumParser(object):
 
         for char in chain(inputs, output):
             if char not in ascii_letters + ',':
-                raise ValueError('Invalid einsum string, subscript must contain' ' letters, commas, and "->".')
+                raise ValueError('Invalid einsum string, subscript must contain letters, commas, and "->".')
 
         inputs = inputs.split(',')
 
@@ -66,7 +66,7 @@ class EinsumParser(object):
         ab_vars = a_vars.union(b_vars)
         c_vars = set(c)
         if not ab_vars.issuperset(c_vars):
-            raise ValueError('Einsum subscript string includes outputs that do' ' not appear as an input')
+            raise ValueError('Einsum subscript string includes outputs that do not appear as an input')
 
         batch_vars = a_vars.intersection(b_vars).intersection(c_vars)
         sum_vars = a_vars.intersection(b_vars) - c_vars
@@ -184,7 +184,7 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
 
 def _build_einsum_views(tensors: str, dimension_dict: dict) -> List[np.ndarray]:
     """
-    Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
+    Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in version 3.4.0.
     Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
     """
     views = []
@@ -236,7 +236,7 @@ def _create_einsum_internal(sdfg: SDFG,
         try:
             import opt_einsum as oe
         except (ModuleNotFoundError, NameError, ImportError):
-            raise ImportError('To optimize einsum expressions, please install ' 'the "opt_einsum" package.')
+            raise ImportError('To optimize einsum expressions, please install the "opt_einsum" package.')
 
         for char, shp in chardict.items():
             if symbolic.issymbolic(shp):

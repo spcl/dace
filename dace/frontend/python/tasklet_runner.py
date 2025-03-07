@@ -50,7 +50,7 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
         if (getattr(node, 'lineno', -1) == caller.lineno and isinstance(node, ast.With)):
             return node
 
-    raise FileNotFoundError('Cannot recover "with" statement from calling ' 'function.')
+    raise FileNotFoundError('Cannot recover "with" statement from calling function.')
 
 
 def _copy_location(newnode, node):

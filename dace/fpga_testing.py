@@ -122,7 +122,7 @@ def _run_fpga_test(vendor: str, test_function: Callable, test_timeout: int, run_
                 raise_error("No SDFG(s) returned by FPGA test.")
             elif isinstance(sdfgs, SDFG):
                 sdfgs = [sdfgs]
-            print_success(f"{base_name} [Xilinx]: " "Simulation successful.")
+            print_success(f"{base_name} [Xilinx]: Simulation successful.")
 
             for sdfg in sdfgs:
                 build_folder = Path(sdfg.build_folder) / "build"

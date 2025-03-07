@@ -38,9 +38,28 @@ def example_function(param_a: str, *args: Optional[SDFG]) -> bool:
     ...
 ```
 
+For automatic styling, we rely on [pre-commit](https://pre-commit.com/) and use the [yapf](https://github.com/google/yapf) file formatter.
+**Please run `pre-commit` before making your pull request ready for review.**
 
-For automatic styling, we use the [yapf](https://github.com/google/yapf) file formatter.
-**Please run `yapf` before making your pull request ready for review.**
+```bash
+pre-commit run --all-files
+```
+
+Formatting will be evaluated as part of CI and you won't be able to merge unless formatting issues are resolved. To get `pre-commit` and `yapf`, be sure to install the `linting` extra, e.g. for contributors we recommend
+
+```bash
+pip install -e ".[testing,linting]"
+```
+
+to get testing and linting extras in an editable install.
+
+One way to always ensure consistency with our coding standards is to install pre-commit hooks, which will check formatting issues of changed files before every commit. If you wish to do so, run
+
+```bash
+pre-commit install
+```
+
+to install the `git` hooks for this repository.
 
 ## Tests
 

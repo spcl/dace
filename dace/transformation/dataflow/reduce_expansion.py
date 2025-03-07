@@ -35,9 +35,9 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transient" "in registers", dtype=bool, default=False)
+    create_in_transient = Property(desc="Create local in-transient in registers", dtype=bool, default=False)
 
-    create_out_transient = Property(desc="Create local out-transient" "in registers", dtype=bool, default=False)
+    create_out_transient = Property(desc="Create local out-transient in registers", dtype=bool, default=False)
 
     reduce_implementation = Property(desc="Reduce implementation of inner reduce. If specified,"
                                      "overrides any existing implementations",

@@ -69,7 +69,7 @@ def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError("Matrix multiplication connector " "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector \"{}\" not found.".format(name))
     return result
 
 
