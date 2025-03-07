@@ -1023,6 +1023,12 @@ class Map(object):
         if self.get_param_num() != self.range.dims():
             raise ValueError(f'There are {self.get_param_num()} parameters but the range'
                              f' has {self.range.dims()} dimensions.')
+        if any((ss <= 0) == True for ss in self.range.size()):
+            # The CPU and GPU backend tolerate such maps.
+            warnings.warn(
+                f'The iteration range of Map {self.label} is {self.range}, which contains a zero'
+                ' or negative sized range, which is allowed but not recommended.'
+                ' The Map will be turned into a no-ops.')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
