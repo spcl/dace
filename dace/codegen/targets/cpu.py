@@ -477,7 +477,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             # NOTE: Scalar members are already defined in the struct definition.
                             self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                         else:
-                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v,
+                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{node.data}.{k}"), v,
                                                 function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, data.View):
