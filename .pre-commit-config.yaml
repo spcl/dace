@@ -16,5 +16,4 @@ repos:
       name: yapf
       language: python
       entry: yapf
-      args: [-i]
       types: [python]
