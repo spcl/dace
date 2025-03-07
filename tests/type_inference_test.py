@@ -9,6 +9,7 @@ import ast
 
 
 class TestTypeInference(unittest.TestCase):
+
     def testSimpleAssignment(self):
 
         config_data_types = Config.get('compiler', 'default_data_types')

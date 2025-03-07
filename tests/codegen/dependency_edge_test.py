@@ -4,6 +4,7 @@ import pytest
 import dace
 import numpy as np
 
+
 @pytest.mark.parametrize("reverse", [True, False])
 def test_mapped_dependency_edge(reverse):
     """ Tests dependency edges in a map scope """
@@ -40,12 +41,12 @@ def test_mapped_dependency_edge(reverse):
 
     state.add_edge(tmp_A, None, A2, None, dace.Memlet("tmp_A[0] -> [((i+1)%2)]"))
     if not reverse:
-      state.add_edge(A2, None, tmp_B, None, dace.Memlet()) # Dependency Edge
+        state.add_edge(A2, None, tmp_B, None, dace.Memlet())  # Dependency Edge
     state.add_edge(A2, None, map_exit, "IN_A", dace.Memlet("A[0:2]"))
 
     state.add_edge(tmp_B, None, A3, None, dace.Memlet("tmp_B[0] -> [((i+1)%2)]"))
     if reverse:
-      state.add_edge(A3, None, tmp_A, None, dace.Memlet()) # Dependency Edge
+        state.add_edge(A3, None, tmp_A, None, dace.Memlet())  # Dependency Edge
     state.add_edge(A3, None, map_exit, "IN_A", dace.Memlet("A[0:2]"))
 
     state.add_edge(map_exit, "OUT_A", A4, None, dace.Memlet("A[0:2]"))
@@ -56,12 +57,11 @@ def test_mapped_dependency_edge(reverse):
     sdfg(A=a, B=b)
 
     if reverse:
-      assert a[0] == a[1]
+        assert a[0] == a[1]
     else:
-      assert a[0] == b[1] and a[1] == b[0]
+        assert a[0] == b[1] and a[1] == b[0]
 
 
 if __name__ == "__main__":
     test_mapped_dependency_edge(False)
     test_mapped_dependency_edge(True)
-  

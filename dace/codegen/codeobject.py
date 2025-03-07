@@ -16,7 +16,8 @@ class CodeObject(object):
                                          value_type=str,
                                          desc="Additional compiler argument "
                                          "variables to add to template")
-    linkable = Property(dtype=bool, desc='Should this file participate in ' 'overall linkage?')
+    linkable = Property(dtype=bool, desc='Should this file participate in '
+                        'overall linkage?')
     environments = SetProperty(str,
                                desc="Environments required by CMake to build and run this code node.",
                                default=set())

@@ -4,7 +4,6 @@ import sys
 from collections import defaultdict
 from typing import Tuple
 
-
 if sys.version_info < (3, 8):
     _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
     BytesConstant = ast.Bytes
@@ -19,7 +18,6 @@ else:
     NameConstant = ast.Constant
     NumConstant = ast.Constant
     StrConstant = ast.Constant
-
 
 if sys.version_info < (3, 9):
     Index = ast.Index
@@ -49,6 +47,7 @@ class SubscriptConverter(ast.NodeTransformer):
       }
     }
     """
+
     def __init__(self, offset: Tuple[int] = None, dtype=None):
         """
         :param offset: Apply the given offset tuple to every index found.

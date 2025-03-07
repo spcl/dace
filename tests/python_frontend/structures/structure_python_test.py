@@ -18,7 +18,7 @@ def test_read_structure():
         for i in dace.map[0:M]:
             for idx in dace.map[A.indptr[i]:A.indptr[i + 1]]:
                 B[i, A.indices[idx]] = A.data[idx]
-    
+
     rng = np.random.default_rng(42)
     A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     B = np.zeros((20, 20), dtype=np.float32)
@@ -41,7 +41,7 @@ def test_write_structure():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
                               name='CSRMatrix')
-    
+
     @dace.program
     def dense_to_csr_python(A: dace.float32[M, N], B: CSR):
         idx = 0
@@ -53,7 +53,7 @@ def test_write_structure():
                     B.indices[idx] = j
                     idx += 1
         B.indptr[M] = idx
-    
+
     rng = np.random.default_rng(42)
     tmp = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     A = tmp.toarray()
@@ -74,7 +74,7 @@ def test_write_structure_scalar():
 
     N = dace.symbol('N')
     SumStruct = dace.data.Structure(dict(sum=dace.data.Scalar(dace.float64)), name='SumStruct')
-    
+
     @dace.program
     def struct_member_based_sum(A: dace.float64[N], B: SumStruct, C: dace.float64[N]):
         tmp = 0.0
@@ -83,11 +83,11 @@ def test_write_structure_scalar():
         B.sum = tmp
         for i in range(N):
             C[i] = A[i] + B.sum
-    
+
     N = 40
     A = np.random.rand(N)
     C = np.random.rand(N)
-    C_val = np.zeros((N,))
+    C_val = np.zeros((N, ))
     sum = 0
     for i in range(N):
         sum += A[i]
@@ -109,7 +109,7 @@ def test_local_structure():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
                               name='CSRMatrix')
-    
+
     @dace.program
     def dense_to_csr_local_python(A: dace.float32[M, N], B: CSR):
         tmp = dace.define_local_structure(CSR)
@@ -125,7 +125,7 @@ def test_local_structure():
         B.indptr[:] = tmp.indptr[:]
         B.indices[:] = tmp.indices[:]
         B.data[:] = tmp.data[:]
-    
+
     rng = np.random.default_rng(42)
     tmp = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     A = tmp.toarray()
@@ -152,12 +152,11 @@ def test_rgf():
             self.lower = lower
 
     n, nblocks = dace.symbol('n'), dace.symbol('nblocks')
-    BlockTriDiagonal = dace.data.Structure(
-        dict(diagonal=dace.complex128[nblocks, n, n],
-             upper=dace.complex128[nblocks, n, n],
-             lower=dace.complex128[nblocks, n, n]),
-        name='BlockTriDiagonalMatrix')
-    
+    BlockTriDiagonal = dace.data.Structure(dict(diagonal=dace.complex128[nblocks, n, n],
+                                                upper=dace.complex128[nblocks, n, n],
+                                                lower=dace.complex128[nblocks, n, n]),
+                                           name='BlockTriDiagonalMatrix')
+
     @dace.program
     def rgf_leftToRight(A: BlockTriDiagonal, B: BlockTriDiagonal, n_: dace.int32, nblocks_: dace.int32):
 
@@ -173,42 +172,41 @@ def test_rgf():
         # 2. Forward substitution
         # From left to right
         for i in range(1, nblocks_):
-            tmp[i] = np.linalg.inv(A.diagonal[i] - A.lower[i-1] @ tmp[i-1] @ A.upper[i-1])
+            tmp[i] = np.linalg.inv(A.diagonal[i] - A.lower[i - 1] @ tmp[i - 1] @ A.upper[i - 1])
         # 3. Initialisation of last element of B
         B.diagonal[-1] = tmp[-1]
 
         # 4. Backward substitution
         # From right to left
 
-        for i in range(nblocks_-2, -1, -1): 
-            B.diagonal[i]  =  tmp[i] @ (identity + A.upper[i] @ B.diagonal[i+1] @ A.lower[i] @ tmp[i])
-            B.upper[i] = -tmp[i] @ A.upper[i] @ B.diagonal[i+1]
-            B.lower[i] =  np.transpose(B.upper[i])
-    
+        for i in range(nblocks_ - 2, -1, -1):
+            B.diagonal[i] = tmp[i] @ (identity + A.upper[i] @ B.diagonal[i + 1] @ A.lower[i] @ tmp[i])
+            B.upper[i] = -tmp[i] @ A.upper[i] @ B.diagonal[i + 1]
+            B.lower[i] = np.transpose(B.upper[i])
+
     rng = np.random.default_rng(42)
 
     A_diag = rng.random((10, 20, 20)) + 1j * rng.random((10, 20, 20))
     A_upper = rng.random((10, 20, 20)) + 1j * rng.random((10, 20, 20))
-    A_lower = rng.random((10, 20, 20)) + 1j * rng.random((10, 20, 20)) 
+    A_lower = rng.random((10, 20, 20)) + 1j * rng.random((10, 20, 20))
     inpBTD = BlockTriDiagonal.dtype._typeclass.as_ctypes()(diagonal=A_diag.__array_interface__['data'][0],
                                                            upper=A_upper.__array_interface__['data'][0],
                                                            lower=A_lower.__array_interface__['data'][0])
-    
+
     B_diag = np.zeros((10, 20, 20), dtype=np.complex128)
     B_upper = np.zeros((10, 20, 20), dtype=np.complex128)
     B_lower = np.zeros((10, 20, 20), dtype=np.complex128)
     outBTD = BlockTriDiagonal.dtype._typeclass.as_ctypes()(diagonal=B_diag.__array_interface__['data'][0],
                                                            upper=B_upper.__array_interface__['data'][0],
                                                            lower=B_lower.__array_interface__['data'][0])
-    
+
     func = rgf_leftToRight.compile()
     func(A=inpBTD, B=outBTD, n_=A_diag.shape[1], nblocks_=A_diag.shape[0], n=A_diag.shape[1], nblocks=A_diag.shape[0])
 
     A = BTD(A_diag, A_upper, A_lower)
-    B = BTD(np.zeros((10, 20, 20), dtype=np.complex128),
-            np.zeros((10, 20, 20), dtype=np.complex128),
+    B = BTD(np.zeros((10, 20, 20), dtype=np.complex128), np.zeros((10, 20, 20), dtype=np.complex128),
             np.zeros((10, 20, 20), dtype=np.complex128))
-    
+
     rgf_leftToRight.f(A, B, A_diag.shape[1], A_diag.shape[0])
 
     assert np.allclose(B.diagonal, B_diag)
@@ -229,7 +227,7 @@ def test_read_structure_gpu():
         for i in dace.map[0:M]:
             for idx in dace.map[A.indptr[i]:A.indptr[i + 1]]:
                 B[i, A.indices[idx]] = A.data[idx]
-    
+
     rng = np.random.default_rng(42)
     A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     ref = A.toarray()
@@ -237,7 +235,7 @@ def test_read_structure_gpu():
     inpA = CSR.dtype._typeclass.as_ctypes()(indptr=A.indptr.__array_interface__['data'][0],
                                             indices=A.indices.__array_interface__['data'][0],
                                             data=A.data.__array_interface__['data'][0])
-    
+
     # TODO: The following doesn't work because we need to create a Structure data descriptor from the ctypes class.
     # csr_to_dense_python(inpA, B)
     naive = csr_to_dense_python.to_sdfg(simplify=False)

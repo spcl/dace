@@ -87,6 +87,7 @@ def test_reshape_np():
     """
     Dace program with numpy reshape, transformed for FPGA
     """
+
     @dace.program
     def reshp_np(A: dace.float32[3, 4], B: dace.float32[2, 6]):
         B[:] = np.reshape(A, [2, 6])

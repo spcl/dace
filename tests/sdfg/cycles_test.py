@@ -4,6 +4,7 @@ import pytest
 import dace
 from dace.sdfg.validation import InvalidSDFGError
 
+
 def test_cycles():
     with pytest.raises(ValueError, match="Found cycles.*"):
         sdfg = dace.SDFG("hello")

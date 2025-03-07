@@ -160,7 +160,8 @@ if __name__ == "__main__":
 
     comm.Barrier()
 
-    stmt = ("mpi_func(A=lA, B=lB, x=lx, alpha=alpha, beta=beta, y=ly, " "lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)")
+    stmt = ("mpi_func(A=lA, B=lB, x=lx, alpha=alpha, beta=beta, y=ly, "
+            "lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)")
     setup = "comm.Barrier()"
     repeat = 10
 

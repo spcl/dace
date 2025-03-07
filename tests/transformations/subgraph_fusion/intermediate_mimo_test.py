@@ -104,21 +104,21 @@ def test_single_data_multiple_intermediate_accesses():
     @dace.program
     def sdmi_accesses(ZSOLQA: dace.float64[1, 5, 5], ZEPSEC: dace.float64, ZQX: dace.float64[1, 137, 5],
                       LLINDEX3: dace.bool[1, 5, 5], ZRATIO: dace.float64[1, 5], ZSINKSUM: dace.float64[1, 5]):
-        
+
         for i in dace.map[0:5]:
             ZSINKSUM[0, i] = 0.0
             for j in dace.map[0:5]:
                 LLINDEX3[0, j, i] = False
-        
+
         for i in dace.map[0:5]:
             for k in range(5):
                 ZSINKSUM[0, i] = ZSINKSUM[0, i] - ZSOLQA[0, 0, k]
-        
+
         for i in dace.map[0:5]:
             t0 = max(ZEPSEC, ZQX[0, 0, i])
             t1 = max(t0, ZSINKSUM[0, i])
             ZRATIO[0, i] = t0 / t1
-    
+
     sdfg = sdmi_accesses.to_sdfg(simplify=True)
     assert len(sdfg.states()) == 1
 

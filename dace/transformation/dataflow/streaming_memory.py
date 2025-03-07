@@ -14,7 +14,7 @@ from dace.libraries.standard import Gearbox
 
 
 def get_post_state(sdfg: SDFG, state: SDFGState):
-    """ 
+    """
     Returns the post state (the state that copies the data a back from the FGPA device) if there is one.
     """
     for s in sdfg.all_sdfgs_recursive():
@@ -32,7 +32,7 @@ def is_int(i):
 
 def _collect_map_ranges(state: SDFGState,
                         memlet_path: List[gr.MultiConnectorEdge[mm.Memlet]]) -> List[Tuple[str, subsets.Range]]:
-    """ 
+    """
     Collects a list of parameters and ranges for every map (entry or exit)
     in the given memlet path.
     """
@@ -51,8 +51,8 @@ def _collect_map_ranges(state: SDFGState,
 
 
 def _canonicalize_memlet(memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.Range]]) -> Tuple[symbolic.SymbolicType]:
-    """ 
-    Turn a memlet subset expression (of a single element) into an expression 
+    """
+    Turn a memlet subset expression (of a single element) into an expression
     that does not depend on the map symbol names.
     """
     repldict = {symbolic.symbol(p): symbolic.symbol('__dace%d' % i) for i, (p, _) in enumerate(mapranges)}
@@ -62,15 +62,16 @@ def _canonicalize_memlet(memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.R
 
 def _do_memlets_correspond(memlet_a: mm.Memlet, memlet_b: mm.Memlet, mapranges_a: List[Tuple[str, subsets.Range]],
                            mapranges_b: List[Tuple[str, subsets.Range]]) -> bool:
-    """ 
+    """
     Returns True if the two memlets correspond to each other, disregarding
     symbols from equivalent maps.
     """
     for s1, s2 in zip(memlet_a.subset, memlet_b.subset):
         # Check for matching but disregard parameter names
-        s1b = s1[0].subs(
-            {symbolic.symbol(k1): symbolic.symbol(k2)
-             for (k1, _), (k2, _) in zip(mapranges_a, mapranges_b)})
+        s1b = s1[0].subs({
+            symbolic.symbol(k1): symbolic.symbol(k2)
+            for (k1, _), (k2, _) in zip(mapranges_a, mapranges_b)
+        })
         s2b = s2[0]
         # Since there is one element in both subsets, we can check only
         # the beginning
@@ -105,13 +106,13 @@ def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str, desc: data.Str
 
 @properties.make_properties
 class StreamingMemory(xf.SingleStateTransformation):
-    """ 
+    """
     Converts a read or a write to streaming memory access, where data is
     read/written to/from a stream in a separate connected component than the
     computation.
     If 'use_memory_buffering' is True, the transformation reads/writes data from memory
     using a wider data format (e.g. 512 bits), and then convert it
-    on the fly to the right data type used by the computation: 
+    on the fly to the right data type used by the computation:
     """
     access = xf.PatternNode(nodes.AccessNode)
     entry = xf.PatternNode(nodes.EntryNode)
@@ -586,7 +587,7 @@ class StreamingMemory(xf.SingleStateTransformation):
 
 @properties.make_properties
 class StreamingComposition(xf.SingleStateTransformation):
-    """ 
+    """
     Converts two connected computations (nodes, map scopes) into two separate
     processing elements, with a stream connecting the results. Only applies
     if the memory access patterns of the two computations match.

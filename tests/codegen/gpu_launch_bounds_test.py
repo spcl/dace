@@ -6,6 +6,7 @@ import pytest
 
 @pytest.mark.gpu
 def test_launch_bounds_default():
+
     @dace.program
     def prog(a: dace.float64[100, 20] @ dace.StorageType.GPU_Global):
         for i, j in dace.map[0:100, 0:20] @ dace.ScheduleType.GPU_Device:
@@ -17,6 +18,7 @@ def test_launch_bounds_default():
 
 @pytest.mark.gpu
 def test_launch_bounds_implicit():
+
     @dace.program
     def prog(a: dace.float64[100, 20] @ dace.StorageType.GPU_Global):
         for i, j in dace.map[0:50, 0:10] @ dace.ScheduleType.GPU_Device:

@@ -465,8 +465,16 @@ def test_direct_read_structure_loops():
     state.add_edge(data, None, t, '__val', dace.Memlet(data='A.data', subset='idx'))
     state.add_edge(t, '__out', B, None, dace.Memlet(data='B', subset='0:M, 0:N', volume=1))
 
-    idx_before, idx_guard, idx_after = sdfg.add_loop(None, state, None, 'idx', 'A.indptr[i]', 'idx < A.indptr[i+1]', 'idx + 1')
-    i_before, i_guard, i_after = sdfg.add_loop(None, idx_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=idx_after)
+    idx_before, idx_guard, idx_after = sdfg.add_loop(None, state, None, 'idx', 'A.indptr[i]', 'idx < A.indptr[i+1]',
+                                                     'idx + 1')
+    i_before, i_guard, i_after = sdfg.add_loop(None,
+                                               idx_before,
+                                               None,
+                                               'i',
+                                               '0',
+                                               'i < M',
+                                               'i + 1',
+                                               loop_end_state=idx_after)
 
     func = sdfg.compile()
 
@@ -593,8 +601,8 @@ def test_read_struct_member_interstate_edge():
 
     sdfg.validate()
 
-    arr = np.zeros((20,), dtype=np.int32)
-    arr_validate = np.zeros((20,), dtype=np.int32)
+    arr = np.zeros((20, ), dtype=np.int32)
+    arr_validate = np.zeros((20, ), dtype=np.int32)
     for i in range(11):
         arr_validate[i] = i
 

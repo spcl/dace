@@ -45,6 +45,7 @@ def covariance(data, cov, mean):
 
     @dace.mapscope
     def comp_cov_row(i: _[0:M]):
+
         @dace.mapscope
         def comp_cov_col(j: _[i:M]):
             with dace.tasklet:

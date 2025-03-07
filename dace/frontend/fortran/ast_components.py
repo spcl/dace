@@ -104,6 +104,7 @@ class InternalFortranAst:
     for each entry in the dictionary, the key is the name of the class in the fparser AST and the value
     is the name of the function that will be used to translate the fparser AST to our AST
     """
+
     def __init__(self, ast: f03.Program, tables: symbol_table.SymbolTables):
         """
         Initialization of the AST converter
@@ -571,7 +572,7 @@ class InternalFortranAst:
                 attr_size = []
                 attr_offset = []
                 sizes = get_child(dimension_spec[0], ["Explicit_Shape_Spec_List"])
-                
+
                 for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                     self.parse_shape_specification(shape_spec, attr_size, attr_offset)
 
@@ -609,21 +610,21 @@ class InternalFortranAst:
                 if attr_size is None:
                     vardecls.append(
                         ast_internal_classes.Var_Decl_Node(name=actual_name.name,
-                                                        type=testtype,
-                                                        alloc=alloc,
-                                                        sizes=size,
-                                                        offsets=offset,
-                                                        kind=kind,
-                                                        line_number=node.item.span))
+                                                           type=testtype,
+                                                           alloc=alloc,
+                                                           sizes=size,
+                                                           offsets=offset,
+                                                           kind=kind,
+                                                           line_number=node.item.span))
                 else:
                     vardecls.append(
                         ast_internal_classes.Var_Decl_Node(name=actual_name.name,
-                                                        type=testtype,
-                                                        alloc=alloc,
-                                                        sizes=attr_size,
-                                                        offsets=attr_offset,
-                                                        kind=kind,
-                                                        line_number=node.item.span))
+                                                           type=testtype,
+                                                           alloc=alloc,
+                                                           sizes=attr_size,
+                                                           offsets=attr_offset,
+                                                           kind=kind,
+                                                           line_number=node.item.span))
             else:
                 if size is None and attr_size is None:
                     self.symbols[actual_name.name] = init

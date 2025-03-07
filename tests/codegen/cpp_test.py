@@ -12,8 +12,11 @@ from dace.subsets import Range
 from dace.transformation.dataflow import RedundantArray
 
 
-def _add_map_with_connectors(st: SDFGState, name: str, ndrange: Dict[str, str],
-                             en_conn_bases: Collection[str] = None, ex_conn_bases: Collection[str] = None):
+def _add_map_with_connectors(st: SDFGState,
+                             name: str,
+                             ndrange: Dict[str, str],
+                             en_conn_bases: Collection[str] = None,
+                             ex_conn_bases: Collection[str] = None):
     en, ex = st.add_map(name, ndrange)
     if en_conn_bases:
         for c in en_conn_bases:
@@ -166,7 +169,7 @@ def test_reshape_strides_from_strided_and_offset_range():
 def redundant_array_crashes_codegen_test_original_graph():
     g = SDFG('prog')
     g.add_array('A', (5, 5), dace.float32)
-    g.add_array('b', (1,), dace.float32, transient=True)
+    g.add_array('b', (1, ), dace.float32, transient=True)
     g.add_array('c', (5, 5), dace.float32, transient=True)
 
     st0 = g.add_state('st0', is_start_block=True)

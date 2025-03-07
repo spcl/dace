@@ -19,9 +19,9 @@ def _dataview(data: Data, memlet: Memlet) -> Data:
 
 
 def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[Dict[str, Data], Dict[str, Data]]:
-    """ Returns two dictionaries that map from input/output connectors to data 
-        descriptors. 
-        
+    """ Returns two dictionaries that map from input/output connectors to data
+        descriptors.
+
         :return: Tuple of (input memlet mapping, output memlet mapping).
     """
     inputs: Dict[str, Data] = {}

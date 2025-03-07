@@ -344,7 +344,7 @@ def test_gpu_callback():
 
 
 def test_bad_closure():
-    """ 
+    """
     Testing functions that should not be in the closure (must be implemented as
     callbacks).
     """

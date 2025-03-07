@@ -6,6 +6,7 @@ import numpy as np
 
 @dace.program
 def myprint(input, N, M):
+
     @dace.tasklet
     def myprint():
         a << input

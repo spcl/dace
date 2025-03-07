@@ -101,14 +101,10 @@ def test_scalar_write_shadow_split(with_raising):
 
     assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_2, loop1_read_tmp)}
     assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_2, loop2_read_tmp)}
-    assert results[0]['A'][None] == {
-        (loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read), (loop_2_2, loop2_read_a),
-        (loop_2_2, loop2_write_a), (loop_1_2, loop1_write_a)
-    }
-    assert results[0]['B'][None] == {
-        (loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read), (loop_2_2, loop2_read_b),
-        (loop_2_2, loop2_write_b), (loop_1_2, loop1_write_b)
-    }
+    assert results[0]['A'][None] == {(loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read),
+                                     (loop_2_2, loop2_read_a), (loop_2_2, loop2_write_a), (loop_1_2, loop1_write_a)}
+    assert results[0]['B'][None] == {(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
+                                     (loop_2_2, loop2_read_b), (loop_2_2, loop2_write_b), (loop_1_2, loop1_write_b)}
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
@@ -289,14 +285,10 @@ def test_scalar_write_shadow_interstate_self(with_raising):
 
     assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_2, loop1_read_tmp), (loop_1_1, tmp1_edge)}
     assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_2, loop2_read_tmp), (loop_2_1, tmp2_edge)}
-    assert results[0]['A'][None] == {
-        (loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read), (loop_2_2, loop2_read_a),
-        (loop_1_2, loop1_write_a), (loop_2_2, loop2_write_a)
-    }
-    assert results[0]['B'][None] == {
-        (loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read), (loop_2_2, loop2_read_b),
-        (loop_1_2, loop1_write_b), (loop_2_2, loop2_write_b)
-    }
+    assert results[0]['A'][None] == {(loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read),
+                                     (loop_2_2, loop2_read_a), (loop_1_2, loop1_write_a), (loop_2_2, loop2_write_a)}
+    assert results[0]['B'][None] == {(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
+                                     (loop_2_2, loop2_read_b), (loop_1_2, loop1_write_b), (loop_2_2, loop2_write_b)}
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
@@ -397,14 +389,10 @@ def test_scalar_write_shadow_interstate_pred(with_raising):
 
     assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_3, loop1_read_tmp), (loop_1_2, tmp1_edge)}
     assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_3, loop2_read_tmp), (loop_2_2, tmp2_edge)}
-    assert results[0]['A'][None] == {
-        (loop_1_1, a1_read), (loop_1_3, loop1_read_a), (loop_2_1, a2_read), (loop_2_3, loop2_read_a),
-        (loop_1_3, loop1_write_a), (loop_2_3, loop2_write_a)
-    }
-    assert results[0]['B'][None] == {
-        (loop_1_1, b1_read), (loop_1_3, loop1_read_b), (loop_2_1, b2_read), (loop_2_3, loop2_read_b),
-        (loop_1_3, loop1_write_b), (loop_2_3, loop2_write_b)
-    }
+    assert results[0]['A'][None] == {(loop_1_1, a1_read), (loop_1_3, loop1_read_a), (loop_2_1, a2_read),
+                                     (loop_2_3, loop2_read_a), (loop_1_3, loop1_write_a), (loop_2_3, loop2_write_a)}
+    assert results[0]['B'][None] == {(loop_1_1, b1_read), (loop_1_3, loop1_read_b), (loop_2_1, b2_read),
+                                     (loop_2_3, loop2_read_b), (loop_1_3, loop1_write_b), (loop_2_3, loop2_write_b)}
 
 
 @pytest.mark.parametrize('with_raising', (False, True))

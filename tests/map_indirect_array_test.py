@@ -7,6 +7,7 @@ N = dace.symbol('N')
 
 @dace.program
 def plus_1(X_in: dace.float32[N], num: dace.int32[1], X_out: dace.float32[N]):
+
     @dace.map
     def p1(i: _[0:num[0]]):
         x_in << X_in[i]

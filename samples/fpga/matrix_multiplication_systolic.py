@@ -269,8 +269,7 @@ def run_matmul_systolic(m, n, k, p, specialize):
         sdfg = make_sdfg(True, p, n, k, m)
         sdfg.specialize(dict(P=p, M=m, N=n, K=k))
 
-    print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(m, n, k, p,
-                                                                              "" if specialize else "not "))
+    print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(m, n, k, p, "" if specialize else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([n, k], dtype=dace.float32.type)

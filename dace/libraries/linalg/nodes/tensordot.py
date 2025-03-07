@@ -39,8 +39,10 @@ class ExpandPure(ExpandTransformation):
 
         init_state = sdfg.add_state(f"{node.label}_init", is_start_state=True)
         init_state.add_mapped_tasklet(
-            f"{node.label}_init_tasklet", {f"__i{i}": f"0:{symstr(s)}"
-                                           for i, s in enumerate(out_tensor.shape)}, {},
+            f"{node.label}_init_tasklet", {
+                f"__i{i}": f"0:{symstr(s)}"
+                for i, s in enumerate(out_tensor.shape)
+            }, {},
             '__out = 0', {
                 '__out':
                 dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_tensor.shape))])}]")

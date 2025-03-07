@@ -19,11 +19,11 @@ exclude_lines =
     if False:
     if __name__ == .__main__.:
     pass
-    
+
 omit =
     # Omit files that cannot be tested
     dace/jupyter.py
-    
+
     # Omit deprecated files
     dace/frontend/tensorflow/__init__.py
     dace/frontend/tensorflow/tensorflow.py

@@ -42,10 +42,10 @@ _TC_STORAGE_TYPES = ['TensorCore_A', 'TensorCore_B', 'TensorCore_Accumulator']
 
 
 class TensorCoreCodegen(TargetCodeGenerator):
-    """ 
-    The code generator target for Tensor Core code. This class contains 
+    """
+    The code generator target for Tensor Core code. This class contains
     dispatchers for memlet paths from/to the tensor core storage locations.
-    
+
     To do so, the code generator must register itself with the SDFG code
     generator dispatcher (in `__init__`) for:
         1. Every allocation/deallocation of storage locations.
@@ -55,6 +55,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
     `{allocate, deallocate, initialize}_array` methods, whereas the copy
     dispatcher requires the `copy_memory` and `define_out_memlet` methods.
     """
+
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
@@ -95,7 +96,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
             ctype = 'wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, half, wmma::{maj}_major>'.format(
                 mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj)
             declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
-            
+
         # Add the ctype to defined_vars so that the codegen can properly pass
         # fragments to functions as an object reference.
         self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
@@ -176,8 +177,8 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
 
 def _include_mma(sdfg: dace.SDFG):
-    """ 
-    Add the Tensor Core includes into global code, if not already included. 
+    """
+    Add the Tensor Core includes into global code, if not already included.
     """
 
     global_code = '''
@@ -203,6 +204,7 @@ def frag_fill(frag, fill):
         """
         wmma::fill_fragment(out, val);
         """
+
 
 def wmma(a_frag, b_frag, c_frag):
     # We do the same here as we did with frag_fill. Since c_frag is used

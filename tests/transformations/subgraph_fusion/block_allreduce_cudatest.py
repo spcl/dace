@@ -9,6 +9,7 @@ from dace.libraries.standard.nodes.reduce import Reduce
 N = dace.symbol('N')
 M = dace.symbol('M')
 
+
 @dace.program
 def program(A: dace.float32[M, N]):
     return dace.reduce(lambda a, b: max(a, b), A, axis=1, identity=0)

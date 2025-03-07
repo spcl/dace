@@ -7,6 +7,7 @@ from dace.transformation.interstate import InlineSDFG
 
 
 def test_inconn_self_copy():
+
     @dace.program
     def loop_body(A: dace.int32[5, 5], B: dace.int32[5]):
         A[1] = A[0]
@@ -34,6 +35,7 @@ def test_inconn_self_copy():
 
 
 def test_outconn_self_copy():
+
     @dace.program
     def loop_body(A: dace.int32[5, 5], B: dace.int32[5, 5]):
         A[1] = A[0]
@@ -64,6 +66,7 @@ def test_outconn_self_copy():
 
 
 def test_in_out_inconn_copy():
+
     @dace.program
     def loop_body(A: dace.int32[5, 5], B: dace.int32[5, 5]):
         B[1] = A[0]
@@ -94,6 +97,7 @@ def test_in_out_inconn_copy():
 
 
 def test_intermediate_copies():
+
     @dace.program
     def loop_body(A: dace.int32[5, 5], B: dace.int32[5, 5]):
         B[1] = A[0]

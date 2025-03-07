@@ -54,7 +54,7 @@ def _replsym(symlist, symrepl):
 def replace_dict(subgraph: 'StateSubgraphView',
                  repl: Dict[str, str],
                  symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
-    """ 
+    """
     Finds and replaces all occurrences of a set of symbols/arrays in the given subgraph.
 
     :param subgraph: The given graph or subgraph to replace in.
@@ -86,7 +86,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
 def replace(subgraph: 'StateSubgraphView', name: str, new_name: str):
     """
     Finds and replaces all occurrences of a symbol or array in the given subgraph.
-    
+
     :param subgraph: The given graph or subgraph to replace in.
     :param name: Name to find.
     :param new_name: Name to replace.
@@ -120,7 +120,7 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
 
         else:
             warnings.warn('Replacement of %s with %s was not made '
-                            'for string tasklet code of language %s' % (name, new_name, lang))
+                          'for string tasklet code of language %s' % (name, new_name, lang))
 
     elif codeblock.code is not None:
         afr = ASTFindReplace(repl)
@@ -169,8 +169,8 @@ def replace_properties_dict(node: Any,
                     pass
 
 
-def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType],
-                       name: str, new_name: str):
+def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType], name: str,
+                       new_name: str):
     replace_properties_dict(node, {name: new_name}, symrepl)
 
 

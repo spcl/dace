@@ -46,6 +46,7 @@ def test():
 
 
 def test_bad_cast_csdfg():
+
     @dp.program
     def tester(a: int):
         return a + 1

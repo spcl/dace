@@ -37,9 +37,8 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
             return False
         if not any(r[0] == r[1] for r in map_entry.map.range):
             return False
-        if (map_entry.map.get_param_num()) == 1 and (
-            any(not e.dst_conn.startswith("IN_") for e in graph.in_edges(map_entry) if not e.data.is_empty())
-        ):
+        if (map_entry.map.get_param_num()) == 1 and (any(not e.dst_conn.startswith("IN_")
+                                                         for e in graph.in_edges(map_entry) if not e.data.is_empty())):
             # There is only one map parameter and there are dynamic map ranges, this can not be resolved.
             return False
         return True
@@ -100,7 +99,7 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
             if len(path) > index + 1:
                 graph.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
                 if write_only_map:
-                    outer_exit = path[index+1].dst
+                    outer_exit = path[index + 1].dst
                     outer_entry = graph.entry_node(outer_exit)
                     if outer_entry is not None:
                         graph.add_edge(outer_entry, None, edge.src, None, Memlet())

@@ -1,6 +1,7 @@
 import dace
 import copy
 
+
 def test_argument_signature_test():
     """Tests if the argument signature is computed correctly.
 
@@ -26,29 +27,30 @@ def test_argument_signature_test():
         #  However, the stride is used if we want to index array `A`.
         second_stride_A = dace.symbol(sdfg.add_symbol("second_stride_A", dace.int32))
         sdfg.add_array(
-                name="A",
-                dtype=dace.float64,
-                shape=(N,),
-                strides=(second_stride_A,),
-                transient=False,
-                
+            name="A",
+            dtype=dace.float64,
+            shape=(N, ),
+            strides=(second_stride_A, ),
+            transient=False,
         )
 
         # Also array `D` uses a stride that is not used by any other array.
         second_stride_D = dace.symbol(sdfg.add_symbol("second_stride_D", dace.int32))
         sdfg.add_array(
-                name="D",
-                dtype=dace.float64,
-                shape=(N, N),
-                strides=(second_stride_D, 1),
-                transient=False,
-                
+            name="D",
+            dtype=dace.float64,
+            shape=(N, N),
+            strides=(second_stride_D, 1),
+            transient=False,
         )
 
         # Simplest way to generate a mapped Tasklet, we will later modify it.
         state.add_mapped_tasklet(
             "computation",
-            map_ranges={"__i0": "0:N", "__i1": "0:N"},
+            map_ranges={
+                "__i0": "0:N",
+                "__i1": "0:N"
+            },
             inputs={
                 "__in0": dace.Memlet("A[__i1]"),
                 "__in1": dace.Memlet("B[__i0, __i1]"),
@@ -167,23 +169,24 @@ def test_argument_signature_test():
             break
 
     # Now get the argument list of the map.
-    res_arglist = { k:v for k, v in state.scope_subgraph(map_entry).arglist().items()}
+    res_arglist = {k: v for k, v in state.scope_subgraph(map_entry).arglist().items()}
 
     ref_arglist = {
-            'A': dace.data.Array,
-            'B': dace.data.Array,
-            'C': dace.data.Array,
-            'D': dace.data.Array,
-            'N': dace.data.Scalar,
-            'second_stride_A': dace.data.Scalar,
-            'second_stride_D': dace.data.Scalar,
+        'A': dace.data.Array,
+        'B': dace.data.Array,
+        'C': dace.data.Array,
+        'D': dace.data.Array,
+        'N': dace.data.Scalar,
+        'second_stride_A': dace.data.Scalar,
+        'second_stride_D': dace.data.Scalar,
     }
 
     assert len(ref_arglist) == len(res_arglist), f"Expected {len(ref_arglist)} but got {len(res_arglist)}"
     for aname in ref_arglist.keys():
         atype_ref = ref_arglist[aname]
         atype_res = res_arglist[aname]
-        assert isinstance(atype_res, atype_ref), f"Expected '{aname}' to have type {atype_ref}, but it had {type(atype_res)}."
+        assert isinstance(atype_res,
+                          atype_ref), f"Expected '{aname}' to have type {atype_ref}, but it had {type(atype_res)}."
 
     # If we have cupy we will also compile it.
     try:
@@ -192,6 +195,7 @@ def test_argument_signature_test():
         return
 
     csdfg = sdfg.compile()
+
 
 if __name__ == "__main__":
     test_argument_signature_test()

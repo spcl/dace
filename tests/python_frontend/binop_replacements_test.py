@@ -6,6 +6,7 @@ import pytest
 N = dace.symbol('N')
 M = dace.symbol('M')
 
+
 @dace.program
 def array_array(A: dace.int32[N], B: dace.int32[N]):
     return A + B

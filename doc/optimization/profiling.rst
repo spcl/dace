@@ -33,7 +33,7 @@ with 10 steps of warmup (where execution time is ignored):
       return A + 1
 
   A = np.random.rand(10000)
-  
+
   with dace.profile(repetitions=100, warmup=10) as prof:  # Enable profiling
     my_function(A)
 
@@ -59,11 +59,11 @@ directory.
 The instrumentation API can be used by setting ``element.instrument`` to the desired instrumentation type (see :class:`~dace.dtypes.InstrumentationType`
 for a list of the default available types). ``element`` can be almost any SDFG element, from the SDFG itself, through a
 state, to a variety of nodes, such as a Map, a Tasklet, or a NestedSDFG. The generated report can then be read programmatically
-as a :class:`~dace.codegen.instrumentation.report.InstrumentationReport` object. The SDFG class provides the methods 
-:func:`~dace.sdfg.sdfg.SDFG.get_latest_report` and :func:`~dace.sdfg.sdfg.SDFG.get_instrumentation_reports` to read the last or 
+as a :class:`~dace.codegen.instrumentation.report.InstrumentationReport` object. The SDFG class provides the methods
+:func:`~dace.sdfg.sdfg.SDFG.get_latest_report` and :func:`~dace.sdfg.sdfg.SDFG.get_instrumentation_reports` to read the last or
 all generated reports, respectively. See :class:`~dace.sdfg.sdfg.SDFG` for more methods related to instrumentation reports.
 
-A simple example use of SDFG instrumentation would be to mimic the simple profiling mode from above with a 
+A simple example use of SDFG instrumentation would be to mimic the simple profiling mode from above with a
 :class:`~dace.dtypes.InstrumentationType.Timer` instrumentation applied on the whole SDFG:
 
 .. code-block:: python
@@ -103,16 +103,16 @@ code will instrument the individual Map scopes in the above application:
   # SDFG Hash: 0f02b642249b861dc94b7cbc729190d4b27cab79607b8f28c7de3946e62d5977
   # ---------------------------------------------------------------------------
   # Element                          Runtime (ms)
-  #               Min            Mean           Median         Max            
+  #               Min            Mean           Median         Max
   # ---------------------------------------------------------------------------
-  # SDFG (0)                                                                   
-  # |-State (0)                                                                
-  # | |-Node (0)                                                               
-  # | | |Map _numpy_sin__map:                                                  
-  # | | |          11.654         11.654         11.654         11.654         
-  # | |-Node (5)                                                               
-  # | | |Map _Mult__map:                                                       
-  # | | |          1.524          1.524          1.524          1.524          
+  # SDFG (0)
+  # |-State (0)
+  # | |-Node (0)
+  # | | |Map _numpy_sin__map:
+  # | | |          11.654         11.654         11.654         11.654
+  # | |-Node (5)
+  # | | |Map _Mult__map:
+  # | | |          1.524          1.524          1.524          1.524
   # ---------------------------------------------------------------------------
 
 
@@ -126,7 +126,7 @@ a wide variety of performance counters on CPUs and GPUs. An example use can be f
 Instrumentation file format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Instrumentation uses a JSON file in the `Chrome Trace Event <https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview>`_ 
+Instrumentation uses a JSON file in the `Chrome Trace Event <https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview>`_
 format to store the collected metrics. You can view it in several ways:
 
   * In the Visual Studio Code extension, laid on top of a program (see :ref:`vscode_trace` for an example)
@@ -139,10 +139,10 @@ format to store the collected metrics. You can view it in several ways:
 Data Instrumentation
 ~~~~~~~~~~~~~~~~~~~~
 
-Similarly to timing events, data containers and their contents can be serialized for performance and validation 
+Similarly to timing events, data containers and their contents can be serialized for performance and validation
 reproducibility purposes. This is done by setting the ``instrument`` property of an :class:`~dace.sdfg.nodes.AccessNode`
 to a :class:`~dace.dtypes.DataInstrumentationType`, such as :class:`~dace.dtypes.DataInstrumentationType.Save`.
-The data will be serialized (keeping each version if the access node is encountered multiple times) in the 
+The data will be serialized (keeping each version if the access node is encountered multiple times) in the
 ``.dacecache/<program name>/data`` directory. The data can then be reloaded in subsequent executions by setting the
 ``instrument`` property to :class:`~dace.dtypes.DataInstrumentationType.Restore`.
 
@@ -172,16 +172,15 @@ Example of creating and reading such a report is as follows:
         return versioned
 
     sdfg = data_instrumentation.to_sdfg()
-    
+
     # ... Set instrument to Save on the AccessNodes and run the SDFG ...
 
     dreport = sdfg.get_instrumented_data()  # Returns an InstrumentedDataReport
     print(dreport.keys())                   # Will print "'A', 'versioned'"
     array = dreport['A']  # return value is a single array if there is only one version
     varrays = dreport['versioned']  # otherwise, return value is a sorted list of versions
-    
+
     # after loading, arrays can be used normally with numpy
     assert np.allclose(array, real_A)
     for arr in varrays:
         print(arr[5, :])
-

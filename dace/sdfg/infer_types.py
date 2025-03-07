@@ -51,9 +51,9 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
 
 
 def infer_connector_types(sdfg: SDFG):
-    """ 
+    """
     Infers connector types throughout an SDFG and its nested SDFGs in-place.
-    
+
     :param sdfg: The SDFG to infer.
     """
     # Loop over states, and in a topological sort over each state's nodes
@@ -112,7 +112,8 @@ def infer_connector_types(sdfg: SDFG):
             for e in state.out_edges(node):
                 cname = e.src_conn
                 if cname and node.out_connectors[cname] is None:
-                    raise TypeError('Ambiguous or uninferable type in' ' connector "%s" of node "%s"' % (cname, node))
+                    raise TypeError('Ambiguous or uninferable type in'
+                                    ' connector "%s" of node "%s"' % (cname, node))
 
 
 #############################################################################
@@ -124,13 +125,13 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
                                            use_parent_schedule: bool = False,
                                            state: SDFGState = None,
                                            child_nodes: Dict[nodes.Node, List[nodes.Node]] = None):
-    """ 
+    """
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces ``ScheduleType.Default`` and ``StorageType.Default``
-    with the corresponding types according to the parent scope's schedule. 
-    
+    with the corresponding types according to the parent scope's schedule.
+
     The defaults for storage types are determined by the
-    ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device 
+    ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device
     schedule, by default, will allocate containers on the shared memory).
     Following storage type inference for a scope, nested scopes (e.g., map entry, nested SDFG)
     are evaluated using the ``dtypes.STORAGEDEFAULT_SCHEDULE`` dictionary (for example, a

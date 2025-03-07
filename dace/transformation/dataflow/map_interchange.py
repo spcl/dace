@@ -12,7 +12,7 @@ from dace.properties import make_properties
 
 class MapInterchange(transformation.SingleStateTransformation):
     """ Implements the map-interchange transformation.
-    
+
         Map-interchange takes two nested maps and interchanges their position.
     """
 

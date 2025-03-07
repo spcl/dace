@@ -57,6 +57,7 @@ def make_sdfg():
 
 @dace.program
 def type_inference(x: dace.float32[N], y: dace.float32[N]):
+
     @dace.map
     def comp(i: _[0:N]):
         in_x << x[i]

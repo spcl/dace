@@ -10,9 +10,9 @@ def test_tasklet():
 
     @dace.program
     def test():
-        a = np.zeros((10,))
+        a = np.zeros((10, ))
         for i in dace.map[1:9]:
-            a[i-1] += 1
+            a[i - 1] += 1
         return a
 
     sdfg = test.to_sdfg(simplify=False)
@@ -20,16 +20,16 @@ def test_tasklet():
 
     val = sdfg()
     ref = test.f()
-    assert(np.allclose(val, ref))
+    assert (np.allclose(val, ref))
 
 
 def test_mapped_tasklet():
 
     @dace.program
     def test():
-        a = np.zeros((10,))
+        a = np.zeros((10, ))
         for i in dace.map[1:9]:
-            a[i-1] += 1
+            a[i - 1] += 1
         return a
 
     sdfg = test.to_sdfg(simplify=True)
@@ -37,7 +37,7 @@ def test_mapped_tasklet():
 
     val = sdfg()
     ref = test.f()
-    assert(np.allclose(val, ref))
+    assert (np.allclose(val, ref))
 
 
 if __name__ == '__main__':

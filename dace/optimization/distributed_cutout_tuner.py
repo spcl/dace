@@ -92,9 +92,7 @@ class DistributedSpaceTuner:
 
         for cutout_hash in new_cutouts:
             cutout = cutouts[cutout_hash]
-            evaluate_kwargs = self._tuner.pre_evaluate(cutout=cutout,
-                                                       measurements=measurements,
-                                                       **kwargs)
+            evaluate_kwargs = self._tuner.pre_evaluate(cutout=cutout, measurements=measurements, **kwargs)
 
             configs = list(self._tuner.space(**(evaluate_kwargs["space_kwargs"])))
 

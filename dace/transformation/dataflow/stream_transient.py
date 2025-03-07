@@ -185,7 +185,8 @@ class AccumulateTransient(transformation.SingleStateTransformation):
                                                                node_b=outer_map_exit)
 
         if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize ' 'newly-created transient!')
+            warnings.warn('AccumulateTransient did not properly initialize '
+                          'newly-created transient!')
             return
 
         map_entry = graph.entry_node(map_exit)
@@ -202,17 +203,19 @@ class AccumulateTransient(transformation.SingleStateTransformation):
 
         temp_array: Array = sdfg.arrays[data_node.data]
 
-        init_state.add_mapped_tasklet(
-            name='acctrans_init',
-            map_ranges={'_o%d' % i: '0:%s' % symstr(d)
-                        for i, d in enumerate(temp_array.shape)},
-            inputs={},
-            code='out = %s' % self.identity,
-            outputs={
-                'out':
-                dace.Memlet.simple(data=data_node.data,
-                                   subset_str=','.join(['_o%d' % i for i, _ in enumerate(temp_array.shape)]))
-            },
-            external_edges=True)
+        init_state.add_mapped_tasklet(name='acctrans_init',
+                                      map_ranges={
+                                          '_o%d' % i: '0:%s' % symstr(d)
+                                          for i, d in enumerate(temp_array.shape)
+                                      },
+                                      inputs={},
+                                      code='out = %s' % self.identity,
+                                      outputs={
+                                          'out':
+                                          dace.Memlet.simple(data=data_node.data,
+                                                             subset_str=','.join(
+                                                                 ['_o%d' % i for i, _ in enumerate(temp_array.shape)]))
+                                      },
+                                      external_edges=True)
 
         # TODO: use trivial map elimintation here when it will be merged to remove map if it has trivial ranges

@@ -963,7 +963,7 @@ def _block_scatter(pv: ProgramVisitor,
         :param in_buffer: Name of the (global) Array descriptor.
         :param out_buffer: Name of the (local) Array descriptor.
         :param scatter_grid: Name of the sub-grid used for scattering the Array (replication group leaders).
-        :param bcast_grid: Name of the sub-grid used for broadcasting the Array (replication groups). 
+        :param bcast_grid: Name of the sub-grid used for broadcasting the Array (replication groups).
         :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
         :return: Name of the new sub-array descriptor.
     """
@@ -1015,7 +1015,7 @@ def _block_gather(pv: ProgramVisitor,
         :param in_buffer: Name of the (local) Array descriptor.
         :param out_buffer: Name of the (global) Array descriptor.
         :param gather_grid: Name of the sub-grid used for gathering the Array (reduction group leaders).
-        :param reduce_grid: Name of the sub-grid used for broadcasting the Array (reduction groups). 
+        :param reduce_grid: Name of the sub-grid used for broadcasting the Array (reduction groups).
         :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
         :return: Name of the new sub-array descriptor.
     """
@@ -1056,7 +1056,7 @@ def _block_gather(pv: ProgramVisitor,
 def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
                   out_subarray: str):
     """ Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
-    
+
         :param in_buffer: Name of the (local) input Array descriptor.
         :param in_subarray: Input sub-array descriptor.
         :param out_buffer: Name of the (local) output Array descriptor.

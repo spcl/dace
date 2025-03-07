@@ -8,7 +8,7 @@ tool to optimize applications in DaCe. You can go from naive code to state-of-th
 
 All transformations extend the :class:`~dace.transformation.transformation.TransformationBase` class. There are three built-in types of transformations in DaCe:
 
-  * **Pattern-matching Transformations** (extending :class:`~dace.transformation.transformation.PatternTransformation`): Transformations that require a certain 
+  * **Pattern-matching Transformations** (extending :class:`~dace.transformation.transformation.PatternTransformation`): Transformations that require a certain
     subgraph structure to match. Within this abstract class, there are two sub-classes:
 
       * :class:`~dace.transformation.transformation.SingleStateTransformation`: Patterns are limited to a single SDFG state.
@@ -16,7 +16,7 @@ All transformations extend the :class:`~dace.transformation.transformation.Trans
 
     A pattern-matching must extend at least one of those two classes.
   * **Subgraph Transformations** (extending :class:`~dace.transformation.transformation.SubgraphTransformation`): Transformations that can operate on arbitrary
-    subgraphs. 
+    subgraphs.
   * Another form of (implicit) transformation is a Library node expansion (extending :class:`~dace.transformation.transformation.ExpandTransformation`). It is
     a class used for tracking when library nodes are expanded, and creating a library node implementation involves
     extending this class.
@@ -32,8 +32,8 @@ Pattern-Matching Transformations
 
 A pattern-matching transformation works on a specific subgraph pattern, and, using the API, can be used to find all
 instances of that pattern and apply it anywhere.
-Authoring such a transformation requires extending one of the two subclasses mentioned above 
-(:class:`~dace.transformation.transformation.SingleStateTransformation` or :class:`~dace.transformation.transformation.MultiStateTransformation`), add static :class:`~dace.transformation.transformation.PatternNode` fields to the class to 
+Authoring such a transformation requires extending one of the two subclasses mentioned above
+(:class:`~dace.transformation.transformation.SingleStateTransformation` or :class:`~dace.transformation.transformation.MultiStateTransformation`), add static :class:`~dace.transformation.transformation.PatternNode` fields to the class to
 represent the pattern, and implement at least three methods:
 
   * ``expressions``: A method that returns a list of graph patterns that match this transformation.
@@ -62,7 +62,7 @@ label to match the name of that access node:
             # The pattern to match is ``access -> map_node``. Since this is a
             # class method, accessing ``cls.access`` gets the pattern node.
             return [node_path_graph(cls.access, cls.map_node)]
-        
+
         # Because this is a Single-State Transformation, the first argument here
         # is ``state``
         def can_be_applied(self, state: SDFGState, expr_index: int, sdfg: SDFG,
@@ -71,7 +71,7 @@ label to match the name of that access node:
             # pattern match
             if self.access.data == 'mydata':
                 return True
-            
+
             # We only match patterns in which the access node is accessing 'mydata'
             return False
 
@@ -123,8 +123,3 @@ pattern-matching transformations, but without the pattern. A simple example with
 
             if self.simplify:
                 sdfg.simplify()
-
-
-
-
-

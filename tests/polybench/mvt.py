@@ -36,6 +36,7 @@ def init_array(x1, x2, y_1, y_2, A, n):
 
 @dace.program(datatype[N], datatype[N], datatype[N], datatype[N], datatype[N, N])
 def mvt(x1, x2, y_1, y_2, A):
+
     @dace.map
     def compute(i: _[0:N], j: _[0:N]):
         in_A1 << A[i, j]

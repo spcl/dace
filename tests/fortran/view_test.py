@@ -27,7 +27,7 @@ def test_fortran_frontend_view_test():
                     PROGRAM """ + test_name + """_program
 implicit none
 double precision a(10,11,12)
-double precision res(1,1,2) 
+double precision res(1,1,2)
 
 CALL """ + test_name + """_function(a,res)
 
@@ -36,7 +36,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,res)
 
 double precision aa(10,11,12)
-double precision res(1,1,2) 
+double precision res(1,1,2)
 
 call viewlens(aa(:,:,1),res)
 
@@ -46,7 +46,7 @@ SUBROUTINE viewlens(aa,res)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11,23) 
+double precision  :: aa(10,11,23)
 double precision :: res(1,1,2)
 
 INTEGER ::  JK, JL
@@ -105,7 +105,7 @@ SUBROUTINE viewlens(aa,bb,cc)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11),bb(10,11),cc(10,11) 
+double precision  :: aa(10,11),bb(10,11),cc(10,11)
 
 INTEGER ::  JK, JL
 
@@ -158,7 +158,7 @@ SUBROUTINE viewlens(aa,bb,cc)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11),bb(10,11),cc(10,11) 
+double precision  :: aa(10,11),bb(10,11),cc(10,11)
 
 INTEGER ::  JK, JL
 

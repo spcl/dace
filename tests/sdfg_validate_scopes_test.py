@@ -5,6 +5,7 @@ import dace
 
 # Try to detect invalid scopes in SDFG
 class ScopeValidationTests(unittest.TestCase):
+
     def test_connector_mismatch(self):
         try:
             sdfg = dace.SDFG('a')

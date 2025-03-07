@@ -77,7 +77,7 @@ class ExpandRedistribute(ExpandTransformation):
             }}
             // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
             // fflush(stdout);
-            
+
         """
 
         tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)

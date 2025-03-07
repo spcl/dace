@@ -7,7 +7,6 @@ import sys, os
 import numpy as np
 import pytest
 
-
 from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
 from fparser.two.symbol_table import SymbolTable
@@ -20,7 +19,7 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
 def test_fortran_frontend_simplify():
-    """ 
+    """
     Test that the DaCe simplify works with the input SDFG provided by the Fortran frontend.
     """
     test_string = """
@@ -38,7 +37,7 @@ def test_fortran_frontend_simplify():
                     b=2
                     d(:,:)=0.0
                     d(a,b)=5
-                    
+
                     END SUBROUTINE symbol_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "symbol_test")

@@ -131,10 +131,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                default='')
 
     host_maps = ListProperty(desc='List of map GUIDs, the passed maps are not offloaded to the GPU',
-                             element_type=str, default=None, allow_none=True)
+                             element_type=str,
+                             default=None,
+                             allow_none=True)
 
     host_data = ListProperty(desc='List of data names, the passed data are not offloaded to the GPU',
-                             element_type=str, default=None, allow_none=True)
+                             element_type=str,
+                             default=None,
+                             allow_none=True)
 
     @staticmethod
     def annotates_memlets():
@@ -166,16 +170,24 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         if not self.host_data and not self.host_maps:
             return []
         marked_sources = [state.memlet_tree(e).root().edge.src for e in state.in_edges(entry_node)]
-        marked_sources = [sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_sources]
-        marked_destinations = [state.memlet_tree(e).root().edge.dst for e in state.in_edges(state.exit_node(entry_node))]
-        marked_destinations = [sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_destinations]
-        marked_accesses = [n.data for n in (marked_sources + marked_destinations) if n is not None and isinstance(n, nodes.AccessNode) and n.data in self.host_data]
+        marked_sources = [
+            sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_sources
+        ]
+        marked_destinations = [
+            state.memlet_tree(e).root().edge.dst for e in state.in_edges(state.exit_node(entry_node))
+        ]
+        marked_destinations = [
+            sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_destinations
+        ]
+        marked_accesses = [
+            n.data for n in (marked_sources + marked_destinations)
+            if n is not None and isinstance(n, nodes.AccessNode) and n.data in self.host_data
+        ]
         return marked_accesses
 
     def _output_or_input_is_marked_host(self, state, entry_node) -> bool:
         marked_accesses = self._get_marked_inputs_and_outputs(state, entry_node)
         return len(marked_accesses) > 0
-
 
     def apply(self, _, sdfg: sd.SDFG):
         #######################################################
@@ -209,13 +221,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         # map ranges must stay on host
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
-                            if (isinstance(last_edge.dst, nodes.EntryNode) and ((last_edge.dst_conn
-                                    and not last_edge.dst_conn.startswith('IN_') and sdict[last_edge.dst] is None) or
-                                (last_edge.dst in self.host_maps))):
+                            if (isinstance(last_edge.dst, nodes.EntryNode)
+                                    and ((last_edge.dst_conn and not last_edge.dst_conn.startswith('IN_')
+                                          and sdict[last_edge.dst] is None) or (last_edge.dst in self.host_maps))):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
-                    if (state.in_degree(node) > 0 and node.data not in output_nodes and node.data not in self.host_data):
+                    if (state.in_degree(node) > 0 and node.data not in output_nodes
+                            and node.data not in self.host_data):
                         output_nodes.append((node.data, node.desc(sdfg)))
 
             # Input nodes may also be nodes with WCR memlets and no identity
@@ -491,14 +504,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             state.parent, state, node):
                         memlet_path_roots = set()
                         memlet_path_roots = memlet_path_roots.union(
-                            [state.memlet_tree(e).root().edge.src for e in state.in_edges(node)]
-                            )
+                            [state.memlet_tree(e).root().edge.src for e in state.in_edges(node)])
                         memlet_path_roots = memlet_path_roots.union(
-                            [state.memlet_tree(e).root().edge.dst for e in state.out_edges(node)]
-                            )
-                        gpu_accesses = [n.data for n in memlet_path_roots
-                                        if isinstance(n, nodes.AccessNode) and
-                                           sdfg.arrays[n.data].storage in gpu_storage]
+                            [state.memlet_tree(e).root().edge.dst for e in state.out_edges(node)])
+                        gpu_accesses = [
+                            n.data for n in memlet_path_roots
+                            if isinstance(n, nodes.AccessNode) and sdfg.arrays[n.data].storage in gpu_storage
+                        ]
                         if len(gpu_accesses) > 0:
                             global_code_nodes[state].append(node)
 
@@ -572,8 +584,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
                 co_state.add_node(src_array)
                 co_state.add_node(dst_array)
-                co_state.add_nedge(src_array, dst_array,
-                                    memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
+                co_state.add_nedge(src_array, dst_array, memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
                 name_mapping[devicename] = hostname
             return name_mapping
 

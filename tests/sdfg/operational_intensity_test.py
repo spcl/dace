@@ -103,20 +103,41 @@ def reduction_library_node(x: dc.float64[N]):
 
 #(sdfg, c, l, assumptions, expected_result)
 test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dc.symbolic.SymbolicType]] = {
-    'single_map64_even': (single_map64, 64 * 64, 64, { 'N': 512 }, 1 / 24),
-    'single_map16_even': (single_map16, 64 * 64, 64, { 'N': 512 }, 1 / 6),
+    'single_map64_even': (single_map64, 64 * 64, 64, {
+        'N': 512
+    }, 1 / 24),
+    'single_map16_even': (single_map16, 64 * 64, 64, {
+        'N': 512
+    }, 1 / 6),
     # now num_elements_on_single_cache_line does not divie N anymore
     # -->513 work, 520 elements loaded --> 513 / (520*8*3)
-    'single_map64_uneven': (single_map64, 64 * 64, 64, { 'N': 513 }, 513 / (3 * 8 * 520)),
-    'sequential_maps': (sequential_maps, 1024, 3 * 8, { 'N': 29 }, 87 / (90 * 8)),
+    'single_map64_uneven': (single_map64, 64 * 64, 64, {
+        'N': 513
+    }, 513 / (3 * 8 * 520)),
+    'sequential_maps': (sequential_maps, 1024, 3 * 8, {
+        'N': 29
+    }, 87 / (90 * 8)),
     # smaller cache --> only two arrays fit --> x loaded twice now
-    'sequential_maps_small': (sequential_maps, 6, 3 * 8, { 'N': 7 }, 21 / (13 * 3 * 8)),
-    'nested_reuse': (nested_reuse, 1024, 64, { 'N': 1024 }, 2048 / (3 * 1024 * 8 + 128)),
-    'mmm': (mmm, 20, 16, { 'N': 24 }, (2 * 24**3) / ((36 * 24**2 + 24 * 12) * 16)),
-    'tiled_mmm': (tiled_mmm, 20, 16, { 'N': 24, 'TILE_SIZE': 4 }, (2 * 24**3) / (16 * 24 * 6**3)),
-    'tiled_mmm_32': (tiled_mmm_32, 10, 16, { 'N': 24, 'TILE_SIZE': 4 }, (2 * 24**3) / (16 * 12 * 6**3)),
-    'reduction_library_node': (reduction_library_node, 1024, 64, { 'N': 128 },
-                               128.0 / (dc.symbol('Reduce_misses') * 64.0 + 64.0)),
+    'sequential_maps_small': (sequential_maps, 6, 3 * 8, {
+        'N': 7
+    }, 21 / (13 * 3 * 8)),
+    'nested_reuse': (nested_reuse, 1024, 64, {
+        'N': 1024
+    }, 2048 / (3 * 1024 * 8 + 128)),
+    'mmm': (mmm, 20, 16, {
+        'N': 24
+    }, (2 * 24**3) / ((36 * 24**2 + 24 * 12) * 16)),
+    'tiled_mmm': (tiled_mmm, 20, 16, {
+        'N': 24,
+        'TILE_SIZE': 4
+    }, (2 * 24**3) / (16 * 24 * 6**3)),
+    'tiled_mmm_32': (tiled_mmm_32, 10, 16, {
+        'N': 24,
+        'TILE_SIZE': 4
+    }, (2 * 24**3) / (16 * 12 * 6**3)),
+    'reduction_library_node': (reduction_library_node, 1024, 64, {
+        'N': 128
+    }, 128.0 / (dc.symbol('Reduce_misses') * 64.0 + 64.0)),
 }
 
 

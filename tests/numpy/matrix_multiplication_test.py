@@ -7,7 +7,9 @@ B, M, N, K, L, O = tuple(dace.symbol(k) for k in 'BMNKLO')
 
 
 class MatrixMultiplication(unittest.TestCase):
+
     def test_mmm(self):
+
         @dace.program
         def mmmtest(a: dace.float64[M, K], b: dace.float64[K, N]):
             return a @ b
@@ -19,6 +21,7 @@ class MatrixMultiplication(unittest.TestCase):
         self.assertTrue(np.allclose(c, a @ b))
 
     def test_mmm_batch(self):
+
         @dace.program
         def mmmtest(a: dace.float64[B, M, K], b: dace.float64[B, K, N]):
             return a @ b
@@ -30,6 +33,7 @@ class MatrixMultiplication(unittest.TestCase):
         self.assertTrue(np.allclose(c, a @ b))
 
     def test_mmm_batch_stationary_a(self):
+
         @dace.program
         def mmmtest(a: dace.float64[M, K], b: dace.float64[B, K, N]):
             return a @ b
@@ -39,8 +43,9 @@ class MatrixMultiplication(unittest.TestCase):
         c = mmmtest(a, b)
         self.assertEqual(list(c.shape), [3, 34, 31])
         self.assertTrue(np.allclose(c, a @ b))
-    
+
     def test_mm_symbolic(self):
+
         @dace.program
         def mmtest_symbolic(a: dace.float64[M, K], b: dace.float64[O, N]):
             return a @ b
@@ -50,8 +55,9 @@ class MatrixMultiplication(unittest.TestCase):
         c = mmtest_symbolic(a, b)
         self.assertEqual(list(c.shape), [32, 34])
         self.assertTrue(np.allclose(c, a @ b))
-    
+
     def test_mmm_batch_symbolic(self):
+
         @dace.program
         def mmmtest_symbolic(a: dace.float64[B, M, K], b: dace.float64[L, O, N]):
             return a @ b

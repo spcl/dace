@@ -27,8 +27,10 @@ def init_array(path, n):
 
 @dace.program(datatype[N, N])
 def floyd_warshall(path):
+
     @dace.mapscope
     def k_map(k: _[0:N]):
+
         @dace.map
         def ij_map(i: _[0:N], j: _[0:N]):
             ik_dist << path[i, k]

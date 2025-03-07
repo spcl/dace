@@ -17,11 +17,11 @@ class MPITransformMap(transformation.SingleStateTransformation):
 
         Takes a map and makes it an MPI-scheduled map, introduces transients
         that keep locally accessed data.
-        
+
         Original SDFG:
 
         .. code-block:: text
-        
+
             Input1 -                                            Output1
                     \\                                         /
             Input2 --- MapEntry -- Arbitrary R  -- MapExit -- Output2
@@ -33,16 +33,16 @@ class MPITransformMap(transformation.SingleStateTransformation):
         itself and do not go through MapEntry/MapExit
         Map must be a one-dimensional map for now.
         The range of the map must be a Range object.
-     
+
         * Add transients for the accessed parts
         * The schedule property of Map is set to MPI
         * The range of Map is changed to
           var = startexpr + p * chunksize ... startexpr + p + 1 * chunksize
           where p is the current rank and P is the total number of ranks,
-          and chunksize is defined as (endexpr - startexpr) / P, adding the 
+          and chunksize is defined as (endexpr - startexpr) / P, adding the
           remaining K iterations to the first K procs.
-        * For each input InputI, create a new transient transInputI, which 
-          has an attribute that specifies that it needs to be filled with 
+        * For each input InputI, create a new transient transInputI, which
+          has an attribute that specifies that it needs to be filled with
           (possibly) remote data
         * Collect all accesses to InputI within R, assume their convex hull is
           InputI[rs ... re]

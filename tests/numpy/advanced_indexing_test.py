@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" 
+"""
 Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
@@ -360,14 +360,18 @@ def test_advanced_indexing_syntax(tuple_index):
     @dace.program
     def indexing_test(A: dace.float64[N, N, N]):
         if tuple_index:
-            A[(1, 2, 3), ] = 2
+            A[
+                (1, 2, 3),
+            ] = 2
         else:
             A[[1, 2, 3]] = 2
         A[(1, 2, 3)] = 1
 
     A = np.random.rand(20, 20, 20)
     ref = np.copy(A)
-    ref[(1, 2, 3), ] = 2
+    ref[
+        (1, 2, 3),
+    ] = 2
     ref[(1, 2, 3)] = 1
     indexing_test(A)
 
@@ -477,6 +481,7 @@ def test_combining_basic_and_advanced_indexing():
     res = indexing_test(A, indices, indices2)
 
     assert np.allclose(res, ref)
+
 
 @pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_combining_basic_and_advanced_indexing_write():

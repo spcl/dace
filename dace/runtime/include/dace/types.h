@@ -7,7 +7,7 @@
 
 #ifdef _MSC_VER
     //#define DACE_ALIGN(N) __declspec( align(N) )
-    #define DACE_ALIGN(N) 
+    #define DACE_ALIGN(N)
     #undef __in
     #undef __inout
     #undef __out
@@ -118,7 +118,7 @@ namespace dace
     template <int DIM, int... OTHER_DIMS>
     struct TotalNDSize
     {
-	enum 
+	enum
 	{
 	    value = DIM * TotalNDSize<OTHER_DIMS...>::value,
 	};
@@ -127,7 +127,7 @@ namespace dace
     template <int DIM>
     struct TotalNDSize<DIM>
     {
-	enum 
+	enum
 	{
 	    value = DIM,
 	};

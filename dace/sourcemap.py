@@ -11,6 +11,7 @@ from dace.sdfg import nodes
 
 
 class SdfgLocation:
+
     def __init__(self, cfg_id, state_id, node_ids):
         self.cfg_id = cfg_id
         self.state_id = state_id
@@ -32,7 +33,7 @@ def create_folder(path_str: str):
 
 
 def create_cache(name: str, folder: str) -> str:
-    """ 
+    """
     Creates the map folder in the build path if it does not yet exist
 
     :param name: name of the SDFG
@@ -70,7 +71,7 @@ def send(data: json):
 
 
 def save(language: str, name: str, map: dict, build_folder: str) -> str:
-    """ 
+    """
     Saves the mapping in the map folder of
     the corresponding SDFG
 
@@ -176,6 +177,7 @@ class MapCpp:
     """ Creates the mapping between the SDFG nodes and
         the generated C++ code lines.
     """
+
     def __init__(self, code: str, name: str, target_name: str):
         self.name = name
         self.code = code
@@ -273,6 +275,7 @@ class MapPython:
     """ Creates the mapping between the source code and
         the SDFG nodes
     """
+
     def __init__(self, name):
         self.name = name
         self.map = {}
@@ -379,7 +382,7 @@ class MapPython:
     def create_mapping(self, range_dict=None):
         """ Creates the actual mapping by using the debuginfo list
 
-            :param range_dict: For each file, a list of tuples containing a start and 
+            :param range_dict: For each file, a list of tuples containing a start and
                                end line of a DaCe program
         """
         for file_dbinfo in self.debuginfo:

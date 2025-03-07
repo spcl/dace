@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 title: "DaCe - Data Centric Parallel Programming"
-message: "Please cite as" 
+message: "Please cite as"
 # this can be parsed from the AUTHORS file using .github/citation_format_authors.py
 authors:
   - family-names: Ben-Nun
@@ -64,7 +64,7 @@ preferred-citation:
   year: "2019"
   type: conference-paper
   collection-title: "Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis"
-  conference: 
+  conference:
     name: "SC '19"
   authors:
     - family-names: Ben-Nun

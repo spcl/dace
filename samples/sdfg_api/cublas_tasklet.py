@@ -41,11 +41,11 @@ tasklet = state.add_tasklet(
     code='''
     // Set the current stream to match DaCe (for correct synchronization)
     cublasSetStream(handle, __dace_current_stream);
-    
+
     double alpha = 1.0, beta = 0.0;
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                M, N, K, &alpha, 
-                a, M, b, K, 
+                M, N, K, &alpha,
+                a, M, b, K,
                 &beta,
                 c, M);
     ''',

@@ -10,6 +10,7 @@ def empty():
 
 
 class MyPass(ppl.Pass):
+
     def __init__(self):
         self.applied = 0
 
@@ -37,7 +38,9 @@ def test_simple_pipeline():
 
 
 def test_pipeline_with_dependencies():
+
     class PassA(MyPass):
+
         def depends_on(self):
             return {MyPass}
 
@@ -55,7 +58,9 @@ def test_pipeline_with_dependencies():
 
 
 def test_pipeline_modification_rerun():
+
     class MyAnalysis(MyPass):
+
         def should_reapply(self, modified: ppl.Modifies) -> bool:
             return modified & ppl.Modifies.Symbols
 
@@ -63,6 +68,7 @@ def test_pipeline_modification_rerun():
             return ppl.Modifies.Nothing
 
     class PassA(MyPass):
+
         def depends_on(self):
             return {MyAnalysis}
 
@@ -70,6 +76,7 @@ def test_pipeline_modification_rerun():
             return ppl.Modifies.Descriptors
 
     class PassB(MyPass):
+
         def depends_on(self):
             return {MyAnalysis}
 
@@ -77,6 +84,7 @@ def test_pipeline_modification_rerun():
             return ppl.Modifies.Symbols
 
     class PassC(MyPass):
+
         def depends_on(self):
             return {MyAnalysis}
 

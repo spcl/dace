@@ -8,6 +8,7 @@ import argparse
 import shutil
 from dace.frontend.fortran import fortran_parser
 
+
 def main():
     # Command line options parser
     parser = argparse.ArgumentParser(description='Fortran to SDFG command-line transpiler.')

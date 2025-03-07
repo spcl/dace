@@ -12,16 +12,16 @@
 _Decoupling domain science from performance optimization._
 
 DaCe is a [fast](https://nbviewer.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb) parallel programming
-framework that takes code in Python/NumPy and other programming languages, and maps it to high-performance 
-**CPU, GPU, and FPGA** programs, which can be optimized to achieve state-of-the-art. Internally, DaCe 
-uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate 
-representation*: A transformable, interactive representation of code based on 
+framework that takes code in Python/NumPy and other programming languages, and maps it to high-performance
+**CPU, GPU, and FPGA** programs, which can be optimized to achieve state-of-the-art. Internally, DaCe
+uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate
+representation*: A transformable, interactive representation of code based on
 data movement.
-Since the input code and the SDFG are separate, it is possible to optimize a 
-program without changing its source, so that it stays readable. On the other 
-hand, transformations are customizable and user-extensible, so they can be written 
+Since the input code and the SDFG are separate, it is possible to optimize a
+program without changing its source, so that it stays readable. On the other
+hand, transformations are customizable and user-extensible, so they can be written
 once and reused in many applications.
-With data-centric parallel programming, we enable **direct knowledge transfer** 
+With data-centric parallel programming, we enable **direct knowledge transfer**
 of performance optimization, regardless of the application or the target processor.
 
 DaCe generates high-performance programs for:
@@ -29,7 +29,7 @@ DaCe generates high-performance programs for:
  * NVIDIA GPUs and AMD GPUs (with HIP)
  * Xilinx and Intel FPGAs
 
-DaCe can be written inline in Python and transformed in the command-line/Jupyter 
+DaCe can be written inline in Python and transformed in the command-line/Jupyter
 Notebooks or SDFGs can be interactively modified using our [Visual Studio Code extension](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv).
 
 ## [For more information, see the documentation](https://spcldace.readthedocs.io/en/latest/)
@@ -53,10 +53,10 @@ def myprogram(a):
     return np.sum(a)
 ```
 
-Calling `myprogram` with any NumPy array or GPU array (e.g., PyTorch, Numba, CuPy) will 
-generate data-centric code, compile, and run it. From here on out, you can 
-_optimize_ (interactively or automatically), _instrument_, and _distribute_ 
-your code. The code creates a shared library (DLL/SO file) that can readily 
+Calling `myprogram` with any NumPy array or GPU array (e.g., PyTorch, Numba, CuPy) will
+generate data-centric code, compile, and run it. From here on out, you can
+_optimize_ (interactively or automatically), _instrument_, and _distribute_
+your code. The code creates a shared library (DLL/SO file) that can readily
 be used in any C ABI compatible language (C/C++, FORTRAN, etc.).
 
 For more information on how to use DaCe, see the [samples](samples) or tutorials below:
@@ -93,4 +93,3 @@ DaCe is an open-source project. We are happy to accept Pull Requests with your c
 License
 -------
 DaCe is published under the New BSD license, see [LICENSE](LICENSE).
-

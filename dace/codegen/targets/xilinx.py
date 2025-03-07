@@ -239,16 +239,15 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
 
                                     if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
                                             arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
-                                        repl = fpga.fpga_ptr(
-                                            arr_name,
-                                            graph.arrays[node.value.id],
-                                            sdfg,
-                                            None,
-                                            False,
-                                            None,
-                                            None,
-                                            True,
-                                            decouple_array_interfaces=self._decouple_array_interfaces)
+                                        repl = fpga.fpga_ptr(arr_name,
+                                                             graph.arrays[node.value.id],
+                                                             sdfg,
+                                                             None,
+                                                             False,
+                                                             None,
+                                                             None,
+                                                             True,
+                                                             decouple_array_interfaces=self._decouple_array_interfaces)
                                         replace_dict[arr_name] = repl
 
                         # Perform replacement and update graph.arrays to allow type inference
@@ -1324,7 +1323,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
         """
         Write source to destination, where the source is a scalar, and the
         destination is a pointer.
-        
+
         :return: String of C++ performing the write.
         """
         return self.make_write(DefinedType.Pointer, dst_dtype, None, "&" + dst_expr, None, src_expr, None,

@@ -6,6 +6,7 @@ import dace
 
 
 class AST_Assign(AST_Node):
+
     def __init__(self, context, lhs, rhs, op):
         # for a normal assignment op is "=", but there is also
         # in place modification, i.e., "+="

@@ -15,9 +15,9 @@ import warnings
 
 
 class DeduplicateAccess(xf.SingleStateTransformation):
-    """ 
+    """
     This transformation takes a node that is connected to multiple destinations
-    with overlapping memlets, and consolidates those accesses through a 
+    with overlapping memlets, and consolidates those accesses through a
     transient array or scalar.
     """
 

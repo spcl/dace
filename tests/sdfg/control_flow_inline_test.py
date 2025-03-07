@@ -9,8 +9,12 @@ from dace.sdfg import utils as sdutils
 def test_loop_inlining_regular_for():
     sdfg = dace.SDFG('inlining')
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
-                       update_expr='i = i + 1', inverted=False)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       inverted=False)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
     state2 = loop1.add_state('state2')
@@ -21,7 +25,7 @@ def test_loop_inlining_regular_for():
 
     sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
-    states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
+    states = sdfg.nodes()  # Get top-level states only, not all (.states()), in case something went wrong
     assert len(states) == 8
     assert state0 in states
     assert state1 in states
@@ -43,7 +47,7 @@ def test_loop_inlining_regular_while():
 
     sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
-    states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
+    states = sdfg.nodes()  # Get top-level states only, not all (.states()), in case something went wrong
     guard = None
     for state in states:
         if state.label == 'loop1_guard':
@@ -77,7 +81,7 @@ def test_loop_inlining_do_while():
 
     sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
-    states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
+    states = sdfg.nodes()  # Get top-level states only, not all (.states()), in case something went wrong
     guard = None
     init_state = None
     for state in states:
@@ -105,8 +109,12 @@ def test_loop_inlining_do_while():
 def test_loop_inlining_do_for():
     sdfg = dace.SDFG('inlining')
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
-                       update_expr='i = i + 1', inverted=True)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       inverted=True)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
     state2 = loop1.add_state('state2')
@@ -117,7 +125,7 @@ def test_loop_inlining_do_for():
 
     sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
-    states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
+    states = sdfg.nodes()  # Get top-level states only, not all (.states()), in case something went wrong
     guard = None
     init_state = None
     for state in states:
@@ -171,7 +179,7 @@ def test_inline_triple_nested_for():
 
     tmpnode2 = reduce_state.add_access('tmp')
     cnode = reduce_state.add_access('C')
-    red = reduce_state.add_reduce('lambda a, b: a + b', (2,), 0)
+    red = reduce_state.add_reduce('lambda a, b: a + b', (2, ), 0)
     reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
     reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
 
@@ -185,8 +193,12 @@ def test_inline_triple_nested_for():
 def test_loop_inlining_for_continue_break():
     sdfg = dace.SDFG('inlining')
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
-                       update_expr='i = i + 1', inverted=False)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1',
+                       inverted=False)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
     state2 = loop1.add_continue('state2')
@@ -205,7 +217,7 @@ def test_loop_inlining_for_continue_break():
 
     sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
-    states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
+    states = sdfg.nodes()  # Get top-level states only, not all (.states()), in case something went wrong
     assert len(states) == 12
     assert not any(isinstance(s, LoopRegion) for s in states)
     end_state = None
@@ -230,8 +242,12 @@ def test_loop_inlining_multi_assignments():
     sdfg = dace.SDFG('inlining')
     sdfg.add_symbol('j', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0; j = 10 + 200 - 1',
-                       update_expr='i = i + 1; j = j + i', inverted=False)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0; j = 10 + 200 - 1',
+                       update_expr='i = i + 1; j = j + i',
+                       inverted=False)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
     state2 = loop1.add_state('state2')
@@ -242,7 +258,7 @@ def test_loop_inlining_multi_assignments():
 
     sdutils.inline_control_flow_regions(sdfg, [LoopRegion])
 
-    states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
+    states = sdfg.nodes()  # Get top-level states only, not all (.states()), in case something went wrong
     assert len(states) == 8
     assert state0 in states
     assert state1 in states
@@ -272,8 +288,12 @@ def test_loop_inlining_invalid_update_statement():
     sdfg = dace.SDFG('inlining')
     sdfg.add_symbol('j', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
-    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
-                       update_expr='i = i + 1; j < i', inverted=False)
+    loop1 = LoopRegion(label='loop1',
+                       condition_expr='i < 10',
+                       loop_var='i',
+                       initialize_expr='i = 0',
+                       update_expr='i = i + 1; j < i',
+                       inverted=False)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
     state2 = loop1.add_state('state2')

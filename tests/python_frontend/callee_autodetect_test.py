@@ -27,7 +27,7 @@ def freefunction(A):
 
 
 def test_autodetect_function():
-    """ 
+    """
     Tests auto-detection of parsable free functions in the Python frontend.
     """
 
@@ -184,7 +184,7 @@ def freefunction2(A):
 
 
 def test_autodetect_function_in_for():
-    """ 
+    """
     Tests auto-detection of parsable free functions in a for loop.
     """
 

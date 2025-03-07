@@ -2,7 +2,6 @@
 import dace
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 
-
 N = 10
 
 
@@ -10,9 +9,9 @@ def test_trivial_tasklet():
     ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet")
     sdfg.add_symbol("s", ty_)
-    sdfg.add_array("v", (N,), ty_)
+    sdfg.add_array("v", (N, ), ty_)
     st = sdfg.add_state()
-    
+
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty_, transient=True)
     tmp1_node = st.add_access(tmp1_name)
     init_tasklet = st.add_tasklet("init", {}, {"out"}, "out = s")
@@ -23,7 +22,7 @@ def test_trivial_tasklet():
     copy_tasklet = st.add_tasklet("copy", {"inp"}, {"out"}, "out = inp")
     st.add_edge(tmp1_node, None, copy_tasklet, "inp", dace.Memlet(tmp1_node.data))
     st.add_edge(copy_tasklet, "out", tmp2_node, None, dace.Memlet(tmp2_node.data))
-    
+
     bcast_tasklet, _, _ = st.add_mapped_tasklet(
         "bcast",
         dict(i=f"0:{N}"),
@@ -52,9 +51,9 @@ def test_trivial_tasklet_with_map():
     ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet_with_map")
     sdfg.add_symbol("s", ty_)
-    sdfg.add_array("v", (N,), ty_)
+    sdfg.add_array("v", (N, ), ty_)
     st = sdfg.add_state()
-    
+
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty_, transient=True)
     tmp1_node = st.add_access(tmp1_name)
     init_tasklet = st.add_tasklet("init", {}, {"out"}, "out = s")
@@ -67,7 +66,7 @@ def test_trivial_tasklet_with_map():
     tmp2_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty_, transient=True)
     tmp2_node = st.add_access(tmp2_name)
     st.add_edge(copy_tasklet, "out", tmp2_node, None, dace.Memlet(tmp2_node.data))
-    
+
     bcast_tasklet = st.add_tasklet("bcast", {"inp"}, {"out"}, "out = inp")
     st.add_edge(tmp2_node, None, bcast_tasklet, "inp", dace.Memlet(tmp2_node.data))
     st.add_memlet_path(bcast_tasklet, mx, st.add_access("v"), src_conn="out", memlet=dace.Memlet("v[i]"))
@@ -94,9 +93,9 @@ def test_trivial_tasklet_with_implicit_cast():
     ty64_ = dace.int64
     sdfg = dace.SDFG("trivial_tasklet_with_implicit_cast")
     sdfg.add_symbol("s", ty32_)
-    sdfg.add_array("v", (N,), ty32_)
+    sdfg.add_array("v", (N, ), ty32_)
     st = sdfg.add_state()
-    
+
     tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty32_, transient=True)
     tmp1_node = st.add_access(tmp1_name)
     init_tasklet = st.add_tasklet("init", {}, {"out"}, "out = s")
@@ -109,7 +108,7 @@ def test_trivial_tasklet_with_implicit_cast():
     tmp2_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty64_, transient=True)
     tmp2_node = st.add_access(tmp2_name)
     st.add_edge(copy_tasklet, "out", tmp2_node, None, dace.Memlet(tmp2_node.data))
-    
+
     bcast_tasklet = st.add_tasklet("bcast", {"inp"}, {"out"}, "out = inp")
     st.add_edge(tmp2_node, None, bcast_tasklet, "inp", dace.Memlet(tmp2_node.data))
     st.add_memlet_path(bcast_tasklet, mx, st.add_access("v"), src_conn="out", memlet=dace.Memlet("v[i]"))

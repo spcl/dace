@@ -11,14 +11,14 @@ class MyContextManager:
 
     def __init__(self, seed):
         self.rng = np.random.default_rng(seed)
-    
+
     @dace_blocker
     def __enter__(self):
         a = self.rng.integers(51, 100)
         b = self.rng.integers(51, 100)
         print(f'Computing GCD of {a} and {b}')
         return np.gcd(a, b)
-    
+
     @dace_blocker
     def __exit__(self, exc_type=None, exc_value=None, traceback=None):
         pass

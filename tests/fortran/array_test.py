@@ -25,7 +25,7 @@ def test_fortran_frontend_array_access():
                     double precision d(4)
 
                     d(2)=5.5
-                    
+
                     END SUBROUTINE array_access_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_access_test")
@@ -58,7 +58,7 @@ def test_fortran_frontend_array_ranges():
                     d(:,:,:)=e(:,:,:)+f(:,:,:)
                     d(1,2:4,1)=e(1,2:4,1)*10.0
                     d(1,1,1)=SUM(e(:,1,:))
-                    
+
                     END SUBROUTINE array_ranges_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_access_test")
@@ -87,7 +87,7 @@ def test_fortran_frontend_array_3dmap():
                     double precision d(4,4,4)
 
                     d(:,:,:)=7
-                    
+
                     END SUBROUTINE array_3dmap_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_3dmap_test")
@@ -116,7 +116,7 @@ def test_fortran_frontend_twoconnector():
                     double precision d(4)
 
                     d(2)=d(1)+d(3)
-                    
+
                     END SUBROUTINE twoconnector_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "twoconnector_test")
@@ -147,7 +147,7 @@ def test_fortran_frontend_input_output_connector():
                     b=2
                     d(:,:)=0.0
                     d(a,b)=d(1,1)+5
-                    
+
                     END SUBROUTINE ioc_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "ioc_test")

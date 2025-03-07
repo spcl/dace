@@ -69,7 +69,7 @@ class FIFO {
     push(std::forward<U>(val));
   }
 
-  operator Data_t() { 
+  operator Data_t() {
     #pragma HLS INLINE
     return pop_blocking();
   }

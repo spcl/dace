@@ -36,7 +36,7 @@ TGAP="                                                                          
 
 join_by_newline() {
     for a in $*; do
-        echo $a        
+        echo $a
     done
     echo 9999
 }
@@ -94,7 +94,7 @@ runtest_cu() {
     # Check if GPU tests can be run
     nvidia-smi >/dev/null 2>&1
     if [ $? -ne 0 ]; then bail_skip $1; return; fi
-    
+
     testcmd ./$1.out
     retval=$?
     rm -f $1.out
@@ -127,7 +127,7 @@ endreport() {
     echo "$PASSED / $TOTAL tests passed"
     if [ $SKIPS -ne 0 ]; then
         printf "Skipped tests:\n${SKIPPED_TESTS}"
-    fi    
+    fi
     if [ $ERRORS -ne 0 ]; then
         printf "Failed tests:\n${FAILED_TESTS}"
         exit 1

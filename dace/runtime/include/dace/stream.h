@@ -134,7 +134,7 @@ namespace dace {
             m_queue.enqueue_bulk(s.m_array, s.m_elements);
             m_elements += s.m_elements;
         }
-    
+
         inline bool push_try(T const& val) {
             bool result = m_queue.try_enqueue(val);
             if (result)

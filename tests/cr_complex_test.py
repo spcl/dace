@@ -9,6 +9,7 @@ N = 12
 
 @dace.program
 def cr_complex(input, output):
+
     @dace.map(_[0:N])
     def tasklet(i):
         a << input[i]

@@ -184,8 +184,6 @@ class ReferenceToView(ppl.Pass):
                         e.dst.remove_in_connector('set')
                         e.data = Memlet()
 
-
-
                 # Modify the state graph as necessary
                 for e in edges_to_remove:
                     state.remove_memlet_path(e)

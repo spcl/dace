@@ -7,6 +7,7 @@ M = dace.symbol('M')
 
 
 def test_contiguous_map():
+
     @dace.program(dace.float64[N], dace.float64[N])
     def program(A, B):
         for i in dace.map[0:N]:
@@ -22,6 +23,7 @@ def test_contiguous_map():
 
 
 def test_stride_map():
+
     @dace.program(dace.float64[N], dace.float64[N])
     def program(A, B):
         for i in dace.map[0:N:2]:
@@ -38,6 +40,7 @@ def test_stride_map():
 
 
 def test_fake_stride():
+
     @dace.program(dace.float64[N], dace.float64[N])
     def program(A, B):
         for i in dace.map[0:N:2]:
@@ -56,6 +59,7 @@ def test_fake_stride():
 
 
 def test_matrix_stride():
+
     @dace.program(dace.float64[N, M], dace.float64[M, N])
     def program(A, B):
         for i, j in dace.map[0:N, 0:M]:
@@ -74,6 +78,7 @@ def test_matrix_stride():
 
 
 def test_indirect_load_explicit():
+
     @dace.program(dace.int64[N], dace.int64[N], dace.int64[N])
     def program(A, B, C):
         for i in dace.map[0:N]:
@@ -89,6 +94,7 @@ def test_indirect_load_explicit():
 
 
 def test_indirect_load_implicit():
+
     @dace.program(dace.int64[N], dace.int64[N], dace.int64[N])
     def program(A, B, C):
         for i in dace.map[0:N]:

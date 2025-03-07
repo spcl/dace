@@ -17,7 +17,7 @@ N, Nt = (dc.symbol(s, dtype=dc.int64) for s in ('N', 'Nt'))
 @dc.program
 def getAcc(pos: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64, softening: dc.float64):
     """
-    Calculate the acceleration on each particle due to Newton's Law 
+    Calculate the acceleration on each particle due to Newton's Law
     pos  is an N x 3 matrix of positions
     mass is an N x 1 vector of masses
     G is Newton's Gravitational constant
@@ -153,7 +153,7 @@ def initialize(N, tEnd, dt):
 
 def getAcc_np(pos, mass, G, softening):
     """
-    Calculate the acceleration on each particle due to Newton's Law 
+    Calculate the acceleration on each particle due to Newton's Law
     pos  is an N x 3 matrix of positions
     mass is an N x 1 vector of masses
     G is Newton's Gravitational constant

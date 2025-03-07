@@ -21,6 +21,7 @@ class VectorInferenceFlags(Flag):
 
 
 class VectorInferenceException(Exception):
+
     def __init__(self, msg):
         super().__init__(msg)
 

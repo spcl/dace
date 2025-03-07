@@ -13,6 +13,7 @@ from dace.transformation.optimizer import Optimizer
 class TransformationTester(Optimizer):
     """ An SDFG optimizer that consecutively applies available transformations
         up to a fixed depth. """
+
     def __init__(self,
                  sdfg: SDFG,
                  depth=1,
@@ -23,7 +24,7 @@ class TransformationTester(Optimizer):
                  halt_on_exception=False):
         """ Creates a new Transformation tester, which brute-forces applying the
             available transformations up to a certain level.
-            
+
             :param sdfg: The SDFG to transform.
             :param depth: The number of levels to run transformations. For
                           instance, depth=1 means to only run immediate

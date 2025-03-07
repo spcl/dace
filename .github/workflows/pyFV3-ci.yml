@@ -33,7 +33,7 @@ jobs:
               submodules: 'recursive'
               path: 'pyFV3'
       - uses: actions/checkout@v4
-        with: 
+        with:
             path: 'dace'
             submodules: 'recursive'
       - name: Set up Python ${{ matrix.python-version }}
@@ -46,9 +46,9 @@ jobs:
           sudo apt-get install -y libopenmpi-dev libboost-all-dev
           gcc --version
       # Because Github doesn't allow us to do a git checkout in code
-      # we use a trick to checkout DaCe first (not using the external submodule)    
+      # we use a trick to checkout DaCe first (not using the external submodule)
       # install the full suite via requirements_dev, then re-install the correct DaCe
-      - name: Install Python packages 
+      - name: Install Python packages
         run: |
           python -m pip install --upgrade pip wheel setuptools
           pip install -e ./pyFV3[develop]

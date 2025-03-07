@@ -5,7 +5,7 @@ Using GPUs and Optimization Best Practices
     Experiencing errors or unintended behavior during GPU optimization? Refer to :ref:`gpu-debugging` for information
     on how to pinpoint the issue.
 
-Before reading this document, read the `CUDA programming guide <https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html>`_ 
+Before reading this document, read the `CUDA programming guide <https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html>`_
 for more information on programmable GPU architectures.
 
 How are SDFGs mapped to GPU programs?
@@ -14,17 +14,17 @@ How are SDFGs mapped to GPU programs?
 To utilize GPUs, DaCe provides two basic elements:
 
     * Storage locations for arrays, scalars, and streams on the GPU: :class:`~dace.dtypes.StorageType.GPU_Global` for
-      global memory on the GPU DRAM, and :class:`~dace.dtypes.StorageType.GPU_Shared` for shared memory. Note that 
+      global memory on the GPU DRAM, and :class:`~dace.dtypes.StorageType.GPU_Shared` for shared memory. Note that
       register storage works normally inside GPU kernels
     * Map schedules for running GPU kernels: :class:`~dace.dtypes.ScheduleType.GPU_Device` for a GPU kernel (grid) map,
       and :class:`~dace.dtypes.ScheduleType.GPU_ThreadBlock` for a map of threads in a single thread-block.
 
 The :class:`~dace.transformation.interstate.gpu_transform_sdfg.GPUTransformSDFG` transformation takes an existing SDFG
 and transforms it into a GPU program. Call it on an SDFG with :func:`~dace.sdfg.sdfg.SDFG.apply_gpu_transformations`.
-The transformation will automatically detect GPU kernels and thread-blocks, and will make copies for all the relevant 
+The transformation will automatically detect GPU kernels and thread-blocks, and will make copies for all the relevant
 sub-arrays used to the GPU.
 
-**Threads**: Each Map scope that has a ``GPU_Device`` schedule will create a GPU kernel call. The number of blocks, 
+**Threads**: Each Map scope that has a ``GPU_Device`` schedule will create a GPU kernel call. The number of blocks,
 and threads in each block, are determined by the Map's parameters. The number of elements in a ``GPU_Device`` map will
 create the thread-block grid. If there is no ``GPU_ThreadBlock`` map inside the ``GPU_Device`` map, the threads per block
 will be defined from the map's :attr:`~dace.sdfg.nodes.Map.gpu_block_size` attribute, or the :envvar:`compiler.cuda.default_block_size`
@@ -38,7 +38,7 @@ to the _reversed_ order of the map dimensions. This means that the last map dime
 in CPU schedules) is ``{block,thread}Idx.x``. Any dimension of the Map scope beyond the third dimension will by default be linearized into
 ``{block,thread}Idx.z``. This can sometimes result in slower code, as recovering the index in the kernel code involves delinearization,
 which uses modulo operations. For example, the Map scope ``for i, j, k, l in dace.map[0:N, 0:M, 0:K, 0:L]`` will result in ``threadIdx.x``
-mapping to ``l``, ``threadIdx.y`` to ``k``, and ``threadIdx.z``'s range will span ``N * M`` and map ``threadIdx.z % M`` to ``j`` and 
+mapping to ``l``, ``threadIdx.y`` to ``k``, and ``threadIdx.z``'s range will span ``N * M`` and map ``threadIdx.z % M`` to ``j`` and
 ``threadIdx.z / M`` to ``i``.
 
 Some examples of Example of an SDFG **without** a GPU thread-block map and its generated code:
@@ -52,7 +52,7 @@ Some examples of Example of an SDFG **without** a GPU thread-block map and its g
 
 .. code-block:: cpp
 
-    __global__ void example(const double * __restrict__ gpu_A, 
+    __global__ void example(const double * __restrict__ gpu_A,
                             double * __restrict__ gpu_B, int N) {
         // i defines the thread index
         int i = (blockIdx.x * 64 + threadIdx.x);
@@ -64,7 +64,7 @@ Some examples of Example of an SDFG **without** a GPU thread-block map and its g
         }
     }
     // ...
-    cudaLaunchKernel((void*)example, 
+    cudaLaunchKernel((void*)example,
                      dim3(int_ceil(N, 64), 1, 1), // Grid size
                      dim3(64, 1, 1),              // Block size
                      example_25_0_0_2_args, 0,
@@ -83,9 +83,9 @@ Example of an SDFG **with** a GPU thread-block map and its generated code:
 
 .. code-block:: cpp
 
-    __global__ void example(const double * __restrict__ gpu_A, 
+    __global__ void example(const double * __restrict__ gpu_A,
                             double * __restrict__ gpu_B, int N) {
-        // i defines the block index 
+        // i defines the block index
         // It is multiplied by 32 because of the map range
         int i = (32 * blockIdx.x);
 
@@ -97,7 +97,7 @@ Example of an SDFG **with** a GPU thread-block map and its generated code:
         gpu_B[((32 * i) + j)] = b;
     }
     // ...
-    cudaLaunchKernel((void*)example, 
+    cudaLaunchKernel((void*)example,
                      dim3(int_ceil(N, 32), 1, 1), // Grid size
                      dim3(32, 1, 1),              // Block size
                      example_25_0_0_2_args, 0,
@@ -105,12 +105,12 @@ Example of an SDFG **with** a GPU thread-block map and its generated code:
 
 
 **Memory**: ``GPU_Global`` memory can be read and written to from inside the kernel, but is usually defined outside the
-GPU maps. Copies from host to/from GPU is done by a memlet between a ``GPU_Global`` array and a ``CPU_Heap`` array. 
+GPU maps. Copies from host to/from GPU is done by a memlet between a ``GPU_Global`` array and a ``CPU_Heap`` array.
 ``GPU_Shared`` memory is allocated inside the kernel, and is only accessible from inside the kernel. An error will be
 triggered if a ``GPU_Shared`` array is accessed from outside the kernel. The ``CPU_Pinned`` storage type is used for
 host memory that is pinned for GPU access, and can be accessed from within a kernel (albeit much slower than a GPU array).
 
-**Collaborative Copies**: If there exists a ``GPU_ThreadBlock`` map, and a ``GPU_Shared`` array is copied to/from a 
+**Collaborative Copies**: If there exists a ``GPU_ThreadBlock`` map, and a ``GPU_Shared`` array is copied to/from a
 ``GPU_Global`` array, the copy will be done collaboratively across all threads in the block. This requires that the access node
 of the shared array will be outside the thread-block map (such that the copy is performed by the entire block).
 
@@ -158,12 +158,12 @@ Subsequently, any GPU DaCe program will use HIP.
 Note that if you are using CuPy, install its appropriate HIP/ROCm version.
 
 .. note::
-    Not every CUDA feature is directly supported by HIP. 
+    Not every CUDA feature is directly supported by HIP.
     Refer to the `HIP documentation <https://rocmdocs.amd.com/en/latest/Programming_Guides/HIP-GUIDE.html>`_ for more information.
     If compilation fails, try to :ref:`manually edit the source code and recompile <recompilation>`,
     or use the HIP-provided tools to convert CUDA code to HIP code without changing the backend.
     If you find a feature that is not supported in DaCe, please open an issue on GitHub.
-    
+
 
 Optimizing GPU SDFGs
 --------------------
@@ -199,7 +199,7 @@ function in the `Matrix Multiplication optimization example <https://github.com/
       if you have a kernel that uses more threads than the maximum, or allocates too much shared memory, you will get an
       error. The optimal block size depends on the degree of reuse that can be achieved by the threads in the block.
       Try to use transformations such as :class:`~dace.transformation.dataflow.tiling.MapTiling` to increase the
-      work performed per thread, or move map dimensions to the ``GPU_Device`` map in order to make them part of the 
+      work performed per thread, or move map dimensions to the ``GPU_Device`` map in order to make them part of the
       thread-block grid, which is more accommodating.
 
     * **Kernel fusion and data movement**: Moving data between registers and global memory is very expensive. Try to
@@ -224,22 +224,22 @@ function in the `Matrix Multiplication optimization example <https://github.com/
       be disabled (if you know what you are doing) with the ``nosync`` property.
 
     * **Global memory access**: Try to keep memory accesses structured and coalesced across threads in a warp. It is also
-      mostly better (if a thread is working on multiple elements) to use wide loads and stores of 128-bits. You can 
+      mostly better (if a thread is working on multiple elements) to use wide loads and stores of 128-bits. You can
       verify that your loads/stores are structured and wide using the ``cuobjdump`` tool on the compiled SDFG (for example
       ``cuobjdump -sass .dacecache/<sdfg name>/build/lib<sdfg name>.so``). It is also important to keep **local loads/stores**
       (``LDL.*`` and ``STL.*`` instructions) to a minimum, as they are often a sign that registers were spilled onto local
-      memory, which is much slower to access. You can ensure wide loads and stores are used with the 
+      memory, which is much slower to access. You can ensure wide loads and stores are used with the
       :class:`~dace.transformation.dataflow.vectorization.Vectorization` transformation, and reschedule the division of
       work to threads to reduce register pressure.
 
     * **Specialized hardware**: Specialized hardware, such as NVIDIA Tensor Cores or AMD's matrix instructions, can
       significantly improve performance. DaCe will not automatically emit such instructions, but you can use such operations
-      in your code. See the `Tensor Core code sample <https://github.com/spcl/dace/blob/main/samples/codegen/tensor_cores.py>`_ 
+      in your code. See the `Tensor Core code sample <https://github.com/spcl/dace/blob/main/samples/codegen/tensor_cores.py>`_
       to see how to make use of such units.
 
     * **Advanced GPU Map schedules**: DaCe provides two additional built-in map schedules: :class:`~dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic`
       and :class:`~dace.dtypes.ScheduleType.GPU_Persistent`. The former is useful for grids that have a varying number
-      of work per thread-block (for example, in graph traversal and sparse computation), as it generates a dynamically 
+      of work per thread-block (for example, in graph traversal and sparse computation), as it generates a dynamically
       load-balanced thread-block schedule. The latter is useful for *persistent kernels*, where the same thread-blocks
       are kept alive and synchronized on the grid level without ending the kernel. You can set those schedules
       on the maps based on the workload characteristics.

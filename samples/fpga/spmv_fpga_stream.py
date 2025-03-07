@@ -454,8 +454,7 @@ def make_sdfg(specialize, rows, cols, nnz):
 
 def run_spmv(size_w, size_h, num_nonzero, specialize):
     print("Sparse Matrix-Vector Multiplication {}x{} "
-          "({} non-zero elements, {}specialized)".format(size_w, size_h, num_nonzero,
-                                                         "not " if not specialize else ""))
+          "({} non-zero elements, {}specialized)".format(size_w, size_h, num_nonzero, "not " if not specialize else ""))
 
     A_row = dace.ndarray([size_h + 1], dtype=itype)
     A_col = dace.ndarray([num_nonzero], dtype=itype)
@@ -509,7 +508,8 @@ def run_spmv(size_w, size_h, num_nonzero, specialize):
         print(b)
         print("Reference:")
         print(A_sparse.dot(x))
-        print("Type \"debug\" to enter debugger, " "or any other string to quit (timeout in 10 seconds)")
+        print("Type \"debug\" to enter debugger, "
+              "or any other string to quit (timeout in 10 seconds)")
         read, _, _ = select.select([sys.stdin], [], [], 10)
         if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
             print("Entering debugger...")

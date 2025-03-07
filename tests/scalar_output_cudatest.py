@@ -8,6 +8,7 @@ import dace.libraries.blas as blas
 
 @pytest.mark.gpu
 def test_dot_gpu():
+
     @dace.program
     def dot(x: dace.float64[20], y: dace.float64[20]):
         return x @ y
@@ -32,6 +33,7 @@ def test_dot_gpu():
 
 @pytest.mark.gpu
 def test_scalar_output():
+
     @dace.program
     def scaltest(A: dace.float64[20, 20]):
         scal = dace.define_local_scalar(dace.float64)

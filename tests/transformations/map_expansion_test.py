@@ -3,7 +3,9 @@ import dace
 import numpy as np
 from dace.transformation.dataflow import MapExpansion
 
+
 def test_expand_with_inputs():
+
     @dace.program
     def toexpand(A: dace.float64[4, 2], B: dace.float64[2, 2]):
         for i, j in dace.map[1:3, 0:2]:
@@ -11,7 +13,7 @@ def test_expand_with_inputs():
                 a1 << A[i, j]
                 a2 << A[i + 1, j]
                 a3 << A[i - 1, j]
-                b >> B[i-1, j]
+                b >> B[i - 1, j]
                 b = a1 + a2 + a3
 
     sdfg = toexpand.to_sdfg()
@@ -46,7 +48,9 @@ def test_expand_with_inputs():
 
     assert len(map_entries) == 2
 
+
 def test_expand_without_inputs():
+
     @dace.program
     def toexpand(B: dace.float64[4, 4]):
         for i, j in dace.map[0:4, 0:4]:
@@ -86,9 +90,12 @@ def test_expand_without_inputs():
 
     assert len(map_entries) == 2
 
+
 def test_expand_without_dynamic_inputs():
+
     @dace.program
     def expansion(A: dace.float32[20, 30, 5], rng: dace.int32[2]):
+
         @dace.map
         def mymap(i: _[0:20], j: _[rng[0]:rng[1]], k: _[0:5]):
             a << A[i, j, k]
@@ -113,9 +120,12 @@ def test_expand_without_dynamic_inputs():
     print('Difference:', diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
 
+
 def test_expand_with_limits():
+
     @dace.program
     def expansion(A: dace.float32[20, 30, 5]):
+
         @dace.map
         def mymap(i: _[0:20], j: _[0:30], k: _[0:5]):
             a << A[i, j, k]

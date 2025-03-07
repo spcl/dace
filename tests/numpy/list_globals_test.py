@@ -22,6 +22,7 @@ def test_global_func_access_global_list():
 
 
 def test_local_func_access_global_list():
+
     @dace
     def local_list_program(A: dace.int32[3, 2, 4]):
         return np.transpose(A, axes=global_axes)

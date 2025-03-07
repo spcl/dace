@@ -177,10 +177,8 @@ class GeneralLoopScope(ControlFlowScope):
                     footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
                 return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
             else:
-                result = (indent * INDENTATION +
-                          f'for {loop.init_statement.as_string}; ' +
-                          f'{loop.loop_condition.as_string}; ' +
-                          f'{loop.update_statement.as_string}:\n')
+                result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
+                          f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
                 return result + super().as_string(indent)
         else:
             if loop.inverted:

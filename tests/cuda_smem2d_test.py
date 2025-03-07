@@ -11,8 +11,10 @@ W = dace.symbol('W')
 
 @dace.program(dace.float64[H, W], dace.float64[H, W])
 def cudahello(V, Vout):
+
     @dace.mapscope(_[0:H:8, 0:W:32])
     def multiplication(i, j):
+
         @dace.map(_[0:8, 0:32])
         def mult_block(bi, bj):
             in_V << V[i + bi, j + bj]
@@ -61,6 +63,7 @@ def test_gpu_localstorage():
 
 @pytest.mark.gpu
 def test_gpu_2localstorage():
+
     @dace.program
     def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
         for i, j in dace.map[0:H:8, 0:W:32]:
@@ -90,6 +93,7 @@ def test_gpu_2localstorage():
 
 @pytest.mark.gpu
 def test_gpu_2shared_for():
+
     @dace.program
     def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
         for i, j in dace.map[0:H:8, 0:W:32]:

@@ -54,6 +54,7 @@ def create_tiled_sdfg():
 
 
 def test_simple_program():
+
     @dace.program
     def multiply(a: dace.float32[N]):
         a *= 2

@@ -46,8 +46,8 @@ def test_2D_map_overwrites_2D_array():
 
 def test_2D_map_added_indices():
     """
-    2-dimensional array that writes to two-dimensional array with 
-    subscript expression that adds two indices 
+    2-dimensional array that writes to two-dimensional array with
+    subscript expression that adds two indices
     --> Approximated write-set of Map is empty
     """
 
@@ -76,7 +76,7 @@ def test_2D_map_added_indices():
 
 def test_2D_map_multiplied_indices():
     """
-    2-dimensional array that writes to two-dimensional array with 
+    2-dimensional array that writes to two-dimensional array with
     subscript expression that multiplies two indices
     --> Approximated write-set of Map is empty
     """
@@ -106,7 +106,7 @@ def test_2D_map_multiplied_indices():
 
 def test_1D_map_one_index_multiple_dims():
     """
-    One-dimensional map that has the same index 
+    One-dimensional map that has the same index
     in two dimensions in a write-access
     --> Approximated write-set of Map is empty
     """
@@ -134,8 +134,8 @@ def test_1D_map_one_index_multiple_dims():
 
 def test_1D_map_one_index_squared():
     """
-    One-dimensional map that multiplies the index 
-    in the subscript expression 
+    One-dimensional map that multiplies the index
+    in the subscript expression
     --> Approximated write-set of Map is empty
     """
     sdfg = dace.SDFG("twoD_map")
@@ -206,8 +206,8 @@ def test_map_tree_full_write():
 
 def test_map_tree_no_write_multiple_indices():
     """
-    Two maps nested in a map. Both nested writes contain an addition of 
-    indices in the subscript expression 
+    Two maps nested in a map. Both nested writes contain an addition of
+    indices in the subscript expression
     --> Approximated write-set of outer Map to array equals shape of array
     """
 
@@ -250,7 +250,7 @@ def test_map_tree_no_write_multiple_indices():
 
 def test_map_tree_multiple_indices_per_dimension():
     """
-    Two maps nested in a map. One inner Map writes to array using multiple indices. 
+    Two maps nested in a map. One inner Map writes to array using multiple indices.
     The other inner map writes to array with affine indices
     --> Approximated write-set of outer Map to array equals shape of array
     """
@@ -295,8 +295,8 @@ def test_map_tree_multiple_indices_per_dimension():
 
 def test_loop_in_map_multiplied_indices():
     """
-    Loop nested in a map that writes to array. In the subscript expression 
-    of the write indices are multiplied  
+    Loop nested in a map that writes to array. In the subscript expression
+    of the write indices are multiplied
     --> Approximated write-set of Map to array is empty
     """
 
@@ -485,7 +485,7 @@ def test_nested_sdfg_in_map_nest():
 
 def test_loop_in_nested_sdfg_in_map_partial_write():
     """
-    Write in nested SDFG in two-dimensional map nest. 
+    Write in nested SDFG in two-dimensional map nest.
     Nested map does not iterate over shape of second array dimension.
     --> should approximate write-set of map nest precisely."""
 
@@ -645,7 +645,7 @@ def test_loop_2D_overwrite():
 def test_loop_2D_propagation_gap_symbolic():
     """
     Three nested loops that overwrite two dimensional array.
-    Innermost loop is surrounded by loop that doesn't iterate 
+    Innermost loop is surrounded by loop that doesn't iterate
     over array range and is potentially empty.
     --> should approximate write-set to array of outer loop as empty
     """
@@ -706,7 +706,7 @@ def test_2_loops_overwrite():
 def test_loop_2D_overwrite_propagation_gap_non_empty():
     """
     Three nested loops that overwrite two-dimensional array.
-    Innermost loop is surrounded by a loop that doesn't iterate 
+    Innermost loop is surrounded by a loop that doesn't iterate
     over array range but over a non-empty constant range.
     --> should approximate write-set to array of loop nest as shape of array
     """
@@ -738,7 +738,7 @@ def test_loop_2D_overwrite_propagation_gap_non_empty():
 def test_loop_nest_multiplied_indices():
     """
     three nested loops that write to two dimensional array.
-    The subscript expression is a multiplication of two indices 
+    The subscript expression is a multiplication of two indices
     -> should approximate write-sets of loops as empty
     """
 
@@ -770,7 +770,7 @@ def test_loop_nest_empty_nested_loop():
     """
     three nested loops that write to two dimensional array.
     the innermost loop is surrounded by a loop that iterates over an empty range.
-    --> Approximated write-set to array of outer loop is empty. 
+    --> Approximated write-set to array of outer loop is empty.
     Approximated write-set to array of innermost loop is equal to shape of array
     """
 
@@ -1032,7 +1032,7 @@ def test_negative_step():
 
 def test_step_not_one():
     """
-    Array is accessed via index that is defined 
+    Array is accessed via index that is defined
     over Range with stepsize > 1.
     --> should approximate write-set precisely
 """

@@ -7,18 +7,13 @@ from typing import Any, List, Optional, Tuple, Type, TypeVar, Union, overload
 
 
 class FNode(object):
+
     def __init__(self, *args, **kwargs):  # real signature unknown
         self.integrity_exceptions = []
         self.read_vars = []
         self.written_vars = []
-        self.parent: Optional[
-            Union[
-                Subroutine_Subprogram_Node,
-                Function_Subprogram_Node,
-                Main_Program_Node,
-                Module_Node
-            ]
-        ] = None
+        self.parent: Optional[Union[Subroutine_Subprogram_Node, Function_Subprogram_Node, Main_Program_Node,
+                                    Module_Node]] = None
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -386,6 +381,7 @@ class Use_Stmt_Node(FNode):
 class Write_Stmt_Node(FNode):
     _attributes = ()
     _fields = ('args', )
+
 
 class Break_Node(FNode):
     _attributes = ()

@@ -113,6 +113,7 @@ def test_scalar_fission(with_raising):
     assert all([n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp]])
     assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])
 
+
 @pytest.mark.parametrize('with_raising', (False, True))
 def test_branch_subscopes_nofission(with_raising):
     sdfg = dace.SDFG('branch_subscope_fission')
@@ -198,6 +199,7 @@ def test_branch_subscopes_nofission(with_raising):
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
     assert set(sdfg.arrays.keys()) == {'A', 'B', 'C'}
+
 
 @pytest.mark.parametrize('with_raising', (False, True))
 def test_branch_subscopes_fission(with_raising):
@@ -294,6 +296,7 @@ def test_branch_subscopes_fission(with_raising):
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
     assert set(sdfg.arrays.keys()) == {'A', 'B', 'C', 'B_0', 'B_1'}
+
 
 if __name__ == '__main__':
     test_scalar_fission(False)

@@ -11,6 +11,7 @@ import dace.dtypes
 
 
 class SVEBinOpFuser(ast.NodeTransformer):
+
     def __init__(self, defined_symbols):
         self.defined_symbols = defined_symbols
 

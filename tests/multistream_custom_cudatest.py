@@ -34,8 +34,8 @@ tasklet = state.add_tasklet(
     double alpha = 1.0, beta = 0.0;
     cublasSetStream(handle, __dace_current_stream);
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                N, N, N, &alpha, 
-                a, N, b, N, 
+                N, N, N, &alpha,
+                a, N, b, N,
                 &beta,
                 c, N);
     ''',
@@ -49,8 +49,8 @@ tasklet2 = state.add_tasklet(name='gemm2',
     double alpha = 1.0, beta = 0.0;
     cublasSetStream(handle, __dace_current_stream);
     cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                N, N, N, &alpha, 
-                a, N, b, N, 
+                N, N, N, &alpha,
+                a, N, b, N,
                 &beta,
                 c, N);
     ''',

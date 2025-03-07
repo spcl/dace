@@ -221,11 +221,11 @@ def parse_memlet_subset(array: data.Data,
                         node: Union[ast.Name, ast.Subscript],
                         das: Dict[str, Any],
                         parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], List[int]]:
-    """ 
+    """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
-    
-    :param array: Accessed data descriptor (used for filling in missing data, 
+
+    :param array: Accessed data descriptor (used for filling in missing data,
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.

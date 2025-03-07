@@ -4,6 +4,7 @@ import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
 
+
 def test_fortran_frontend_minval_double():
     """
     Tests that the generated array map correctly handles offsets.
@@ -57,6 +58,7 @@ def test_fortran_frontend_minval_double():
     assert res[2] == d[5]
     # It should be the dace max for integer
     assert res[3] == np.finfo(np.float64).max
+
 
 def test_fortran_frontend_minval_int():
     """
@@ -124,6 +126,7 @@ def test_fortran_frontend_minval_int():
     # It should be the dace max for integer
     assert res[3] == np.iinfo(np.int32).max
 
+
 def test_fortran_frontend_maxval_double():
     """
     Tests that the generated array map correctly handles offsets.
@@ -177,6 +180,7 @@ def test_fortran_frontend_maxval_double():
     assert res[2] == d[2]
     # It should be the dace max for integer
     assert res[3] == np.finfo(np.float64).min
+
 
 def test_fortran_frontend_maxval_int():
     """
@@ -243,6 +247,7 @@ def test_fortran_frontend_maxval_int():
     assert res[2] == d[2]
     # It should be the dace max for integer
     assert res[3] == np.iinfo(np.int32).min
+
 
 if __name__ == "__main__":
 

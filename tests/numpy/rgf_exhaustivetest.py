@@ -16,6 +16,7 @@ def trace(A):
 
 @dace.program
 def hermitian_transpose(A: dace.complex128[BS, BS], B: dace.complex128[BS, BS]):
+
     @dace.map(_[0:BS, 0:BS])
     def her_trans(i, j):
         inp << A[i, j]

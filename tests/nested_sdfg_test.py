@@ -14,6 +14,7 @@ def test():
 
     @dp.program
     def sdfg_internal(input: dp.float32, output: dp.float32[1]):
+
         @dp.tasklet
         def init():
             out >> output
@@ -27,7 +28,6 @@ def test():
                 out >> output
                 out = oin * input
 
-
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
     state = mysdfg.add_state()
@@ -40,7 +40,6 @@ def test():
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
-
 
     N = 64
 
@@ -61,6 +60,7 @@ def test_external_nsdfg():
 
     @dp.program
     def sdfg_internal(input: dp.float32, output: dp.float32[1]):
+
         @dp.tasklet
         def init():
             out >> output
@@ -73,7 +73,6 @@ def test_external_nsdfg():
                 oin << output
                 out >> output
                 out = oin * input
-
 
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
@@ -90,7 +89,6 @@ def test_external_nsdfg():
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
-
 
     N = 64
 

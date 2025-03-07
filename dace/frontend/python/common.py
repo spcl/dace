@@ -66,7 +66,7 @@ class SDFGConvertible(object):
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         """
         Returns an SDFG representation of this object.
-        :param args: Arguments or argument types (given as DaCe data 
+        :param args: Arguments or argument types (given as DaCe data
                      descriptors) that can be used for compilation.
         :param kwargs: Keyword arguments or argument types (given as DaCe data
                        descriptors) that can be used for compilation.
@@ -95,7 +95,7 @@ class SDFGConvertible(object):
         (i.e., including regular and constant arguments, but excluding "self"
         for bound methods) and a sequence of the constant argument names from
         the first sequence.
-        
+
         :return: A 2-tuple of (all arguments, constant arguments).
         """
         raise NotImplementedError

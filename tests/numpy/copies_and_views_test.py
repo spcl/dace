@@ -114,6 +114,7 @@ def test_is_a_copy():
 
 
 def test_needs_view():
+
     @dace.program
     def nested(q, i, j):
         q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 3:6]
@@ -132,6 +133,7 @@ def test_needs_view():
 
 
 def test_needs_copy():
+
     @dace.program
     def nested(q, i, j):
         q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 1:4]

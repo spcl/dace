@@ -34,7 +34,7 @@ get_latest_file() {
 
 join_by_newline() {
     for a in $*; do
-        echo $a        
+        echo $a
     done
     echo 9999
 }
@@ -56,7 +56,7 @@ runtestopt() {
         bail "$1 ($2, Single Node)"
         return 1
     fi
-    
+
     return 0
 }
 
@@ -74,7 +74,7 @@ runmpitestopt() {
 
 runone() {
     echo "Running $PYTHON_BINARY"
-    
+
     # Use cache (do not recompile every rank) in distributed test
     runtestopt codegen/mpi_axpy.py $1 ''
     DACE_compiler_use_cache=1

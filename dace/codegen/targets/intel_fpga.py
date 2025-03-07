@@ -173,13 +173,23 @@ DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
                                    sdfg=self._global_sdfg)
 
         kernel_code_objs = [
-            CodeObject(kernel_name, code, "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device", sdfg=self._global_sdfg)
-            for (kernel_name, code, _) in self._kernel_codes
+            CodeObject(kernel_name,
+                       code,
+                       "cl",
+                       IntelFPGACodeGen,
+                       "Intel FPGA",
+                       target_type="device",
+                       sdfg=self._global_sdfg) for (kernel_name, code, _) in self._kernel_codes
         ]
         # add the util header if present
         other_code_objs = [
-            CodeObject(file_name, code.getvalue(), "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device", sdfg=self._global_sdfg)
-            for (file_name, code) in self._other_codes.items()
+            CodeObject(file_name,
+                       code.getvalue(),
+                       "cl",
+                       IntelFPGACodeGen,
+                       "Intel FPGA",
+                       target_type="device",
+                       sdfg=self._global_sdfg) for (file_name, code) in self._other_codes.items()
         ]
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
@@ -300,7 +310,7 @@ DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
             return "__global volatile  {}* restrict {}".format(vec_type, var_name)
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
-        else: # Scalar or structure
+        else:  # Scalar or structure
             return f'{data.dtype.ocltype} {var_name}'
 
     @staticmethod
@@ -1058,8 +1068,8 @@ __kernel void \\
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
-                    global_node = utils.trace_nested_access(dst_node if is_output else src_node,
-                                                            cfg.state(state_id), sdfg)
+                    global_node = utils.trace_nested_access(dst_node if is_output else src_node, cfg.state(state_id),
+                                                            sdfg)
                     data_name = global_node[0][0][1 if is_output else 0].label
 
                     if outer_memlet is not None:
@@ -1171,8 +1181,8 @@ __kernel void \\
             self._generate_converter(unpack, ctype, veclen, sdfg, cfg, function_stream)
 
     def unparse_tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, dfg: StateSubgraphView,
-                        node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream,
-                        locals, ldepth, toplevel_schedule) -> str:
+                        node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream, locals,
+                        ldepth, toplevel_schedule) -> str:
         if node.label is None or node.label == "":
             return ''
 
@@ -1227,9 +1237,10 @@ __kernel void \\
         defined_symbols = state_dfg.symbols_defined_at(node)
 
         # This could be problematic for numeric constants that have no dtype
-        defined_symbols.update(
-            {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-             for k, v in sdfg.constants.items()})
+        defined_symbols.update({
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        })
 
         for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:

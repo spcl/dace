@@ -5,6 +5,7 @@ import math
 
 
 def test_pi_tasklet():
+
     @dace.program
     def returnpi(result: dace.float64[1]):
         with dace.tasklet:
@@ -17,6 +18,7 @@ def test_pi_tasklet():
 
 
 def test_pi_numpy():
+
     @dace.program
     def returnpi(result: dace.float64[1]):
         result[0] = math.pi
@@ -27,6 +29,7 @@ def test_pi_numpy():
 
 
 def test_piarray_numpy():
+
     @dace.program
     def returnpi(result: dace.float64[20]):
         result[:] = math.pi

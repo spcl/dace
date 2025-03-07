@@ -10,6 +10,7 @@ from dace.transformation import transformation as xf
 
 def test_unsqueeze():
     """ Tests for an issue in unsqueeze not allowing reshape. """
+
     @dace.program
     def callee(A: dace.float64[60, 2]):
         A[:, 1] = 5.0

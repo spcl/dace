@@ -58,8 +58,8 @@ def test_dse_edge_condition_with_integer_as_boolean_regression():
     state_init = sdfg.add_state()
     state_middle = sdfg.add_state()
     state_end = sdfg.add_state()
-    sdfg.add_edge(state_init, state_end, dace.InterstateEdge(condition='(not ((N > 20) != 0))',
-                                                             assignments={'result': 'N'}))
+    sdfg.add_edge(state_init, state_end,
+                  dace.InterstateEdge(condition='(not ((N > 20) != 0))', assignments={'result': 'N'}))
     sdfg.add_edge(state_init, state_middle, dace.InterstateEdge(condition='((N > 20) != 0)'))
     sdfg.add_edge(state_middle, state_end, dace.InterstateEdge(assignments={'result': '20'}))
 
@@ -385,48 +385,38 @@ def test_prune_single_branch_conditional_block():
 
     for name in "abc":
         sdfg.add_array(
-                name,
-                shape=(10,),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=False,
         )
     sdfg.arrays["b"].transient = True
 
     first_state = sdfg.add_state("first_state")
     first_state.add_mapped_tasklet(
-            "first_comp",
-            map_ranges={"__i0": "0:10"},
-            inputs={"__in1": dace.Memlet("a[__i0]")},
-            code="__out = __in1 + 10.0",
-            outputs={"__out": dace.Memlet("b[__i0]")},
-            external_edges=True,
+        "first_comp",
+        map_ranges={"__i0": "0:10"},
+        inputs={"__in1": dace.Memlet("a[__i0]")},
+        code="__out = __in1 + 10.0",
+        outputs={"__out": dace.Memlet("b[__i0]")},
+        external_edges=True,
     )
 
     # create states inside the nested SDFG for the if-branches
     if_region = dace.sdfg.state.ConditionalBlock("if")
     sdfg.add_node(if_region)
-    sdfg.add_edge(
-            first_state,
-            if_region,
-            dace.InterstateEdge()
-    )
+    sdfg.add_edge(first_state, if_region, dace.InterstateEdge())
 
-    then_body = dace.sdfg.state.ControlFlowRegion(
-            "then_body",
-            sdfg=sdfg
-    )
+    then_body = dace.sdfg.state.ControlFlowRegion("then_body", sdfg=sdfg)
     then_state = then_body.add_state("true_branch", is_start_block=True)
-    if_region.add_branch(
-            dace.sdfg.state.CodeBlock("True"),
-            then_body
-    )
+    if_region.add_branch(dace.sdfg.state.CodeBlock("True"), then_body)
     then_state.add_mapped_tasklet(
-            "second_comp",
-            map_ranges={"__i0": "0:10"},
-            inputs={"__in1": dace.Memlet("b[__i0]")},
-            code="__out = __in1 + 1.0",
-            outputs={"__out": dace.Memlet("c[__i0]")},
-            external_edges=True,
+        "second_comp",
+        map_ranges={"__i0": "0:10"},
+        inputs={"__in1": dace.Memlet("b[__i0]")},
+        code="__out = __in1 + 1.0",
+        outputs={"__out": dace.Memlet("c[__i0]")},
+        external_edges=True,
     )
     sdfg.validate()
     res = DeadStateElimination().apply_pass(sdfg, {})

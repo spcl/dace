@@ -246,6 +246,7 @@ def test_free_map_permissive():
     applied = sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True)
     assert applied == 1
 
+
 def test_aug_assign_same_inconns():
 
     @dace.program
@@ -253,7 +254,7 @@ def test_aug_assign_same_inconns():
         for i in dace.map[0:31]:
             with dace.tasklet(language=dace.Language.Python):
                 a << A[i]
-                b << A[i+1]
+                b << A[i + 1]
                 c >> A[i]
 
                 c = a * b

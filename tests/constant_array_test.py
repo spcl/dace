@@ -15,6 +15,7 @@ KERNEL = np.array([[0, -1, 0], [-1, 0, -1], [0, -1, 0]], dtype=np.float32)
 
 @dace.program(dace.float32[N, N], dace.float32[N, N])
 def stencil3x3(A, B):
+
     @dace.map(_[1:N - 1, 1:N - 1])
     def a2b(y, x):
         input << A[y - 1:y + 2, x - 1:x + 2]
@@ -60,6 +61,7 @@ def test():
 
 
 def test_constant_transient():
+
     @dace.program
     def ctrans(a: dace.float64[10]):
         cst = np.array([1., 2., 3., 4., 5, 6, 7, 8, 9, 10])

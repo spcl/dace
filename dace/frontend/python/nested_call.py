@@ -38,6 +38,7 @@ class NestedCall():
         self.count = 0
 
     def __call__(self, func):
+
         def nested(*args, **kwargs):
             result = func(self.pv, self.sdfg,
                           self.add_state("{}_nested_call_{}_{}".format(self.state.label, self.count, func.__name__)),

@@ -82,7 +82,6 @@ class MapFusion(transformation.SingleStateTransformation):
     array = transformation.transformation.PatternNode(nodes.AccessNode)
     second_map_entry = transformation.transformation.PatternNode(nodes.MapEntry)
 
-
     # Settings
     only_toplevel_maps = properties.Property(
         dtype=bool,
@@ -105,7 +104,6 @@ class MapFusion(transformation.SingleStateTransformation):
         desc="If `True` then all intermediates will be classified as shared.",
     )
 
-
     def __init__(
         self,
         only_inner_maps: Optional[bool] = None,
@@ -127,7 +125,6 @@ class MapFusion(transformation.SingleStateTransformation):
         # See comment in `is_shared_data()` for more information.
         self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
 
-
     @classmethod
     def expressions(cls) -> Any:
         """Get the match expression.
@@ -139,7 +136,6 @@ class MapFusion(transformation.SingleStateTransformation):
         from the first Map or an outgoing connection to the second Map entry.
         """
         return [dace.sdfg.utils.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
-
 
     def can_be_applied(
         self,
@@ -167,12 +163,10 @@ class MapFusion(transformation.SingleStateTransformation):
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
         #  or `None` if the maps can not be structurally fused.
-        param_repl = self.can_topologically_be_fused(
-                first_map_entry=first_map_entry,
-                second_map_entry=second_map_entry,
-                graph=graph,
-                sdfg=sdfg
-        )
+        param_repl = self.can_topologically_be_fused(first_map_entry=first_map_entry,
+                                                     second_map_entry=second_map_entry,
+                                                     graph=graph,
+                                                     sdfg=sdfg)
         if param_repl is None:
             return False
 
@@ -217,7 +211,6 @@ class MapFusion(transformation.SingleStateTransformation):
             return False
 
         return True
-
 
     def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:
         """Performs the serial Map fusing.
@@ -310,7 +303,6 @@ class MapFusion(transformation.SingleStateTransformation):
 
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
-
 
     def partition_first_outputs(
         self,
@@ -475,7 +467,9 @@ class MapFusion(transformation.SingleStateTransformation):
                 # If the second map entry is not immediately reachable from the intermediate
                 #  node, then ensure that there is not path that goes to it.
                 if intermediate_node_out_edge.dst is not second_map_entry:
-                    if self.is_node_reachable_from(graph=state, begin=intermediate_node_out_edge.dst, end=second_map_entry):
+                    if self.is_node_reachable_from(graph=state,
+                                                   begin=intermediate_node_out_edge.dst,
+                                                   end=second_map_entry):
                         return None
                     continue
 
@@ -549,7 +543,6 @@ class MapFusion(transformation.SingleStateTransformation):
 
         assert len(processed_inter_nodes) == sum(len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs])
         return (pure_outputs, exclusive_outputs, shared_outputs)
-
 
     def relocate_nodes(
         self,
@@ -640,7 +633,6 @@ class MapFusion(transformation.SingleStateTransformation):
         assert len(from_node.in_connectors) == 0
         assert len(from_node.out_connectors) == 0
 
-
     def handle_intermediate_set(
         self,
         intermediate_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]],
@@ -691,8 +683,8 @@ class MapFusion(transformation.SingleStateTransformation):
             pre_exit_edge = pre_exit_edges[0]
 
             (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
-                    producer_subset=pre_exit_edge.data.dst_subset,
-                    inter_desc=inter_desc,
+                producer_subset=pre_exit_edge.data.dst_subset,
+                inter_desc=inter_desc,
             )
 
             # This is the name of the new "intermediate" node that we will create.
@@ -727,10 +719,10 @@ class MapFusion(transformation.SingleStateTransformation):
             #  the old output edge wrote to. We need that to adjust the producer
             #  Memlets, since they now write into the new (smaller) intermediate.
             producer_offset = self.compute_offset_subset(
-                    original_subset=pre_exit_edge.data.dst_subset,
-                    intermediate_desc=inter_desc,
-                    map_params=map_params,
-                    producer_offset=None,
+                original_subset=pre_exit_edge.data.dst_subset,
+                intermediate_desc=inter_desc,
+                map_params=map_params,
+                producer_offset=None,
             )
 
             # Memlets have a lot of additional informations, to ensure that we get
@@ -808,10 +800,10 @@ class MapFusion(transformation.SingleStateTransformation):
                     #  So we must offset them, we use the original edge for this.
                     assert inner_edge.data.src_subset is not None
                     consumer_offset = self.compute_offset_subset(
-                            original_subset=inner_edge.data.src_subset,
-                            intermediate_desc=inter_desc,
-                            map_params=map_params,
-                            producer_offset=producer_offset,
+                        original_subset=inner_edge.data.src_subset,
+                        intermediate_desc=inter_desc,
+                        map_params=map_params,
+                        producer_offset=producer_offset,
                     )
 
                     # Now create the memlet for the new consumer. To make sure that we get all attributes
@@ -921,11 +913,10 @@ class MapFusion(transformation.SingleStateTransformation):
                 first_map_exit.remove_out_connector(out_edge.src_conn)
                 state.remove_edge(out_edge)
 
-
     def compute_reduced_intermediate(
-            self,
-            producer_subset: subsets.Range,
-            inter_desc: dace.data.Data,
+        self,
+        producer_subset: subsets.Range,
+        inter_desc: dace.data.Data,
     ) -> Tuple[Tuple[int, ...], Tuple[int, ...], List[int]]:
         """Compute the size of the new (reduced) intermediate.
 
@@ -965,13 +956,12 @@ class MapFusion(transformation.SingleStateTransformation):
 
         return (tuple(new_inter_shape_raw), tuple(new_inter_shape), squeezed_dims)
 
-
     def compute_offset_subset(
-            self,
-            original_subset: subsets.Range,
-            intermediate_desc: data.Data,
-            map_params: List[str],
-            producer_offset: Union[subsets.Range, None],
+        self,
+        original_subset: subsets.Range,
+        intermediate_desc: data.Data,
+        map_params: List[str],
+        producer_offset: Union[subsets.Range, None],
     ) -> subsets.Range:
         """Computes the memlet to correct read and writes of the intermediate.
 
@@ -1021,14 +1011,13 @@ class MapFusion(transformation.SingleStateTransformation):
             #  See also the `transformations/mapfusion_test.py::test_offset_correction_*`
             #  tests for more.
             final_offset.offset(
-                    final_offset.offset_new(
-                        producer_offset,
-                        negative=True,
-                    ),
+                final_offset.offset_new(
+                    producer_offset,
                     negative=True,
+                ),
+                negative=True,
             )
         return final_offset
-
 
     def can_topologically_be_fused(
         self,
@@ -1057,7 +1046,8 @@ class MapFusion(transformation.SingleStateTransformation):
         :param permissive: Currently unused.
         """
         if self.only_inner_maps and self.only_toplevel_maps:
-            raise ValueError("Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusion instance.")
+            raise ValueError(
+                "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusion instance.")
 
         # Ensure that both have the same schedule
         if first_map_entry.map.schedule != second_map_entry.map.schedule:
@@ -1078,7 +1068,6 @@ class MapFusion(transformation.SingleStateTransformation):
         #  match the one of the first Map.
         param_repl = self.find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
         return param_repl
-
 
     def has_inner_read_write_dependency(
         self,
@@ -1116,14 +1105,10 @@ class MapFusion(transformation.SingleStateTransformation):
 
         # Find the data that is internally referenced. Because of the first rule above,
         #  we filter all views above.
-        first_map_body_data, second_map_body_data = [
-            {
-                dnode.data
-                for dnode in map_body.nodes()
-                if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)
-            }
-            for map_body in [first_map_body, second_map_body]
-        ]
+        first_map_body_data, second_map_body_data = [{
+            dnode.data
+            for dnode in map_body.nodes() if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)
+        } for map_body in [first_map_body, second_map_body]]
 
         # If there is data that is referenced in both, then we consider this as an error
         #  this is the second rule above.
@@ -1133,14 +1118,10 @@ class MapFusion(transformation.SingleStateTransformation):
         # We consider it as a problem if any map refers to non-transient data.
         #  This is an implementation detail and could be dropped if we do further
         #  analysis.
-        if any(
-            not sdfg.arrays[data].transient
-            for data in first_map_body_data.union(second_map_body_data)
-        ):
+        if any(not sdfg.arrays[data].transient for data in first_map_body_data.union(second_map_body_data)):
             return True
 
         return False
-
 
     def has_read_write_dependency(
         self,
@@ -1330,7 +1311,6 @@ class MapFusion(transformation.SingleStateTransformation):
         # No read write dependency was found.
         return False
 
-
     def test_if_subsets_are_point_wise(self, subsets_to_check: List[subsets.Subset]) -> bool:
         """Point wise means that they are all the same.
 
@@ -1368,7 +1348,6 @@ class MapFusion(transformation.SingleStateTransformation):
         #  This means that the data accesses, described by this transformation is
         #  point wise
         return True
-
 
     def is_shared_data(
         self,
@@ -1426,7 +1405,6 @@ class MapFusion(transformation.SingleStateTransformation):
         # We have to perform the full scan of the SDFG.
         return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
 
-
     def _scan_sdfg_if_data_is_shared(
         self,
         data: nodes.AccessNode,
@@ -1483,7 +1461,6 @@ class MapFusion(transformation.SingleStateTransformation):
 
         # The `data` is not used anywhere else, thus `data` is not shared.
         return False
-
 
     def find_parameter_remapping(self, first_map: nodes.Map, second_map: nodes.Map) -> Optional[Dict[str, str]]:
         """Computes the parameter remapping for the parameters of the _second_ map.
@@ -1583,7 +1560,6 @@ class MapFusion(transformation.SingleStateTransformation):
         assert len(final_mapping) == len(unmapped_second_params)
         return final_mapping
 
-
     def rename_map_parameters(
         self,
         first_map: nodes.Map,
@@ -1622,7 +1598,6 @@ class MapFusion(transformation.SingleStateTransformation):
         second_map.params = copy.deepcopy(first_map.params)
         second_map.range = copy.deepcopy(first_map.range)
 
-
     def is_node_reachable_from(
         self,
         graph: Union[dace.SDFG, dace.SDFGState],
@@ -1657,7 +1632,6 @@ class MapFusion(transformation.SingleStateTransformation):
         # We never found `end`
         return False
 
-
     def _is_data_accessed_downstream(
         self,
         data: str,
@@ -1676,6 +1650,7 @@ class MapFusion(transformation.SingleStateTransformation):
         :param graph: The graph to explore.
         :param begin: The node to start exploration; The node itself is ignored.
         """
+
         def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
             return (edge.dst for edge in graph.out_edges(node))
 
@@ -1689,7 +1664,6 @@ class MapFusion(transformation.SingleStateTransformation):
             to_visit.extend(next_nodes(node))
 
         return False
-
 
     def get_access_set(
         self,
@@ -1720,7 +1694,6 @@ class MapFusion(transformation.SingleStateTransformation):
         }
 
         return access_set
-
 
     def find_subsets(
         self,
@@ -1768,16 +1741,14 @@ class MapFusion(transformation.SingleStateTransformation):
 
         return found_subsets
 
-
     def is_view(
         self,
         node: Union[nodes.AccessNode, data.Data],
         sdfg: SDFG,
     ) -> bool:
         """Tests if `node` points to a view or not."""
-        node_desc: data.Data =  node if isinstance(node, data.Data) else node.desc(sdfg)
+        node_desc: data.Data = node if isinstance(node, data.Data) else node.desc(sdfg)
         return isinstance(node_desc, data.View)
-
 
     def track_view(
         self,

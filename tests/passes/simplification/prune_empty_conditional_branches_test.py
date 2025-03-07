@@ -1,6 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-
 import numpy as np
 import dace
 from dace.sdfg.state import ConditionalBlock
@@ -41,10 +40,10 @@ def test_prune_empty_else():
 
     N1 = 32
     N2 = 31
-    A1 = np.zeros((N1,), dtype=np.int32)
-    A2 = np.zeros((N2,), dtype=np.int32)
-    verif1 = np.full((N1,), 1, dtype=np.int32)
-    verif2 = np.zeros((N2,), dtype=np.int32)
+    A1 = np.zeros((N1, ), dtype=np.int32)
+    A2 = np.zeros((N2, ), dtype=np.int32)
+    verif1 = np.full((N1, ), 1, dtype=np.int32)
+    verif2 = np.zeros((N2, ), dtype=np.int32)
 
     sdfg(A1, N=N1)
     sdfg(A2, N=N2)
@@ -88,10 +87,10 @@ def test_prune_empty_if_with_else():
 
     N1 = 32
     N2 = 31
-    A1 = np.zeros((N1,), dtype=np.int32)
-    A2 = np.zeros((N2,), dtype=np.int32)
-    verif1 = np.zeros((N1,), dtype=np.int32)
-    verif2 = np.full((N2,), 1, dtype=np.int32)
+    A1 = np.zeros((N1, ), dtype=np.int32)
+    A2 = np.zeros((N2, ), dtype=np.int32)
+    verif1 = np.zeros((N1, ), dtype=np.int32)
+    verif2 = np.full((N2, ), 1, dtype=np.int32)
 
     sdfg(A1, N=N1)
     sdfg(A2, N=N2)

@@ -16,6 +16,7 @@ import tempfile
 
 
 def partialclass(cls, *args, **kwds):
+
     class NewCls(cls):
         __init__ = functools.partialmethod(cls.__init__, *args, **kwds)
 
@@ -37,11 +38,8 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
     """
     # If vscode is open, try to open it inside vscode
     if filename is None:
-        if (
-            'VSCODE_IPC_HOOK' in os.environ
-            or 'VSCODE_IPC_HOOK_CLI' in os.environ
-            or 'VSCODE_GIT_IPC_HANDLE' in os.environ
-        ):
+        if ('VSCODE_IPC_HOOK' in os.environ or 'VSCODE_IPC_HOOK_CLI' in os.environ
+                or 'VSCODE_GIT_IPC_HANDLE' in os.environ):
             suffix = '.sdfgz' if compress else '.sdfg'
             fd, filename = tempfile.mkstemp(suffix=suffix)
             sdfg.save(filename, compress=compress)
@@ -82,7 +80,7 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
     with open(html_filename, "w") as f:
         f.write(html)
 
-    if(verbose):
+    if (verbose):
         print("File saved at %s" % html_filename)
 
     if fd is not None:
@@ -95,7 +93,7 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
         # start the web server
         handler = partialclass(http.server.SimpleHTTPRequestHandler, directory=dirname)
         httpd = http.server.HTTPServer(('localhost', filename), handler)
-        if(verbose):
+        if (verbose):
             print(f"Serving at localhost:{filename}, press enter to stop...")
 
         # start the server in a different thread

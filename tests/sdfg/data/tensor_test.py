@@ -9,12 +9,8 @@ from scipy import sparse
 def test_read_csr_tensor():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    csr_obj = dace.data.Tensor(
-        dace.float32,
-        (M, N),
-        [(dace.data.TensorIndexDense(), 0), (dace.data.TensorIndexCompressed(), 1)],
-        nnz,
-        "CSR_Tensor")
+    csr_obj = dace.data.Tensor(dace.float32, (M, N), [(dace.data.TensorIndexDense(), 0),
+                                                      (dace.data.TensorIndexCompressed(), 1)], nnz, "CSR_Tensor")
 
     sdfg = dace.SDFG('tensor_csr_to_dense')
 

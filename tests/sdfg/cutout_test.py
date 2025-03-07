@@ -327,9 +327,8 @@ def test_minimum_cut_simple_no_further_input_config():
     state = sdfg.add_state('state')
     mi, mo = state.add_map('map', dict(i='0:N', j='0:N'))
     t1 = state.add_tasklet('t1', {'a', 'b'}, {'t'}, 't = a + b')
-    t2 = state.add_tasklet(
-        't2', {'tin'}, {'t1', 't2', 't3', 't4'}, 't1 = tin + 2\nt2 = tin * 2\nt3 = tin / 2\nt4 = tin + 1'
-    )
+    t2 = state.add_tasklet('t2', {'tin'}, {'t1', 't2', 't3', 't4'},
+                           't1 = tin + 2\nt2 = tin * 2\nt3 = tin / 2\nt4 = tin + 1')
     t3 = state.add_tasklet('t3', {'a', 'b'}, {'t'}, 't = a + b')
     t4 = state.add_tasklet('t4', {'a', 'b', 'c'}, {'t'}, 't = (a - b) * c')
     a_access = state.add_access('A')

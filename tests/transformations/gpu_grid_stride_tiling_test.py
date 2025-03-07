@@ -98,12 +98,7 @@ def test_gpu_grid_stride_tiling_with_indirection():
         for j in range(A.indptr[i], A.indptr[i + 1]):
             D_ref[j] += A.data[j] * (B[i, :] @ C[:, A.indices[j]])
 
-    sdfg(A_vals=np.copy(A.data),
-         A2_crd=np.copy(A.indices),
-         A2_pos=A.indptr,
-         B=B,
-         C=C,
-         D_vals=D_test)
+    sdfg(A_vals=np.copy(A.data), A2_crd=np.copy(A.indices), A2_pos=A.indptr, B=B, C=C, D_vals=D_test)
     assert np.allclose(D_ref, D_test)
 
 

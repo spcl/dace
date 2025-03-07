@@ -21,9 +21,10 @@ from dace.transformation import dataflow, interstate, subgraph
 
 class Optimizer(object):
     """ Implements methods for optimizing a DaCe program stateful dataflow
-        graph representation, by matching patterns and applying 
+        graph representation, by matching patterns and applying
         transformations on it.
     """
+
     def __init__(self, sdfg, inplace=True):
         """ Constructs an SDFG optimizer.
 
@@ -49,7 +50,7 @@ class Optimizer(object):
     def set_transformation_metadata(self,
                                     patterns: List[Type[PatternTransformation]],
                                     options: Optional[List[Dict[str, Any]]] = None):
-        """ 
+        """
         Caches transformation metadata for a certain set of patterns to match.
         """
         self.transformation_metadata = (pattern_matching.get_transformation_metadata(patterns, options))
@@ -85,6 +86,7 @@ class Optimizer(object):
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """
+
         def get_actions(actions, graph, match):
             subgraph_node_ids = match.subgraph.values()
             subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
@@ -178,9 +180,10 @@ def _parse_cli_input(line):
 
 
 class SDFGOptimizer(Optimizer):
+
     def optimize(self):
         """ A command-line UI for applying patterns on the SDFG.
-        
+
             :return: An optimized SDFG object
         """
         sdfg_file = self.sdfg.name + '.sdfg'

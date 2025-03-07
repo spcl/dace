@@ -5,7 +5,7 @@ DaCe Python Frontend
 
 The DaCe Python frontend is a Python library that parses general Python code and generates SDFGs.
 Briefly, it works by parsing the Python AST, preprocessing it into a more suitable form, and then creates the SDFG
-by traversing the AST. Upon parsing, Python elements can be (a) parsed to equivalent SDFG components; (b) parsed to 
+by traversing the AST. Upon parsing, Python elements can be (a) parsed to equivalent SDFG components; (b) parsed to
 :ref:`Library Nodes <libnodes>` to be subsequently specialized for each platform; or (c) if containing unsupported features
 (e.g., recursion), converted into callbacks to the Python interpreter, raising a warning in the process.
 
@@ -30,4 +30,3 @@ capabilities DaCe provides by default.
 
 
 ..  preprocessing
-    

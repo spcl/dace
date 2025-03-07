@@ -26,7 +26,8 @@ def expand_reduce(sdfg: dace.SDFG,
                 rexp.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(graph), {ReduceExpansion.reduce: graph.node_id(node)},
                                  0)
                 if not rexp.can_be_applied(graph, 0, sdfg):
-                    print(f"WARNING: Cannot expand reduce node {node}:" "can_be_applied() failed.")
+                    print(f"WARNING: Cannot expand reduce node {node}:"
+                          "can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 

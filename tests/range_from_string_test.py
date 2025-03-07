@@ -7,6 +7,7 @@ from dace import subsets as sbs
 
 class RangeFromStringTests(unittest.TestCase):
     """Implements unit tests for dace.subsets.Range.from_string method."""
+
     def test_simple_uni_dim_range(self):
 
         r = sbs.Range.from_string('0:M:2')

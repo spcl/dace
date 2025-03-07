@@ -4,6 +4,7 @@ import numpy as np
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_frontend_array_attribute_no_offset():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
@@ -35,9 +36,10 @@ def test_fortran_frontend_array_attribute_no_offset():
 
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    for i in range(1,5):
+    for i in range(1, 5):
         # offset -1 is already added
-        assert a[i-1] == i * 2
+        assert a[i - 1] == i * 2
+
 
 def test_fortran_frontend_array_attribute_offset():
     """
@@ -70,9 +72,10 @@ def test_fortran_frontend_array_attribute_offset():
 
     a = np.full([60], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    for i in range(50,54):
+    for i in range(50, 54):
         # offset -1 is already added
-        assert a[i-1] == i * 2
+        assert a[i - 1] == i * 2
+
 
 def test_fortran_frontend_array_offset():
     """
@@ -91,7 +94,7 @@ def test_fortran_frontend_array_offset():
                     do i=50,54
                        d(i) = i * 2.0
                     end do
-                    
+
                     END SUBROUTINE index_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test")
@@ -105,9 +108,9 @@ def test_fortran_frontend_array_offset():
 
     a = np.full([60], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    for i in range(50,54):
+    for i in range(50, 54):
         # offset -1 is already added
-        assert a[i-1] == i * 2
+        assert a[i - 1] == i * 2
 
 
 if __name__ == "__main__":

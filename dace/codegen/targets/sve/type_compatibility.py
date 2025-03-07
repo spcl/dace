@@ -17,6 +17,7 @@ import collections
 
 
 class IncompatibleTypeError(Exception):
+
     def __init__(self, message, types):
         super().__init__(f'{message}; given: {types}')
 

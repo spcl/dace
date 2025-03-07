@@ -256,8 +256,8 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             first_accesses = tuple(first_memlet.subset.ranges)
             for second_accesses in consume_memlets[array]:
                 # Step 1: Infer index access of second map to new inputs with respect to original first map
-                mapping = OTFMapFusion.solve(first_map_entry.map.params, first_accesses,
-                                             second_map_entry.map.params, second_accesses)
+                mapping = OTFMapFusion.solve(first_map_entry.map.params, first_accesses, second_map_entry.map.params,
+                                             second_accesses)
 
                 # Step 2: Add Temporary buffer
                 tmp_name = sdfg.temp_data_name()

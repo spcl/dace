@@ -139,9 +139,7 @@ of << i << "\\n";""",
     return sdfg_outer
 
 
-def _make_read_write_sdfg(
-    conforming_memlet: bool,
-) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
+def _make_read_write_sdfg(conforming_memlet: bool, ) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
     """Creates an SDFG for the `test_read_write_{1, 2}` tests.
 
     The SDFG is rather synthetic, it has an input `in_arg` and adds to every element
@@ -170,7 +168,10 @@ def _make_read_write_sdfg(
 
     ostate.add_mapped_tasklet(
         "producer",
-        map_ranges={"i": "0:4", "j": "0:4"},
+        map_ranges={
+            "i": "0:4",
+            "j": "0:4"
+        },
         inputs={"__in": dace.Memlet("in_arg[i, j]")},
         code="__out = __in + 10.",
         outputs={"__out": dace.Memlet("A[i, j]")},
@@ -189,7 +190,10 @@ def _make_read_write_sdfg(
 
     istate.add_mapped_tasklet(
         "inner_consumer",
-        map_ranges={"i": "0:4", "j": "0:4"},
+        map_ranges={
+            "i": "0:4",
+            "j": "0:4"
+        },
         inputs={},
         code="__out = 10",
         outputs={"__out": dace.Memlet("inner_A[i, j]")},
@@ -253,14 +257,14 @@ def test_prune_connectors(n=None):
 
     # The pruned connectors are not removed so they have to be supplied.
     sdfg(read_used=arr_in,
-            read_unused=arr_in,
-            read_used_outer=arr_in,
-            read_unused_outer=arr_in,
-            write_used=arr_out,
-            write_unused=arr_out,
-            write_used_outer=arr_out,
-            write_unused_outer=arr_out,
-            N=n)
+         read_unused=arr_in,
+         read_used_outer=arr_in,
+         read_unused_outer=arr_in,
+         write_used=arr_out,
+         write_unused=arr_out,
+         write_used_outer=arr_out,
+         write_unused_outer=arr_out,
+         N=n)
 
     assert np.allclose(arr_out, arr_in + 1)
 

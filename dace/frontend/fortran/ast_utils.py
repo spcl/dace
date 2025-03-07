@@ -26,8 +26,7 @@ fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
     "REAL": dtypes.float32,
     "INTEGER": dtypes.int32,
-    "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C 
-    
+    "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C
 }
 
 
@@ -93,6 +92,7 @@ class TaskletWriter:
     :param name_mapping: mapping of names in the code to names in the sdfg
     :return: python code for a tasklet, as a string
     """
+
     def __init__(self,
                  outputs: List[str],
                  outputs_changes: List[str],
@@ -299,8 +299,9 @@ def generate_memlet(op, top_sdfg, state):
 class ProcessedWriter(TaskletWriter):
     """
     This class is derived from the TaskletWriter class and is used to write the code of a tasklet that's on an interstate edge rather than a computational tasklet.
-    :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based. 
+    :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based.
     """
+
     def __init__(self, sdfg: SDFG, mapping):
         self.sdfg = sdfg
         self.mapping = mapping
@@ -345,6 +346,7 @@ class ProcessedWriter(TaskletWriter):
 
 
 class Context:
+
     def __init__(self, name):
         self.name = name
         self.constants = {}
@@ -355,6 +357,7 @@ class Context:
 
 
 class NameMap(dict):
+
     def __getitem__(self, k):
         assert isinstance(k, SDFG)
         if k not in self:
@@ -371,6 +374,7 @@ class NameMap(dict):
 
 
 class ModuleMap(dict):
+
     def __getitem__(self, k):
         assert isinstance(k, ast_internal_classes.Module_Node)
         if k not in self:

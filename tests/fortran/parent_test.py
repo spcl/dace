@@ -48,6 +48,7 @@ def test_fortran_frontend_parent():
         for execution in subroutine.execution_part.execution:
             assert execution.parent == subroutine
 
+
 def test_fortran_frontend_module():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.

@@ -4,6 +4,7 @@ import random
 
 
 def test_python_min1():
+
     @dace.program
     def python_min1(a: dace.int64):
         return min(a)
@@ -14,6 +15,7 @@ def test_python_min1():
 
 
 def test_python_max1():
+
     @dace.program
     def python_max1(a: dace.int64):
         return max(a)
@@ -24,6 +26,7 @@ def test_python_max1():
 
 
 def test_python_min2():
+
     @dace.program
     def python_min2(a: dace.int64, b: dace.int64):
         return min(a, b)
@@ -35,6 +38,7 @@ def test_python_min2():
 
 
 def test_python_max2():
+
     @dace.program
     def python_max2(a: dace.int64, b: dace.int64):
         return max(a, b)
@@ -46,6 +50,7 @@ def test_python_max2():
 
 
 def test_python_min3():
+
     @dace.program
     def python_min3(a: dace.int64, b: dace.int64, c: dace.int64):
         return min(a, b, c)
@@ -58,6 +63,7 @@ def test_python_min3():
 
 
 def test_python_max3():
+
     @dace.program
     def python_max3(a: dace.int64, b: dace.int64, c: dace.int64):
         return max(a, b, c)
@@ -70,6 +76,7 @@ def test_python_max3():
 
 
 def test_python_abs():
+
     @dace.program
     def python_abs(a: dace.int64):
         b = abs(a)

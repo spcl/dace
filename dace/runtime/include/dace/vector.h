@@ -135,12 +135,12 @@ namespace dace
         template <typename T>
         struct simplevec<T, 16>
         {
-            union { 
+            union {
                 struct {
                     T s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13,
                       s14, s15;
-                }; 
-                T s[16]; 
+                };
+                T s[16];
             };
             inline T operator[](int ind) const { return s[ind]; }
             template <typename U>
@@ -219,7 +219,7 @@ namespace dace
         {                                                                   \
             using aligned = simplevec<T, N>;                                \
             using unaligned = aligned;                                      \
-        };                                                                  
+        };
 
     #else
         #define DEFINE_VECTYPE(T, BASE_SIZE, N)                             \
@@ -249,7 +249,7 @@ namespace dace
     //  DEFINE_VECTYPE_ALLSIZES(float16, 2);
         DEFINE_VECTYPE_ALLSIZES(float32, 4);
         DEFINE_VECTYPE_ALLSIZES(float64, 8);
-#endif    
+#endif
 
     // END of workaround for clang++
     //////////////////////////////////////////////////////////////////
@@ -264,7 +264,7 @@ namespace dace
     namespace detail
     {
         // If the element type is not fundamental, for example when nesting
-        // vector types within vector types, fall back on a generic 
+        // vector types within vector types, fall back on a generic
         // implementation.
 
         template <typename T, unsigned int N, bool = std::is_fundamental<T>::value>

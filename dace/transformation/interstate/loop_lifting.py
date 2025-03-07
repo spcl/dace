@@ -11,7 +11,10 @@ from dace.transformation.interstate.loop_detection import DetectLoop
 @transformation.explicit_cf_compatible
 class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
 
-    def can_be_applied(self, graph: transformation.ControlFlowRegion, expr_index: int, sdfg: transformation.SDFG,
+    def can_be_applied(self,
+                       graph: transformation.ControlFlowRegion,
+                       expr_index: int,
+                       sdfg: transformation.SDFG,
                        permissive: bool = False) -> bool:
         # Check loop detection with permissive = True, which allows loops where no iteration variable could be detected.
         # We want this to detect while loops.
@@ -65,8 +68,13 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         else:
             update_before_condition = True
 
-        loop = LoopRegion(label, condition_expr=cond_edge.data.condition, loop_var=itvar, initialize_expr=init_expr,
-                          update_expr=incr_expr, inverted=inverted, sdfg=sdfg,
+        loop = LoopRegion(label,
+                          condition_expr=cond_edge.data.condition,
+                          loop_var=itvar,
+                          initialize_expr=init_expr,
+                          update_expr=incr_expr,
+                          inverted=inverted,
+                          sdfg=sdfg,
                           update_before_condition=update_before_condition)
 
         graph.add_node(loop)
@@ -89,10 +97,10 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                                     left_over_incr_cond_region = ConditionalBlock(label + '_post_incr_conditional')
                                     incr_graph = ControlFlowRegion(label + '_post_incr')
                                     left_over_incr_cond_region.add_branch(cond_edge.data.condition, incr_graph)
-                                    incr_graph.add_edge(incr_graph.add_state(label + '_post_incr_start',
-                                                                            is_start_block=True),
-                                                        incr_graph.add_state(label + '_post_incr_end'),
-                                                        InterstateEdge(assignments=left_over_incr_assignments))
+                                    incr_graph.add_edge(
+                                        incr_graph.add_state(label + '_post_incr_start', is_start_block=True),
+                                        incr_graph.add_state(label + '_post_incr_end'),
+                                        InterstateEdge(assignments=left_over_incr_assignments))
                                     dst = left_over_incr_cond_region
                                     assignments = {}
                                 else:

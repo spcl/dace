@@ -118,9 +118,8 @@ def test_write_subset_dynamic():
 
     assert np.array_equal(ref, val)
 
-@pytest.mark.parametrize(["transient", "scalar"],
-                         [[False, False], [False, True],
-                          [True, False], [True, True]])
+
+@pytest.mark.parametrize(["transient", "scalar"], [[False, False], [False, True], [True, False], [True, True]])
 def test_free_tasklet(transient, scalar):
     sdfg = dace.SDFG("assign")
 
@@ -128,7 +127,7 @@ def test_free_tasklet(transient, scalar):
     if scalar:
         arr_name, arr = sdfg.add_scalar("A", dace.float32, transient=transient)
     else:
-        arr_name, arr = sdfg.add_array("A", (4,), dace.float32, transient=transient)
+        arr_name, arr = sdfg.add_array("A", (4, ), dace.float32, transient=transient)
 
     an = state.add_access(arr_name)
 
@@ -137,16 +136,15 @@ def test_free_tasklet(transient, scalar):
 
     sdfg.validate()
 
-    sdfg.apply_gpu_transformations(
-        validate = True,
-        validate_all = True,
-        permissive = True,
-        sequential_innermaps=True,
-        register_transients=False,
-        simplify=False
-    )
+    sdfg.apply_gpu_transformations(validate=True,
+                                   validate_all=True,
+                                   permissive=True,
+                                   sequential_innermaps=True,
+                                   register_transients=False,
+                                   simplify=False)
 
     sdfg.validate()
+
 
 if __name__ == '__main__':
     test_toplevel_transient_lifetime()

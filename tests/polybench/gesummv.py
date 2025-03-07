@@ -30,6 +30,7 @@ def init_array(A, B, tmp, x, y, alpha, beta, n):
 
 @dace.program(datatype[N, N], datatype[N, N], datatype[N], datatype[N], datatype[N], datatype[1], datatype[1])
 def gesummv(A, B, tmp, x, y, alpha, beta):
+
     @dace.map
     def compute_ty(i: _[0:N], j: _[0:N]):
         ia << A[i, j]

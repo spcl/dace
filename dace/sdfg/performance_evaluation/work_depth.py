@@ -352,7 +352,7 @@ def sdfg_work_depth(sdfg: SDFG,
               ' The analysis per state remains correct, but no SDFG-wide analysis can be performed.')
         sdfg_result = (sp.oo, sp.oo)
         w_d_map[get_uuid(sdfg)] = sdfg_result
-    
+
         for k, (v_w, v_d) in w_d_map.items():
             # The symeval replaces nested SDFG symbols with their global counterparts.
             v_w = symeval(v_w, symbols)
@@ -502,7 +502,7 @@ def sdfg_work_depth(sdfg: SDFG,
 
     sdfg_result = (max_work, max_depth)
     w_d_map[get_uuid(sdfg)] = sdfg_result
-    
+
     for k, (v_w, v_d) in w_d_map.items():
         # The symeval replaces nested SDFG symbols with their global counterparts.
         v_w = symeval(v_w, symbols)

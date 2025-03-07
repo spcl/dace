@@ -7,6 +7,7 @@ N = dace.symbol('N')
 
 @dace.program(dace.float64[N], dace.float64[N])
 def floor_div(Input, Output):
+
     @dace.map(_[0:N])
     def div(i):
         inp << Input[i // 2]

@@ -21,7 +21,8 @@ class Vectorization(transformation.SingleStateTransformation):
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
-    propagate_parent = Property(desc="Propagate vector length through " "parent SDFGs", dtype=bool, default=False)
+    propagate_parent = Property(desc="Propagate vector length through "
+                                "parent SDFGs", dtype=bool, default=False)
     strided_map = Property(desc="Use strided map range (jump by vector length)"
                            " instead of modifying memlets",
                            dtype=bool,

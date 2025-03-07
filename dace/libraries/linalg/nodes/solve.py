@@ -192,7 +192,8 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         shape_bin = squeezed_bin.size()
         shape_out = squeezed_out.size()
         if shape_ain[0] != shape_ain[1]:
-            raise ValueError("linalg.solve only supported with first input a " "square matrix")
+            raise ValueError("linalg.solve only supported with first input a "
+                             "square matrix")
         if shape_ain[-1] != shape_bin[0]:
             raise ValueError("A column must be equal to B rows")
         if not np.array_equal(shape_bin, shape_out):

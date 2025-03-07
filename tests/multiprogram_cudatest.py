@@ -8,6 +8,7 @@ import pytest
 
 @dace.program
 def prog1(A: dace.float32[32], B: dace.float32[32]):
+
     @dace.map
     def work1(i: _[0:32]):
         a << A[i]
@@ -17,6 +18,7 @@ def prog1(A: dace.float32[32], B: dace.float32[32]):
 
 @dace.program
 def prog2(A: dace.float32[32], B: dace.float32[32]):
+
     @dace.map
     def work2(i: _[0:32]):
         a << A[i]

@@ -11,6 +11,7 @@ def add_one(A: dace.int64[N, N], result: dace.int64[N, N]):
 
 
 def test_call():
+
     @dace.program
     def add_one_more(A: dace.int64[N, N]):
         result = dace.define_local([N, N], dace.int64)

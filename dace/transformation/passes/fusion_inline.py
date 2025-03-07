@@ -41,7 +41,7 @@ class FuseStates(ppl.Pass):
         Fuses all possible states of an SDFG (and all sub-SDFGs).
 
         :param sdfg: The SDFG to transform.
-    
+
         :return: The total number of states fused, or None if did not apply.
         """
         fused = fuse_states(sdfg, self.permissive, self.progress)
@@ -77,9 +77,9 @@ class InlineSDFGs(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
-        
+
         :param sdfg: The SDFG to transform.
-    
+
         :return: The total number of states fused, or None if did not apply.
         """
         inlined = inline_sdfgs(sdfg, self.permissive, self.progress, self.multistate)
@@ -115,11 +115,14 @@ class InlineControlFlowRegions(ppl.Pass):
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
 
     no_inline_loops = properties.Property(dtype=bool, default=True, desc='Whether to prevent inlining loops.')
-    no_inline_conditional = properties.Property(dtype=bool, default=True,
+    no_inline_conditional = properties.Property(dtype=bool,
+                                                default=True,
                                                 desc='Whether to prevent inlining conditional blocks.')
-    no_inline_function_call_regions = properties.Property(dtype=bool, default=True,
+    no_inline_function_call_regions = properties.Property(dtype=bool,
+                                                          default=True,
                                                           desc='Whether to prevent inlining function call regions.')
-    no_inline_named_regions = properties.Property(dtype=bool, default=True,
+    no_inline_named_regions = properties.Property(dtype=bool,
+                                                  default=True,
                                                   desc='Whether to prevent inlining named control flow regions.')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
@@ -131,9 +134,9 @@ class InlineControlFlowRegions(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """
         Inlines all possible nested SDFGs (and all sub-SDFGs).
-        
+
         :param sdfg: The SDFG to transform.
-    
+
         :return: The total number of states fused, or None if did not apply.
         """
         ignore_region_types = []

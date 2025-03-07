@@ -24,9 +24,9 @@ def to_blastype(dtype):
 
 
 def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
-    """ 
-    Returns type metadata on a given dace dtype. 
-    
+    """
+    Returns type metadata on a given dace dtype.
+
     :return: A 3 tuple of (BLAS letter, CUDA C type, Name in dace runtime).
     """
 

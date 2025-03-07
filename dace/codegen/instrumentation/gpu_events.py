@@ -12,6 +12,7 @@ from dace.sdfg.state import ControlFlowRegion, SDFGState
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
 class GPUEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
+
     def __init__(self):
         self.backend = common.get_gpu_backend()
         super().__init__()
@@ -124,7 +125,8 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             if s.schedule != dtypes.ScheduleType.GPU_Device:
-                raise TypeError('GPU Event instrumentation only applies to ' 'GPU_Device map scopes')
+                raise TypeError('GPU Event instrumentation only applies to '
+                                'GPU_Device map scopes')
 
             idstr = 'b' + self._idstr(cfg, state, node)
             stream = getattr(node, '_cuda_stream', -1)

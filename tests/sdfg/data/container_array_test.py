@@ -263,7 +263,7 @@ def test_multi_nested_containers():
     M, N = dace.symbol('M'), dace.symbol('N')
     sdfg = dace.SDFG('tester')
     float_desc = dace.data.Scalar(dace.float32)
-    E_desc = dace.data.Structure({'F': dace.float32[N], 'G':float_desc}, 'InnerStruct')
+    E_desc = dace.data.Structure({'F': dace.float32[N], 'G': float_desc}, 'InnerStruct')
     B_desc = dace.data.ContainerArray(E_desc, [M])
     A_desc = dace.data.Structure({'B': B_desc, 'C': dace.float32[M], 'D': float_desc}, 'OuterStruct')
     sdfg.add_datadesc('A', A_desc)
@@ -303,9 +303,6 @@ def test_multi_nested_containers():
     a_dace = A_desc.dtype._typeclass.as_ctypes()(B=b_data.__array_interface__['data'][0],
                                                  C=c_data.__array_interface__['data'][0],
                                                  D=ctypes.c_float(0.2))
-
-    
-
 
     out_dace = np.empty((5, 3), dtype=np.float32)
     ref = np.empty((5, 3), dtype=np.float32)

@@ -11,8 +11,10 @@ import os
 
 # Dynamically creates DaCe programs with the same name
 def program_generator(size: int, factor: float) -> DaceProgram:
+
     @dace.program(dace.float64[size], dace.float64[size], size=size, factor=factor)
     def lib_reuse(input, output):
+
         @dace.map(_[0:size])
         def tasklet(i):
             a << input[i]

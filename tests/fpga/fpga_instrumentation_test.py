@@ -7,6 +7,7 @@ from dace import config
 import numpy as np
 import re
 
+
 def make_sdfg(make_tmp_local: bool):
     """
     Creates an SDFG that has a left and a right branch writing into two

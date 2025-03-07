@@ -125,7 +125,7 @@ def test_sum():
     A = np.array(np.random.rand(10, 20, 20, 10) + 0.1, dtype=np.float64, copy=True)
     ref = A.sum()
     res = testee(A)
-    assert res.shape == (1,)  # DaCe can not return scalars
+    assert res.shape == (1, )  # DaCe can not return scalars
     assert np.allclose(ref, res), f"Expected '{ref}' but got '{res[0]}'"
 
 
