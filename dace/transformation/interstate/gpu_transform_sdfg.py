@@ -13,7 +13,7 @@ from copy import deepcopy as dc
 from sympy import floor
 from typing import Dict, List, Set, Tuple
 
-gpu_storage = [dtypes.StorageType.CPU_Pinned, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
+gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
 
 
 def _recursive_out_check(node, state, gpu_scalars):
@@ -95,7 +95,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             2. Replace all non-transients with their GPU counterparts
             3. Copy-in state from host to GPU
             4. Copy-out state from GPU to host
-            5. Re-store Default-top/CPU_Heap transients as CPU_Pinned
+            5. Re-store Default-top/CPU_Heap transients as GPU_Global
             6. Global tasklets are wrapped with a map of size 1
             7. Global Maps are re-scheduled to use the GPU
             8. Make data ready for interstate edges that use them
@@ -237,7 +237,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         cloned_arrays = {}
         for inodename, inode in set(input_nodes):
-            if inode.storage == dtypes.StorageType.CPU_Pinned:
+            if inode.storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[inodename] = None
                 continue
             if isinstance(inode, data.Scalar):  # Scalars can remain on host
@@ -246,13 +246,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 continue
 
             newdesc = inode.clone()
-            newdesc.storage = dtypes.StorageType.CPU_Pinned
+            newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
             name = sdfg.add_datadesc('gpu_' + inodename, newdesc, find_new_name=True)
             cloned_arrays[inodename] = name
 
         for onodename, onode in set(output_nodes):
-            if onode.storage == dtypes.StorageType.CPU_Pinned:
+            if onode.storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[onodename] = None
                 continue
             if onodename in cloned_arrays:
@@ -260,7 +260,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if isinstance(inode, data.Structure): # Flattening pass should handle
                 continue
             newdesc = onode.clone()
-            newdesc.storage = dtypes.StorageType.CPU_Pinned
+            newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
             name = sdfg.add_datadesc('gpu_' + onodename, newdesc, find_new_name=True)
             cloned_arrays[onodename] = name
@@ -300,7 +300,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if isinstance(blk, AbstractControlFlowRegion):
                 check_memlets.extend(blk.get_meta_read_memlets())
         for mem in check_memlets:
-            if sdfg.arrays[mem.data].storage == dtypes.StorageType.CPU_Pinned:
+            if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[mem.data] = None
 
         # Replace nodes
@@ -384,13 +384,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
                         desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.CPU_Pinned
+                        desc.storage = dtypes.StorageType.GPU_Global
             if isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
                         desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.CPU_Pinned
+                        desc.storage = dtypes.StorageType.GPU_Global
 
         #######################################################
         # Step 5: Collect free tasklets and check for scalars that have to be moved to the GPU
@@ -475,7 +475,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
                         if node.data not in self.host_data:
-                            nodedesc.storage = dtypes.StorageType.CPU_Pinned
+                            nodedesc.storage = dtypes.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
