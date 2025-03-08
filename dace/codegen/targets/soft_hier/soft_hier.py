@@ -125,6 +125,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
 
         # Note down all allocated SoftHier_TCDM arrays with their sizes
         self.tcdm_offset = 0
+        self._soft_hier_dims = []
         # Register illegal copies
         # cpu_unpinned_storage = [dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal]
         # gpu_private_storage = [dtypes.StorageType.GPU_Shared]
@@ -1232,7 +1233,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
                     callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
-                    callsite_stream.write(f"bare_dma_start_1d(local({dst_expr}), remote_xy({pos_x},{pos_y},{src_expr}), {src_size});")
+                    callsite_stream.write(f"bare_dma_start_1d(local({dst_expr}), dace_remote_xy({pos_x},{pos_y},{src_expr},{self._soft_hier_dims[0]}), {src_size});")
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
@@ -1276,9 +1277,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
                     if is_broadcast:
-                        callsite_stream.write(f"flex_dma_async_1d_broadcast(remote_xy({pos_x_end},{pos_y_end},{dst_expr}), local({src_expr}), {dst_size});")
+                        callsite_stream.write(f"flex_dma_async_1d_broadcast(dace_remote_xy({pos_x_end},{pos_y_end},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
                     else:
-                        callsite_stream.write(f"bare_dma_start_1d(remote_xy({pos_x},{pos_y},{dst_expr}), local({src_expr}), {dst_size});")
+                        callsite_stream.write(f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}")
@@ -2323,9 +2324,15 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                         callsite_stream.write('{', cfg, state_id, scope_entry)
 
             if len(brange) == 2:
+                x_length = brange.max_element()[0] + 1
+                y_length = brange.max_element()[1] + 1
+                self._soft_hier_dims = [x_length, y_length]
                 for i in range(min(len(brange), 3)):
                     varname = scope_map.params[i]
-                    block_expr = 'get_pos(cluster_id).%s' % _named_idx(i)
+                    if i == 0:
+                        block_expr = f"cluster_id % {x_length}"
+                    else:
+                        block_expr = f"cluster_id / {x_length}"
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
@@ -2388,6 +2395,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # callsite_stream.write("flex_global_barrier_xy();\n")
         callsite_stream.write("flex_intra_cluster_sync();\n")
         callsite_stream.write("// Finished deivelevel scope\n")
+        self._soft_hier_dims = []
 
 
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,

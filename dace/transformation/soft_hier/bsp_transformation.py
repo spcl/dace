@@ -224,7 +224,7 @@ class BSPTransformer(transformation.SingleStateTransformation):
             trans_dtype = desc.dtype
             trans_storage = desc.storage
             trans_shape = desc.shape
-            sn, s = nsdfg.add_stream(f"s_{trans_name}", dtype=trans_dtype, storage=trans_storage, buffer_size=1, shape=(NPE, NPE)+trans_shape, transient=True)
+            sn, s = nsdfg.add_stream(f"s_{trans_name}", dtype=trans_dtype, storage=trans_storage, buffer_size=1, shape=(npe_x, npe_y)+trans_shape, transient=True)
             new_streams[f"s_{trans_name}"] = s
 
         ##############################

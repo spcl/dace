@@ -164,7 +164,7 @@ def generate_summa_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K):
     BSP_loop_code_block = CodeBlock(
         code=f"""
 {loop_param} = 0
-while {loop_param} < {K}/{tK}:
+while {loop_param} <= {K}/{tK}:
     {loop_param} = {loop_param} + 1
             """,
         language=dace.dtypes.Language.Python

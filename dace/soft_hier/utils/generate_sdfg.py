@@ -70,7 +70,7 @@ def _my_gen_summa_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
     thread_group_map_entry, thread_group_map_exit = main_state.add_map(
         name="thread_group_mmad",
         ndrange={"gi" : dace.subsets.Range([(0, gM-1, 1)]),
-                 "gj" : dace.subsets.Range([(0, gM-1, 1)])},
+                 "gj" : dace.subsets.Range([(0, gN-1, 1)])},
         schedule=thread_group_schedule
     )
 
@@ -275,7 +275,7 @@ def _my_gen_systolic_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
     thread_group_map_entry, thread_group_map_exit = main_state.add_map(
         name="thread_group_mmad",
         ndrange={"gi" : dace.subsets.Range([(0, gM-1, 1)]),
-                 "gj" : dace.subsets.Range([(0, gM-1, 1)])},
+                 "gj" : dace.subsets.Range([(0, gN-1, 1)])},
         schedule=thread_group_schedule
     )
 
@@ -483,7 +483,7 @@ def _my_gen_baseline_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
     thread_group_map_entry, thread_group_map_exit = main_state.add_map(
         name="thread_group_mmad",
         ndrange={"gi" : dace.subsets.Range([(0, gM-1, 1)]),
-                 "gj" : dace.subsets.Range([(0, gM-1, 1)])},
+                 "gj" : dace.subsets.Range([(0, gN-1, 1)])},
         schedule=thread_group_schedule
     )
 
@@ -683,7 +683,7 @@ def _my_gen_double_buffer_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
     thread_group_map_entry, thread_group_map_exit = main_state.add_map(
         name="thread_group_mmad",
         ndrange={"gi" : dace.subsets.Range([(0, gM-1, 1)]),
-                 "gj" : dace.subsets.Range([(0, gM-1, 1)])},
+                 "gj" : dace.subsets.Range([(0, gN-1, 1)])},
         schedule=thread_group_schedule
     )
 
