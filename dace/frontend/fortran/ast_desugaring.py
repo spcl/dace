@@ -31,7 +31,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt, \
     Equiv_Operand
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
-from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
+from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase, BlockBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
@@ -1416,6 +1416,9 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     alias_map = alias_specs(ast)
     iface_map = interface_specs(ast, alias_map)
     unused_ifaces = set(iface_map.keys())
+    for k, v in alias_map.items():
+        if isinstance(v, Interface_Stmt) or isinstance(v.parent.parent, Interface_Block):
+            unused_ifaces.difference_update({ident_spec(v)})
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
@@ -4004,10 +4007,10 @@ def deconstuct_goto_statements(ast: Program) -> Program:
 def copy_fparser_node(n: Base) -> Base:
     try:
         nstr = n.tofortran()
-        x = Base.__new__(type(n), get_reader(nstr))
-        if x is not None:
-            return x
-        x = Base.__new__(type(n), nstr)
+        if isinstance(n, BlockBase):
+            x = Base.__new__(type(n), get_reader(nstr))
+        else:
+            x = Base.__new__(type(n), nstr)
         assert x is not None
         return x
     except (RuntimeError, AssertionError):
