@@ -546,6 +546,7 @@ class StructToContainerGroups(ppl.Pass):
         clean_container_grous: bool = True,
         save_steps: bool = False,
         interface_with_struct_copy: bool = True,
+        interface_to_gpu: bool = False,
         verbose: bool = False,
     ):
         if flattening_mode != ContainerGroupFlatteningMode.StructOfArrays:
@@ -565,6 +566,7 @@ class StructToContainerGroups(ppl.Pass):
         self._struct_replacements = dict()
         self._flattener_codestr = ""
         self._deflattener_codestr = ""
+        self._interface_to_gpu = interface_to_gpu
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -835,25 +837,48 @@ class StructToContainerGroups(ppl.Pass):
                 entry_interface.add_edge(an, None, flatten_lib_node, None,
                                          dace.Memlet(expr=inname))
                 sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
-                #if inname.lower() not in flatten_lib_node.in_connectors:
-                #    flatten_lib_node.add_in_connector(inname)
+
             for outname in set(registered_names):
-                an = dace.nodes.AccessNode(outname)
-                entry_interface.add_node(an)
-                arr = sdfg.arrays[outname]
-                assert not isinstance(arr, dace.data.Scalar)
-                if isinstance(arr, dace.data.Scalar):
-                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
+                if not self._interface_to_gpu:
+                    an = dace.nodes.AccessNode(outname)
+                    entry_interface.add_node(an)
+                    arr = sdfg.arrays[outname]
+                    assert not isinstance(arr, dace.data.Scalar)
+                    if isinstance(arr, dace.data.Scalar):
+                        entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
+                                                dace.Memlet(expr=outname)
+                                                )
+                    else:
+                        assert isinstance(arr, dace.data.Array)
+                        entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
+                                                dace.Memlet(outname))
+
+                    if outname.lower() not in flatten_lib_node.out_connectors:
+                        flatten_lib_node.add_out_connector(outname.lower())
+
+                    sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
+                else:
+                    an0 = dace.nodes.AccessNode("host_" + outname)
+                    an = dace.nodes.AccessNode(outname)
+                    entry_interface.add_node(an)
+                    arr = sdfg.arrays[outname]
+                    arr0 = copy.deepcopy(arr)
+                    arr.storage = dace.dtypes.StorageType.GPU_Global
+                    arr0.storage = dace.dtypes.StorageType.CPU_Heap
+                    sdfg.add_datadesc("host_" + outname, arr0, find_new_name=False)
+                    assert not isinstance(arr, dace.data.Scalar)
+
+                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an0, None,
+                                            dace.Memlet(expr="host_" + outname)
+                                            )
+                    entry_interface.add_edge(an0, None, an, None,
                                             dace.Memlet(expr=outname)
                                             )
-                else:
-                    assert isinstance(arr, dace.data.Array)
-                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
-                                            dace.Memlet(outname))
 
-                if outname.lower() not in flatten_lib_node.out_connectors:
-                    flatten_lib_node.add_out_connector(outname.lower())
-                sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
+                    if outname.lower() not in flatten_lib_node.out_connectors:
+                        flatten_lib_node.add_out_connector(outname.lower())
+
+                #sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
 
             end_nodes = set()
             for cfg in sdfg.nodes():
@@ -865,16 +890,23 @@ class StructToContainerGroups(ppl.Pass):
 
             exit_interface.add_node(deflatten_lib_node)
             for inname in set(registered_names):
-                an = dace.nodes.AccessNode(inname)
-                exit_interface.add_node(an)
-                assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
-                if isinstance(sdfg.arrays[inname], dace.data.Scalar):
+                if self._interface_to_gpu:
+                    an0 = dace.nodes.AccessNode(inname)
+                    an = dace.nodes.AccessNode("host_" + inname)
+                    exit_interface.add_node(an)
+                    exit_interface.add_node(an0)
+                    assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
+                    exit_interface.add_edge(an0, None, an, None,
+                                            dace.Memlet(inname))
+                    exit_interface.add_edge(an, None, deflatten_lib_node, None,
+                                            dace.Memlet("host_" + inname))
+                else:
+                    an = dace.nodes.AccessNode(inname)
+                    exit_interface.add_node(an)
+                    assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
                     exit_interface.add_edge(an, None, deflatten_lib_node, None,
                                             dace.Memlet(inname))
-                else:
-                    assert isinstance(sdfg.arrays[inname], dace.data.Array)
-                    exit_interface.add_edge(an, None, deflatten_lib_node, None,
-                        dace.Memlet(inname))
+
             for outname in set([k for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
                             or isinstance(v, dace.data.ContainerArray)) and not
                             isinstance(v, dace.data.View)]):
