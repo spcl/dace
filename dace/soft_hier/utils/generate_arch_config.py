@@ -179,7 +179,7 @@ def _check_combo(combo, tcdm_usage_func=None):
     return True
 
 
-def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, tcdm_usage_func=None):
+def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, tcdm_usage_func=None, min_tiling_size=1):
     # Default TCDM usage calculation if none provided
     if tcdm_usage_func is None:
         tcdm_usage_func = lambda m, n, k: 2 * (2 * m * k + 2 * k * n + m * n)
@@ -187,10 +187,24 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, tcdm_usag
     # Unpack thread group dimensions
     dim_x, dim_y = thread_group_dims
     combos = []
+
+    def factors(n):
+        result = []
+        # iterate up to the square root of n
+        for i in range(1, int(n ** 0.5) + 1):
+            if n % i == 0:
+                result.append(i)
+                if i != n // i:
+                    result.append(n // i)
+        return sorted(result)
     
-    hw_M_list = [2**i for i in range(5, 11) if 2**i <= M_val // dim_x]
-    hw_N_list = [2**i for i in range(5, 20) if 2**i <= N_val // dim_y]
-    hw_K_list = [2**i for i in range(5, 11) if 2**i <= K_val]
+    if (M_val % dim_x != 0) or (N_val % dim_y != 0):
+        raise ValueError("M and N must be divisible by the thread group dimensions")
+
+    # Generate lists of hardware tile sizes
+    hw_M_list = [i for i in factors(M_val // dim_x) if i >= min_tiling_size]
+    hw_N_list = [i for i in factors(N_val // dim_y) if i >= min_tiling_size]
+    hw_K_list = [i for i in factors(K_val) if i >= min_tiling_size]
 
     print(f"hw_M_list: {hw_M_list}")
     print(f"hw_N_list: {hw_N_list}")

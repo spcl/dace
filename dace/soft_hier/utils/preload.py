@@ -22,7 +22,7 @@ def make_preload_elf(output_file_path, np_arrays, start_addresses=None, hbm_node
         np.dtype('uint32'): 'uint32_t',
         np.dtype('int64'): 'int64_t',
         np.dtype('uint64'): 'uint64_t',
-        np.dtype('float16'): 'float16',
+        np.dtype('float16'): '_Float16',
         np.dtype('float32'): 'float',
         np.dtype('float64'): 'double',
     }

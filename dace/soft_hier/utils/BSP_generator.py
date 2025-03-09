@@ -11,7 +11,7 @@ def generate_systolic_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K):
     BSP_loop_code_block = CodeBlock(
         code=f"""
 {loop_param} = {gi}+{gj}
-while {loop_param} < {gi}+{gj} + {K}/{tK}:
+while {loop_param} <= {gi}+{gj} + {K}/{tK}:
     {loop_param} = {loop_param} + 1
             """,
         language=dace.dtypes.Language.Python
@@ -150,9 +150,7 @@ local_A [({loop_param+1})%2][:][:] = s_local_A [{gi}][({gj+gN-1})%{gN}][{loop_pa
             BSP_communication_code_block, 
             BSP_sync, 
             post_shift_code_block)
-    
-    
-    
+     
 
 def generate_summa_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K):
     loop_param = dace.symbol("_c")
