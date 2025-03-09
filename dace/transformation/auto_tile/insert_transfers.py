@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
+import re
 from typing import Callable
 import typing
 import dace
@@ -36,6 +37,8 @@ class InsertTransfers(ppl.Pass):
     )
     str_input_output_types = Property(dtype=str, default="", allow_none=False)
 
+    unspecialized_locations = ListProperty(element_type=str, default=[], allow_none=False)
+
     def __init__(
         self,
         movement_graph,
@@ -43,6 +46,7 @@ class InsertTransfers(ppl.Pass):
         exit_location_requirements,
         computational_unit_register_locations,
         input_output_types,
+        unspecialized_locations,
         dev_entry_type,
     ):
         super().__init__()
@@ -54,6 +58,7 @@ class InsertTransfers(ppl.Pass):
             computational_unit_register_locations
         )
         self.str_input_output_types = input_output_types
+        self.unspecialized_locations = unspecialized_locations
         assert (
             entry_location_requirements is not None
             and entry_location_requirements != ""
@@ -182,7 +187,10 @@ class InsertTransfers(ppl.Pass):
             prefix = str(dace.dtypes.StorageType.Ascend_L2)
         if s.endswith("1"):
             prefix = str(dace.dtypes.StorageType.Ascend_L1)
-        return prefix + "@" + s if prefix != "" else s
+        name = prefix + "@" + s if prefix != "" else s
+        if prefix in self.unspecialized_locations and s == prefix:
+            return s
+        return name
 
     def _copy_arr_to_loc(
         self,
@@ -371,6 +379,8 @@ class InsertTransfers(ppl.Pass):
     def _replace_tasklet_outputs(
         self, state: SDFGState, sdfg: SDFG, device_map_entry: nodes.MapEntry
     ):
+        edges_to_add = set()
+        edges_to_rm = set()
         for n in list(
             state.all_nodes_between(device_map_entry, state.exit_node(device_map_entry))
         ) + [
@@ -416,6 +426,33 @@ class InsertTransfers(ppl.Pass):
                                 n, old_data_name, new_data_name, state
                             )
 
+                            # We need to add a copy to the out edge
+                            map_exit = state.exit_node(state.entry_node(n))
+                            for map_out in state.out_edges(map_exit):
+                                print("AB", map_out.data.data,
+                                      old_data_name, new_data_name,
+                                      oe.data.data, map_out.src_conn[4:])
+                                # RM OUT_
+                                if map_out.src_conn[4:] == new_data_name:
+                                    #raise Exception("Not implemented")
+                                    new_memlet = dace.memlet.Memlet(expr=new_data_name)
+                                    an = state.add_access(new_data_name)
+                                    an2 = state.add_access(map_out.data.data)
+                                    edges_to_add.add((map_out.src, map_out.src_conn,
+                                                     an, None, new_memlet))
+                                    edges_to_add.add((an, None,
+                                                     an2, None,
+                                                     copy.deepcopy(map_out.data)))
+                                    edges_to_add.add((an2, None,
+                                                     map_out.dst, map_out.dst_conn,
+                                                     copy.deepcopy(map_out.data)))
+                                    edges_to_rm.add(map_out)
+
+        for e in edges_to_add:
+            state.add_edge(*e)
+        for e in edges_to_rm:
+            state.remove_edge(e)
+
     def _replace_in_connectors_and_memlet_data(
         self,
         node: dace.nodes.Node,
@@ -445,10 +482,59 @@ class InsertTransfers(ppl.Pass):
             if _e.dst_conn == "IN_" + old_data_name:
                 _e.dst_conn = "IN_" + new_data_name
 
+    def _specialize_purpose(self, sdfg: SDFG, state: SDFGState, device_map_entry: nodes.MapEntry):
+        all_nodes = state.all_nodes_between(
+            device_map_entry, state.exit_node(device_map_entry)
+        )
+        if hasattr(device_map_entry, "purpose_dict"):
+            purpose_dict = device_map_entry.purpose_dict
+            for node in all_nodes:
+                if isinstance(node, dace.nodes.AccessNode):
+                    arr = sdfg.arrays[node.data]
+                    storage_str = self._construct_str_from_storage(arr.storage)
+                    print(storage_str, self.unspecialized_locations)
+                    if storage_str in self.unspecialized_locations:
+                        print(storage_str)
+                        #raise Exception(purpose_dict)
+                        #specialized_storage =
+                        def get_ending_number(s):
+                            match = re.search(r'\d+$', s)
+                            return int(match.group()) if match else None
+                        level = get_ending_number(storage_str)
+                        root_data_name = node.data.split("_")[-1]
+                        purpose = purpose_dict[root_data_name]
+                        if purpose == "acc":
+                            purpose = "CO"
+                        purpose += str(level)
+                        # Remove the _L2 for example
+                        no_loc_stroge_str = storage_str[0:-(1+len(storage_str.split("_")[-1]))]
+                        new_storage = dace.dtypes.StorageType[(no_loc_stroge_str + "_" + purpose).split(".")[-1]]
+
+                        new_prefix = purpose
+                        old_prefix = storage_str.split("_")[-1]
+                        #raise Exception(storage_str, new_storage)
+                        arr.storage = new_storage
+                        old_name = storage_str.split("_")[-1] + "_" + root_data_name
+                        new_name = new_prefix + "_" + root_data_name
+                        sdfg.add_datadesc(new_name, copy.deepcopy(arr), find_new_name=False)
+                        sdfg.replace(old_name, new_name)
+                        #raise Exception(old_name, new_name)
+                        for _n in state.nodes():
+                            if isinstance(_n, dace.nodes.AccessNode):
+                                if _n.data == old_name:
+                                    _n.data = new_name
+                        for _e in state.edges():
+                            if _e.data.data == old_name:
+                                _e.data.data = new_name
+                        sdfg.remove_data(old_name, validate=False)
+
+                    if arr.storage == dace.dtypes.StorageType.Register:
+                        raise Exception(arr)
+        sdfg.save("hm.sdfg")
     def _apply(self, state: SDFGState, sdfg: SDFG, device_map_entry: nodes.MapEntry):
         print(self._G)
         self._specialize_register_storage(sdfg, state, device_map_entry)
-
+        self._specialize_purpose(sdfg, state, device_map_entry)
         all_nodes = state.all_nodes_between(
             device_map_entry, state.exit_node(device_map_entry)
         )
@@ -511,6 +597,7 @@ class InsertTransfers(ppl.Pass):
                                             compute_unit
                                         ]
                                     ]
+                                    print(paths)
                                     # Take the first shortest path
                                     shortest_path = min(paths, key=len)
                                     assert shortest_path is not None
@@ -552,7 +639,7 @@ class InsertTransfers(ppl.Pass):
         self._replace_tasklet_outputs(state, sdfg, device_map_entry)
 
         # Then insert movement nodes towards the exit
-        return
+        """
         for node in all_nodes:
             if isinstance(node, dace.nodes.MapExit):
                 map_exit = node
@@ -623,7 +710,7 @@ class InsertTransfers(ppl.Pass):
                                     print("EA", _e_add)
                                     edges_to_add = edges_to_add.union(_e_add)
                                     edges_to_rm = edges_to_rm.union(_e_rm)
-
+        """
         # raise Exception("Not implemented")
 
     @staticmethod
