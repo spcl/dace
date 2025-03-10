@@ -470,7 +470,7 @@ def test_struct_to_container_group(container_variant: str):
         simplify=True,
         validate=True,
         validate_all=True,
-        save_steps=True,
+        save_steps=False,
         interface_with_struct_copy=True,
         interface_to_gpu=False,
         verbose=False,
@@ -512,5 +512,4 @@ def test_struct_to_container_group(container_variant: str):
 
 if __name__ == "__main__":
     test_struct_to_container_group("Struct")
-
     test_struct_to_container_group("ContainerArray")

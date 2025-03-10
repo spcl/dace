@@ -834,7 +834,7 @@ class StructToContainerGroups(ppl.Pass):
                 an = dace.nodes.AccessNode(inname)
                 entry_interface.add_node(an)
                 entry_interface.add_edge(an, None, flatten_lib_node, None,
-                                         dace.Memlet(expr=inname))
+                                         dace.Memlet())
                 sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
 
             for outname in set(registered_names):
@@ -904,12 +904,15 @@ class StructToContainerGroups(ppl.Pass):
                     exit_interface.add_node(an)
                     assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
                     exit_interface.add_edge(an, None, deflatten_lib_node, None,
-                                            dace.Memlet(inname))
+                                            dace.Memlet())
 
             for outname in set([k for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
                             or isinstance(v, dace.data.ContainerArray)) and not
                             isinstance(v, dace.data.View)]):
-                pass
+                an = dace.nodes.AccessNode(outname)
+                exit_interface.add_node(an)
+                assert not isinstance(sdfg.arrays[outname], dace.data.Scalar)
+                exit_interface.add_edge(an, None, deflatten_lib_node, None, dace.Memlet())
 
         if not self._interface_with_struct_copy:
             # Remove structs

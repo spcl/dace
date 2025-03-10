@@ -26,10 +26,14 @@ def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[D
     """
     inputs: Dict[str, Data] = {}
     for edge in state.in_edges(node):
+        if edge.data.data is None:
+            continue # Skip dependency edges
         inputs[edge.dst_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
     outputs: Dict[str, Data] = {}
     for edge in state.out_edges(node):
+        if edge.data.data is None:
+            continue # Skip dependency edges
         outputs[edge.src_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
     return inputs, outputs
