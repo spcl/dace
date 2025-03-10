@@ -2043,7 +2043,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                    "for (auto %s = %s; %s <= %s; %s += %s) {\n" %
                     (var, begin, var, end, var, skip),
                     cfg,
                     state_id,
