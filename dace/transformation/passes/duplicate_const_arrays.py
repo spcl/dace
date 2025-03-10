@@ -228,18 +228,27 @@ class DuplicateConstArrays(ppl.Pass):
                     print(f"Copying {const_arr_name} to host as host_{const_arr_name}")
 
                 # Check if this array is a gpu variant of an array
-                if const_arr_name.startswith("gpu_") and const_arr_name[4:] in sdfg.arrays:
-                    gpu_host_name_map[const_arr_name[4:]] = "host_" + const_arr_name[4:]
-                    host_gpu_name_map["host_" + const_arr_name[4:]] = const_arr_name[4:]
+                if const_arr_name.startswith("gpu_"):
+                    if const_arr_name[4:] in sdfg.arrays:
+                        assert sdfg.arrays[const_arr_name[4:]].storage == dace.dtypes.StorageType.CPU_Heap or sdfg.arrays[const_arr_name[4:]].storage == dace.dtypes.StorageType.Default
+                        gpu_host_name_map[const_arr_name] = const_arr_name[4:]
+                        host_gpu_name_map[const_arr_name[4:]] = const_arr_name
+                    else:
+                        gpu_host_name_map[const_arr_name] = const_arr_name[4:]
+                        host_gpu_name_map[const_arr_name[4:]] = const_arr_name
+                        newdesc = copy.deepcopy(arr)
+                        newdesc.storage = dace.dtypes.StorageType.CPU_Heap
+                        sdfg.add_datadesc(const_arr_name[4:], newdesc)
                 else:
-                    gpu_host_name_map[const_arr_name] = "host_" + const_arr_name
-                    host_gpu_name_map["host_" + const_arr_name] = const_arr_name
-                    if "host_" + const_arr_name not in sdfg.arrays:
+                    if "host_" + const_arr_name in sdfg.arrays:
+                        gpu_host_name_map[const_arr_name] = "host_" + const_arr_name
+                        host_gpu_name_map["host_" + const_arr_name] = const_arr_name
+                    else:
+                        gpu_host_name_map[const_arr_name] = "host_" + const_arr_name
+                        host_gpu_name_map["host_" + const_arr_name] = const_arr_name
                         newdesc = copy.deepcopy(arr)
                         newdesc.storage = dace.dtypes.StorageType.CPU_Heap
                         sdfg.add_datadesc("host_" + const_arr_name, newdesc)
-                        #an = cfg.add_access("host_" + const_arr_name)
-                        #cfg.add_edge(node, None, an, None, dace.memlet.Memlet(expr=const_arr_name))
             else:
                 assert arr.storage == dace.dtypes.StorageType.CPU_Heap or arr.storage == dace.dtypes.StorageType.Default
                 if self.verbose:

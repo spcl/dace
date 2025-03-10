@@ -914,6 +914,8 @@ class StructToContainerGroups(ppl.Pass):
                 assert not isinstance(sdfg.arrays[outname], dace.data.Scalar)
                 exit_interface.add_edge(an, None, deflatten_lib_node, None, dace.Memlet())
 
+            # Add the end replace the host_name stuff
+
         if not self._interface_with_struct_copy:
             # Remove structs
             to_rm = []
@@ -958,6 +960,29 @@ class StructToContainerGroups(ppl.Pass):
 
         if self._validate or self._validate_all:
             sdfg.validate()
+
+        def replace_key(d, k1, k2):
+            if k1 in d:
+                d[k2] = d.pop(k1)
+
+        # Want to replace host_name to name and name to gpu_name for the duplication pass
+        for name in set(registered_names):
+            for arr_name,arr in sdfg.arrays.items():
+                if arr_name == name:
+                    arr.storage = dace.dtypes.StorageType.GPU_Global
+            sdfg.replace(name, "gpu_" + name)
+            replace_key(sdfg.arrays, name, "gpu_" + name)
+
+        for name in set(registered_names):
+            for arr_name, arr in sdfg.arrays.items():
+                if arr_name == "host_" + name:
+                    arr.storage = dace.dtypes.StorageType.CPU_Heap
+            sdfg.replace("host_" + name, name)
+            replace_key(sdfg.arrays, "host_" + name, name)
+
+        if self._validate or self._validate_all:
+            sdfg.validate()
+
 
     def _can_be_applied(
         self,
