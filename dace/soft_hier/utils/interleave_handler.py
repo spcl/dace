@@ -1,4 +1,5 @@
 import numpy as np
+from math import sqrt
 
 class InterleaveHandler:
     array = None
@@ -34,7 +35,7 @@ class InterleaveHandler:
             raise ValueError("Range must be a tuple of 3 elements")
         (start, end, step) = place_range
         num_channels = (end - start + 1) // step
-        total_channels = (self.cluster_dims[0] + self.cluster_dims[1]) * 2
+        total_channels = int(sqrt(self.cluster_dims[0] * self.cluster_dims[1])) * 4
         num_tiles = self.split_scheme[0] * self.split_scheme[1]
         if num_tiles % num_channels != 0:
             raise ValueError("Number of chunks must be a multiple of number of tiles")

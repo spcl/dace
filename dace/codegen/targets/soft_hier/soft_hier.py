@@ -387,6 +387,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #include "flex_printf.h"
 #include "flex_cluster_arch.h"
 #include "flex_dma_pattern.h"
+#define floor(x) ((x))
 {file_header}
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params});

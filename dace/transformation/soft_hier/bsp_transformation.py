@@ -498,9 +498,17 @@ class BSPTransformer(transformation.SingleStateTransformation):
                                                         symbolic.pystr_to_symbolic(idx_info["value"]), 
                                                         1)
             if idx_info["type"] == "slice":
+                # print(idx_info)
                 # if lower and upper are None, do nothing
                 if idx_info["lower"] is None and idx_info["upper"] is None:
                     continue   
+                else:
+                    # if step is None, set it to 1
+                    if idx_info["step"] is None:
+                        idx_info["step"] = "1"
+                    new_memlet.other_subset.ranges[dim] = (symbolic.pystr_to_symbolic(idx_info["lower"]), 
+                                                        symbolic.pystr_to_symbolic(idx_info["upper"])-1, 
+                                                        symbolic.pystr_to_symbolic(idx_info["step"])) 
         # print("\nRight-hand side:")
         # print("  Base variable:", rhs_base)
         for dim, idx_info in enumerate(rhs_indexes):
