@@ -1,7 +1,6 @@
 from typing import Dict
 
 import numpy as np
-import pytest
 
 import dace
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
@@ -15,7 +14,6 @@ def construct_internal_ast(sources: Dict[str, str]):
     return iast, prog
 
 
-@pytest.mark.skip('Segfaults in Python 3.9, works in Python 3.12')
 def test_minimal():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -45,26 +43,34 @@ end subroutine main
     g = create_singular_sdfg_from_string(
         sources, entry_point='main', normalize_offsets=False,
         config_injections=[
-            ConstTypeInjection(scope_spec=None, type_spec=('lib', 'config'), component_spec=('a_d0_s',), value='3'),
-            ConstTypeInjection(scope_spec=None, type_spec=('lib', 'config'), component_spec=('a_d1_s',), value='4'),
-            ConstTypeInjection(scope_spec=None, type_spec=('lib', 'config'), component_spec=('b_d0_s',), value='5'),
-            ConstTypeInjection(scope_spec=None, type_spec=('lib', 'config'), component_spec=('b_d1_s',), value='6'),
-            ConstTypeInjection(scope_spec=None, type_spec=('lib', 'config'), component_spec=('b_d2_s',), value='7'),
+            ConstTypeInjection(
+                scope_spec=None, type_spec=('lib', 'config'),component_spec=('__f2dace_SA_a_d_0_s',), value='3'),
+            ConstTypeInjection(
+                scope_spec=None, type_spec=('lib', 'config'), component_spec=('__f2dace_SA_a_d_1_s',), value='4'),
+            ConstTypeInjection(
+                scope_spec=None, type_spec=('lib', 'config'), component_spec=('__f2dace_SA_b_d_0_s',), value='5'),
+            ConstTypeInjection(
+                scope_spec=None, type_spec=('lib', 'config'), component_spec=('__f2dace_SA_b_d_1_s',), value='6'),
+            ConstTypeInjection(
+                scope_spec=None, type_spec=('lib', 'config'), component_spec=('__f2dace_SA_b_d_2_s',), value='7'),
         ])
     g.simplify(verbose=True)
     g.compile()
 
     # As per the injection, the result should be 3 (first dimension size of a) + 5 (first dimension size of b)
-    cfg_T = dace.data.Structure({'a': dace.int32[3, 4], 'b': dace.float32[5, 6, 7]}, 'config')
-    cfg = cfg_T.dtype._typeclass.as_ctypes()()
+    cfg_T = g.arrays['cfg'].dtype.base_type.as_ctypes()
+    a = np.full([3, 4], 42, order="F", dtype=np.int32)
+    b = np.full([5, 6, 7], 42, order="F", dtype=np.int32)
+    cfg = cfg_T(a=a.ctypes.data, b=b.ctypes.data)
     c = np.zeros(2, dtype=np.float32)
     g(cfg=cfg, c=c)
     assert c[0] == 3 + 5
 
     # Even if we now pass a different value (which we shouldn't), the result stays unchanged, since the values are
     # already injected.
-    cfg_T = dace.data.Structure({'a': dace.int32[1, 1], 'b': dace.float32[1, 1, 1]}, 'config')
-    cfg = cfg_T.dtype._typeclass.as_ctypes()()
+    a = np.full([1, 1], 42, order="F", dtype=np.int32)
+    b = np.full([1, 1, 1], 42, order="F", dtype=np.int32)
+    cfg = cfg_T(a=a.ctypes.data, b=b.ctypes.data)
     c = np.zeros(2, dtype=np.float32)
     g(cfg=cfg, c=c)
     assert c[0] == 3 + 5
