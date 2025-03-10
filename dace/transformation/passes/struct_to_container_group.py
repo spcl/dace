@@ -829,7 +829,7 @@ class StructToContainerGroups(ppl.Pass):
             start_state = sdfg.start_state
             entry_interface = sdfg.add_state_before(sdfg.start_state, "entry_interface", is_start_block=True, is_start_state=True)
             #sdfg.add_edge(entry_interface, start_state, dace.sdfg.InterstateEdge())
-            exit_interface = sdfg.add_state("exit_interface")
+
 
             assert sdfg.start_state == entry_interface
             assert sdfg.start_block == entry_interface
@@ -864,20 +864,20 @@ class StructToContainerGroups(ppl.Pass):
 
                     sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
                 else:
-                    an0 = dace.nodes.AccessNode("host_" + outname)
+                    an0 = dace.nodes.AccessNode("gpu_" + outname)
                     an = dace.nodes.AccessNode(outname)
                     entry_interface.add_node(an)
                     arr = sdfg.arrays[outname]
                     arr0 = copy.deepcopy(arr)
-                    arr.storage = dace.dtypes.StorageType.GPU_Global
-                    arr0.storage = dace.dtypes.StorageType.CPU_Heap
-                    sdfg.add_datadesc("host_" + outname, arr0, find_new_name=False)
+                    arr.storage = dace.dtypes.StorageType.CPU_Heap
+                    arr0.storage = dace.dtypes.StorageType.GPU_Global
+                    sdfg.add_datadesc("gpu_" + outname, arr0, find_new_name=False)
                     assert not isinstance(arr, dace.data.Scalar)
 
-                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an0, None,
-                                            dace.Memlet(expr="host_" + outname)
+                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
+                                            dace.Memlet(expr=outname)
                                             )
-                    entry_interface.add_edge(an0, None, an, None,
+                    entry_interface.add_edge(an, None, an0, None,
                                             dace.Memlet(expr=outname)
                                             )
 
@@ -886,25 +886,27 @@ class StructToContainerGroups(ppl.Pass):
 
                 #sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
 
+            exit_interface = sdfg.add_state("exit_interface")
             end_nodes = set()
             for cfg in sdfg.nodes():
-                if sdfg.out_degree(cfg) == 0:
+                if sdfg.out_degree(cfg) == 0 and cfg != exit_interface:
                     end_nodes.add(cfg)
+            assert len(end_nodes) == 1, f"End nodes: {end_nodes}"
             for end_node in end_nodes:
                 sdfg.add_edge(end_node, exit_interface, dace.sdfg.InterstateEdge())
 
             exit_interface.add_node(deflatten_lib_node)
             for inname in set(registered_names):
                 if self._interface_to_gpu:
-                    an0 = dace.nodes.AccessNode(inname)
-                    an = dace.nodes.AccessNode("host_" + inname)
+                    an0 = dace.nodes.AccessNode("gpu_" + inname)
+                    an = dace.nodes.AccessNode(inname)
                     exit_interface.add_node(an)
                     exit_interface.add_node(an0)
                     assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
                     exit_interface.add_edge(an0, None, an, None,
                                             dace.Memlet(expr=inname))
                     exit_interface.add_edge(an, None, deflatten_lib_node, None,
-                                            dace.Memlet(expr="host_" + inname))
+                                            dace.Memlet(expr=inname))
                 else:
                     an = dace.nodes.AccessNode(inname)
                     exit_interface.add_node(an)
@@ -919,7 +921,6 @@ class StructToContainerGroups(ppl.Pass):
                 exit_interface.add_node(an)
                 assert not isinstance(sdfg.arrays[outname], dace.data.Scalar)
                 exit_interface.add_edge(an, None, deflatten_lib_node, None, dace.Memlet())
-                #pass
 
             # Add the end replace the host_name stuff
 
@@ -970,33 +971,10 @@ class StructToContainerGroups(ppl.Pass):
             if k1 in d:
                 d[k2] = d.pop(k1)
 
-        if self._verbose:
-            print("Replacing names to help the const array duplication transformation")
-
-        # Want to replace host_name to name and name to gpu_name for the duplication pass
-        if self._interface_to_gpu:
-            for name in set(registered_names):
-                for arr_name,arr in sdfg.arrays.items():
-                    if arr_name == name:
-                        arr.storage = dace.dtypes.StorageType.GPU_Global
-                sdfg.replace(name, "gpu_" + name)
-                replace_key(sdfg.arrays, name, "gpu_" + name)
-
-            for name in set(registered_names):
-                for arr_name, arr in sdfg.arrays.items():
-                    if arr_name == "host_" + name:
-                        arr.storage = dace.dtypes.StorageType.CPU_Heap
-                sdfg.replace("host_" + name, name)
-                replace_key(sdfg.arrays, "host_" + name, name)
-
-        if self._verbose:
-            print("Resetting CFG list")
-
         sdfg.reset_cfg_list()
 
         if self._verbose:
             print("Validating again after replacing names and resetting CFG list")
-
 
         if self._validate or self._validate_all:
             sdfg.validate()
