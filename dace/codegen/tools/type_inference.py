@@ -50,7 +50,7 @@ def infer_types(code, symbols=None):
 def infer_expr_type(code, symbols=None):
     """
     Return inferred type of a given expression.
-    
+
     :param code: code string (an expression) or symbolic expression
     :param symbols: already defined symbols (if any) in a dictionary "symbol name" -> dytpes.typeclass:
     :return: inferred type
@@ -340,15 +340,15 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (sys.version_info >= (3, 8) and isinstance(t.right, ast.Constant) and
-                int(t.right.value) == t.right.value and t.right.value >= 0):
+        if (sys.version_info >= (3, 8) and isinstance(t.right, ast.Constant) and int(t.right.value) == t.right.value
+                and t.right.value >= 0):
             if t.right.value != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
             return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
-        elif (sys.version_info < (3, 8) and isinstance(t.right, ast.Num) and
-                int(t.right.n) == t.right.n and t.right.n >= 0):
+        elif (sys.version_info < (3, 8) and isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
+              and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
@@ -417,8 +417,8 @@ def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
 
 def _Attribute(t, symbols, inferred_symbols):
     inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-    if (isinstance(inferred_type, dtypes.pointer) and isinstance(inferred_type.base_type, dtypes.struct) and
-            t.attr in inferred_type.base_type.fields):
+    if (isinstance(inferred_type, dtypes.pointer) and isinstance(inferred_type.base_type, dtypes.struct)
+            and t.attr in inferred_type.base_type.fields):
         return inferred_type.base_type.fields[t.attr]
     return inferred_type
 
@@ -452,10 +452,10 @@ def _Call(t, symbols, inferred_symbols):
 
     if name in ('abs', 'log'):
         return arg_types[0]
-    if name in ('min', 'max'): # binary math operations that do not exist in the math module
+    if name in ('min', 'max'):  # binary math operations that do not exist in the math module
         return dtypes.result_type_of(arg_types[0], *arg_types)
     if name in ('round', ):
-        return dtypes.typeclass(int)   
+        return dtypes.typeclass(int)
 
     # dtypes (dace.int32, np.float64) can be used as functions
     inf_type = _infer_dtype(t)

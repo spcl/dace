@@ -99,12 +99,13 @@ class ExpandReducePure(pm.ExpandTransformation):
             nsdfg.add_edge(init_state, nstate, dace.InterstateEdge())
 
             # Add initialization as a map
-            init_state.add_mapped_tasklet(
-                'reduce_init', {'_o%d' % i: '0:%s' % symstr(d)
-                                for i, d in enumerate(outedge.data.subset.size())}, {},
-                '__out = %s' % node.identity,
-                {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in osqdim]))},
-                external_edges=True)
+            init_state.add_mapped_tasklet('reduce_init', {
+                '_o%d' % i: '0:%s' % symstr(d)
+                for i, d in enumerate(outedge.data.subset.size())
+            }, {},
+                                          '__out = %s' % node.identity,
+                                          {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in osqdim]))},
+                                          external_edges=True)
         else:
             nstate = nsdfg.add_state()
         # END OF INIT
@@ -122,9 +123,10 @@ class ExpandReducePure(pm.ExpandTransformation):
                     input_subset.append('_o%d' % octr)
                     octr += 1
 
-            ome, omx = nstate.add_map('reduce_output',
-                                      {'_o%d' % i: '0:%s' % symstr(sz)
-                                       for i, sz in enumerate(outsubset.size())})
+            ome, omx = nstate.add_map('reduce_output', {
+                '_o%d' % i: '0:%s' % symstr(sz)
+                for i, sz in enumerate(outsubset.size())
+            })
             outm = dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = dace.Memlet.simple('_in', ','.join(input_subset))
         else:
@@ -134,10 +136,10 @@ class ExpandReducePure(pm.ExpandTransformation):
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
-        ime, imx = nstate.add_map(
-            'reduce_values',
-            {'_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
-             for i, axis in enumerate(sorted(axes))})
+        ime, imx = nstate.add_map('reduce_values', {
+            '_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
+            for i, axis in enumerate(sorted(axes))
+        })
 
         # Add identity tasklet for reduction
         t = nstate.add_tasklet('identity', {'__inp'}, {'__out'}, '__out = __inp')
@@ -222,9 +224,10 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
                 input_subset.append('_o%d' % octr)
                 octr += 1
 
-        ome, omx = nstate.add_map('reduce_output',
-                                  {'_o%d' % i: '0:%s' % symstr(sz)
-                                   for i, sz in enumerate(outsubset.size())})
+        ome, omx = nstate.add_map('reduce_output', {
+            '_o%d' % i: '0:%s' % symstr(sz)
+            for i, sz in enumerate(outsubset.size())
+        })
         outm = dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]))
         #wcr_str=node.wcr)
         inmm = dace.Memlet.simple('_in', ','.join(input_subset))
@@ -238,11 +241,11 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
-        ime, imx = nstate.add_map(
-            'reduce_values',
-            {'_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
-             for i, axis in enumerate(sorted(axes))},
-            schedule=dtypes.ScheduleType.Sequential)
+        ime, imx = nstate.add_map('reduce_values', {
+            '_i%d' % i: '0:%s' % symstr(insubset.size()[isqdim.index(axis)])
+            for i, axis in enumerate(sorted(axes))
+        },
+                                  schedule=dtypes.ScheduleType.Sequential)
 
         # Add identity tasklet for reduction
         t = nstate.add_tasklet('identity', {'a', 'b'}, {'o'}, 'o = b')
@@ -954,9 +957,10 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
 
             output_size = outedge.data.subset.size()
 
-            ome, omx = nstate.add_map('reduce_output',
-                                      {f'_o{i}': f'0:{symstr(sz)}'
-                                       for i, sz in enumerate(outedge.data.subset.size())})
+            ome, omx = nstate.add_map('reduce_output', {
+                f'_o{i}': f'0:{symstr(sz)}'
+                for i, sz in enumerate(outedge.data.subset.size())
+            })
             outm_idx = ','.join([f'_o{i}' for i in range(output_dims)])
             outm = dace.Memlet(f'_out[{outm_idx}]')
             inm_idx = ','.join(input_subset)
@@ -996,10 +1000,10 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
         if not all_axis:
             nstate.add_memlet_path(ome, init_me, memlet=dace.Memlet())
 
-        ime, imx = nstate.add_map(
-            'reduce_values',
-            {f'_i{i}': f'0:{symstr(inedge.data.subset.size()[axis])}'
-             for i, axis in enumerate(sorted(axes))})
+        ime, imx = nstate.add_map('reduce_values', {
+            f'_i{i}': f'0:{symstr(inedge.data.subset.size()[axis])}'
+            for i, axis in enumerate(sorted(axes))
+        })
 
         # Accumulate over partial results
         redtype = detect_reduction_type(node.wcr)
@@ -1209,25 +1213,26 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 nsdfg.add_edge(init_state, nstate, dace.InterstateEdge())
 
                 # Add initialization as a map
-                init_state.add_mapped_tasklet(
-                    'reduce_init',
-                    {f'_o{i}': subsets.Range([(0, sz - 1, 1)])
-                     for i, sz in enumerate(schedule.out_shape)}, {},
-                    '__out = %s' % node.identity, {'__out': outm},
-                    external_edges=True,
-                    schedule=dtypes.ScheduleType.GPU_Device)
+                init_state.add_mapped_tasklet('reduce_init', {
+                    f'_o{i}': subsets.Range([(0, sz - 1, 1)])
+                    for i, sz in enumerate(schedule.out_shape)
+                }, {},
+                                              '__out = %s' % node.identity, {'__out': outm},
+                                              external_edges=True,
+                                              schedule=dtypes.ScheduleType.GPU_Device)
 
                 # additional grid dims
-                add_me, add_mx = nstate.add_map(
-                    'grid',
-                    {f'_a{i}': subsets.Range([(0, sz - 1, 1)])
-                     for i, sz in enumerate(schedule.additional_grid)},
-                    schedule=dtypes.ScheduleType.GPU_Device)
+                add_me, add_mx = nstate.add_map('grid', {
+                    f'_a{i}': subsets.Range([(0, sz - 1, 1)])
+                    for i, sz in enumerate(schedule.additional_grid)
+                },
+                                                schedule=dtypes.ScheduleType.GPU_Device)
 
             # add map, which corresponds to the CUDA grid
-            ome, omx = nstate.add_map('grid',
-                                      {f'_o{i}': subsets.Range([(0, sz - 1, 1)])
-                                       for i, sz in enumerate(schedule.grid)},
+            ome, omx = nstate.add_map('grid', {
+                f'_o{i}': subsets.Range([(0, sz - 1, 1)])
+                for i, sz in enumerate(schedule.grid)
+            },
                                       schedule=dtypes.ScheduleType.GPU_Device)
 
             # add map, which corresponds to the thread blocks
@@ -1274,11 +1279,12 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 },
                                           schedule=dtypes.ScheduleType.Sequential)
             else:
-                ime, imx = nstate.add_map('reduce_values', {
-                    f'_i{i}': subsets.Range([(f'{schedule.vec_len if vectorize else 1}*tid', s[1] - 1, s[2])])
-                    for i, s in enumerate(schedule.sequential)
-                },
-                                          schedule=dtypes.ScheduleType.Sequential)
+                ime, imx = nstate.add_map(
+                    'reduce_values', {
+                        f'_i{i}': subsets.Range([(f'{schedule.vec_len if vectorize else 1}*tid', s[1] - 1, s[2])])
+                        for i, s in enumerate(schedule.sequential)
+                    },
+                    schedule=dtypes.ScheduleType.Sequential)
 
             # Add identity tasklet for reduction
             if vectorize:
@@ -1368,20 +1374,20 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 # Add initialization
                 init_state = nsdfg.add_state()
                 nsdfg.add_edge(init_state, nstate, dace.InterstateEdge())
-                init_state.add_mapped_tasklet(
-                    'reduce_init',
-                    {f'_o{i}': subsets.Range([(0, sz - 1, 1)])
-                     for i, sz in enumerate(schedule.out_shape)}, {},
-                    '__out = %s' % node.identity, {'__out': reset_outm},
-                    external_edges=True,
-                    schedule=dtypes.ScheduleType.GPU_Device)
+                init_state.add_mapped_tasklet('reduce_init', {
+                    f'_o{i}': subsets.Range([(0, sz - 1, 1)])
+                    for i, sz in enumerate(schedule.out_shape)
+                }, {},
+                                              '__out = %s' % node.identity, {'__out': reset_outm},
+                                              external_edges=True,
+                                              schedule=dtypes.ScheduleType.GPU_Device)
 
                 # additional grid dims
-                add_me, add_mx = nstate.add_map(
-                    'grid',
-                    {f'_a{i}': subsets.Range([(0, sz - 1, 1)])
-                     for i, sz in enumerate(schedule.additional_grid)},
-                    schedule=dtypes.ScheduleType.GPU_Device)
+                add_me, add_mx = nstate.add_map('grid', {
+                    f'_a{i}': subsets.Range([(0, sz - 1, 1)])
+                    for i, sz in enumerate(schedule.additional_grid)
+                },
+                                                schedule=dtypes.ScheduleType.GPU_Device)
 
             if len(schedule.grid) == 1:
                 ome, omx = nstate.add_map('grid', {'_g': f'0:{schedule.grid[0]}'},
@@ -1404,10 +1410,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                                             schedule=dtypes.ScheduleType.GPU_ThreadBlock)
 
             else:
-                bme1, bmx1 = nstate.add_map('block', {'_b': f'0:{warp_size}'}, schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+                bme1, bmx1 = nstate.add_map('block', {'_b': f'0:{warp_size}'},
+                                            schedule=dtypes.ScheduleType.GPU_ThreadBlock)
 
-                bme2, bmx2 = nstate.add_map('block', {f'_b{i}': f'0:{sz}'
-                                                      for i, sz in enumerate(schedule.block)},
+                bme2, bmx2 = nstate.add_map('block', {
+                    f'_b{i}': f'0:{sz}'
+                    for i, sz in enumerate(schedule.block)
+                },
                                             schedule=dtypes.ScheduleType.GPU_ThreadBlock)
 
             # add shared memory of warp size to outer sdfg
@@ -1485,7 +1494,8 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             if mini_warps:
                 cond_tasklet = nstate.add_tasklet(
                     'cond_write', {'_input'}, {'_output'},
-                    f'if _b + {warp_size} * _g < {schedule.out_shape[-1]} and _bb == 0 and _mwid == 0: _output = _input')
+                    f'if _b + {warp_size} * _g < {schedule.out_shape[-1]} and _bb == 0 and _mwid == 0: _output = _input'
+                )
             else:
                 cond_tasklet = nstate.add_tasklet(
                     'cond_write', {'_input'}, {'_output'},
@@ -1515,7 +1525,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             else:
                 bme3, bmx3 = nstate.add_map('block', {
                     '_bb': f'0:{512//warp_size}',
-                    '_b':  f'0:{warp_size}'
+                    '_b': f'0:{warp_size}'
                 },
                                             schedule=dtypes.ScheduleType.GPU_ThreadBlock)
                 nstate.add_memlet_path(s_mem3, bme3, cond_tasklet, dst_conn='_input', memlet=dace.Memlet('s_mem[_b]'))

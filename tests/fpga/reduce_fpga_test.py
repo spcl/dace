@@ -133,6 +133,7 @@ def test_reduce_max():
 
 @fpga_test(assert_ii_1=False)
 def test_reduce_scalar():
+
     @dace.program
     def reduction_to_scalar(A: dace.float64[64]):
         result = dace.reduce(lambda a, b: a + b, A)

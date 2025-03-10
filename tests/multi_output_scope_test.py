@@ -7,6 +7,7 @@ W = dace.symbol('W')
 
 @dace.program
 def multi_output_scope(A, stats):
+
     @dace.map(_[0:W])
     def compute(i):
         inp << A[i]

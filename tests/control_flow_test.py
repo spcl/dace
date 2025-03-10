@@ -141,6 +141,7 @@ def test_2d_assignment():
 
 
 def test_while_symbol():
+
     @dace.program
     def whiletest_symbol(A: dace.int32[1]):
         i = 6
@@ -162,6 +163,7 @@ def test_while_symbol():
 
 
 def test_while_data():
+
     @dace.program
     def whiletest_data(A: dace.int32[1]):
         while A[0] > 0:
@@ -213,6 +215,7 @@ def test_dowhile():
 
 
 def test_ifchain():
+
     @dace.program
     def ifchain_program(A: dace.int32[2]):
         if A[0] == 0:
@@ -330,6 +333,7 @@ def test_fsm():
 
 
 def test_nested_loop_detection():
+
     @dace.program
     def nestedloop(A: dace.float64[1]):
         for i in range(5):

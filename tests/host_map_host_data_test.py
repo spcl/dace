@@ -1,6 +1,7 @@
 import dace
 import pytest
 
+
 def create_assign_sdfg():
     sdfg = dace.SDFG('single_iteration_map')
     state = sdfg.add_state()
@@ -17,6 +18,7 @@ def create_assign_sdfg():
     state.add_edge(map_exit, 'OUT__a', an, None, dace.Memlet(f'A[0]'))
     sdfg.validate()
     return A, sdfg
+
 
 def create_assign_sdfg_with_views():
     sdfg = dace.SDFG('single_iteration_map')
@@ -39,6 +41,7 @@ def create_assign_sdfg_with_views():
     sdfg.validate()
     return v_A, sdfg
 
+
 def create_increment_sdfg():
     sdfg = dace.SDFG('increment_map')
     state = sdfg.add_state()
@@ -60,6 +63,7 @@ def create_increment_sdfg():
     state.add_edge(map_exit, 'OUT__a', an2, None, dace.Memlet(f'A[i]'))
     sdfg.validate()
     return A, sdfg
+
 
 def create_increment_sdfg_with_views():
     sdfg = dace.SDFG('increment_map')
@@ -91,13 +95,12 @@ def create_increment_sdfg_with_views():
     sdfg.validate()
     return v_A, sdfg
 
-@pytest.mark.parametrize("sdfg_creator", [
-    create_assign_sdfg,
-    create_increment_sdfg,
-    create_assign_sdfg_with_views,
-    create_increment_sdfg_with_views
-])
+
+@pytest.mark.parametrize(
+    "sdfg_creator",
+    [create_assign_sdfg, create_increment_sdfg, create_assign_sdfg_with_views, create_increment_sdfg_with_views])
 class TestHostDataHostMapParams:
+
     def test_host_data(self, sdfg_creator):
         """Test that arrays marked as host_data remain on host after GPU transformation."""
         A, sdfg = sdfg_creator()
@@ -109,11 +112,7 @@ class TestHostDataHostMapParams:
     def test_host_map(self, sdfg_creator):
         """Test that maps marked as host_maps remain on host after GPU transformation."""
         A, sdfg = sdfg_creator()
-        host_maps = [
-            n.guid for s in sdfg.states()
-            for n in s.nodes()
-            if isinstance(n, dace.nodes.EntryNode)
-        ]
+        host_maps = [n.guid for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.EntryNode)]
         sdfg.apply_gpu_transformations(host_maps=host_maps)
         sdfg.validate()
         assert sdfg.arrays['A'].storage != dace.dtypes.StorageType.GPU_Global
@@ -140,6 +139,7 @@ class TestHostDataHostMapParams:
             for n in s.nodes():
                 if isinstance(n, dace.nodes.MapEntry):
                     assert n.map.schedule == dace.ScheduleType.GPU_Device
+
 
 if __name__ == '__main__':
     pytest.main([__file__])

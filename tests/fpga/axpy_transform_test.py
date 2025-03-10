@@ -10,6 +10,7 @@ N = dace.symbol('N')
 
 @dace.program(dace.float64, dace.float64[N], dace.float64[N])
 def axpy(A, X, Y):
+
     @dace.map(_[0:N])
     def multiplication(i):
         in_A << A

@@ -93,7 +93,7 @@ def _find_node(state, node_id_or_label):
 
 
 def string_builder(string):
-    """ To match DaCe variable naming conventions, replaces all undesired 
+    """ To match DaCe variable naming conventions, replaces all undesired
         characters with "_".
     """
     newstring = string
@@ -123,6 +123,7 @@ _atomic_count = _atomic_counter_generator()
 
 
 class TFSession:
+
     def __init__(self, name: str = "tfsession", seed: int = None, config=None):
         """ Creates a DaCe Tensorflow session.
 
@@ -173,9 +174,9 @@ class TFSession:
         nodes=None,
         output_gradients=False,
     ):
-        """ Trains a subgraph for the specified number of iterations and 
+        """ Trains a subgraph for the specified number of iterations and
             returns requested nodes after training.
-            
+
             :param optimizer: A TensorFlow tf.Optimizer node.
             :param initializer: Either a list of global and local initializers
                                 or one initializer.
@@ -298,13 +299,16 @@ class TFSession:
         sdfg_args.update(self.reinitDict)
         sdfg_args.update(self.initDict)
 
-        sdfg_args.update({(k if isinstance(k, str) else string_builder(k.name + "_Inp")): v
-                          for k, v in feed_dict.items()})
+        sdfg_args.update({
+            (k if isinstance(k, str) else string_builder(k.name + "_Inp")): v
+            for k, v in feed_dict.items()
+        })
 
         # Set scalar arguments to appropriate arrays of size 1
-        sdfg_args.update(
-            {k: (v if isinstance(v, np.ndarray) else np.array(v, dtype=node_types[k]))
-             for k, v in sdfg_args.items()})
+        sdfg_args.update({
+            k: (v if isinstance(v, np.ndarray) else np.array(v, dtype=node_types[k]))
+            for k, v in sdfg_args.items()
+        })
 
         ############################
         # Create output numpy arrays
@@ -347,8 +351,8 @@ class TFSession:
         )
 
     def compile(self, nodes, gpu, name=None, patterns=[], validate=False, permissive=False):
-        """ Compiles a subgraph into a callable function, which is equivalent 
-            to calling ``run()``. 
+        """ Compiles a subgraph into a callable function, which is equivalent
+            to calling ``run()``.
 
             :param nodes: Node or an iterable (e.g. list) of nodes to evaluate.
             :param name: Name of the SDFG to create, or None for a unique name.
@@ -440,9 +444,10 @@ class TFSession:
         sdfg_args.update(self.inpDict)
         sdfg_args.update(self.initDict)
         # Set scalar arguments to appropriate arrays of size 1
-        sdfg_args.update(
-            {k: (v if isinstance(v, np.ndarray) else np.array(v, dtype=node_types[k]))
-             for k, v in sdfg_args.items()})
+        sdfg_args.update({
+            k: (v if isinstance(v, np.ndarray) else np.array(v, dtype=node_types[k]))
+            for k, v in sdfg_args.items()
+        })
 
         ############################
         # Create output numpy arrays
@@ -490,8 +495,10 @@ class TFSession:
         def call_func(feed_dict=None):
             if feed_dict is not None:
                 invoke_args = dict(
-                    sdfg_args, **{(k if isinstance(k, str) else string_builder(k.name)): v
-                                  for k, v in feed_dict.items()})
+                    sdfg_args, **{
+                        (k if isinstance(k, str) else string_builder(k.name)): v
+                        for k, v in feed_dict.items()
+                    })
 
                 compiled_sdfg(**invoke_args)
             else:
@@ -3385,7 +3392,7 @@ class TFSession:
         )
 
     def add_in_memlets(self, inputList, otherNode, tasklet, inputDims, inputParams, identifier="j"):
-        """ Convenience function that adds two memlets for each input of the 
+        """ Convenience function that adds two memlets for each input of the
             node: external and internal to a given map.
 
             :param inputList: list of inputNodes (DaCe access node)
@@ -3394,11 +3401,11 @@ class TFSession:
                             mapEntry, for example map in map.
             :param inputDims: List of list of strings dimension of the
                               respective input. Example:
-                              [["0:5","0:7"],["0:2","0:4"]]  
+                              [["0:5","0:7"],["0:2","0:4"]]
             :param inputParams: List of list of strings params of respective
                                 input. Example: [["i0","i1"],["i2","i3"]]
             :param identifier: This will be used as the base identifier of the
-                                input connector to the tasklet. Default is 'j'  
+                                input connector to the tasklet. Default is 'j'
         """
         state = self.state
         connected_nodes = set()
@@ -3428,7 +3435,7 @@ class TFSession:
         identifier="out",
         wcr_conflict=True,
     ):
-        """ Convenience function that adds two memlets for each output of the 
+        """ Convenience function that adds two memlets for each output of the
             node: external and internal to a given map.
 
             :param outputList: list of outputNodes (DaCe access node)
@@ -3437,9 +3444,9 @@ class TFSession:
                             mapEntry, for example map in map.
             :param outputDims: List of list of strings dimension of the
                                respective output. Example:
-                               [["0:5","0:7"],["0:2","0:4"]]  
+                               [["0:5","0:7"],["0:2","0:4"]]
             :param outputParams: List of list of strings params of respective
-                                 output. Example: [["i0","i1"],["i2","i3"]]  
+                                 output. Example: [["i0","i1"],["i2","i3"]]
             :param wcr: (optional) Write-conflict resolution function (as
                         string).
             :param wcr_identity: (optional) Identity element for write-conflict
@@ -3486,7 +3493,7 @@ class TFSession:
                 state.add_edge(tasklet, None, otherNode, None, innerMemlet)
 
     def create_and_add_input_node(self, inp):
-        """ Creates a DaCe access node for each input of `inp`, adds it to the 
+        """ Creates a DaCe access node for each input of `inp`, adds it to the
             state, and returns it.
             If the node already exists, returns the pre-existing node.
 
@@ -3525,7 +3532,7 @@ class TFSession:
         return inputNode, params, dims
 
     def create_and_add_output_node(self, node):
-        """ Creates a DaCe access node for each output of `node`, adds it to 
+        """ Creates a DaCe access node for each output of `node`, adds it to
             the state, and returns it.
             If the node already exists, returns the pre-existing node.
 
@@ -3673,7 +3680,7 @@ class TFSession:
 
     def get_default_dims(self, tensor):
         """ Returns the default dimensions of a tensor e.g., ["0:N","0:M"]
-        
+
             :param tensor: tf.Tensor.
             :return: List of dimensions as strings ["0:N","0:M"]
         """

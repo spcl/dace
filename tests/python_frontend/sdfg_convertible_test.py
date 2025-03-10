@@ -8,6 +8,7 @@ import pytest
 
 
 def test_daceprogram_constants_in_signature():
+
     @dace.program
     def convertible(grid: dace.compiletime, arr: dace.float64[10]):
         arr[grid.start:grid.end] = 7.0
@@ -24,8 +25,11 @@ def test_daceprogram_constants_in_signature():
 
 
 def test_constants_in_signature():
+
     class AConvertible(SDFGConvertible):
+
         def __sdfg__(self, grid, arr):
+
             @dace.program
             def func(_: dace.compiletime, arr: dace.float64[10]):
                 arr[grid.start:grid.end] = 7.0
@@ -55,6 +59,7 @@ def test_nested_convertible_parse_fail(raise_error, nested_decorator):
     raised_exception = None
 
     class AConvertible(SDFGConvertible):
+
         def __call__(self, arr):
             nonlocal raised_exception
             raised_exception = FileNotFoundError('Expected')

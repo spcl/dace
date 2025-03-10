@@ -7,6 +7,7 @@ W = dp.symbol('W')
 
 @dp.program
 def intarg(A, B, integer):
+
     @dp.map(_[0:W])
     def compute(i):
         a << A[i]

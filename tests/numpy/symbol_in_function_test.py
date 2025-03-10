@@ -5,6 +5,7 @@ import numpy as np
 
 
 def myfunction(mytype: Array) -> dace.SDFG:
+
     @dace.program
     def op(A: mytype):
         return A + A

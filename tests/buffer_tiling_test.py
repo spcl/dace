@@ -11,6 +11,7 @@ J = dace.symbol("J")
 
 @dace.program
 def conv3x3(weights: dace.float32[3, 3], A: dace.float32[I, J], B: dace.float32[I, J]):
+
     @dace.map
     def conv3x3(y: _[1:I - 1], x: _[1:J - 1]):
         inp << A[y - 1:y + 2, x - 1:x + 2]
@@ -23,6 +24,7 @@ def conv3x3(weights: dace.float32[3, 3], A: dace.float32[I, J], B: dace.float32[
 
 @dace.program
 def conv3x3_transposed(weights: dace.float32[3, 3], A: dace.float32[I, J], B: dace.float32[I, J]):
+
     @dace.map
     def conv3x3(y: _[1:I - 1], x: _[1:J - 1]):
         inp << A[x - 1:x + 2, y - 1:y + 2]
@@ -35,6 +37,7 @@ def conv3x3_transposed(weights: dace.float32[3, 3], A: dace.float32[I, J], B: da
 
 @dace.program
 def conv5x5(weights: dace.float32[5, 5], A: dace.float32[I, J], B: dace.float32[I, J]):
+
     @dace.map
     def conv5x5(y: _[3:I - 3], x: _[3:J - 3]):
         inp << A[y - 2:y + 3, x - 2:x + 3]
