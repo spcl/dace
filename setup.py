@@ -81,7 +81,7 @@ setup(name='dace',
           'testing':
           ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert'],
           'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
-          'linting': ['pre-commit', 'yapf'],
+          'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
       },
       entry_points={
           'console_scripts': [

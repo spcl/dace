@@ -23,7 +23,7 @@ jobs:
         cache: 'pip'
 
     - name: Install linting tools
-      run: pip install pre-commit yapf
+      run: pip install .[linting]
 
     - name: Run linting tools
       run: pre-commit run --all-files
