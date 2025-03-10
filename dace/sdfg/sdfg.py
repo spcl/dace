@@ -51,7 +51,7 @@ class NestedDict(dict):
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
-        
+
         while tokens:
             token = tokens.pop(0)
             if isinstance(result, dt.ContainerArray):
@@ -313,7 +313,7 @@ class InterstateEdge(object):
             self._uncond = None
             self._cond_sympy = None
 
-    
+
     def replace_complex_iedge(self, oldname,newname,remove_zero_index=False, replace_keys=True) -> None:
         """
         Replaces all given keys with their corresponding values.
@@ -338,7 +338,7 @@ class InterstateEdge(object):
         if newc != condition:
             self.condition.as_string = newc
             self._uncond = None
-            self._cond_sympy = None        
+            self._cond_sympy = None
 
     def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
@@ -358,7 +358,7 @@ class InterstateEdge(object):
         :param new_name: The replacement list for iedge memlet replacement.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        self.replace_complex_iedge(name, new_name, remove_zero_index,replace_keys)    
+        self.replace_complex_iedge(name, new_name, remove_zero_index,replace_keys)
 
     def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
@@ -484,7 +484,7 @@ class SDFG(ControlFlowRegion):
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
-    
+
 
     _pgrids = DictProperty(str,
                            ProcessGrid,
@@ -1763,7 +1763,7 @@ class SDFG(ControlFlowRegion):
         if name in self._rdistrarrays:
             return True
         return False
-    
+
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
@@ -2836,7 +2836,8 @@ class SDFG(ControlFlowRegion):
                                   register_transients=True,
                                   simplify=True,
                                   host_maps=None,
-                                  host_data=None):
+                                  host_data=None,
+                                  dont_copy_structs=False):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 
@@ -2855,7 +2856,8 @@ class SDFG(ControlFlowRegion):
                                                 register_trans=register_transients,
                                                 simplify=simplify,
                                                 host_maps=host_maps,
-                                                host_data=host_data),
+                                                host_data=host_data,
+                                                dont_copy_structs=dont_copy_structs),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,

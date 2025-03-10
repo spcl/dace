@@ -136,6 +136,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
     host_data = ListProperty(desc='List of data names, the passed data are not offloaded to the GPU',
                              element_type=str, default=None, allow_none=True)
 
+    dont_copy_structs = Property(desc="Do not copy structs from CPU to GPU memory",
+                                 dtype=bool, default=False)
+
     @staticmethod
     def annotates_memlets():
         # Skip memlet propagation for now
@@ -239,6 +242,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 continue
             if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
+            if self._dont_copy_structs:
+                if isinstance(inode, data.Structure): # Flattening pass should handle, cant really copy structs
+                    continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
@@ -251,6 +257,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 continue
             if onodename in cloned_arrays:
                 continue
+            if self._dont_copy_structs:
+                if isinstance(inode, data.Structure): # Flattening pass should handle, cant really copy structs
+                    continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
