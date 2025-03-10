@@ -300,7 +300,6 @@ class DuplicateConstArrays(ppl.Pass):
                                     if src.data not in added_views:
                                         added_views[src.data] = an_src
 
-        sdfg.simplify(validate=False)
         duplicate_views(sdfg)
 
         for e in  sdfg.all_interstate_edges(recursive=False):
