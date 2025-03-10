@@ -1086,7 +1086,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         _emit_hbm_interleaved_code(nodedesc, src_name, s, callsite_stream, cfg, state_id, src_node, dst_node, True)
 
                     else:
-                        funcname = "flex_dma_async_2d"
+                        funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
                                 args=', '.join([f'local({dst_expr})'] + 
@@ -1114,7 +1114,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             "if(flex_is_dm_core())"
                         )
                         callsite_stream.write("{", cfg, state_id, src_node)
-                        funcname = "flex_dma_async_2d_dummy"
+                        funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
                                 args=', '.join([f'local({dst_expr})'] + 
@@ -1146,7 +1146,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                         # if is_sync:
                         callsite_stream.write("flex_dma_async_wait_all();")
                     else:
-                        funcname = "flex_dma_async_2d_dummy"
+                        funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
                                 args=', '.join([f'hbm_addr({dst_expr})'] + 
@@ -1317,7 +1317,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                             dst_strides = dst_node_desc.strides[-dims:]
                             callsite_stream.write("if (flex_is_dm_core())")
                             callsite_stream.write("{")
-                            funcname = "flex_dma_async_2d"
+                            funcname = "flex_dma_sync_2d"
                             callsite_stream.write(('    {func}({args});').format(
                                     func=funcname,
                                     args=', '.join([f'dace_remote_xy({pos_x},{pos_y},{dst_expr})'] + 
