@@ -710,20 +710,20 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                 initrange = i[0]
                 finalrange = i[1]
                 init = ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                    lval=ast_internal_classes.Name_Node(name="tmp_lbrt_" + str(self.count + range_index)),
                     op="=",
                     rval=initrange,
                     line_number=child.line_number)
                 cond = ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                    lval=ast_internal_classes.Name_Node(name="tmp_lbrt_" + str(self.count + range_index)),
                     op="<=",
                     rval=finalrange,
                     line_number=child.line_number)
                 iter = ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                    lval=ast_internal_classes.Name_Node(name="tmp_lbrt_" + str(self.count + range_index)),
                     op="=",
                     rval=ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        lval=ast_internal_classes.Name_Node(name="tmp_lbrt_" + str(self.count + range_index)),
                         op="+",
                         rval=ast_internal_classes.Int_Literal_Node(value="1")),
                     line_number=child.line_number)
