@@ -1567,6 +1567,9 @@ class RemoveSliceView(pm.SingleStateTransformation):
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
 
+        # Filter out dependecy edges
+        non_view_edges = [e for e in non_view_edges if e.data.data]
+
         if isinstance(sdfg.arrays[viewed.data], (data.ContainerArray, data.ContainerView)):
             return False
 
@@ -1625,6 +1628,9 @@ class RemoveSliceView(pm.SingleStateTransformation):
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
 
+        # Filter out dependecy edges
+        non_view_edges = [e for e in non_view_edges if e.data.data]
+
         if subset is None:
             # `subset = None` means the entire viewed data container is used
             subset = subsets.Range.from_array(viewed.desc(sdfg))
@@ -1668,6 +1674,10 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Remove view node
         state.remove_node(self.view)
+
+        # If the viewed node is now isolated, remove it
+        if len(state.all_edges(viewed)) == 0:
+            state.remove_node(viewed)
 
     def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
         # Get offset and size from the space of the view to compose

@@ -167,7 +167,25 @@ def test_view_offset_removal():
 
     assert np.allclose(inout[1, 1:], inout[2, 1:])
 
-    
+
+def test_dependency_edges():
+    sdfg = dace.SDFG("testing")
+    state = sdfg.add_state()
+
+    sdfg.add_array('a', [64], dtype=dace.float64)
+    sdfg.add_view('view', [1], dtype=dace.float64)
+
+    r = state.add_read('a')
+    v = state.add_access('view')
+    w = state.add_write('a')
+    v2 = state.add_access('view')
+    state.add_edge(r, None, v, 'views', dace.Memlet('a[0]'))
+    state.add_edge(w, None, v2, None, dace.Memlet('a[1]'))
+    state.add_edge(v, None, w, None, dace.Memlet())
+
+    assert sdfg.apply_transformations_repeated(RemoveSliceView) == 2
+
+
 if __name__ == '__main__':
     test_redundant_array_removal()
     test_redundant_array_1_into_2_dims("O", False)
@@ -180,3 +198,4 @@ if __name__ == '__main__':
     test_redundant_array_2_into_1_dim("T", True)
     test_unsqueeze_view_removal()
     test_view_offset_removal()
+    test_dependency_edges()

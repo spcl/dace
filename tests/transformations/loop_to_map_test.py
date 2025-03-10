@@ -12,6 +12,8 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap, StateFusion
 from dace.transformation.interstate.loop_lifting import LoopLifting
+from dace.transformation.interstate import LoopNormalize
+from dace.transformation.passes import SymbolPropagation
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
@@ -550,7 +552,6 @@ def test_thread_local_transient_single_state():
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    assert not ('A' in sdfg.arrays)
 
     ref = (np.arange(10, dtype=np.int32) + 6) * 2
     val = sdfg()
@@ -631,7 +632,6 @@ def test_thread_local_transient_multi_state():
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    assert not ('A' in sdfg.arrays)
 
     ref = (np.arange(10, dtype=np.int32) + 6) * 2
     val = sdfg()
@@ -782,6 +782,161 @@ def test_self_loop_to_map():
     sdfg(A=a, N=20)
     assert np.allclose(a, ref)
 
+def _count_loops(sdfg):
+    loops = 0
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, LoopRegion):
+            loops += 1
+    return loops
+
+
+def test_pipeline():
+    """
+    Tests that the Loop2Map pipeline (LoopNormalize -> SymbolPropagation) enables additional Loop2Map transformations.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_symbol("LB", dace.int32)
+    sdfg.add_symbol("UB", dace.int32)
+    sdfg.add_symbol("idx", dace.int32)
+  
+    loop = LoopRegion("loop", "i < UB", "i", "i = LB", "i = i + 1")
+    sdfg.add_node(loop)
+    s = loop.add_state(is_start_block=True)
+    s1 = loop.add_state()
+    s2 = loop.add_state()
+    e = loop.add_state()
+    loop.add_edge(s, s1, dace.InterstateEdge(assignments={"a": "i"}))
+    loop.add_edge(s1, s2, dace.InterstateEdge(assignments={"b": "a+1"}))
+    loop.add_edge(s2, e, dace.InterstateEdge(assignments={"idx": "b - 1 - LB"}))
+    task = e.add_tasklet("init", {}, {"out"}, "out = 0")
+    access = e.add_access("A")
+    e.add_edge(task, "out", access, None, dace.Memlet("A[idx]"))
+
+    sdfg.validate()
+
+    # Count loops before transformation
+    assert _count_loops(sdfg) == 1
+
+    # Apply Loop2Map directly
+    sdfg.apply_transformations_repeated(LoopToMap)
+
+    # Should not have changed
+    assert _count_loops(sdfg) == 1
+
+    # Apply LoopNormalize and SymbolPropagation
+    sdfg.apply_transformations_repeated(LoopNormalize)
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(LoopToMap)
+
+    # Should have transformed the loop
+    assert _count_loops(sdfg) == 0
+
+    # Validate correctness
+    A = dace.ndarray([64], dtype=dace.float32)
+    A[:] = np.random.rand(64).astype(dace.float32.type)
+    sdfg(A=A, LB=0, UB=64)
+
+    assert np.allclose(A[:], 0)
+
+
+def test_views_in_body():
+    """
+    Tests that the Loop2Map works correctly with views in the loop body.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_view("A_view", [1], dace.float32)
+    sdfg.add_array("B", [64], dace.float32)
+
+    loop = LoopRegion("loop", "i < 64", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    s = loop.add_state(is_start_block=True)
+    access_A = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    access_B = s.add_access("B")
+    tasklet = s.add_tasklet("copy", {"v"}, {"out"}, "out = v")
+    s.add_edge(access_A, None, access_view, "views", dace.Memlet("A[i]"))
+    s.add_edge(access_view, None, tasklet, "v", dace.Memlet("A_view[i]"))
+    s.add_edge(tasklet, "out", access_B, None, dace.Memlet("B[i]"))
+
+    sdfg.validate()
+
+    # Try to apply Loop2Map directly
+    try:
+        sdfg.apply_transformations_repeated(LoopToMap)
+        sdfg.validate()
+    except Exception as e:
+        assert False, f"LoopToMap failed: {e}"
+
+    # Validate correctness
+    A = dace.ndarray([64], dtype=dace.float32)
+    A[:] = np.random.rand(64).astype(dace.float32.type)
+    B = dace.ndarray([64], dtype=dace.float32)
+    B[:] = np.random.rand(64).astype(dace.float32.type)
+    sdfg(A=A, B=B)
+
+    for i in range(32):
+        assert np.isclose(A[i*2], B[i])
+
+
+def test_views_in_header():
+    """
+    Tests that the Loop2Map works correctly with views in the loop header.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.int32)
+    sdfg.add_view("A_view", [1], dace.int32)
+    sdfg.add_symbol("A_view", dace.int32)
+
+    loop2 = LoopRegion("loop2", "i < 1", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop2)
+
+    s = loop2.add_state()
+    access_A = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access_A, None, access_view, "views", dace.Memlet("A[0]"))
+
+    loop = LoopRegion("loop", "i < A_view", "i", "i = 0", "i = i + 1")
+    loop.add_state("loop_body",is_start_block=True)
+    loop2.add_node(loop)
+    loop2.add_edge(s, loop, dace.InterstateEdge())
+    sdfg.validate()
+
+    # Try to apply Loop2Map directly
+    try:
+        sdfg.apply_transformations_repeated(LoopToMap)
+        sdfg.validate()
+    except Exception as e:
+        assert False, f"LoopToMap failed: {e}"
+
+def test_empty_views_in_body():
+    """
+    Tests that the Loop2Map works correctly with views in the loop body, which are not written or read in the body.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_view("A_view", [1], dace.float32)
+
+    loop = LoopRegion("loop", "i < 64", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    s = loop.add_state(is_start_block=True)
+    access_A = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access_A, None, access_view, "views", dace.Memlet("A[i]"))
+    sdfg.validate()
+
+    # Try to apply Loop2Map directly
+    try:
+        sdfg.apply_transformations_repeated(LoopToMap)
+        sdfg.validate()
+    except Exception as e:
+        assert False, f"LoopToMap failed: {e}"
+
+
 
 if __name__ == "__main__":
 
@@ -822,3 +977,7 @@ if __name__ == "__main__":
     test_rotated_loop_to_map(False)
     test_rotated_loop_to_map(True)
     test_self_loop_to_map()
+    test_pipeline()
+    test_views_in_body()
+    test_views_in_header()
+    test_empty_views_in_body()

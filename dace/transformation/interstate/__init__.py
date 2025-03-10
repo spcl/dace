@@ -12,6 +12,7 @@ from .gpu_transform_sdfg import GPUTransformSDFG
 from .inline_map import InlineMap
 from .sdfg_nesting import NestSDFG, InlineSDFG, InlineTransients, RefineNestedAccess
 from .loop_unroll import LoopUnroll
+from .loop_normalize import LoopNormalize
 from .loop_peeling import LoopPeeling
 from .loop_to_map import LoopToMap
 from .move_loop_into_map import MoveLoopIntoMap
