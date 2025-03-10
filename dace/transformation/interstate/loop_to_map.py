@@ -505,6 +505,26 @@ class LoopToMap(xf.MultiStateTransformation):
         for sym, dtype in nsymbols.items():
             nsdfg.symbols[sym] = dtype
 
+        # Add casts to preserve types of non-mapped symbols
+        for e in self.loop.all_interstate_edges():
+          for k, v in e.data.assignments.items():
+              if k not in sdfg.symbols or k in nsdfg.symbols:
+                  continue
+              ktype: dtypes.typeclass = sdfg.symbols[k]
+              vtype = infer_expr_type(v, sdfg.symbols)
+              if ktype == vtype:
+                  continue
+              
+              if ktype.dtype == dtypes.int32 or ktype.dtype == dtypes.int64:
+                  ktype = "int"
+              elif ktype.dtype == dtypes.float32 or ktype.dtype == dtypes.float64:
+                  ktype = "float"
+              else:
+                  raise ValueError(f"Unsupported type {ktype}")
+
+              # Add cast
+              e.data.assignments[k] = f'{ktype}({v})'
+
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
             start, end, step = end, start, -step

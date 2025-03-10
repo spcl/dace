@@ -912,6 +912,7 @@ def test_views_in_header():
     except Exception as e:
         assert False, f"LoopToMap failed: {e}"
 
+
 def test_empty_views_in_body():
     """
     Tests that the Loop2Map works correctly with views in the loop body, which are not written or read in the body.
@@ -936,6 +937,41 @@ def test_empty_views_in_body():
     except Exception as e:
         assert False, f"LoopToMap failed: {e}"
 
+
+def test_nested_loop_symbols():
+    """
+    Tests that the Loop2Map works correctly with nested loops and symbols.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_symbol("N_sym", dace.int32)
+    sdfg.add_array("A", [64, 64], dace.int32)
+
+    loop = LoopRegion("loop", "i < 64", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    loop2 = LoopRegion("loop2", "j < 64", "j", "j = 0", "j = j + 1")
+    loop.add_node(loop2)
+
+    s1 = loop2.add_state(is_start_block=True)
+    s2 = loop2.add_state()
+    loop2.add_edge(s1, s2, dace.InterstateEdge(assignments={"N_sym": "bitwise_and(A[i,j], 1)"}))
+
+    access = s2.add_access("A")
+    tasklet = s2.add_tasklet("init", {}, {"out"}, "out = N_sym")
+    s2.add_edge(tasklet, "out", access, None, dace.Memlet("A[i,j]"))
+
+
+    # Should validate and compile
+    sdfg.validate()
+    sdfg.compile()
+
+    # Should turn both loops into maps
+    num_apps = sdfg.apply_transformations_repeated(LoopToMap)
+    assert num_apps == 2, f"Expected 2 applications, got {num_apps}"
+
+    # Should still validate and compile
+    sdfg.validate()
+    sdfg.compile()
+  
 
 
 if __name__ == "__main__":
@@ -981,3 +1017,4 @@ if __name__ == "__main__":
     test_views_in_body()
     test_views_in_header()
     test_empty_views_in_body()
+    test_nested_loop_symbols()
