@@ -1,6 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the grid-strided map tiling
-    transformation."""
+"""This module contains classes and functions that implement the grid-strided map tiling
+transformation."""
 
 import copy
 import math
@@ -30,6 +30,7 @@ import sympy
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.sdfg import utils as sdutil
 
+
 class ContainerGroupFlatteningMode(Enum):
     ArrayOfStructs = 1
     StructOfArrays = 2
@@ -58,8 +59,8 @@ class ContainerGroup:
     )
     is_cg = Property(dtype=bool, default=False, allow_none=False)
     is_ca = Property(dtype=bool, default=False, allow_none=False)
-    shape = Property(dtype=tuple, default=(1, ), allow_none=False)
-    strides = Property(dtype=tuple, default=(1, ), allow_none=False)
+    shape = Property(dtype=tuple, default=(1,), allow_none=False)
+    strides = Property(dtype=tuple, default=(1,), allow_none=False)
 
     def __init__(self, name, is_cg, is_ca, shape, strides):
         self.name = name
@@ -154,7 +155,7 @@ class ContainerGroup:
                         is_cg=True,
                         is_ca=False,
                         shape=(1,),
-                        strides=(1, ),
+                        strides=(1,),
                     )
                 elif isinstance(member, data.ContainerArray):
                     new_member = cls.from_struct(
@@ -194,8 +195,8 @@ class ContainerGroup:
                     struct_or_container_array=member,
                     is_cg=True,
                     is_ca=False,
-                    shape=(1, ),
-                    strides=(1, ),
+                    shape=(1,),
+                    strides=(1,),
                 )
             elif isinstance(member, data.ContainerArray):
                 raise Exception(
@@ -224,8 +225,9 @@ class ContainerGroup:
 # Functionality to Register Container Groups to an SDFG
 # ===================================================================================================
 def register_container_group_members(
-    sdfg: dace.SDFG, flattening_mode: ContainerGroupFlatteningMode,
-    register_as_transient: bool
+    sdfg: dace.SDFG,
+    flattening_mode: ContainerGroupFlatteningMode,
+    register_as_transient: bool,
 ):
     registered = []
     for name, dg in sdfg.container_groups.items():
@@ -236,7 +238,7 @@ def register_container_group_members(
             prefix_name=f"__CG_{name}",
             acc_shape=(),
             acc_strides=(),
-            register_as_transient=register_as_transient
+            register_as_transient=register_as_transient,
         )
     return registered
 
@@ -252,6 +254,7 @@ def _get_fused_strides(member, acc_shape):
         cur_acc *= i
     strides += member.strides
     return strides
+
 
 def _register_container_group_members(
     sdfg,
@@ -276,7 +279,12 @@ def _register_container_group_members(
                         acc_shape = acc_shape + copy.deepcopy(member.shape)
                         # lets say strides is [A, 1] and new shape is [B, 1] (shape MxN)
                         # then acc strides will be [A*B*N, B*M, B, 1]
-                        acc_strides = tuple([v*(member.strides[0]*member.shape[0]) for v in acc_strides]) + copy.deepcopy(member.strides)
+                        acc_strides = tuple(
+                            [
+                                v * (member.strides[0] * member.shape[0])
+                                for v in acc_strides
+                            ]
+                        ) + copy.deepcopy(member.strides)
                     added_descriptors += _register_container_group_members(
                         sdfg=sdfg,
                         flattening_mode=flattening_mode,
@@ -284,7 +292,7 @@ def _register_container_group_members(
                         prefix_name=dg_prefix,
                         acc_shape=acc_shape,
                         acc_strides=acc_strides,
-                        register_as_transient=register_as_transient
+                        register_as_transient=register_as_transient,
                     )
                 elif isinstance(member, dace.data.ContainerArray):
                     assert False
@@ -297,7 +305,11 @@ def _register_container_group_members(
                                 dtype=member.dtype,
                                 shape=(1,),
                                 strides=(1,),
-                                transient=member.transient if not register_as_transient else True,
+                                transient=(
+                                    member.transient
+                                    if not register_as_transient
+                                    else True
+                                ),
                                 allow_conflicts=member.allow_conflicts,
                                 storage=member.storage,
                                 location=member.location,
@@ -306,13 +318,17 @@ def _register_container_group_members(
                                 may_alias=False,
                             )
                         else:
-                            #if acc_strides != ():
+                            # if acc_strides != ():
                             #    raise Exception(f"TODO {acc_strides}")
                             datadesc = dace.data.Array(
                                 dtype=member.dtype,
                                 shape=acc_shape,
                                 strides=acc_strides,
-                                transient=member.transient if not register_as_transient else True,
+                                transient=(
+                                    member.transient
+                                    if not register_as_transient
+                                    else True
+                                ),
                                 allow_conflicts=member.allow_conflicts,
                                 storage=member.storage,
                                 location=member.location,
@@ -323,13 +339,23 @@ def _register_container_group_members(
                             )
                     elif isinstance(member, dace.data.Array):
                         _acc_shape = acc_shape + member.shape
-                        _acc_strides = tuple([v*(member.strides[0]*member.shape[0]) for v in acc_strides]) + member.strides
+                        _acc_strides = (
+                            tuple(
+                                [
+                                    v * (member.strides[0] * member.shape[0])
+                                    for v in acc_strides
+                                ]
+                            )
+                            + member.strides
+                        )
                         assert len(acc_shape) == len(acc_strides)
                         datadesc = dace.data.Array(
                             dtype=member.dtype,
                             shape=_acc_shape,
                             strides=_acc_strides,
-                            transient=member.transient if not register_as_transient else True,
+                            transient=(
+                                member.transient if not register_as_transient else True
+                            ),
                             allow_conflicts=member.allow_conflicts,
                             storage=member.storage,
                             location=member.location,
@@ -390,9 +416,7 @@ def get_demangled_container_group_member_name(
             ):
                 demangled_name += f"__m_Leaf"
                 return demangled_name
-            raise Exception(
-                f"Name Hierarchy {name_hierarchy} Not in ContainerGroups 1"
-            )
+            raise Exception(f"Name Hierarchy {name_hierarchy} Not in ContainerGroups 1")
 
     if (
         i == len(name_hierarchy) - 1
@@ -401,9 +425,7 @@ def get_demangled_container_group_member_name(
     ):
         demangled_name += f"__m_Leaf"
         return demangled_name
-    raise Exception(
-        f"Name Hierarchy {name_hierarchy} Not in ContainerGroups 2"
-    )
+    raise Exception(f"Name Hierarchy {name_hierarchy} Not in ContainerGroups 2")
 
 
 def generate_container_groups_from_structs(
@@ -419,12 +441,13 @@ def generate_container_groups_from_structs(
                 struct_or_container_array=arr,
                 is_cg=True,
                 is_ca=False,
-                shape=(1, ),
-                strides=(1, ),
+                shape=(1,),
+                strides=(1,),
             )
             sdfg.container_groups[dg_name] = dg
             added_cgs += 1
     return added_cgs
+
 
 def clean_container_groups(sdfg: dace.SDFG):
     # assert hasattr(
@@ -497,13 +520,13 @@ def add_container_group(
         dg_desc,
     )
 
+
 def _get_name_hierarchy_from_name(demangled_name: str):
     # Split the string while keeping the prefixes
-    parts = re.split(r'(?=__(?:CG|CA|m))', demangled_name)
+    parts = re.split(r"(?=__(?:CG|CA|m))", demangled_name)
 
     name_hierarchy = []
     type_hierarchy = []
-
 
     for p in parts:
         if not p or p == "":
@@ -522,6 +545,7 @@ def _get_name_hierarchy_from_name(demangled_name: str):
 
 
 # ===================================================================================================
+
 
 @make_properties
 class Flattener(CodeLibraryNode):
@@ -660,7 +684,9 @@ class StructToContainerGroups(ppl.Pass):
                 assert len(remaining_letters) == 1
                 endaccess = ""
             else:
-                assert len(remaining_letters) == len(member_arr.shape), f"{member_arr}, {remaining_letters}"
+                assert len(remaining_letters) == len(
+                    member_arr.shape
+                ), f"{member_arr}, {remaining_letters}"
                 endaccess = " + ".join(
                     [
                         f"({letter} * ({cpp.sym2cpp(stride)}))"
@@ -685,16 +711,17 @@ class StructToContainerGroups(ppl.Pass):
             return _cstr, _cstr_reverse
 
         ll = [
-                _gen_loop(
-                    sdfg,
-                    name,
-                    desc,
-                    arr_name,
-                    arr_desc,
-                    *_get_name_hierarchy_from_name(arr_name),
-                )
-                for (arr_name, arr_desc) in registered_members if _get_name_hierarchy_from_name(arr_name)[0][0] == name
-            ]
+            _gen_loop(
+                sdfg,
+                name,
+                desc,
+                arr_name,
+                arr_desc,
+                *_get_name_hierarchy_from_name(arr_name),
+            )
+            for (arr_name, arr_desc) in registered_members
+            if _get_name_hierarchy_from_name(arr_name)[0][0] == name
+        ]
 
         copy_strs_list, copy_strs_reverse_list = zip(*ll) if ll != [] else ([], [])
         copy_strs = "\n".join(copy_strs_list)
@@ -732,7 +759,9 @@ class StructToContainerGroups(ppl.Pass):
             print("No container groups were registered as no structs were found")
             return
         registered_members = register_container_group_members(
-            sdfg, self._flattening_mode, register_as_transient=True if self._interface_with_struct_copy else False
+            sdfg,
+            self._flattening_mode,
+            register_as_transient=True if self._interface_with_struct_copy else False,
         )
 
         # Preprocess chains as needed
@@ -742,25 +771,39 @@ class StructToContainerGroups(ppl.Pass):
             edges_to_add = set()
             nodes = state.nodes()
             for node in nodes:
-                    if isinstance(node, dace.nodes.AccessNode) and not isinstance(sdfg.arrays[node.data], dace.data.View):
-                        sv = False
-                        for oe in state.out_edges(node):
-                            if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.View):
-                                sv = True
-                                break
-                        if sv:
-                            _nodes_to_rm, _edges_to_add = self._process_and_pad_struct_to_view_view_chain(state, sdfg, node)
-                            nodes_to_rm = nodes_to_rm.union(_nodes_to_rm)
-                            edges_to_add = edges_to_add.union(_edges_to_add)
-                        vs = False
-                        for ie in state.in_edges(node):
-                            if isinstance(ie.src, dace.nodes.AccessNode) and isinstance(sdfg.arrays[ie.src.data], dace.data.View):
-                                vs = True
-                                break
-                        if vs:
-                            _nodes_to_rm, _edges_to_add = self._process_and_pad_view_to_struct_view_chain(state, sdfg, node)
-                            nodes_to_rm = nodes_to_rm.union(_nodes_to_rm)
-                            edges_to_add = edges_to_add.union(_edges_to_add)
+                if isinstance(node, dace.nodes.AccessNode) and not isinstance(
+                    sdfg.arrays[node.data], dace.data.View
+                ):
+                    sv = False
+                    for oe in state.out_edges(node):
+                        if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(
+                            sdfg.arrays[oe.dst.data], dace.data.View
+                        ):
+                            sv = True
+                            break
+                    if sv:
+                        _nodes_to_rm, _edges_to_add = (
+                            self._process_and_pad_struct_to_view_view_chain(
+                                state, sdfg, node
+                            )
+                        )
+                        nodes_to_rm = nodes_to_rm.union(_nodes_to_rm)
+                        edges_to_add = edges_to_add.union(_edges_to_add)
+                    vs = False
+                    for ie in state.in_edges(node):
+                        if isinstance(ie.src, dace.nodes.AccessNode) and isinstance(
+                            sdfg.arrays[ie.src.data], dace.data.View
+                        ):
+                            vs = True
+                            break
+                    if vs:
+                        _nodes_to_rm, _edges_to_add = (
+                            self._process_and_pad_view_to_struct_view_chain(
+                                state, sdfg, node
+                            )
+                        )
+                        nodes_to_rm = nodes_to_rm.union(_nodes_to_rm)
+                        edges_to_add = edges_to_add.union(_edges_to_add)
             for node in nodes_to_rm:
                 state.remove_node(node)
             for edge in edges_to_add:
@@ -801,7 +844,9 @@ class StructToContainerGroups(ppl.Pass):
 
         # Generate the flattener functions
         for name, desc in sdfg.arrays.items():
-            if isinstance(desc, dace.data.Structure) and not isinstance(desc, dace.data.View):
+            if isinstance(desc, dace.data.Structure) and not isinstance(
+                desc, dace.data.View
+            ):
                 self._generate_flattener(sdfg, name, desc, registered_members)
 
         registered_names, registered_descs = zip(*registered_members)
@@ -809,39 +854,52 @@ class StructToContainerGroups(ppl.Pass):
         if self._interface_with_struct_copy:
             flatten_lib_node = Flattener(
                 name="flatten",
-                code = self._flattener_codestr,
-                input_names=[],#[k.lower() for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Structure) and not
-                               #isinstance(v, dace.data.View)],
+                code=self._flattener_codestr,
+                input_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Structure) and not
+                # isinstance(v, dace.data.View)],
                 output_names=[n.lower() for n in registered_names],
             )
             deflatten_lib_node = Flattener(
                 name="deflatten",
-                code = self._deflattener_codestr,
-                input_names=[],#[n.lower() for n in registered_names],
-                output_names=[],#[k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
-                            #or isinstance(v, dace.data.ContainerArray)) and not
-                            #isinstance(v, dace.data.View)],
+                code=self._deflattener_codestr,
+                input_names=[],  # [n.lower() for n in registered_names],
+                output_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
+                # or isinstance(v, dace.data.ContainerArray)) and not
+                # isinstance(v, dace.data.View)],
             )
             flatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
             deflatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
-            #entry_interface = sdfg.add_state("entry_interface")
-            #exit_interface = sdfg.add_state("exit_interface")
+            # entry_interface = sdfg.add_state("entry_interface")
+            # exit_interface = sdfg.add_state("exit_interface")
             start_state = sdfg.start_state
-            entry_interface = sdfg.add_state_before(sdfg.start_state, "entry_interface", is_start_block=True, is_start_state=True)
-            #sdfg.add_edge(entry_interface, start_state, dace.sdfg.InterstateEdge())
-
+            entry_interface = sdfg.add_state_before(
+                sdfg.start_state,
+                "entry_interface",
+                is_start_block=True,
+                is_start_state=True,
+            )
+            # sdfg.add_edge(entry_interface, start_state, dace.sdfg.InterstateEdge())
 
             assert sdfg.start_state == entry_interface
             assert sdfg.start_block == entry_interface
 
             entry_interface.add_node(flatten_lib_node)
-            for inname in set([k for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
-                            or isinstance(v, dace.data.ContainerArray)) and not
-                            isinstance(v, dace.data.View)]):
+            for inname in set(
+                [
+                    k
+                    for k, v in sdfg.arrays.items()
+                    if (
+                        isinstance(v, dace.data.Structure)
+                        or isinstance(v, dace.data.ContainerArray)
+                    )
+                    and not isinstance(v, dace.data.View)
+                ]
+            ):
                 an = dace.nodes.AccessNode(inname)
                 entry_interface.add_node(an)
-                entry_interface.add_edge(an, None, flatten_lib_node, None,
-                                         dace.Memlet(expr=inname))
+                entry_interface.add_edge(
+                    an, None, flatten_lib_node, None, dace.Memlet(expr=inname)
+                )
                 sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
 
             for outname in set(registered_names):
@@ -850,41 +908,54 @@ class StructToContainerGroups(ppl.Pass):
                     entry_interface.add_node(an)
                     arr = sdfg.arrays[outname]
                     assert not isinstance(arr, dace.data.Scalar)
+
                     if isinstance(arr, dace.data.Scalar):
-                        entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
-                                                dace.Memlet(expr=outname)
-                                                )
+                        entry_interface.add_edge(
+                            flatten_lib_node,
+                            outname.lower(),
+                            an,
+                            None,
+                            dace.Memlet(expr=outname),
+                        )
                     else:
                         assert isinstance(arr, dace.data.Array)
-                        entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
-                                                dace.Memlet(outname))
+                        entry_interface.add_edge(
+                            flatten_lib_node,
+                            outname.lower(),
+                            an,
+                            None,
+                            dace.Memlet(outname),
+                        )
 
                     if outname.lower() not in flatten_lib_node.out_connectors:
                         flatten_lib_node.add_out_connector(outname.lower())
 
                     sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
                 else:
-                    an0 = dace.nodes.AccessNode("gpu_" + outname)
-                    an = dace.nodes.AccessNode(outname)
-                    entry_interface.add_node(an)
-                    arr = sdfg.arrays[outname]
-                    arr0 = copy.deepcopy(arr)
-                    arr.storage = dace.dtypes.StorageType.CPU_Heap
-                    arr0.storage = dace.dtypes.StorageType.GPU_Global
-                    sdfg.add_datadesc("gpu_" + outname, arr0, find_new_name=False)
-                    assert not isinstance(arr, dace.data.Scalar)
+                    #sdfg.replace(outname, "gpu_" + outname)
 
-                    entry_interface.add_edge(flatten_lib_node, outname.lower(), an, None,
-                                            dace.Memlet(expr=outname)
-                                            )
-                    entry_interface.add_edge(an, None, an0, None,
-                                            dace.Memlet(expr=outname)
-                                            )
+                    an0 = entry_interface.add_access("host_" + outname)
+                    an1 = entry_interface.add_access(outname)
+
+                    arr = sdfg.arrays[outname]
+                    arr.storage = dace.dtypes.StorageType.GPU_Global
+                    arr2 = copy.deepcopy(arr)
+                    arr2.storage = dace.dtypes.StorageType.CPU_Heap
+                    sdfg.add_datadesc("host_" + outname, arr2, find_new_name=False)
+
+                    entry_interface.add_edge(
+                        flatten_lib_node,
+                        outname.lower(),
+                        an0,
+                        None,
+                        dace.Memlet(expr="host_" + outname),
+                    )
+                    entry_interface.add_edge(
+                        an0, None, an1, None, dace.Memlet(expr="host_" + outname)
+                    )
 
                     if outname.lower() not in flatten_lib_node.out_connectors:
                         flatten_lib_node.add_out_connector(outname.lower())
-
-                #sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
 
             exit_interface = sdfg.add_state("exit_interface")
             end_nodes = set()
@@ -898,29 +969,41 @@ class StructToContainerGroups(ppl.Pass):
             exit_interface.add_node(deflatten_lib_node)
             for inname in set(registered_names):
                 if self._interface_to_gpu:
-                    an0 = dace.nodes.AccessNode("gpu_" + inname)
-                    an = dace.nodes.AccessNode(inname)
-                    exit_interface.add_node(an)
-                    exit_interface.add_node(an0)
+                    an0 = exit_interface.add_access("host_" + inname)
+                    an1 = exit_interface.add_access(inname)
                     assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
-                    exit_interface.add_edge(an0, None, an, None,
-                                            dace.Memlet(expr=inname))
-                    exit_interface.add_edge(an, None, deflatten_lib_node, None,
-                                            dace.Memlet(expr=inname))
+
+                    exit_interface.add_edge(
+                        an1, None, an0, None, dace.Memlet(expr="host_" + inname)
+                    )
+                    exit_interface.add_edge(
+                        an0, None, deflatten_lib_node, None, dace.Memlet(expr="host_" + inname)
+                    )
                 else:
                     an = dace.nodes.AccessNode(inname)
                     exit_interface.add_node(an)
                     assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
-                    exit_interface.add_edge(an, None, deflatten_lib_node, None,
-                                            dace.Memlet())
+                    exit_interface.add_edge(
+                        an, None, deflatten_lib_node, None, dace.Memlet()
+                    )
 
-            for outname in set([k for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
-                            or isinstance(v, dace.data.ContainerArray)) and not
-                            isinstance(v, dace.data.View)]):
+            for outname in set(
+                [
+                    k
+                    for k, v in sdfg.arrays.items()
+                    if (
+                        isinstance(v, dace.data.Structure)
+                        or isinstance(v, dace.data.ContainerArray)
+                    )
+                    and not isinstance(v, dace.data.View)
+                ]
+            ):
                 an = dace.nodes.AccessNode(outname)
                 exit_interface.add_node(an)
                 assert not isinstance(sdfg.arrays[outname], dace.data.Scalar)
-                exit_interface.add_edge(an, None, deflatten_lib_node, None, dace.Memlet())
+                exit_interface.add_edge(
+                    an, None, deflatten_lib_node, None, dace.Memlet()
+                )
 
             # Add the end replace the host_name stuff
 
@@ -944,7 +1027,6 @@ class StructToContainerGroups(ppl.Pass):
             for s, n in nd_to_rm:
                 s.remove_node(n)
 
-
         if self._save_steps:
             sdfg.save("nodes_cleand.sdfgz", compress=True)
 
@@ -967,10 +1049,6 @@ class StructToContainerGroups(ppl.Pass):
         if self._validate or self._validate_all:
             sdfg.validate()
 
-        def replace_key(d, k1, k2):
-            if k1 in d:
-                d[k2] = d.pop(k1)
-
         sdfg.reset_cfg_list()
 
         if self._verbose:
@@ -979,7 +1057,6 @@ class StructToContainerGroups(ppl.Pass):
         if self._validate or self._validate_all:
             sdfg.validate()
 
-
     def _can_be_applied(
         self,
         state: SDFGState,
@@ -987,13 +1064,16 @@ class StructToContainerGroups(ppl.Pass):
         src_access: nodes.AccessNode,
         dst_access: nodes.AccessNode,
     ):
-        if ((isinstance(sdfg.arrays[src_access.data], dace.data.View) and
-            isinstance(sdfg.arrays[dst_access.data], dace.data.View)) or (
-            (not isinstance(sdfg.arrays[src_access.data], dace.data.View) and
-            not isinstance(sdfg.arrays[dst_access.data], dace.data.View))
-            )):
+        if (
+            isinstance(sdfg.arrays[src_access.data], dace.data.View)
+            and isinstance(sdfg.arrays[dst_access.data], dace.data.View)
+        ) or (
+            (
+                not isinstance(sdfg.arrays[src_access.data], dace.data.View)
+                and not isinstance(sdfg.arrays[dst_access.data], dace.data.View)
+            )
+        ):
             return False
-
 
         # Pattern1: A -> B, A struct, B pointer/view or whatever or
         # Pattern2: B -> A, B pointer/view, A struct
@@ -1015,7 +1095,9 @@ class StructToContainerGroups(ppl.Pass):
         if struct_access is None or view_access is None:
             return False
 
-        if not (isinstance(struct_data, Structure)) and not (isinstance(view_data, ContainerArray)):
+        if not (isinstance(struct_data, Structure)) and not (
+            isinstance(view_data, ContainerArray)
+        ):
             return False
         if not (isinstance(view_data, View)):
             return False
@@ -1033,10 +1115,14 @@ class StructToContainerGroups(ppl.Pass):
         src_data = sdfg.arrays[src_access.data]
         dst_data = sdfg.arrays[dst_access.data]
 
-        if (isinstance(src_data, Structure) or isinstance(src_data, ContainerArray)) and not isinstance(src_data, View):
+        if (
+            isinstance(src_data, Structure) or isinstance(src_data, ContainerArray)
+        ) and not isinstance(src_data, View):
             struct_access = src_access
             struct_data = src_data
-        elif (isinstance(dst_data, Structure) or isinstance(dst_data, ContainerArray)) and not isinstance(dst_data, View):
+        elif (
+            isinstance(dst_data, Structure) or isinstance(dst_data, ContainerArray)
+        ) and not isinstance(dst_data, View):
             struct_access = dst_access
             struct_data = dst_data
 
@@ -1086,7 +1172,6 @@ class StructToContainerGroups(ppl.Pass):
         struct_to_view_pattern = False
         view_to_struct_pattern = False
 
-
         if len(struct_to_view_edges) == 0 and len(view_to_struct_edges) == 0:
             return (False, False)
         elif len(struct_to_view_edges) != 0 and len(view_to_struct_edges) != 0:
@@ -1109,9 +1194,13 @@ class StructToContainerGroups(ppl.Pass):
             out_edges = state.out_edges(current_view_access)
             if len(out_edges) > 1:
                 for oe in state.out_edges(current_view_access):
-                    if isinstance(oe.dst, nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.View):
-                        raise Exception(f"Flattening pass should ensure all paths in the struct tree are chains\n"
-                                         f"it was not the case at state: {state.label}, node: {current_view_access.label}")
+                    if isinstance(oe.dst, nodes.AccessNode) and isinstance(
+                        sdfg.arrays[oe.dst.data], dace.data.View
+                    ):
+                        raise Exception(
+                            f"Flattening pass should ensure all paths in the struct tree are chains\n"
+                            f"it was not the case at state: {state.label}, node: {current_view_access.label}"
+                        )
             if len(out_edges) == 1:
                 out_edge = out_edges[0]
                 u, uc, v, vc, memlet = out_edge
@@ -1126,7 +1215,11 @@ class StructToContainerGroups(ppl.Pass):
                 return view_accesses
 
     def _process_and_pad_view_chain(
-        self, state: SDFGState, sdfg: SDFG, struct_access: nodes.AccessNode, reverse:bool
+        self,
+        state: SDFGState,
+        sdfg: SDFG,
+        struct_access: nodes.AccessNode,
+        reverse: bool,
     ):
         oes = state.out_edges(struct_access)
 
@@ -1140,16 +1233,28 @@ class StructToContainerGroups(ppl.Pass):
 
             # Add children to the stack in reversed order (to maintain left-to-right order)
             if not reverse:
-                children = [e.dst for e in state.out_edges(node)  if isinstance(e.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[e.dst.data], View)]
+                children = [
+                    e.dst
+                    for e in state.out_edges(node)
+                    if isinstance(e.dst, dace.nodes.AccessNode)
+                    and isinstance(sdfg.arrays[e.dst.data], View)
+                ]
             else:
-                children = [e.src for e in state.in_edges(node)  if isinstance(e.src, dace.nodes.AccessNode) and isinstance(sdfg.arrays[e.src.data], View)]
+                children = [
+                    e.src
+                    for e in state.in_edges(node)
+                    if isinstance(e.src, dace.nodes.AccessNode)
+                    and isinstance(sdfg.arrays[e.src.data], View)
+                ]
 
             if len(children) == 0:
                 complete_paths.append(path)
             else:
                 for child in list(reversed(children)):
                     if not reverse:
-                        stack.append((child, path + [child]))  # Extend the path for the next n
+                        stack.append(
+                            (child, path + [child])
+                        )  # Extend the path for the next n
                     else:
                         stack.append((child, path + [child]))
 
@@ -1175,51 +1280,130 @@ class StructToContainerGroups(ppl.Pass):
             # Middle edges
             for node in path[1:-1]:
                 if not reverse:
-                    ies = [ie for ie in state.in_edges(node) if ie.src == path[path.index(node) - 1]]
-                    oes = [oe for oe in state.out_edges(node) if oe.dst == path[path.index(node) + 1]]
+                    ies = [
+                        ie
+                        for ie in state.in_edges(node)
+                        if ie.src == path[path.index(node) - 1]
+                    ]
+                    oes = [
+                        oe
+                        for oe in state.out_edges(node)
+                        if oe.dst == path[path.index(node) + 1]
+                    ]
                 else:
-                    ies = [ie for ie in state.in_edges(node) if ie.src == path[path.index(node) + 1]]
-                    oes = [oe for oe in state.out_edges(node) if oe.dst == path[path.index(node) - 1]]
+                    ies = [
+                        ie
+                        for ie in state.in_edges(node)
+                        if ie.src == path[path.index(node) + 1]
+                    ]
+                    oes = [
+                        oe
+                        for oe in state.out_edges(node)
+                        if oe.dst == path[path.index(node) - 1]
+                    ]
                 assert len(ies) == 1
                 assert len(oes) == 1
                 for ie in ies:
-                    edges_to_add.add((old_node_to_new_node[ie.src], ie.src_conn, old_node_to_new_node[ie.dst], ie.dst_conn, copy.deepcopy(ie.data)))
+                    edges_to_add.add(
+                        (
+                            old_node_to_new_node[ie.src],
+                            ie.src_conn,
+                            old_node_to_new_node[ie.dst],
+                            ie.dst_conn,
+                            copy.deepcopy(ie.data),
+                        )
+                    )
                 for oe in oes:
-                    edges_to_add.add((old_node_to_new_node[oe.src], oe.src_conn, old_node_to_new_node[oe.dst], oe.dst_conn, copy.deepcopy(oe.data)))
+                    edges_to_add.add(
+                        (
+                            old_node_to_new_node[oe.src],
+                            oe.src_conn,
+                            old_node_to_new_node[oe.dst],
+                            oe.dst_conn,
+                            copy.deepcopy(oe.data),
+                        )
+                    )
 
             if not reverse:
                 # Last Node (to Non-Views)
                 assert len(state.in_edges(path[-1])) <= 1, f"{state.in_edges(path[-1])}"
                 for oe in state.out_edges(path[-1]):
-                    edges_to_add.add((old_node_to_new_node[oe.src], oe.src_conn, oe.dst, oe.dst_conn, copy.deepcopy(oe.data)))
+                    edges_to_add.add(
+                        (
+                            old_node_to_new_node[oe.src],
+                            oe.src_conn,
+                            oe.dst,
+                            oe.dst_conn,
+                            copy.deepcopy(oe.data),
+                        )
+                    )
                 for e in state.in_edges(path[-1]):
-                    edges_to_add.add((old_node_to_new_node[e.src], e.src_conn,  old_node_to_new_node[e.dst], e.dst_conn, copy.deepcopy(e.data)))
+                    edges_to_add.add(
+                        (
+                            old_node_to_new_node[e.src],
+                            e.src_conn,
+                            old_node_to_new_node[e.dst],
+                            e.dst_conn,
+                            copy.deepcopy(e.data),
+                        )
+                    )
 
                 # First Node (from Struct)
                 ies = [ie for ie in state.in_edges(path[0]) if ie.src == struct_access]
                 assert len(ies) == 1
                 ie = ies[0]
-                edges_to_add.add((ie.src, ie.src_conn, old_node_to_new_node[ie.dst], ie.dst_conn, copy.deepcopy(ie.data)))
+                edges_to_add.add(
+                    (
+                        ie.src,
+                        ie.src_conn,
+                        old_node_to_new_node[ie.dst],
+                        ie.dst_conn,
+                        copy.deepcopy(ie.data),
+                    )
+                )
             else:
-                assert len(state.out_edges(path[-1])) <= 1, f"{state.out_edges(path[-1])}"
+                assert (
+                    len(state.out_edges(path[-1])) <= 1
+                ), f"{state.out_edges(path[-1])}"
                 # Last Node (from Non-Views)
                 for e in state.in_edges(path[-1]):
-                    edges_to_add.add((e.src, e.src_conn, old_node_to_new_node[e.dst], e.dst_conn, copy.deepcopy(e.data)))
+                    edges_to_add.add(
+                        (
+                            e.src,
+                            e.src_conn,
+                            old_node_to_new_node[e.dst],
+                            e.dst_conn,
+                            copy.deepcopy(e.data),
+                        )
+                    )
                 for e in state.out_edges(path[-1]):
-                    edges_to_add.add((old_node_to_new_node[e.src], e.src_conn, old_node_to_new_node[e.dst], e.dst_conn, copy.deepcopy(e.data)))
-
+                    edges_to_add.add(
+                        (
+                            old_node_to_new_node[e.src],
+                            e.src_conn,
+                            old_node_to_new_node[e.dst],
+                            e.dst_conn,
+                            copy.deepcopy(e.data),
+                        )
+                    )
 
                 # First node (to Struct)
                 es = [e for e in state.out_edges(path[0]) if e.dst == struct_access]
                 assert len(es) == 1
                 e = es[0]
-                edges_to_add.add((old_node_to_new_node[e.src], e.src_conn, e.dst, e.dst_conn, copy.deepcopy(e.data)))
+                edges_to_add.add(
+                    (
+                        old_node_to_new_node[e.src],
+                        e.src_conn,
+                        e.dst,
+                        e.dst_conn,
+                        copy.deepcopy(e.data),
+                    )
+                )
 
-
-
-        #for node in nodes_to_rm:
+        # for node in nodes_to_rm:
         #    state.remove_node(node)
-        #for edge in edges_to_add:
+        # for edge in edges_to_add:
         #    state.add_edge(*edge)
         return nodes_to_rm, edges_to_add
 
@@ -1229,7 +1413,10 @@ class StructToContainerGroups(ppl.Pass):
         return self._process_and_pad_view_chain(state, sdfg, struct_access, False)
 
     def _process_and_pad_view_to_struct_view_chain(
-        self, state: SDFGState, sdfg: SDFG, struct_access: nodes.AccessNode,
+        self,
+        state: SDFGState,
+        sdfg: SDFG,
+        struct_access: nodes.AccessNode,
     ):
         return self._process_and_pad_view_chain(state, sdfg, struct_access, True)
 
@@ -1289,7 +1476,7 @@ class StructToContainerGroups(ppl.Pass):
                     hierarchy_names.append(sdfg.arrays[node.data].stype.name)
 
         chain = [sdfg.arrays[struct_access.data]]
-        for name in hierarchy_names[1:]: # Skip the struct access
+        for name in hierarchy_names[1:]:  # Skip the struct access
             data = chain[-1]
             if isinstance(data, dace.data.ContainerArray):
                 chain.append(data.stype)
@@ -1306,7 +1493,9 @@ class StructToContainerGroups(ppl.Pass):
         struct_access: dace.nodes.AccessNode,
         view_chain: typing.List[dace.nodes.AccessNode],
     ):
-        return self._process_edges_internal(sdfg, state, struct_access, view_chain, False)
+        return self._process_edges_internal(
+            sdfg, state, struct_access, view_chain, False
+        )
 
     def _process_edges_reverse(
         self,
@@ -1315,7 +1504,9 @@ class StructToContainerGroups(ppl.Pass):
         struct_access: dace.nodes.AccessNode,
         view_chain: typing.List[dace.nodes.AccessNode],
     ):
-        return self._process_edges_internal(sdfg, state, struct_access, view_chain, True)
+        return self._process_edges_internal(
+            sdfg, state, struct_access, view_chain, True
+        )
 
     def _apply(
         self,
@@ -1349,7 +1540,6 @@ class StructToContainerGroups(ppl.Pass):
             assert view_to_struct
             view_access = src_access
             struct_access = dst_access
-
 
         # View chain is either struct -> view -> view -> ... -> view -> dst (not a view like tasklet)
         # or src -> view -> ... -> view -> struct (src is e.g. tasklet)
@@ -1423,20 +1613,18 @@ class StructToContainerGroups(ppl.Pass):
                             sdfg.arrays[_dst_edge.dst.data], dace.data.ContainerArray
                         ):
                             continue
-                        if isinstance(
-                            sdfg.arrays[vc.data], dace.data.Structure
-                        ):
-                            if _dst_edge.data.subset.ranges == [(0,0,1)]:
+                        if isinstance(sdfg.arrays[vc.data], dace.data.Structure):
+                            if _dst_edge.data.subset.ranges == [(0, 0, 1)]:
                                 continue
-                        if isinstance(
-                            sdfg.arrays[vc.data], dace.data.Scalar
-                        ):
+                        if isinstance(sdfg.arrays[vc.data], dace.data.Scalar):
                             continue
                         # If it is an array to array view continue, ti should not be added to the shape
                         if not isinstance(
-                            sdfg.arrays[vc.data], (dace.data.Structure, dace.data.ContainerArray)
+                            sdfg.arrays[vc.data],
+                            (dace.data.Structure, dace.data.ContainerArray),
                         ) and not isinstance(
-                            sdfg.arrays[_dst_edge.dst.data], (dace.data.ContainerArray, dace.data.Structure)
+                            sdfg.arrays[_dst_edge.dst.data],
+                            (dace.data.ContainerArray, dace.data.Structure),
                         ):
                             continue
                         memlet_shape += tuple(_dst_edge.data.subset.ranges)
@@ -1455,7 +1643,7 @@ class StructToContainerGroups(ppl.Pass):
                         if isinstance(
                             sdfg.arrays[_src_edge.src.data], dace.data.Structure
                         ):
-                            if _src_edge.data.subset.ranges == [(0,0,1)]:
+                            if _src_edge.data.subset.ranges == [(0, 0, 1)]:
                                 continue
                         if isinstance(
                             sdfg.arrays[_src_edge.src.data], dace.data.Scalar
@@ -1463,22 +1651,24 @@ class StructToContainerGroups(ppl.Pass):
                             continue
                         # If it is an array to array view continue, ti should not be added to the shape
                         if not isinstance(
-                            sdfg.arrays[vc.data], (dace.data.Structure, dace.data.ContainerArray)
+                            sdfg.arrays[vc.data],
+                            (dace.data.Structure, dace.data.ContainerArray),
                         ) and not isinstance(
-                            sdfg.arrays[_src_edge.src.data], (dace.data.ContainerArray, dace.data.Structure)
+                            sdfg.arrays[_src_edge.src.data],
+                            (dace.data.ContainerArray, dace.data.Structure),
                         ):
                             continue
                         memlet_shape += tuple(_src_edge.data.subset.ranges)
         else:
             raise Exception("ArrayOfStructs mode is not implemented yet")
 
-
         assert isinstance(sdfg.arrays[demangled_name], dace.data.Array)
         if memlet_shape == ():
-            assert (
-                isinstance(sdfg.arrays[demangled_name], dace.data.Scalar) or (isinstance(sdfg.arrays[demangled_name], dace.data.Array) and len(sdfg.arrays[demangled_name].shape) == 1)
+            assert isinstance(sdfg.arrays[demangled_name], dace.data.Scalar) or (
+                isinstance(sdfg.arrays[demangled_name], dace.data.Array)
+                and len(sdfg.arrays[demangled_name].shape) == 1
             )
-            memlet_shape = [(0,0,1)]
+            memlet_shape = [(0, 0, 1)]
         mc = dace.memlet.Memlet(
             subset=dace.subsets.Range(memlet_shape), data=demangled_name
         )
@@ -1497,11 +1687,17 @@ class StructToContainerGroups(ppl.Pass):
         if struct_access.guid not in self._struct_replacements:
             self._struct_replacements[struct_access.guid] = set()
 
-        if an.data not in [a.data for a in self._struct_replacements[struct_access.guid]]:
+        if an.data not in [
+            a.data for a in self._struct_replacements[struct_access.guid]
+        ]:
             state.add_node(an)
             self._struct_replacements[struct_access.guid].add(an)
         else:
-            an = [a for a in self._struct_replacements[struct_access.guid] if a.data == an.data][0]
+            an = [
+                a
+                for a in self._struct_replacements[struct_access.guid]
+                if a.data == an.data
+            ][0]
 
         view_name = None
         if struct_to_view:
@@ -1542,7 +1738,6 @@ class StructToContainerGroups(ppl.Pass):
                 len(state.out_edges(struct_access)) == 0
             ):
                 removed_nodes.add(struct_access)
-
 
         if (len(state.in_edges(struct_access)) == 0) and (
             len(state.out_edges(struct_access)) == 0

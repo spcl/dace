@@ -239,6 +239,8 @@ class DuplicateConstArrays(ppl.Pass):
                         newdesc = copy.deepcopy(arr)
                         newdesc.storage = dace.dtypes.StorageType.CPU_Heap
                         sdfg.add_datadesc(const_arr_name[4:], newdesc)
+                #elif const_arr_name.startswith("host_"):
+                #   #no need to handle this for now, the else branch does it okay
                 else:
                     if "host_" + const_arr_name in sdfg.arrays:
                         gpu_host_name_map[const_arr_name] = "host_" + const_arr_name
