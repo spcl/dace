@@ -11,6 +11,8 @@ from dace.sdfg.state import (
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, properties, SDFGState
 from typing import Any, Dict, Set, Optional
+from dace import data as dt
+from dace.symbolic import pystr_to_symbolic
 
 
 @dataclass(unsafe_hash=True)
@@ -50,7 +52,7 @@ class SymbolPropagation(ppl.Pass):
 
             # Update incoming symbols
             for cfgb, parent in all_cfgb.items():
-                new_in_syms = self._get_in_syms(cfgb, parent, in_syms, out_syms)
+                new_in_syms = self._get_in_syms(sdfg, cfgb, parent, in_syms, out_syms)
                 # Check if the incoming symbols have changed
                 if new_in_syms != in_syms[cfgb]:
                     changed = True
@@ -72,6 +74,7 @@ class SymbolPropagation(ppl.Pass):
     # Given a CFGB, builds the incoming set of symbols
     def _get_in_syms(
         self,
+        sdfg: SDFG,
         cfgb: ControlFlowBlock,
         parent: ControlFlowRegion,
         in_syms: Dict[ControlFlowBlock, Dict[str, Any]],
@@ -82,11 +85,24 @@ class SymbolPropagation(ppl.Pass):
         for i, edge in enumerate(parent.in_edges(cfgb)):
             sym_table = copy.deepcopy(out_syms[edge.src])
             sym_table.update(edge.data.assignments)
-            # Filter out symbols containin arrays accesses as they cannot be propagated
+
+            # Filter out symbols containing arrays accesses as they cannot be safely propagated (nested array accesses are not supported)
             sym_table = {
                 k: v
                 for k, v in sym_table.items()
                 if v is None or ("[" not in v and "]" not in v)
+            }
+
+            # Also filter out symbols containing views as they cannot be safely propagated (they are seen as pointers)
+            sym_table = {
+                k: v
+                for k, v in sym_table.items()
+                if v is None or not any(
+                    [
+                        str(s) in sdfg.arrays and isinstance(sdfg.arrays[str(s)], dt.View)
+                        for s in pystr_to_symbolic(v).free_symbols
+                    ]
+                )
             }
 
             # Combine the symbols

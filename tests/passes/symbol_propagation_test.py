@@ -139,7 +139,35 @@ def test_multiple_sources():
     assert edge4.data.assignments["v"] == "v+a"
 
 
+def test_multiple_edge_assignments():
+    """
+    Tests that SymbolPropagation handles multiple edge assignments using views correctly.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.int32)
+    sdfg.add_view("A_view", [1], dace.int32)
+    sdfg.add_symbol("v1", dace.int32)
+    sdfg.add_symbol("v2", dace.int32)
+
+    s1 = sdfg.add_state()
+    access_A = s1.add_access("A")
+    access_view = s1.add_access("A_view")
+    access_view.add_in_connector("views")
+    s1.add_edge(access_A, None, access_view, "views", dace.Memlet("A[0]"))
+
+    s2 = sdfg.add_state()
+    s3 = sdfg.add_state()
+    sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"v1": "A_view"}))
+    sdfg.add_edge(s2, s3, dace.InterstateEdge(assignments={"v2": "A[v1]"}))
+
+    # Apply SymbolPropagation
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+    sdfg.compile()
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_symbol()
     test_multiple_sources()
+    test_multiple_edge_assignments()
