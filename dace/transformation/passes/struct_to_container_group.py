@@ -922,23 +922,13 @@ class StructToContainerGroups(ppl.Pass):
                     arr = sdfg.arrays[outname]
                     assert not isinstance(arr, dace.data.Scalar)
 
-                    if isinstance(arr, dace.data.Scalar):
-                        entry_interface.add_edge(
-                            flatten_lib_node,
-                            outname.lower(),
-                            an,
-                            None,
-                            dace.Memlet(expr=outname),
-                        )
-                    else:
-                        assert isinstance(arr, dace.data.Array)
-                        entry_interface.add_edge(
-                            flatten_lib_node,
-                            outname.lower(),
-                            an,
-                            None,
-                            dace.Memlet(outname),
-                        )
+                    entry_interface.add_edge(
+                        flatten_lib_node,
+                        outname.lower(),
+                        an,
+                        None,
+                        dace.Memlet(expr=outname),
+                    )
 
                     if outname.lower() not in flatten_lib_node.out_connectors:
                         flatten_lib_node.add_out_connector(outname.lower())
@@ -993,12 +983,14 @@ class StructToContainerGroups(ppl.Pass):
                         an0, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr="host_" + inname)
                     )
                 else:
-                    an = dace.nodes.AccessNode(inname)
-                    exit_interface.add_node(an)
+                    an = exit_interface.add_access(inname)
                     assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
                     exit_interface.add_edge(
-                        an, None, deflatten_lib_node, inname.lower(), dace.Memlet()
+                        an, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr=inname)
                     )
+
+                if inname.lower() not in deflatten_lib_node.in_connectors:
+                    deflatten_lib_node.add_in_connector(inname.lower())
 
             for outname in set(
                 [
