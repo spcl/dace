@@ -179,13 +179,24 @@ def _check_combo(combo, tcdm_usage_func=None):
     return True
 
 
-def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, tcdm_usage_func=None, min_tiling_size=1):
+def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, 
+                    tcdm_usage_func=None, OI_func=None, min_tiling_size=64, 
+                    redmule_h=64, redmule_w=16, hbm_bw=512):
+    dim_x, dim_y = thread_group_dims
+    peak_performance = 2 * dim_x * dim_y * redmule_h * redmule_w
+
+    ridge_OI = peak_performance / hbm_bw
+    print(f"Ridge OI: {ridge_OI}")
+
     # Default TCDM usage calculation if none provided
     if tcdm_usage_func is None:
         tcdm_usage_func = lambda m, n, k: 2 * (2 * m * k + 2 * k * n + m * n)
     
+    if OI_func is None:
+        OI_func = lambda m, n, k: m * n * k / (m * n + m * k + n * k)
+    
     # Unpack thread group dimensions
-    dim_x, dim_y = thread_group_dims
+    
     combos = []
 
     def factors(n):
@@ -218,19 +229,21 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, tcdm_usag
                 # break out of the innermost loop (assuming hw_K_list is in ascending order).
                 if tcdm_usage_func(hw_M, hw_N, hw_K) > tcdm_size:
                     break
-
+                OI = OI_func(hw_M, hw_N, K_val)
+                # If the OI is less than the ridge OI, skip this combination
+                if OI < ridge_OI:
+                    continue
                 # Build the configuration tuple.
                 combo = (M_val, N_val, K_val, hw_M, hw_N, hw_K,
                         thread_group_dims, tcdm_size)
-                combos.append(combo)
-    
-    if combos:
-        combos = [combo for combo in combos if _check_combo(combo, tcdm_usage_func)]
+                if _check_combo(combo, tcdm_usage_func):
+                    combos.append(combo)
 
     # Filter combinations based on the maximum product of hw_M and hw_N.
     if combos:
-        max_OI = min(1 / combo[3] + 1 / combo[4] for combo in combos)
-        filtered_combos = [combo for combo in combos if (1 / combo[3] + 1 / combo[4]) == max_OI]
+        max_OI = max([OI_func(combo[3], combo[4], combo[2]) for combo in combos
+                    if _check_combo(combo, tcdm_usage_func)])
+        filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/2]
         return filtered_combos
     return combos
 
