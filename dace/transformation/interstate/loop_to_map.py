@@ -574,7 +574,6 @@ class LoopToMap(xf.MultiStateTransformation):
         view_assignments = {}
         for rd in views_to_read:
             rd_name = f"{rd}_map"
-            sdfg.add_symbol(rd_name, sdfg.arrays[rd].dtype, find_new_name=True)
             view_assignments[rd_name] = rd
 
             rd_sym = symbolic.pystr_to_symbolic(rd)
