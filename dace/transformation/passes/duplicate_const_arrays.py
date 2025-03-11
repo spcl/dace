@@ -176,31 +176,54 @@ class DuplicateConstArrays(ppl.Pass):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self.wrap_tasklets(node.sdfg, l)
 
+    def _set_scalar_storage_to_register(self, sdfg: dace.SDFG):
+        for arr_name, arr in sdfg.arrays.items():
+            if isinstance(arr, dace.data.Scalar):
+                arr.storage = dace.dtypes.StorageType.Register
+
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: typing.Dict[str, typing.Any]) -> int:
         # Filter or const arrays (nothing is written to them)
         # This means no in edge, or memlet is None on all in edges
+        self._set_scalar_storage_to_register(sdfg)
+
         arrays_written_to = {k: 0 for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Array)}
         arrays = set([arr_name for arr_name, arr in sdfg.arrays.items() if isinstance(arr, dace.data.Array)])
         wrap_list = pipeline_results["wrap_list"] if "wrap_list" in pipeline_results else None
 
+
         def collect_writes(sdfg: dace.SDFG):
-            for cfg in sdfg.nodes():
-                for node in cfg.nodes():
+            for state in sdfg.states():
+                for node in state.nodes():
                     if isinstance(node, dace.nodes.AccessNode):
-                        if len(cfg.in_edges(node)) > 0:
-                            for ie in cfg.in_edges(node):
-                                if ie.data is not None and ie.dst_conn != "views":
+                        if len(state.in_edges(node)) > 0:
+                            for ie in state.in_edges(node):
+                                if ie.data is not None and ie.data.data is not None and ie.dst_conn != "views":
                                     if isinstance(sdfg.arrays[node.data], dace.data.Array):
                                         arrays_written_to[node.data] += 1
                     if isinstance(node, dace.nodes.NestedSDFG):
                         collect_writes(node.sdfg)
+            for inter_edge in sdfg.edges():
+                if isinstance(inter_edge.data, dace.InterstateEdge):
+                    for assignment in inter_edge.data.assignments:
+                        if assignment in arrays_written_to:
+                            arrays_written_to[assignment] += 1
 
+
+        collect_writes(sdfg)
 
         # Let initialization be ok (writing just once)
-        non_const_arrays = set([k for k, v in arrays_written_to.items() if v > 1])
+        # Consider all non-transient arrays are non const
+        non_const_arrays = set([k for k, v in arrays_written_to.items() if
+                                (
+                                    ((v > 1 and sdfg.arrays[k].transient) or
+                                    (not sdfg.arrays[k].transient)) and
+                                    isinstance(sdfg.arrays[k], dace.data.Array)
+                                )])
         const_arrays = arrays - non_const_arrays
 
         if self.verbose:
+            print("Incoming edges:")
+            print(arrays_written_to)
             print("Non const arrays:")
             print(non_const_arrays)
             print("Const arrays:")
@@ -224,9 +247,6 @@ class DuplicateConstArrays(ppl.Pass):
             # 1.1 After we detect the first access node, append a copy to GPU
             arr = sdfg.arrays[const_arr_name]
             if arr.storage == dace.dtypes.StorageType.GPU_Global:
-                if self.verbose:
-                    print(f"Copying {const_arr_name} to host as host_{const_arr_name}")
-
                 # Check if this array is a gpu variant of an array
                 if const_arr_name.startswith("gpu_"):
                     if const_arr_name[4:] in sdfg.arrays:
@@ -253,8 +273,6 @@ class DuplicateConstArrays(ppl.Pass):
                         sdfg.add_datadesc("host_" + const_arr_name, newdesc)
             else:
                 assert arr.storage == dace.dtypes.StorageType.CPU_Heap or arr.storage == dace.dtypes.StorageType.Default
-                if self.verbose:
-                    print(f"Copying {const_arr_name} to GPU as gpu_{const_arr_name}")
 
                 if (not const_arr_name.startswith("gpu_")) and "gpu_" + const_arr_name in sdfg.arrays:
                     gpu_host_name_map["gpu_" + const_arr_name] = const_arr_name
