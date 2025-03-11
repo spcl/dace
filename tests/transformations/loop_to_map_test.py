@@ -973,6 +973,38 @@ def test_nested_loop_symbols():
     sdfg.compile()
   
 
+def test_ptr_in_loop_header():
+    """
+    Tests that the Loop2Map works correctly with pointers in the loop header.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.int32)
+    sdfg.add_view("A_view", [1], dace.int32)
+
+    s = sdfg.add_state()
+    access_A = s.add_access("A")
+    access_view = s.add_access("A_view")
+    access_view.add_in_connector("views")
+    s.add_edge(access_A, None, access_view, "views", dace.Memlet("A[0]"))
+
+    loop = LoopRegion("loop", "i < A_view", "i", "i = 0", "i = i + 1")
+    loop.add_state("loop_body")
+    sdfg.add_node(loop)
+    sdfg.add_edge(s, loop, dace.InterstateEdge())
+
+    # Should validate and compile
+    sdfg.validate()
+    sdfg.compile()
+
+    # Should turn both loops into maps
+    num_apps = sdfg.apply_transformations_repeated(LoopToMap)
+    assert num_apps == 1, f"Expected 1 application, got {num_apps}"
+
+    # Should still validate and compile
+    sdfg.validate()
+    sdfg.compile()
+
+
 
 if __name__ == "__main__":
 
@@ -1018,3 +1050,4 @@ if __name__ == "__main__":
     test_views_in_header()
     test_empty_views_in_body()
     test_nested_loop_symbols()
+    test_ptr_in_loop_header()

@@ -567,6 +567,27 @@ class LoopToMap(xf.MultiStateTransformation):
             access_node = body.add_read(rd)
             body.add_memlet_path(access_node, entry, dst_conn=rd, memlet=memlet.Memlet(rd))
 
+        # Add views as symbols
+        # A better way would be to pass them with a connector, similar to the containers above.
+        # But since we do not have a view node to analyze the chain of view, we cannot (easily) create a chain of views routing to an input connector.
+        views_to_read = (entry.free_symbols & sdfg.arrays.keys()) - containers_to_read
+        view_assignments = {}
+        for rd in views_to_read:
+            rd_name = f"{rd}_map"
+            sdfg.add_symbol(rd_name, sdfg.arrays[rd].dtype, find_new_name=True)
+            view_assignments[rd_name] = rd
+
+            rd_sym = symbolic.pystr_to_symbolic(rd)
+            rd_name_sym = symbolic.pystr_to_symbolic(rd_name)
+            
+            for i in range(len(map_node.range)):
+              lb, up, st = map_node.range[i]
+              lb = lb.replace(rd_sym, rd_name_sym)
+              up = up.replace(rd_sym, rd_name_sym)
+              st = st.replace(rd_sym, rd_name_sym)
+              map_node.range[i] = (lb, up, st)
+        graph.add_state_before(body, "map_views", assignments=view_assignments)
+
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
         direct_edges: Set[gr.MultiConnectorEdge[memlet.Memlet]] = set()
