@@ -625,12 +625,15 @@ class StructToContainerGroups(ppl.Pass):
             _cstr_reverse = ""
             letter = "i"
             used_letters = []
-            for dim in arr.shape:
-                fe = f"for (auto {letter} = 0; {letter} < {dim}; {letter}++){{\n"
-                _cstr += fe
-                _cstr_reverse += fe
-                used_letters.append(letter)
-                letter = chr(ord(letter) + 1)
+
+            # If arr.shape is (1,) DaCe generates a scalar, no need to loop + [i] access will be wrong
+            if (arr.shape != (1,)):
+                for dim in arr.shape:
+                    fe = f"for (auto {letter} = 0; {letter} < {dim}; {letter}++){{\n"
+                    _cstr += fe
+                    _cstr_reverse += fe
+                    used_letters.append(letter)
+                    letter = chr(ord(letter) + 1)
 
             access_cpp_str = " + ".join(
                 [
@@ -680,8 +683,11 @@ class StructToContainerGroups(ppl.Pass):
                 _cstr = ompfor + _cstr
                 _cstr_reverse = ompfor + _cstr_reverse
 
-            if isinstance(member_arr, dace.data.Scalar):
-                assert len(remaining_letters) == 1
+            if (
+                isinstance(member_arr, dace.data.Scalar) or
+                (isinstance(member_arr, dace.data.Array) and member_arr.shape == (1,))
+                ):
+                assert len(remaining_letters) == 1 or len(remaining_letters) == 0
                 endaccess = ""
             else:
                 assert len(remaining_letters) == len(
@@ -696,17 +702,24 @@ class StructToContainerGroups(ppl.Pass):
                     ]
                 )
 
+
             if endaccess != "":
                 src_access = f"{src_access}[{endaccess}]"
+            else:
+                src_access = f"{src_access}"
+            if access_cpp_str != "":
+                access_cpp_str = f"[{access_cpp_str}]"
 
-            access = f"{arrname}[{access_cpp_str}] = {src_access};\n"
-            access_reverse = f"{src_access} = {arrname}[{access_cpp_str}];\n"
+            access = f"{arrname.lower()}{access_cpp_str} = {src_access};\n"
+            access_reverse = f"{src_access} = {arrname.lower()}{access_cpp_str};\n"
             _cstr += access
             _cstr_reverse += access_reverse
-            for dim in arr.shape:
-                fe = f"}}\n"
-                _cstr += fe
-                _cstr_reverse += fe
+
+            if (arr.shape != (1,)):
+                for dim in arr.shape:
+                    fe = f"}}\n"
+                    _cstr += fe
+                    _cstr_reverse += fe
 
             return _cstr, _cstr_reverse
 
@@ -862,7 +875,7 @@ class StructToContainerGroups(ppl.Pass):
             deflatten_lib_node = Flattener(
                 name="deflatten",
                 code=self._deflattener_codestr,
-                input_names=[],  # [n.lower() for n in registered_names],
+                input_names=[n.lower() for n in registered_names],
                 output_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
                 # or isinstance(v, dace.data.ContainerArray)) and not
                 # isinstance(v, dace.data.View)],
@@ -977,14 +990,14 @@ class StructToContainerGroups(ppl.Pass):
                         an1, None, an0, None, dace.Memlet(expr="host_" + inname)
                     )
                     exit_interface.add_edge(
-                        an0, None, deflatten_lib_node, None, dace.Memlet(expr="host_" + inname)
+                        an0, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr="host_" + inname)
                     )
                 else:
                     an = dace.nodes.AccessNode(inname)
                     exit_interface.add_node(an)
                     assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
                     exit_interface.add_edge(
-                        an, None, deflatten_lib_node, None, dace.Memlet()
+                        an, None, deflatten_lib_node, inname.lower(), dace.Memlet()
                     )
 
             for outname in set(
