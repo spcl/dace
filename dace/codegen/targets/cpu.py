@@ -10,7 +10,7 @@ from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Conf
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc, unparse_interstate_edge
+from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
@@ -2026,16 +2026,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 var = map_params[i]
                 begin, end, skip = r
 
-                begin = unparse_interstate_edge(str(begin), sdfg, symbols=sdfg.symbols, codegen=self._frame)
-                begin.strip(";")
-
-                end = unparse_interstate_edge(str(end), sdfg, symbols=sdfg.symbols, codegen=self._frame)
-                end.strip(";")
-
-                skip = unparse_interstate_edge(str(skip), sdfg, symbols=sdfg.symbols, codegen=self._frame)
-                skip.strip(";")
-                
-
                 if node.map.unroll:
                     unroll_pragma = "#pragma unroll"
                     if node.map.unroll_factor:
@@ -2043,8 +2033,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 result.write(
-                    "for (auto %s = %s; %s <= %s; %s += %s) {\n" %
-                    (var, begin, var, end, var, skip),
+                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                    (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,
