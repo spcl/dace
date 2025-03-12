@@ -10,6 +10,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace import data as dt
 from dace import dtypes
@@ -96,6 +97,19 @@ class RecodeAttributeNodes(ast.NodeTransformer):
                 f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
             )
 
+        idx = astutils.unparse(val.slice)
+        if self.direction == 'in' and isinstance(val.slice, ast.Tuple):
+            idx = idx.strip('()')
+        idx_syms: Set[str] = set()
+        if not isinstance(val.slice, ast.Name):
+            for fsym in pystr_to_symbolic(idx).free_symbols:
+                idx_syms.add(str(fsym))
+        else:
+            idx_syms.add(idx)
+        if any([isym in self.tasklet.in_connectors or isym in self.tasklet.out_connectors for isym in idx_syms]):
+            # Cannot lift where the slice index expression depends on a connector.
+            return self.generic_visit(node)
+
         # Gather a new connector name and add the appropriate connector.
         new_connector_name = node.value.value.id + '_slice_' + node.attr
         new_connector_name = self.tasklet.next_connector(new_connector_name)
@@ -132,9 +146,6 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         slice_view_node = self.state.add_access(slice_view_name)
         attr_view_node = self.state.add_access(attr_view_name)
         if self.direction == 'in':
-            idx = astutils.unparse(val.slice)
-            if isinstance(val.slice, ast.Tuple):
-                idx = idx.strip('()')
             slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
             self.state.add_edge(self.data_node, None, slice_view_node, 'views', slice_memlet)
             attr_memlet = Memlet.from_array(slice_view_name + '.' + node.attr, struct.members[node.attr])
@@ -148,7 +159,6 @@ class RecodeAttributeNodes(ast.NodeTransformer):
             # TODO: determine the actual subset from the tasklet accesses.
             attr_memlet = Memlet.from_array(slice_view_name + '.' + node.attr, struct.members[node.attr])
             self.state.add_edge(attr_view_node, 'views', slice_view_node, None, attr_memlet)
-            idx = astutils.unparse(val.slice)
             slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
             self.state.add_edge(slice_view_node, 'views', self.data_node, None, slice_memlet)
         return self.generic_visit(replacement)
@@ -440,13 +450,14 @@ class LiftStructViews(ppl.Pass):
             new_names.update(visitor.views_constructed)
 
         # Clean up by removing the lifted connector and connected edges.
-        state.remove_edge(edge)
-        if direction == 'in':
-            if len(list(state.in_edges_by_connector(tasklet, connector))) == 0:
-                tasklet.remove_in_connector(connector)
-        else:
-            if len(list(state.out_edges_by_connector(tasklet, connector))) == 0:
-                tasklet.remove_out_connector(connector)
+        if len(new_names) > 0:
+            state.remove_edge(edge)
+            if direction == 'in':
+                if len(list(state.in_edges_by_connector(tasklet, connector))) == 0:
+                    tasklet.remove_in_connector(connector)
+            else:
+                if len(list(state.out_edges_by_connector(tasklet, connector))) == 0:
+                    tasklet.remove_out_connector(connector)
 
         return new_names
 
@@ -477,14 +488,16 @@ class LiftStructViews(ppl.Pass):
                                     if isinstance(oedge.dst, nd.Tasklet):
                                         res = self._lift_tasklet(block, node, oedge.dst, oedge, cont, oedge.dst_conn,
                                                                  'in')
-                                        result[node.data].update(res)
-                                        lifted_something_this_round = True
+                                        if len(res) > 0:
+                                            result[node.data].update(res)
+                                            lifted_something_this_round = True
                                 for iedge in block.in_edges(node):
                                     if isinstance(iedge.src, nd.Tasklet):
                                         res = self._lift_tasklet(block, node, iedge.src, iedge, cont, iedge.src_conn,
                                                                  'out')
-                                        result[node.data].update(res)
-                                        lifted_something_this_round = True
+                                        if len(res) > 0:
+                                            result[node.data].update(res)
+                                            lifted_something_this_round = True
                 for edge in cfg.edges():
                     lifted_something_this_round |= self._lift_isedge(cfg, edge, result)
 
