@@ -635,6 +635,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
+    breakpoint()
 
     # Collect nodes_to_move
     for edge in state.edge_bfs(node):
@@ -649,6 +650,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
                 for e in state.memlet_path(iedge):
                     nodes_to_move.add(e.src)
                     orig_edges.add(e)
+    breakpoint()
 
     # Define boundary nodes
     for node in set(nodes_to_move):
@@ -665,6 +667,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
                 if oedge.dst not in nodes_to_move:
                     boundary_nodes.add(node)
                     break
+    breakpoint()
 
     # Duplicate boundary nodes
     new_nodes = {}
@@ -672,6 +675,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
         node_ = copy.deepcopy(node)
         state.add_node(node_)
         new_nodes[node] = node_
+    breakpoint()
 
     for edge in state.edges():
         if edge.src in boundary_nodes and edge.dst in boundary_nodes:
@@ -681,21 +685,93 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
             state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
         elif edge.dst in boundary_nodes:
             state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
+    breakpoint()
 
     # Move nodes
     state.remove_nodes_from(nodes_to_move)
+    breakpoint()
 
     for n in nodes_to_move:
         if isinstance(n, nodes.NestedSDFG):
             # Set the new parent state
             n.sdfg.parent = newstate
+    breakpoint()
 
     newstate.add_nodes_from(nodes_to_move)
+    breakpoint()
 
     for e in orig_edges:
         newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+    breakpoint()
 
     return newstate
+
+
+def isolated_nested_sdfg(
+        sdfg: SDFG,
+        state: SDFGState,
+        nsdfg_node: nodes.NestedSDFG,
+) -> tuple[SDFGState, SDFGState, SDFGState]:
+    """Isolate the nested SDFG.
+
+    The function will split `state` into three states. The second or middle state,
+    which is the original state, will contain the NestedSDFG, `nsdfg_node`, with the
+    AccessNodes that serves as input and output.
+    The first state will contain everything that should be sequenced before the
+    nested SDFG node and the third node contains everything that is sequenced
+    after the nested SDFG node.
+
+    The important aspect of this transformation is, that it will not increase the
+    number of AccessNodes that writes to a transient data, it might, however,
+    add new AccessNodes that read to data.
+    """
+
+    # These are the three node sets.
+    predecessor_nodes: set[nodes.Node] = set()
+    predecessor_edges: dict[tuple[nodes.Node, nodes.Node], graph.MultiConnectorEdge] = dict()
+    middle_nodes: set[nodes.Node] = set()
+    middle_edges: dict[tuple[nodes.Node, nodes.Node], graph.MultiConnectorEdge] = dict()
+    successor_nodes: set[nodes.Node] = set()
+    successor_edges: dict[tuple[nodes.Node, nodes.Node], graph.MultiConnectorEdge] = dict()
+
+    # The edges in the middle state contains only the NestedSDFG and the AccessNodes
+    #  that are needed for its input.
+    middle_nodes.add(nsdfg_node)
+    for iedge in state.in_edges(nsdfg_node):
+        assert isinstance(iedge.src, nodes.AccessNode)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _get_internal_subset(internal_memlet: Memlet,

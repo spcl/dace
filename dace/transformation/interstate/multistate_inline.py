@@ -173,14 +173,20 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Isolate nsdfg in a separate state
         # 1. Push nsdfg node plus dependencies down into new state
+        sdfg.view()
         nsdfg_state = helpers.state_fission_after(outer_state, nsdfg_node)
+        sdfg.view()
         # 2. Push successors of nsdfg node into a later state
         direct_subgraph = set()
         direct_subgraph.add(nsdfg_node)
-        direct_subgraph.update(nsdfg_state.predecessors(nsdfg_node))
-        direct_subgraph.update(nsdfg_state.successors(nsdfg_node))
+        nsdfg_predecessors = nsdfg_state.predecessors(nsdfg_node)
+        nsdfg_successors = nsdfg_state.successors(nsdfg_node)
+        direct_subgraph.update(nsdfg_predecessors)
+        direct_subgraph.update(nsdfg_successors)
         direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
         nsdfg_state = helpers.state_fission(direct_subgraph)
+        sdfg.view()
+        breakpoint()
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
