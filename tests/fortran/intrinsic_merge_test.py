@@ -4,8 +4,9 @@ import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
 
-from tests.fortran.fortran_test_helper import  SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+
 
 def test_fortran_frontend_merge_1d():
     """
@@ -260,7 +261,7 @@ def test_fortran_frontend_merge_array_shift():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
-    #sdfg.simplify(verbose=True)
+    # sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
 
@@ -277,6 +278,7 @@ def test_fortran_frontend_merge_array_shift():
     sdfg(input1=first, input2=second, mask1=mask1, mask2=mask2, res=res)
     for val in res:
         assert val == 100
+
 
 def test_fortran_frontend_merge_nonarray():
     """
@@ -318,6 +320,7 @@ def test_fortran_frontend_merge_nonarray():
     val[0] = 0
     sdfg(val=val, res=res)
     assert res[0] == 5
+
 
 def test_fortran_frontend_merge_recursive():
     """
@@ -362,7 +365,7 @@ def test_fortran_frontend_merge_recursive():
     mask2 = np.full([size], 1, order="F", dtype=np.int32)
     res = np.full([size], 40, order="F", dtype=np.float64)
 
-    for i in range(int(size/2)):
+    for i in range(int(size / 2)):
         mask1[i] = 1
 
     mask2[-1] = 0
@@ -370,6 +373,7 @@ def test_fortran_frontend_merge_recursive():
     sdfg(input1=first, input2=second, input3=third, mask1=mask1, mask2=mask2, res=res)
 
     assert np.allclose(res, [13, 13, 13, 42, 42, 42, 43])
+
 
 def test_fortran_frontend_merge_scalar():
     """
@@ -398,7 +402,7 @@ def test_fortran_frontend_merge_scalar():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
-    #sdfg.simplify(verbose=True)
+    # sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
 
@@ -448,7 +452,7 @@ def test_fortran_frontend_merge_scalar2():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
-    #sdfg.simplify(verbose=True)
+    # sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
 
@@ -464,6 +468,7 @@ def test_fortran_frontend_merge_scalar2():
     mask[:] = 1
     sdfg(input1=first, input2=second, mask=mask, res=res)
     assert res[0] == 13
+
 
 def test_fortran_frontend_merge_scalar3():
     """
@@ -494,7 +499,7 @@ def test_fortran_frontend_merge_scalar3():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
-    #sdfg.simplify(verbose=True)
+    # sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
 
@@ -553,9 +558,12 @@ def test_fortran_frontend_merge_literal():
     sdfg(input1=13, input2=2, res=res)
     assert res[0] == 1
 
-def test_fortran_frontend_merge_dataref():
 
-    sources, main = SourceCodeBuilder().add_file("""
+def test_fortran_frontend_merge_dataref():
+    sources, main = (
+        SourceCodeBuilder()
+        .add_file(
+            """
                     module lib
                       implicit none
                       type test_type
@@ -594,23 +602,30 @@ def test_fortran_frontend_merge_dataref():
                         double precision, dimension(3) :: res
                         type(test_type2) :: data
 
-                        !res = MERGE(data%var%input_data, data%var%input_data_second, data%var%input_data .lt. 3)
-                        res = MERGE(data%var%input_data, data%var%input_data_second, 1 .lt. 3)
+                        res = MERGE(data%var%input_data, data%var%input_data_second, data%var%input_data .lt. 3)
+                        !res = MERGE(data%var%input_data, data%var%input_data_second, 1 .lt. 3)
 
                         END SUBROUTINE merge_test_function
 
                     END MODULE
-    """, 'main').check_with_gfortran().get()
+    """,
+            "main",
+        )
+        .check_with_gfortran()
+        .get()
+    )
 
     sdfg = create_singular_sdfg_from_string(sources, "test_merge.merge_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
     # Minimum is in the beginning
-    data1 = np.full([1], 40, order="F", dtype=np.float64)
-    res = np.full([1], 40, order="F", dtype=np.float64)
+    data1 = np.full([3], 42, order="F", dtype=np.float64)
+    data2 = np.full([3], 40, order="F", dtype=np.float64)
+    res = np.full([3], 0, order="F", dtype=np.float64)
 
-    sdfg(input1=13, input2=42, res=res)
+    sdfg(input1=data1, input2=data2, res=res)
+    print(res)
     assert res[0] == 42
 
     sdfg(input1=13, input2=10, res=res)
@@ -619,17 +634,17 @@ def test_fortran_frontend_merge_dataref():
     sdfg(input1=13, input2=2, res=res)
     assert res[0] == 1
 
-if __name__ == "__main__":
 
-    #test_fortran_frontend_merge_1d()
-    #test_fortran_frontend_merge_comparison_scalar()
-    #test_fortran_frontend_merge_comparison_arrays()
-    #test_fortran_frontend_merge_comparison_arrays_offset()
-    #test_fortran_frontend_merge_array_shift()
-    #test_fortran_frontend_merge_nonarray()
-    #test_fortran_frontend_merge_recursive()
-    #test_fortran_frontend_merge_scalar()
-    #test_fortran_frontend_merge_scalar2()
-    #test_fortran_frontend_merge_scalar3()
-    #test_fortran_frontend_merge_literal()
+if __name__ == "__main__":
+    test_fortran_frontend_merge_1d()
+    test_fortran_frontend_merge_comparison_scalar()
+    test_fortran_frontend_merge_comparison_arrays()
+    test_fortran_frontend_merge_comparison_arrays_offset()
+    test_fortran_frontend_merge_array_shift()
+    test_fortran_frontend_merge_nonarray()
+    test_fortran_frontend_merge_recursive()
+    test_fortran_frontend_merge_scalar()
+    test_fortran_frontend_merge_scalar2()
+    test_fortran_frontend_merge_scalar3()
+    test_fortran_frontend_merge_literal()
     test_fortran_frontend_merge_dataref()
