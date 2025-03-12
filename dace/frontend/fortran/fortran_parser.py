@@ -1949,8 +1949,9 @@ class AST_translator:
                     #this means that there is an array access in the chain before the end
                     #such accesses must always collapse to elements
                     shape,offsets,strides,subset=self.compute_array_shape(parent,sdfg,current_structure)
-                    print("Array Subscript node")
-                    raise NotImplementedError("Array Subscript node in Data Ref parent not implemented")
+                    last_read, last_written=self.add_array_to_element_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write,subset)
+                    current_structure=current_structure.stype
+                    name_chain.append(ast_utils.get_name(parent))
                 elif isinstance(parent,ast_internal_classes.Name_Node):
                     #this is the simpler case - no extra work necessary
                     name_chain.append(ast_utils.get_name(parent))
