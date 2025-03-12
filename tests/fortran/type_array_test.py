@@ -86,6 +86,49 @@ end subroutine main
     print(a)
 
 
+def test_fortran_frontend_type_arrayv2():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type simple_type
+    real :: w(5, 5)
+  end type simple_type
+  type simple_type2
+    type(simple_type) :: pprog(10)
+  end type simple_type2
+contains
+  subroutine f2(stuff)
+    implicit none
+    type(simple_type) :: stuff
+    call deepest(stuff%w)
+  end subroutine f2
+
+  subroutine deepest(my_arr)
+    real :: my_arr(:, :)
+    my_arr(1, 1) = 42
+  end subroutine deepest
+end module lib
+
+subroutine main(d)
+  use lib
+  implicit none
+  real :: d(5, 5)
+  type(simple_type2) :: p_prog
+  type(simple_type) :: t0
+  t0=p_prog%pprog(1)
+  call f2(t0)
+  d(1, 1) = t0%w(1, 1)
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
+    sdfg(d=a)
+    print(a)
+
 def test_fortran_frontend_type2_array():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -199,7 +242,8 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    test_fortran_frontend_type_array_slice()
-    test_fortran_frontend_type_array()
-    test_fortran_frontend_type2_array()
-    test_fortran_frontend_type3_array()
+    #test_fortran_frontend_type_array_slice()
+    #test_fortran_frontend_type_array()
+    test_fortran_frontend_type_arrayv2()
+    #test_fortran_frontend_type2_array()
+    #test_fortran_frontend_type3_array()
