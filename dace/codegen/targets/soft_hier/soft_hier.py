@@ -110,6 +110,9 @@ class SoftHierCodeGen(TargetCodeGenerator):
         # dma core map dictionary
         self._dma_core_map = {}
 
+        # tcdm array hbm map dic
+        self._tcdm_hbm_map = {}
+
 
         # Register additional SoftHier dispatchers
         dispatcher.register_map_dispatcher(dtypes.SOFTHIER_SCHEDULES, self)
@@ -244,15 +247,33 @@ class SoftHierCodeGen(TargetCodeGenerator):
                     if src_desc.storage == dtypes.StorageType.SoftHier_HBM:    
                         if edge.data.data not in self._dma_core_map:
                             self._dma_core_map[edge.data.data] = len(self._dma_core_map)
+                        if isinstance(dst_node, nodes.AccessNode):
+                            dst_desc = dst_node.desc(parent)
+                            if dst_desc.storage == dtypes.StorageType.SoftHier_TCDM and isinstance(dst_desc, dt.Array):
+                                if dst_node.data not in self._tcdm_hbm_map:
+                                    self._tcdm_hbm_map[dst_node.data] = edge.data.data
+                                else:
+                                    if self._tcdm_hbm_map[dst_node.data] != edge.data.data:
+                                        raise ValueError(f"Array {dst_node.data} already mapped to {self._tcdm_hbm_map[dst_node.data]}")
 
                 if isinstance(dst_node, nodes.AccessNode):   
                     dst_desc = dst_node.desc(parent)
                     if dst_desc.storage == dtypes.StorageType.SoftHier_HBM:
                         if edge.data.data not in self._dma_core_map:
-                                self._dma_core_map[edge.data.data] = len(self._dma_core_map)
+                            self._dma_core_map[edge.data.data] = len(self._dma_core_map)
+                        if isinstance(src_node, nodes.AccessNode):
+                            src_desc = src_node.desc(parent)
+                            if src_desc.storage == dtypes.StorageType.SoftHier_TCDM and isinstance(src_desc, dt.Array):
+                                if src_node.data not in self._tcdm_hbm_map:
+                                    self._tcdm_hbm_map[src_node.data] = edge.data.data
+                                else:
+                                    if self._tcdm_hbm_map[src_node.data] != edge.data.data:
+                                        raise ValueError(f"Array {src_node.data} already mapped to {self._tcdm_hbm_map[src_node.data]}")
+
 
         print(f"SoftHier: DMA core map: {self._dma_core_map}")
-        
+        print(f"SoftHier: TCDM HBM map: {self._tcdm_hbm_map}")
+
         # Annotate SoftHier streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
 
@@ -910,8 +931,16 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
             dst_node_desc = sdfg.arrays[dst_node.data]
 
         def _get_dma_core_expr(data_name):
-            dma_id = self._dma_core_map[data_name]
-            expr = f"flex_get_core_id() == (ARCH_NUM_CORE_PER_CLUSTER - 2 - {dma_id})"
+            if data_name in self._dma_core_map:
+                dma_id = self._dma_core_map[data_name]
+            elif data_name in self._stream_name_map:
+                data_name = self._stream_name_map[data_name]
+                data_name = self._tcdm_hbm_map[data_name]
+                dma_id = self._dma_core_map[data_name]
+            elif data_name in self._tcdm_hbm_map:
+                data_name = self._tcdm_hbm_map[data_name]
+                dma_id = self._dma_core_map[data_name]
+            expr = f"flex_get_core_id() == ({dma_id} % (ARCH_NUM_CORE_PER_CLUSTER - 1)) + 1"
             return expr
         
         def _emit_hbm_interleaved_code(nodedesc, src_name, s:subsets.Indices, callsite_stream, cfg, state_id, src_node, dst_node, is_load):   
@@ -1134,8 +1163,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    if is_sync:
-                        callsite_stream.write("flex_intra_cluster_sync();")
+                    # if is_sync:
+                    #     callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
@@ -1268,7 +1297,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                 if src_subset[-3] == dst_subset[-3]:
                     return
                 if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
-                    callsite_stream.write("if (flex_is_dm_core())")
+                    expr = _get_dma_core_expr(src_name)
+                    callsite_stream.write(f"if ({expr})")
+                    # callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
                     callsite_stream.write(f"bare_dma_start_1d(local({dst_expr}), dace_remote_xy({pos_x},{pos_y},{src_expr},{self._soft_hier_dims[0]}), {src_size});")
                     # if is_sync:
@@ -1311,7 +1342,9 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     is_broadcast = True
                     
                 if src_storage == dtypes.StorageType.SoftHier_TCDM and dst_storage == dtypes.StorageType.SoftHier_TCDM:
-                    callsite_stream.write("if (flex_is_dm_core())")
+                    expr = _get_dma_core_expr(dst_name)
+                    callsite_stream.write(f"if ({expr})")
+                    # callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
                     if is_broadcast:
                         callsite_stream.write(f"flex_dma_async_1d_broadcast(dace_remote_xy({pos_x_end},{pos_y_end},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
