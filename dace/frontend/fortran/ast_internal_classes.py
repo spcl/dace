@@ -120,8 +120,15 @@ class Exit_Node(FNode):
 
 
 class Main_Program_Node(FNode):
-    _attributes = ("name",)
-    _fields = ("execution_part", "specification_part")
+    def __init__(self, name: 'Name_Node', specification_part: 'Specification_Part_Node',
+                 execution_part: 'Execution_Part_Node', **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.specification_part = specification_part
+        self.execution_part = execution_part
+
+    _attributes = ('name',)
+    _fields = ('execution_part', 'specification_part')
 
 
 class Module_Node(FNode):
