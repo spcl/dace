@@ -14,6 +14,7 @@ find_program(SHCC_COMPILER
         /usr/scratch/badile111/dace4softhier/gvsoc/third_party/toolchain/v1.0.16-pulp-riscv-gcc-centos-7/bin
         /usr/local/bin
         /usr/bin
+        /users/ashen/dace4softhier/gvsoc/third_party/toolchain/install/bin
         $ENV{PATH}
     NO_DEFAULT_PATH
     DOC "SHCC Compiler"
