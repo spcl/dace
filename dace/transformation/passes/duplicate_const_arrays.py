@@ -2,11 +2,13 @@
 """ This module contains classes and functions that implement the grid-strided map tiling
     transformation."""
 
+import ast
 import copy
 import dace
 import typing
 from dace.codegen.control_flow import ConditionalBlock, ControlFlowBlock
 from dace.data import Property, make_properties
+from dace.sdfg import is_devicelevel_gpu
 from dace.transformation import pass_pipeline as ppl
 
 @make_properties
@@ -176,40 +178,46 @@ class DuplicateConstArrays(ppl.Pass):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     self.wrap_tasklets(node.sdfg, l)
 
-    def _set_scalar_storage_to_register(self, sdfg: dace.SDFG):
+    def _set_scalar_storage_to_register(self, sdfg: dace.SDFG, const_scalar_list=None):
         for arr_name, arr in sdfg.arrays.items():
-            if isinstance(arr, dace.data.Scalar):
+            if isinstance(arr, dace.data.Scalar) and (const_scalar_list is None or arr_name in const_scalar_list):
                 arr.storage = dace.dtypes.StorageType.Register
+
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: typing.Dict[str, typing.Any]) -> int:
         # Filter or const arrays (nothing is written to them)
         # This means no in edge, or memlet is None on all in edges
-        self._set_scalar_storage_to_register(sdfg)
 
         arrays_written_to = {k: 0 for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Array)}
+        scalars_written_to = {k: 0 for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Scalar)}
         arrays = set([arr_name for arr_name, arr in sdfg.arrays.items() if isinstance(arr, dace.data.Array)])
         wrap_list = pipeline_results["wrap_list"] if "wrap_list" in pipeline_results else None
 
 
-        def collect_writes(sdfg: dace.SDFG):
+        def collect_writes(sdfg: dace.SDFG, arrays_written_to, dtype):
             for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, dace.nodes.AccessNode):
                         if len(state.in_edges(node)) > 0:
                             for ie in state.in_edges(node):
                                 if ie.data is not None and ie.data.data is not None and ie.dst_conn != "views":
-                                    if isinstance(sdfg.arrays[node.data], dace.data.Array):
+                                    if isinstance(sdfg.arrays[node.data], dtype):
                                         arrays_written_to[node.data] += 1
                     if isinstance(node, dace.nodes.NestedSDFG):
-                        collect_writes(node.sdfg)
+                        collect_writes(node.sdfg, arrays_written_to, dtype)
             for inter_edge in sdfg.edges():
                 if isinstance(inter_edge.data, dace.InterstateEdge):
                     for assignment in inter_edge.data.assignments:
                         if assignment in arrays_written_to:
                             arrays_written_to[assignment] += 1
 
+        collect_writes(sdfg, arrays_written_to, dace.data.Array)
+        collect_writes(sdfg, scalars_written_to, dace.data.Scalar)
 
-        collect_writes(sdfg)
+        const_scalars = set([k for k, v in scalars_written_to.items() if (v <= 0 and sdfg.arrays[k].transient and
+                                    isinstance(sdfg.arrays[k], dace.data.Scalar))])
+        #self._set_const_scalar_storage_to_register(sdfg)
+
 
         # Let initialization be ok (writing just once)
         # Consider all non-transient arrays are non const
@@ -222,12 +230,14 @@ class DuplicateConstArrays(ppl.Pass):
         const_arrays = arrays - non_const_arrays
 
         if self.verbose:
-            print("Incoming edges:")
-            print(arrays_written_to)
             print("Non const arrays:")
             print(non_const_arrays)
             print("Const arrays:")
             print(const_arrays)
+            print("Incoming edges:")
+            print(arrays_written_to)
+            print("Const scalars:")
+            print(const_scalars)
 
         self._set_def_to_gpu_global(sdfg)
 
@@ -322,9 +332,35 @@ class DuplicateConstArrays(ppl.Pass):
 
         duplicate_views(sdfg)
 
+        # Replace occurences in interstate edges
         for e in  sdfg.all_interstate_edges(recursive=False):
             interstate_edge : dace.InterstateEdge = e.data
             interstate_edge.replace_dict(gpu_host_name_map)
 
         if wrap_list is not None and wrap_list != []:
             self.wrap_tasklets(sdfg, l=wrap_list)
+
+        # Need to replace to host variants on if conditionals
+        for node, parent in sdfg.all_nodes_recursive():
+            if not isinstance(node, ConditionalBlock):
+                continue
+
+            for b in node.branches:
+                if b[0] is None:
+                    continue
+                if isinstance(b[0].code, list):
+                    for i, el in enumerate(b[0].code):
+                        if isinstance(el, str):
+                            for src,dst in gpu_host_name_map.items():
+                                b[0].code[i] = b[0].code[i].replace(src,dst)
+                        else:
+                            def replace_x_with_y(expr: ast.Expr, repl_dict) -> ast.Expr:
+                                expr_str = ast.unparse(expr).strip()
+                                for src,dst in repl_dict.items():
+                                    modified_str = expr_str.replace(src, dst)
+                                return ast.parse(modified_str, mode="eval").body
+                            b[0].code[i] = replace_x_with_y(b[0].code[i], gpu_host_name_map)
+                else:
+                    assert isinstance(b[0].code, str)
+                    for src,dst in gpu_host_name_map.items():
+                        b[0].code = b[0].code.replace(src,dst)
