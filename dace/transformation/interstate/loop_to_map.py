@@ -585,7 +585,9 @@ class LoopToMap(xf.MultiStateTransformation):
               up = up.replace(rd_sym, rd_name_sym)
               st = st.replace(rd_sym, rd_name_sym)
               map_node.range[i] = (lb, up, st)
-        graph.add_state_before(body, "map_views", assignments=view_assignments)
+        
+        if view_assignments:
+          graph.add_state_before(body, "map_views", assignments=view_assignments)
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
