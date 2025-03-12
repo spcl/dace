@@ -1180,7 +1180,7 @@ class ScopeVarsDeclarations(NodeVisitor):
             return self.module_declarations[variable_name]
         else:
             raise RuntimeError(
-                f"Couldn't find the declaration of variable {variable_name} in function {self._scope_name(scope)}!")
+                f"Couldn't find the declaration of variable {variable_name} in function {self._scope_name(scope) if scope else scope}!")
 
     def contains_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> bool:
         return (self._scope_name(scope), variable_name) in self.scope_vars
@@ -1199,7 +1199,7 @@ class ScopeVarsDeclarations(NodeVisitor):
 
     def _scope_name(self, scope: ast_internal_classes.FNode) -> str:
         if isinstance(scope, ast_internal_classes.Main_Program_Node):
-            return scope.name.name.name
+            return scope.name.name
         elif isinstance(scope, str):
             return scope
         else:
