@@ -153,7 +153,7 @@ local_A [({loop_param+1})%2][:][:] = s_local_A [{gi}][({gj+gN-1})%{gN}][{loop_pa
      
 
 def generate_summa_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K):
-    loop_param = dace.symbol("_c")
+    loop_param = dace.symbol("_c", dtype=dace.int32)
 
     BSP_stride = K
 
@@ -212,7 +212,7 @@ if (({loop_param} >= 0) and ({loop_param} < {K}/{tK})):
             BSP_sync, 
             post_shift_code_block)
 
-def generate_summa_systolic_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K, summa_range=(2,2)):
+def generate_summa_systolic_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K, summa_range=(8,8)):
     (sr_m, sr_n) = summa_range
     if (gM % sr_m != 0) or (gN % sr_n != 0):
         raise ValueError("gM and gN should be divisible by summa_range")

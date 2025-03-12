@@ -107,6 +107,10 @@ class SoftHierCodeGen(TargetCodeGenerator):
         # Stream name mapping
         self._stream_name_map: Dict[str, str] = {}
 
+        # dma core map dictionary
+        self._dma_core_map = {}
+
+
         # Register additional SoftHier dispatchers
         dispatcher.register_map_dispatcher(dtypes.SOFTHIER_SCHEDULES, self)
 
@@ -227,8 +231,28 @@ class SoftHierCodeGen(TargetCodeGenerator):
                                     # print(f"SoftHier: Stream {node.data} mapped to { self._stream_name_map[node.data]}")
                                     break
 
+        for edge, parent in sdfg.all_edges_recursive():
+            # get the source of the edge
+            src_node = edge.src
+            dst_node = edge.dst
+            path = parent.memlet_path(edge)
+            if len(path) > 0:
+                src_node = path[0].src
+                dst_node = path[-1].dst
+                if isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode):
+                    src_desc = src_node.desc(parent)
+                    if src_desc.storage == dtypes.StorageType.SoftHier_HBM:    
+                        if edge.data.data not in self._dma_core_map:
+                            self._dma_core_map[edge.data.data] = len(self._dma_core_map)
 
+                if isinstance(dst_node, nodes.AccessNode):   
+                    dst_desc = dst_node.desc(parent)
+                    if dst_desc.storage == dtypes.StorageType.SoftHier_HBM:
+                        if edge.data.data not in self._dma_core_map:
+                                self._dma_core_map[edge.data.data] = len(self._dma_core_map)
 
+        print(f"SoftHier: DMA core map: {self._dma_core_map}")
+        
         # Annotate SoftHier streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
 
@@ -885,6 +909,11 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
         if (isinstance(dst_node, nodes.AccessNode)):
             dst_node_desc = sdfg.arrays[dst_node.data]
 
+        def _get_dma_core_expr(data_name):
+            dma_id = self._dma_core_map[data_name]
+            expr = f"flex_get_core_id() == (ARCH_NUM_CORE_PER_CLUSTER - 2 - {dma_id})"
+            return expr
+        
         def _emit_hbm_interleaved_code(nodedesc, src_name, s:subsets.Indices, callsite_stream, cfg, state_id, src_node, dst_node, is_load):   
             hbm_width = nodedesc.shape[1]
             hbm_height = nodedesc.shape[0]
@@ -1078,8 +1107,13 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     callsite_stream.write(
                         "// SoftHier_HBM -> SoftHier_TCDM 2D"
                     )
+                    # def _get_dma_core_expr(data_name):
+                    #     dma_id = self._dma_core_map[data_name]
+                    #     expr = f"flex_get_core_id() == (ARCH_NUM_CORE_PER_CLUSTER - 1 - {dma_id})"
+                    
+                    cond_expr = _get_dma_core_expr(src_name)
                     callsite_stream.write(
-                        "if(flex_is_dm_core())"
+                        f"if({cond_expr})"
                     )
                     callsite_stream.write("{", cfg, state_id, src_node)
 
@@ -1100,8 +1134,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # if is_sync:
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    # if is_sync:
-                    #     callsite_stream.write("flex_intra_cluster_sync();")
+                    if is_sync:
+                        callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
@@ -1138,8 +1172,10 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     callsite_stream.write(
                         "// SoftHier_TCDM -> SoftHier_HBM"
                     )
+                    
+                    cond_expr = _get_dma_core_expr(dst_name)
                     callsite_stream.write(
-                        "if(flex_is_dm_core())"
+                        f"if({cond_expr})"
                     )
                     callsite_stream.write("{", cfg, state_id, src_node)
                     if(nodedesc.is_hbm_interleaved):
@@ -2179,7 +2215,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         kernel_stream.write("// TEST KERNEL SCOPE\n", cfg, state_id, node)
         kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
         kernel_stream.write(f"uint32_t cluster_id = flex_get_cluster_id();\n", cfg, state_id, node)
-        kernel_stream.write(f"uint32_t core_id = flex_get_core_id();\n", cfg, state_id, node)
+        # kernel_stream.write(f"uint32_t core_id = flex_get_core_id();\n", cfg, state_id, node)
         
         # for i in range(len(kernel_map.range)):
         #     varname = kernel_map.params[-i - 1]
@@ -2381,7 +2417,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                 raise Exception("RedMule only supports matrix multiplication")
                         else:
                             print(f"Tasklet {node} not found in subgraph")
-            callsite_stream.write(f"flex_intra_cluster_sync();\n", cfg, state_id, scope_entry)
+            # callsite_stream.write(f"flex_intra_cluster_sync();\n", cfg, state_id, scope_entry)
 
         ##########################################################
 
@@ -2432,7 +2468,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
         restrict_args = []
-        write_type = 'uint32_t'
+        write_type = 'const uint32_t'
         for atype, aname, _ in memlet_references:
 
             def make_restrict(expr: str) -> str:
@@ -2452,7 +2488,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
-        return f'void {sdfg_label}({arguments}) {{'
+        return f'inline int {sdfg_label}({arguments}) {{'
 
         
 

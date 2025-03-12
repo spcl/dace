@@ -4,7 +4,7 @@ def generate_arg_cfg(
     output_path="generated_arch.py",
     num_cluster_x=8,
     num_cluster_y=8,
-    num_core_per_cluster=3,
+    num_core_per_cluster=8,
     cluster_tcdm_bank_width=64,
     cluster_tcdm_bank_nb=64,
     cluster_tcdm_base="0x00000000",
@@ -25,6 +25,7 @@ def generate_arg_cfg(
     redmule_queue_depth=1,
     redmule_reg_base="0x20020000",
     redmule_reg_size="0x00000200",
+    multi_idma_enable=1,
     idma_outstand_txn=16,
     idma_outstand_burst=256,
     hbm_start_base="0xc0000000",
@@ -93,6 +94,7 @@ class FlexClusterArch:
         self.redmule_reg_size        = {redmule_reg_size}
 
         # IDMA
+        self.multi_idma_enable       = {multi_idma_enable}
         self.idma_outstand_txn       = {idma_outstand_txn}
         self.idma_outstand_burst     = {idma_outstand_burst}
 
@@ -195,6 +197,7 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size,
     if OI_func is None:
         OI_func = lambda m, n, k: m * n * k / (m * n + m * k + n * k)
     
+    max_OI_func = lambda m, n, k: m * n * k / (m * n + m * k + n * k)
     # Unpack thread group dimensions
     
     combos = []
@@ -230,8 +233,9 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size,
                 if tcdm_usage_func(hw_M, hw_N, hw_K) > tcdm_size:
                     break
                 OI = OI_func(hw_M, hw_N, K_val)
+                max_OI = max_OI_func(M_val, N_val, K_val)
                 # If the OI is less than the ridge OI, skip this combination
-                if OI < ridge_OI:
+                if OI < ridge_OI and max_OI > ridge_OI:
                     continue
                 # Build the configuration tuple.
                 combo = (M_val, N_val, K_val, hw_M, hw_N, hw_K,

@@ -19,7 +19,10 @@ def _my_gen_summa_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      output_float,
                      coarsening_factor,
                      mmad_tasklet_str: str,
+                     GEMM_shape: typing.Tuple = None,
                      is_hbm_interleaved: bool = False):
+    if GEMM_shape is not None:
+        (M, N, K) = GEMM_shape
     sdfg = dace.SDFG("GEMM")
     tM, tN, tK = hardware_matmul_mnk
     tM *= coarsening_factor
@@ -224,7 +227,10 @@ def _my_gen_systolic_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      output_float,
                      coarsening_factor,
                      mmad_tasklet_str: str,
+                     GEMM_shape: typing.Tuple = None,
                      is_hbm_interleaved: bool = False):
+    if GEMM_shape is not None:
+        (M, N, K) = GEMM_shape
     sdfg = dace.SDFG("GEMM")
     tM, tN, tK = hardware_matmul_mnk
     tM *= coarsening_factor
@@ -834,7 +840,10 @@ def _my_gen_BSP_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      coarsening_factor,
                      mmad_tasklet_str: str,
                      BSP_generator_func: typing.Callable[...,any],
+                     GEMM_shape=None,
                      is_hbm_interleaved: bool = False):
+    if GEMM_shape is not None:
+        (M, N, K) = GEMM_shape
     sdfg = dace.SDFG("GEMM")
     tM, tN, tK = hardware_matmul_mnk
     tM *= coarsening_factor
