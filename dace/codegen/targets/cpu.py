@@ -584,10 +584,14 @@ class CPUCodeGen(TargetCodeGenerator):
                 callsite_stream.write(f"delete {alloc_name};\n", cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
+            if isinstance(nodedesc, data.Array):
+                deleteop = "delete[]"
+            else:
+                deleteop = "delete"
             callsite_stream.write(
                 f"""#pragma omp parallel
                 {{
-                    delete[] {alloc_name};
+                    {deleteop} {alloc_name};
                 }}""",
                 cfg,
                 state_id,
