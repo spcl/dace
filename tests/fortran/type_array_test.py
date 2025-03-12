@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from dace.frontend.fortran import fortran_parser
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -25,7 +26,7 @@ contains
 
   subroutine deepest(my_arr)
     double precision :: my_arr(5)
-    my_arr(:) = 42
+    my_arr(:) = 1
   end subroutine deepest
 end module lib
 """).add_file("""
@@ -38,11 +39,12 @@ subroutine main(d)
   d(1, 1) = conf%fraction(1,2)
 end subroutine main
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
-    a = np.full([5, 5], 42, order="F", dtype=np.float32)
-    sdfg(d=a)
-    print(a)
+    g = create_singular_sdfg_from_string(sources, entry_point='main')
+    g.simplify(verbose=True)
+    d = np.full([5, 5], 42, order="F", dtype=np.float32)
+    g(d=d)
+    assert d[0][0] == 1
+
 
 def test_fortran_frontend_type_array():
     """
@@ -66,7 +68,7 @@ contains
 
   subroutine deepest(my_arr)
     real :: my_arr(:, :)
-    my_arr(1, 1) = 42
+    my_arr(1, 1) = 47
   end subroutine deepest
 end module lib
 
@@ -79,11 +81,12 @@ subroutine main(d)
   d(1, 1) = p_prog%pprog(1)%w(1, 1)
 end subroutine main
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
-    a = np.full([5, 5], 42, order="F", dtype=np.float32)
-    sdfg(d=a)
-    print(a)
+    g = create_singular_sdfg_from_string(sources, entry_point='main')
+    g.simplify(verbose=True)
+    g.compile()
+    d = np.full([5, 5], 42, order="F", dtype=np.float32)
+    g(d=d)
+    assert d[0][0] == 47
 
 
 def test_fortran_frontend_type_arrayv2():
@@ -129,6 +132,7 @@ end subroutine main
     sdfg(d=a)
     print(a)
 
+
 def test_fortran_frontend_type2_array():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -166,11 +170,26 @@ subroutine main(d, p_prog)
   call f2(d, p_prog)
 end subroutine main
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
-    a = np.full([5, 5], 42, order="F", dtype=np.float32)
-    sdfg(d=a)
-    print(a)
+    # TODO: Just don't use globals :( Otherwise, this line is to keep the name suffixes stable.
+    fortran_parser.global_struct_instance_counter = 0
+
+    g = create_singular_sdfg_from_string(sources, entry_point='main')
+    g.simplify(verbose=True)
+
+    w = np.full([1, 1], 47, order="F", dtype=np.float32)
+    st1_T = g.arrays['v_my_arr_pprog'].dtype.base_type.as_ctypes()
+    st1_P = g.arrays['v_my_arr_pprog'].dtype.as_ctypes()
+    pprog = st1_T(w=w.ctypes.data,
+                  __f2dace_SA_w_d_0_s_2=1, __f2dace_SA_w_d_1_s_3=1,
+                  __f2dace_SOA_w_d_0_s_2=1, __f2dace_SOA_w_d_1_s_3=1)
+    st2_T = g.arrays['p_prog'].dtype.base_type.as_ctypes()
+    p_prog = st2_T(pprog=st1_P(pprog))
+    d = np.full([5, 5], 42, order="F", dtype=np.float32)
+
+    g(d=d, p_prog=p_prog,
+      __f2dace_SA_w_d_0_s_2_pprog_p_prog_1=1, __f2dace_SA_w_d_1_s_3_pprog_p_prog_1=1,
+      __f2dace_SOA_w_d_0_s_2_pprog_p_prog_1=1, __f2dace_SOA_w_d_1_s_3_pprog_p_prog_1=1)
+    assert d[0][0] == 47
 
 
 def test_fortran_frontend_type3_array():
@@ -233,17 +252,37 @@ subroutine main(d, p_prog)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
-    # a = np.full([5, 5], 42, order="F", dtype=np.float32)
-    # sdfg(d=a)
-    # print(a)
+    # TODO: Just don't use globals :( Otherwise, this line is to keep the name suffixes stable.
+    fortran_parser.global_struct_instance_counter = 0
+
+    g = create_singular_sdfg_from_string(sources, entry_point='main')
+    g.simplify(verbose=True)
+    g.compile()
+
+    w = np.full([1, 1], 47, order="F", dtype=np.float32)
+    st1_T = g.arrays['p_prog_pprog_1'].dtype.base_type.as_ctypes()
+    st1_P = g.arrays['p_prog_pprog_1'].dtype.as_ctypes()
+    pprog = st1_T(w=w.ctypes.data,
+                  __f2dace_SA_w_d_0_s_2=1, __f2dace_SA_w_d_1_s_3=1,
+                  __f2dace_SOA_w_d_0_s_2=1, __f2dace_SOA_w_d_1_s_3=1)
+    bla_T = g.arrays['p_prog_diag_2'].dtype.base_type.as_ctypes()
+    bla_P = g.arrays['p_prog_diag_2'].dtype.as_ctypes()
+    diag = bla_T(a=1042.0)
+    metrics_T = g.arrays['p_prog_metrics_3'].dtype.base_type.as_ctypes()
+    metrics_P = g.arrays['p_prog_metrics_3'].dtype.as_ctypes()
+    metrics = metrics_T(b=1042.0)
+    st2_T = g.arrays['p_prog'].dtype.base_type.as_ctypes()
+    p_prog = st2_T(pprog=st1_P(pprog), diag=bla_P(diag), metrics=metrics_P(metrics))
+    d = np.full([5, 5], 42, order="F", dtype=np.float32)
+    g(d=d, p_prog=p_prog,
+      __f2dace_SA_w_d_0_s_2_pprog_p_prog_1=1, __f2dace_SA_w_d_1_s_3_pprog_p_prog_1=1,
+      __f2dace_SOA_w_d_0_s_2_pprog_p_prog_1=1, __f2dace_SOA_w_d_1_s_3_pprog_p_prog_1=1)
+    assert d[0][0] == 50
 
 
 if __name__ == "__main__":
-    #test_fortran_frontend_type_array_slice()
-    #test_fortran_frontend_type_array()
+    test_fortran_frontend_type_array_slice()
+    test_fortran_frontend_type_array()
+    test_fortran_frontend_type2_array()
+    test_fortran_frontend_type3_array()
     test_fortran_frontend_type_arrayv2()
-    #test_fortran_frontend_type2_array()
-    #test_fortran_frontend_type3_array()
