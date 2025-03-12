@@ -533,7 +533,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if view_node is node:
                     raise InvalidSDFGNodeError("View node points to itself", sdfg, state_id, nid)
                 if not isinstance(view_node, nd.AccessNode):
-                    print(view_node, state)
                     raise InvalidSDFGNodeError("View node must point to an AccessNode", sdfg, state_id, nid)
 
             # Find uninitialized transients
@@ -729,7 +728,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
                 and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
                 and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
-            print(src_node, dst_node, state, e)
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",
