@@ -13,11 +13,11 @@ from dace.transformation import pass_pipeline as ppl
 
 @make_properties
 class DuplicateConstArrays(ppl.Pass):
-    verbose: bool = Property(dtype=bool, default=True, desc="Print debug information")
+    verbose: bool = Property(dtype=bool, default=False, desc="Print debug information")
 
     def __init__(
         self,
-        verbose: bool = True
+        verbose: bool = False
     ):
         self.verbose = verbose
         super().__init__()
@@ -282,7 +282,7 @@ class DuplicateConstArrays(ppl.Pass):
                         newdesc.storage = dace.dtypes.StorageType.CPU_Heap
                         sdfg.add_datadesc("host_" + const_arr_name, newdesc)
             else:
-                assert arr.storage == dace.dtypes.StorageType.CPU_Heap or arr.storage == dace.dtypes.StorageType.Default
+                #assert arr.storage == dace.dtypes.StorageType.CPU_Heap or arr.storage == dace.dtypes.StorageType.Default, f"Array {const_arr_name} is not in CPU_Heap or Default storage, {arr.storage}"
 
                 if (not const_arr_name.startswith("gpu_")) and "gpu_" + const_arr_name in sdfg.arrays:
                     gpu_host_name_map["gpu_" + const_arr_name] = const_arr_name

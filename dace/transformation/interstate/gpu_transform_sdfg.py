@@ -260,6 +260,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if self._dont_copy_structs:
                 if isinstance(inode, data.Structure): # Flattening pass should handle, cant really copy structs
                     continue
+            if isinstance(onode, data.Scalar):  # Scalars can remain on host
+                continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True

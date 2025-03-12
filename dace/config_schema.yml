@@ -390,7 +390,7 @@ required:
                             Maximum number of concurrent CUDA/HIP streams to
                             generate. Special values: -1 only uses the
                             default stream, 0 uses infinite concurrent streams.
-                        default: 0
+                        default: 4
 
                     syncdebug:
                         type: bool
