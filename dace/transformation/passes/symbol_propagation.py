@@ -97,9 +97,11 @@ class SymbolPropagation(ppl.Pass):
             sym_table = {
                 k: v
                 for k, v in sym_table.items()
-                if v is None or not any(
+                if v is None
+                or not any(
                     [
-                        str(s) in sdfg.arrays and isinstance(sdfg.arrays[str(s)], dt.View)
+                        str(s) in sdfg.arrays
+                        and isinstance(sdfg.arrays[str(s)], dt.View)
                         for s in pystr_to_symbolic(v).free_symbols
                     ]
                 )
@@ -123,7 +125,11 @@ class SymbolPropagation(ppl.Pass):
             if isinstance(parent, LoopRegion):
                 new_in_syms = copy.deepcopy(new_in_syms)
                 all_syms = set(
-                    [s for e in parent.edges() for s in e.data.assignments.keys()]
+                    [
+                        s
+                        for e in parent.all_interstate_edges()
+                        for s in e.data.assignments.keys()
+                    ]
                 )
                 for sym in all_syms:
                     if sym in new_in_syms:
@@ -142,7 +148,7 @@ class SymbolPropagation(ppl.Pass):
         if isinstance(cfgb, LoopRegion):
             # Any symbol that is assigned in the loop region is not propagated out
             new_out_syms = copy.deepcopy(in_syms[cfgb])
-            for edge in cfgb.edges():
+            for edge in cfgb.all_interstate_edges():
                 for sym in edge.data.assignments.keys():
                     if sym in new_out_syms:
                         new_out_syms[sym] = None

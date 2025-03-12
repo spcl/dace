@@ -72,6 +72,43 @@ def test_loop_carried_symbol():
     assert np.allclose(A[:], 0)
 
 
+def test_nested_loop_carried_symbol():
+    """
+    Tests SymbolPropagation respects loop carried dependencies in nested loops.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.float32)
+    sdfg.add_symbol("cnt", dace.int32)
+
+    init = sdfg.add_state("init", is_start_block=True)
+    loop = LoopRegion("loop", "i < 64", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={"cnt": "0"}))
+
+    loop2 = LoopRegion("loop2", "j < 64", "j", "j = 0", "j = j + 1")
+    loop.add_node(loop2)
+    s1 = loop2.add_state(is_start_block=True)
+    s2 = loop2.add_state()
+    loop2.add_edge(s1, s2, dace.InterstateEdge(assignments={"cnt": "cnt+1"}))
+
+    e = sdfg.add_state()
+    task = e.add_tasklet("init", {}, {"out"}, "out = cnt")
+    access = e.add_access("A")
+    e.add_edge(task, "out", access, None, dace.Memlet("A[0]"))
+    sdfg.add_edge(loop, e, dace.InterstateEdge())
+    sdfg.validate()
+
+    # Apply SymbolPropagation, and LoopToMap
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # Validate correctness
+    A = dace.ndarray([64], dtype=dace.float32)
+    A[:] = np.random.rand(64).astype(dace.float32.type)
+    sdfg(A=A)
+    assert np.allclose(A[0], 64*64)
+
+
 def test_nested_symbol():
     """
     Tests that SymbolPropagation does not overwrite nested symbols.
@@ -168,6 +205,7 @@ def test_multiple_edge_assignments():
 
 if __name__ == "__main__":
     test_loop_carried_symbol()
+    test_nested_loop_carried_symbol()
     test_nested_symbol()
     test_multiple_sources()
     test_multiple_edge_assignments()
