@@ -1223,7 +1223,7 @@ class IndexExtractorNodeLister(NodeVisitor):
         if self.current_parent is None:
             self.current_parent = node
             set_node = True
-
+        self.visit(node.parent_ref)
         self.visit(node.part_ref)
 
         if set_node:
