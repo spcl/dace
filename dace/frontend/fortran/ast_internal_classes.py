@@ -479,7 +479,7 @@ class Symbol_Array_Decl_Node(Statement_Node):
 class Var_Decl_Node(Statement_Node):
     def __init__(self, name: str, type: str,
                  alloc: Optional[bool] = None, optional: Optional[bool] = None,
-                 sizes: Optional[List] = None, offsets: Optional[List] = None,
+                 sizes: Optional[List] = None, offsets: Optional[List[Union[int, Name_Node]]] = None,
                  init: Optional[FNode] = None, actual_offsets: Optional[List] = None,
                  typeref: Optional[Any] = None, kind: Optional[Any] = None,
                  **kwargs):

@@ -4,7 +4,6 @@ import copy
 import re
 import warnings
 from collections import namedtuple
-from itertools import chain
 from typing import Dict, List, Optional, Tuple, Set, Union, Type
 
 import sympy as sp
@@ -12,6 +11,8 @@ import sympy as sp
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
+from dace.frontend.fortran.ast_internal_classes import Var_Decl_Node, Name_Node, Int_Literal_Node, Data_Ref_Node, \
+    Execution_Part_Node, Array_Subscript_Node, Bool_Literal_Node
 from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular, atmost_one, \
     match_callsite_args_to_function_args
 
@@ -822,7 +823,7 @@ class ArrayDimensionSymbolsMapper(NodeTransformer):
 
 
 CONFIG_INJECTOR_SIZE_PATTERN = re.compile(r"__f2dace_SA_(?P<comp>[a-zA-Z0-9_]+)_d_(?P<num>[0-9]*)")
-CONFIG_INJECTOR_OFFSET_PATTERN = re.compile(r"__f2dace_SOA_(?P<comp>[a-zA-Z0-9_]+)_o_(?P<num>[0-9]*)")
+CONFIG_INJECTOR_OFFSET_PATTERN = re.compile(r"__f2dace_SOA_(?P<comp>[a-zA-Z0-9_]+)_d_(?P<num>[0-9]*)")
 
 
 class ArrayDimensionConfigInjector(NodeTransformer):
@@ -852,28 +853,47 @@ class ArrayDimensionConfigInjector(NodeTransformer):
                     assert k not in self.cfg
                     self.cfg[k] = c.value
 
-    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+    def visit_Execution_Part_Node(self, expart: Execution_Part_Node):
         self.in_exec_depth += 1
-        out = self.generic_visit(node)
+        out = self.generic_visit(expart)
         self.in_exec_depth -= 1
         return out
 
-    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
-        if isinstance(node.part_ref, (ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)):
-            return self.generic_visit(node)
-        assert isinstance(node.part_ref, ast_internal_classes.Name_Node)
-        if self.in_exec_depth > 0 and node.part_ref.name in self.cfg:
-            val = self.cfg[node.part_ref.name]
+    def visit_Data_Ref_Node(self, dref: Data_Ref_Node):
+        if isinstance(dref.part_ref, (Array_Subscript_Node, Data_Ref_Node)):
+            return self.generic_visit(dref)
+        assert isinstance(dref.part_ref, Name_Node)
+        if self.in_exec_depth > 0 and dref.part_ref.name in self.cfg:
+            val = self.cfg[dref.part_ref.name]
             if val in {'true', 'false'}:
-                return ast_internal_classes.Bool_Literal_Node(val)
+                return Bool_Literal_Node(val)
             else:
-                return ast_internal_classes.Int_Literal_Node(val)
-        return node
+                return Int_Literal_Node(val)
+        return dref
 
-    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
-        if self.in_exec_depth > 0 and node.name in self.cfg:
-            return ast_internal_classes.Int_Literal_Node(self.cfg[node.name])
-        return node
+    def visit_Name_Node(self, name: Name_Node):
+        if self.in_exec_depth > 0 and name.name in self.cfg:
+            return Int_Literal_Node(self.cfg[name.name])
+        return name
+
+    def visit_Var_Decl_Node(self, var: Var_Decl_Node):
+        if var.sizes is None:
+            return var
+
+        def _name_of(_z) -> Optional[str]:
+            if isinstance(_z, str):
+                return _z
+            elif isinstance(_z, Name_Node):
+                return _z.name
+            return None
+
+        def _maybe_intval_of(_z, to_type: Type):
+            z_name = _name_of(_z)
+            return to_type(self.cfg[z_name]) if z_name in self.cfg else _z
+
+        var.sizes = [_maybe_intval_of(z, Int_Literal_Node) for z in var.sizes]
+        var.offsets = [_maybe_intval_of(z, int) for z in var.offsets]
+        return var
 
 
 class FunctionToSubroutineDefiner(NodeTransformer):

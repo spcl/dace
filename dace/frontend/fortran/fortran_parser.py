@@ -1122,28 +1122,27 @@ class AST_translator:
                 view[3]=variables_in_call.index(variable_in_call)
                 views.append(view)
 
-            for i in local_definition.offsets:
-                if not isinstance(i, ast_internal_classes.Name_Node):
-                    continue
-                if not isinstance(variable_in_call.offsets[local_definition.offsets.index(i)],ast_internal_classes.Name_Node):
-                    if isinstance(variable_in_call.offsets[local_definition.offsets.index(i)],int):
-                         outside_name=str(variable_in_call.offsets[local_definition.offsets.index(i)])
+            if local_definition.offsets:
+                for i in local_definition.offsets:
+                    if not isinstance(i, ast_internal_classes.Name_Node):
+                        continue
+                    i_name = ast_utils.get_name(i)
+                    var_off_i = variable_in_call.offsets[local_definition.offsets.index(i)]
+                    if isinstance(var_off_i, ast_internal_classes.Name_Node):
+                        outside_name = ast_utils.get_name(var_off_i)
+                    elif isinstance(var_off_i, int):
+                        outside_name = str(var_off_i)
                     else:
-                        raise ValueError("Offset must be a name or an integer")
-                   
-                else:
-                    outside_name=ast_utils.get_name(variable_in_call.offsets[local_definition.offsets.index(i)])
-                offset_replacements[ast_utils.get_name(i)] = outside_name
-                
-                offset_name = offset_replacements[ast_utils.get_name(i)]
-                for ofs in sdfg.symbols:
-                    if ofs.startswith(offset_name):
-                        offset_replacements[ast_utils.get_name(i)] = ofs
-                        break
-                self.temporary_sym_dict[new_sdfg.name][ast_utils.get_name(i)  ] = offset_replacements[ast_utils.get_name(i)]
-                
+                        raise ValueError(f"Offset must be a name or an integer; got: {var_off_i}")
+                    offset_replacements[i_name] = outside_name
 
-             
+                    offset_name = offset_replacements[i_name]
+                    for ofs in sdfg.symbols:
+                        if ofs.startswith(offset_name):
+                            offset_replacements[i_name] = ofs
+                            break
+                    self.temporary_sym_dict[new_sdfg.name][i_name] = offset_replacements[i_name]
+
         # Preparing symbol dictionary for nested sdfg
 
         for i in sdfg.symbols:
