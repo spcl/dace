@@ -2,7 +2,7 @@ import math
 import operator
 import re
 import sys
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any, Generator
 
@@ -28,9 +28,10 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, \
     Deallocate_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, \
     Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, \
-    Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt
+    Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt, \
+    Equiv_Operand
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
-from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase
+from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase, BlockBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
@@ -119,9 +120,10 @@ class TYPE_SPEC:
             'REAL4': 'REAL(kind=4)',
             'REAL8': 'REAL(kind=8)',
             'REAL': 'REAL(kind=4)',
+            'LOGICAL': 'LOGICAL',
         }
         typ = self.spec[-1]
-        typ = TYPE_MAP.get(typ, typ)
+        typ = TYPE_MAP.get(typ, f"type({typ})")
 
         bits: List[str] = [typ]
         if self.alloc:
@@ -583,6 +585,8 @@ def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant
 def _eval_real_literal(x: Union[Signed_Real_Literal_Constant, Real_Literal_Constant],
                        alias_map: SPEC_TABLE) -> NUMPY_REALS_TYPES:
     num, kind = x.children
+    if isinstance(kind, Name):
+        kind = kind.string
     if kind is None:
         if 'D' in num:
             num = num.replace('D', 'e')
@@ -847,7 +851,8 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
     return comp_spec
 
 
-def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref, Data_Pointer_Object], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
+def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref, Data_Pointer_Object], scope_spec: SPEC,
+                      alias_map: SPEC_TABLE) -> TYPE_SPEC:
     _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
     cur_type = root_type
 
@@ -986,14 +991,15 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
     return iface_map
 
 
-def set_children(par: Base, children: Iterable[Base]):
+def set_children(par: Base, children: Iterable[Union[Base, str]]):
     assert hasattr(par, 'content') != hasattr(par, 'items')
     if hasattr(par, 'items'):
         par.items = tuple(children)
     elif hasattr(par, 'content'):
-        par.content = list(children)
         if not children:
             remove_self(par)
+        else:
+            par.content = list(children)
     if children:
         _reparent_children(par)
 
@@ -1001,7 +1007,6 @@ def set_children(par: Base, children: Iterable[Base]):
 def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
     # A lot of hacky stuff to make sure that the new nodes are not just the same objects over and over.
     par = node.parent
-    only_child = bool([c for c in par.children if c is node])
     repls = []
     for c in par.children:
         if c is not node:
@@ -1009,8 +1014,6 @@ def replace_node(node: Base, subst: Union[None, Base, Iterable[Base]]):
             continue
         if subst is None or isinstance(subst, Base):
             subst = [subst]
-        if not only_child:
-            subst = [Base.__new__(type(t), t.tofortran()) for t in subst]
         repls.extend(subst)
     if isinstance(par, Loop_Control) and isinstance(subst, Base):
         _, cntexpr, _, _ = par.children
@@ -1141,12 +1144,10 @@ def correct_for_function_calls(ast: Program):
             # We need to replace with this exact node structure, and cannot rely on FParser to parse it right.
             repl = Intrinsic_Function_Reference(fref.tofortran())
             # Set the arguments ourselves, just in case the parser messes it up.
-            repl.items = (Intrinsic_Name(name), args)
-            _reparent_children(repl)
+            set_children(repl, (Intrinsic_Name(name), args))
             replace_node(fref, repl)
         else:
-            fref.items = (Intrinsic_Name(name), args)
-            _reparent_children(fref)
+            set_children(fref, (Intrinsic_Name(name), args))
 
     return ast
 
@@ -1418,6 +1419,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
     alias_map = alias_specs(ast)
     iface_map = interface_specs(ast, alias_map)
+    unused_ifaces = set(iface_map.keys())
+    for k, v in alias_map.items():
+        if isinstance(v, Interface_Stmt) or isinstance(v.parent.parent, Interface_Block):
+            unused_ifaces.difference_update({ident_spec(v)})
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
@@ -1501,6 +1506,11 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         replace_node(name, Name(pname_alias))
+
+    for ui in unused_ifaces:
+        assert ui in alias_map
+        assert isinstance(alias_map[ui], Interface_Stmt) or isinstance(alias_map[ui].parent.parent, Interface_Block)
+        remove_self(alias_map[ui].parent)
 
     ast = consolidate_uses(ast)
     return ast
@@ -1666,8 +1676,7 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
             args = Actual_Arg_Spec_List(f"{dref}")
         else:
             args = Actual_Arg_Spec_List(f"{dref}, {args}")
-        callsite.items = (Name(pname_alias), args)
-        _reparent_children(callsite)
+        set_children(callsite, (Name(pname_alias), args))
 
     for tbp in walk(ast, Type_Bound_Procedure_Part):
         remove_self(tbp)
@@ -2246,7 +2255,7 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             xtyp = find_type_of_entity(xdecl, alias_map) if isinstance(xdecl, Entity_Decl) else None
             if (pointer and xtyp and xtyp.pointer) or value:
                 par = x.parent
-                replace_node(x, plus[spec])
+                replace_node(x, copy_fparser_node(plus[spec]))
                 if isinstance(par, (Data_Ref, Part_Ref)):
                     replace_node(par, Data_Ref(par.tofortran()))
         elif isinstance(x, Data_Ref):
@@ -2265,7 +2274,7 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             xtyp = find_type_dataref(x, scope_spec, alias_map)
             if (pointer and xtyp.pointer) or value:
                 par = x.parent
-                replace_node(x, plus[spec])
+                replace_node(x, copy_fparser_node(plus[spec]))
                 if isinstance(par, (Data_Ref, Part_Ref)):
                     replace_node(par, Data_Ref(par.tofortran()))
         elif isinstance(x, Part_Ref):
@@ -2466,7 +2475,17 @@ def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
             Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Cycle_Stmt)):
         # These don't modify variables or give any new information.
         pass
-    elif isinstance(node, (Allocate_Stmt, Deallocate_Stmt)):
+    elif isinstance(node, Allocate_Stmt):
+        _, allocs, _ = node.children
+        allocs = allocs.children if allocs else tuple()
+        shape_bounds = []
+        for al in allocs:
+            _, shape = al.children
+            if shape:
+                shape_bounds.extend(sb for sb in shape.children)
+        for sb in shape_bounds:
+            _inject_knowns(sb)
+    elif isinstance(node, Deallocate_Stmt):
         # These are not expected to exist in the pruned AST, so don't bother tracking them.
         pass
     elif isinstance(node, UnaryOpBase):
@@ -2539,8 +2558,7 @@ def deconstruct_associations(ast: Program) -> Program:
                 if root.string in local_map:
                     repl = local_map[root.string]
                     repl = type(repl)(repl.tofortran())
-                    dr.items = (repl, *dr_rest)
-                    _reparent_children(dr)
+                    set_children(dr, (repl, *dr_rest))
             # # Replace the part-ref roots as appropriate.
             for pr in walk(node, Part_Ref):
                 if isinstance(pr.parent, (Data_Ref, Part_Ref)):
@@ -2564,13 +2582,12 @@ def deconstruct_associations(ast: Program) -> Program:
                                 idx, _ = free_comps[i]
                                 free_comps[i] = (idx, c)
                             free_comps = {i: c for i, c in free_comps}
-                            access.items = [free_comps.get(i, c) for i, c in enumerate(access.children)]
+                            set_children(access, [free_comps.get(i, c) for i, c in enumerate(access.children)])
                             # Now replace the entire `pr` with `repl`.
                             replace_node(pr, repl)
                             continue
                     # Otherwise, just replace normally.
-                    pr.items = (repl, subsc)
-                    _reparent_children(pr)
+                    set_children(pr, (repl, subsc))
             # Replace all the other names.
             for nm in walk(node, Name):
                 # TODO: This is hacky and can backfire if `nm` is not a standalone identifier.
@@ -2580,7 +2597,7 @@ def deconstruct_associations(ast: Program) -> Program:
                     continue
                 if nm.string not in local_map:
                     continue
-                replace_node(nm, local_map[nm.string])
+                replace_node(nm, copy_fparser_node(local_map[nm.string]))
         replace_node(assoc, rest)
 
     return ast
@@ -2897,7 +2914,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
         if not kind_spec or kind_spec not in uident_map:
             continue
         uname = uident_map[kind_spec]
-        lit.items = (val, uname)
+        set_children(lit, (val, uname))
 
         if len(kind_spec) > 2:
             # If the variable is not defined in a toplevel object, so we're done.
@@ -2964,6 +2981,14 @@ def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
 def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Program:
     alias_map = alias_map or alias_specs(ast)
     for sp in reversed(walk(ast, Specification_Part)):
+        # First, we do a surgery to fix the kind parameter of the literals that refer to a variable, but FParser leaves
+        # them as plain strings instead of making them `Name`s.
+        for lit in walk(sp.parent, LITERAL_CLASSES):
+            val, kind = lit.children
+            if not isinstance(kind, str):
+                continue
+            set_children(lit, (val, Name(kind)))
+
         use_map: Dict[str, Set[str]] = {}
         # Build the table to keep the use statements only if they are actually necessary.
         for nm in walk(sp.parent, Name):
@@ -3098,8 +3123,8 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
 
 def const_eval_nodes(ast: Program) -> Program:
     EXPRESSION_CLASSES = (
-        LITERAL_CLASSES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
-        Level_5_Expr, Intrinsic_Function_Reference)
+        LITERAL_CLASSES, Expr, Equiv_Operand, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr,
+        Level_4_Expr, Level_5_Expr, Intrinsic_Function_Reference)
 
     alias_map = alias_specs(ast)
 
@@ -3130,7 +3155,7 @@ def const_eval_nodes(ast: Program) -> Program:
 
     NON_EXPRESSION_CLASSES = (
         Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
-        Section_Subscript_List, Write_Stmt)
+        Section_Subscript_List, Write_Stmt, Allocate_Stmt)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
@@ -3312,10 +3337,9 @@ def _find_items_applicable_to_instance(items: Iterable[ConstInjection],
 
 
 def _type_injection_applies_to_component(item: ConstTypeInjection, defn_spec: SPEC, comp: str) -> bool:
-    if len(item.component_spec) > 1:
-        print(f"Unimplemented: type injection must have just one-level of component for now; got {item.component_spec} "
-              f"to match against {comp}; moving on...", file=sys.stderr)
-        return False
+    assert len(item.component_spec) == 1, \
+        (f"Unimplemented: type injection must have just one-level of component for now; "
+         f"got {item.component_spec} to match against {comp}")
     item_comp = item.component_spec[-1]
 
     if item.type_spec != defn_spec:
@@ -3554,6 +3578,10 @@ def consolidate_global_data_into_arg(ast: Program, always_add_global_data_arg: b
         if not spart:
             continue
         for tdecl in children_of_type(spart, Type_Declaration_Stmt):
+            typ, attr, _ = tdecl.children
+            if 'PARAMETER' in f"{attr}":
+                # This is a constant which should have been propagated away already.
+                continue
             all_global_vars.append(tdecl.tofortran())
     all_derived_types = '\n'.join(all_derived_types)
     all_global_vars = '\n'.join(all_global_vars)
@@ -3789,7 +3817,7 @@ def convert_data_statements_into_assignments(ast: Program) -> Program:
                 if len(varz.children) != len(valz.children):
                     assert len(varz.children) == 1
                     singular_varz, = varz.children
-                    new_varz = [f"{singular_varz}({i+1})" for i in range(len(valz.children))]
+                    new_varz = [f"{singular_varz}({i + 1})" for i in range(len(valz.children))]
                     replace_node(varz, Data_Stmt_Object_List(', '.join(new_varz)))
                 varz, valz = ds.children
                 varz, valz = varz.children, valz.children
@@ -3998,3 +4026,16 @@ def deconstuct_goto_statements(ast: Program) -> Program:
         replace_node(ifc, [Assignment_Stmt(f"{goto_var} = .false."), ifc])
 
     return ast
+
+
+def copy_fparser_node(n: Base) -> Base:
+    try:
+        nstr = n.tofortran()
+        if isinstance(n, BlockBase):
+            x = Base.__new__(type(n), get_reader(nstr))
+        else:
+            x = Base.__new__(type(n), nstr)
+        assert x is not None
+        return x
+    except (RuntimeError, AssertionError):
+        return deepcopy(n)
