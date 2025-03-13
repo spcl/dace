@@ -5,12 +5,10 @@ from abc import abstractmethod
 from collections import namedtuple
 from typing import Any, List, Optional, Tuple, Union
 
-from numpy import array_repr
-
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
     ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, NeedsTypeInferenceException
-from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes, mywalk
+from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes, mywalk, is_literal
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
 from dace.libraries.standard.nodes import Transpose
@@ -19,9 +17,6 @@ from dace.sdfg.graph import OrderedDiGraph
 from dace.transformation import transformation as xf
 
 FASTNode = Any
-
-def is_literal(node: ast_internal_classes.FNode) -> bool:
-    return isinstance(node, (ast_internal_classes.Int_Literal_Node, ast_internal_classes.Double_Literal_Node, ast_internal_classes.Real_Literal_Node, ast_internal_classes.Bool_Literal_Node))
 
 class IntrinsicTransformation:
 
@@ -540,6 +535,9 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                 return None
 
             _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, arg)
+            #_, cur_val, _= self.ast.structures.find_definition(self.scope_vars, arg)
+
+            assert not isinstance(cur_val.part_ref, ast_internal_classes.Data_Ref_Node)
 
             if isinstance(cur_val.part_ref, ast_internal_classes.Name_Node):
                 cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
@@ -1333,10 +1331,31 @@ class Merge(LoopBasedReplacement):
                 len_pardecls_first_array = 0
                 len_pardecls_second_array = 0
 
-                for ind in self.first_array.indices:
+                indices = None
+                if isinstance(self.first_array, ast_internal_classes.Data_Ref_Node):
+                    # it would be nice to return it directly from `parse_array`
+                    # but this requires refactoring across the entire module
+                    _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, self.first_array)
+                    indices = cur_val.part_ref.indices
+                else:
+                    indices = self.first_array.indices
+
+                for ind in indices:
                     pardecls = [i for i in mywalk(ind) if isinstance(i, ast_internal_classes.ParDecl_Node)]
                     len_pardecls_first_array += len(pardecls)
-                for ind in self.second_array.indices:
+
+                first_array_indices_count = len(indices)
+
+                indices = None
+                if isinstance(self.second_array, ast_internal_classes.Data_Ref_Node):
+                    # it would be nice to return it directly from `parse_array`
+                    # but this requires refactoring across the entire module
+                    _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, self.second_array)
+                    indices = cur_val.part_ref.indices
+                else:
+                    indices = self.second_array.indices
+
+                for ind in indices:
                     pardecls = [i for i in mywalk(ind) if isinstance(i, ast_internal_classes.ParDecl_Node)]
                     len_pardecls_second_array += len(pardecls)    
                 assert len_pardecls_first_array == len_pardecls_second_array
@@ -1352,7 +1371,7 @@ class Merge(LoopBasedReplacement):
                 self.mask_cond = arg
             else:
 
-                array_node = self._parse_array(node, node.args[2], dims_count=len(self.first_array.indices))
+                array_node = self._parse_array(node, node.args[2], dims_count=first_array_indices_count)
                 if array_node is not None:
 
                     self.mask_first_array = array_node
@@ -1386,7 +1405,12 @@ class Merge(LoopBasedReplacement):
             loop_ranges = []
             par_Decl_Range_Finder(self.second_array, loop_ranges, [], self.count, new_func_body,
                                   self.scope_vars, self.ast.structures, True, allow_scalars=True)
-            self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges)
+
+            if isinstance(self.second_array, ast_internal_classes.Data_Ref_Node):
+                _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, self.second_array)
+                self._adjust_array_ranges(node, cur_val.part_ref, self.loop_ranges, loop_ranges)
+            else:
+                self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges)
 
             # parse destination
 
@@ -1493,7 +1517,7 @@ class Merge(LoopBasedReplacement):
         first_arg = args[0]
         if first_arg.type == 'VOID':
             return None
-
+     
         return first_arg.sizes, first_arg.type
 
 

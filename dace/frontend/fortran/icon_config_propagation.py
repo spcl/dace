@@ -24,8 +24,10 @@ if __name__ == "__main__":
         entry_point_module = sys.argv[5]
         entry_point_function = sys.argv[6]
     else:
-        entry_point_module = 'radiation_mcica_lw'
-        entry_point_function = 'solver_mcica_lw'
+        #entry_point_module = 'radiation_mcica_lw'
+        #entry_point_function = 'solver_mcica_lw'
+        entry_point_function='velocity_tendencies'
+        entry_point_module='mo_velocity_advection'
 
     if already_parsed_ast:
         fortran_files = find_all_f90_files(Path(already_parsed_ast))

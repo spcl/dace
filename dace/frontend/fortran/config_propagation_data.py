@@ -1,6 +1,7 @@
 import json
+import sys
 from pathlib import Path
-from typing import List, Any, Dict, Optional, Generator, Iterable
+from typing import List, Any, Dict, Optional, Generator, Iterable, Tuple
 
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection, ConstInjection, SPEC
 
@@ -27,22 +28,6 @@ def deserialize(s: str) -> ConstInjection:
         else ConstInstanceInjection(scope, root, component, value)
 
 
-def deserialize_v2(s: str,
-                   typ: SPEC,
-                   scope: Optional[SPEC] = None) -> List[ConstTypeInjection]:
-    cfg = [tuple(ln.strip().split('=')) for ln in s.split('\n') if ln.strip()]
-    cfg = [(k.strip(), v.strip()) for k, v in cfg]
-    injs = []
-    for k, v in cfg:
-        kparts = tuple(k.split('.')[1:])  # Drop the first part that represents the type, but is not specific.
-        if v == 'T':
-            v = 'true'
-        elif v == 'F':
-            v = 'false'
-        injs.append(ConstTypeInjection(scope, typ, kparts, v))
-    return injs
-
-
 def find_all_config_injection_files(root: Path) -> Generator[Path, None, None]:
     if root.is_file():
         yield root
@@ -51,17 +36,29 @@ def find_all_config_injection_files(root: Path) -> Generator[Path, None, None]:
             yield f
 
 
-def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstTypeInjection, None, None]:
+def find_all_config_injections(ti_files: Iterable[Path]) -> Generator[ConstInjection, None, None]:
+    inj_map: Dict[Tuple[str, str], ConstInjection] = {}
     for f in ti_files:
         for l in f.read_text().strip().splitlines():
             if not l.strip():
                 continue
-            yield deserialize(l.strip())
+            x = deserialize(l.strip())
+            if len(x.component_spec) > 1:
+                print(f"{x}/{x.component_spec} must have just one-level for now; moving on...", file=sys.stderr)
+                continue
+            root = '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec)
+            comp = '.'.join(x.component_spec)
+            key = (root, comp)
+            if key in inj_map:
+                assert inj_map[key].value == x.value, \
+                    f"Inconsistent values in constant injections: {x} vs. {inj_map[key]}"
+            else:
+                inj_map[key] = x
+                yield x
 
 
-def ecrad_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstTypeInjection]:
-    cfgs = [Path(root).joinpath(f).read_text() for f in [
+def ecrad_config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstInjection]:
+    ti_files = [Path(root).joinpath(f) for f in [
         'config.ti', 'aerosol_optics.ti', 'cloud_optics.ti', 'gas_optics_lw.ti', 'gas_optics_sw.ti', 'pdf_sampler.ti',
         'aerosol.ti', 'cloud.ti', 'flux.ti', 'gas.ti', 'single_level.ti', 'thermodynamics.ti']]
-    injs = [deserialize(l.strip()) for c in cfgs for l in c.splitlines() if l.strip()]
-    return injs
+    return list(find_all_config_injections(ti_files))

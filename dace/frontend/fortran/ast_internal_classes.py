@@ -120,8 +120,15 @@ class Exit_Node(FNode):
 
 
 class Main_Program_Node(FNode):
-    _attributes = ("name",)
-    _fields = ("execution_part", "specification_part")
+    def __init__(self, name: 'Name_Node', specification_part: 'Specification_Part_Node',
+                 execution_part: 'Execution_Part_Node', **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.specification_part = specification_part
+        self.execution_part = execution_part
+
+    _attributes = ('name',)
+    _fields = ('execution_part', 'specification_part')
 
 
 class Module_Node(FNode):
@@ -479,7 +486,7 @@ class Symbol_Array_Decl_Node(Statement_Node):
 class Var_Decl_Node(Statement_Node):
     def __init__(self, name: str, type: str,
                  alloc: Optional[bool] = None, optional: Optional[bool] = None,
-                 sizes: Optional[List] = None, offsets: Optional[List] = None,
+                 sizes: Optional[List] = None, offsets: Optional[List[Union[int, Name_Node]]] = None,
                  init: Optional[FNode] = None, actual_offsets: Optional[List] = None,
                  typeref: Optional[Any] = None, kind: Optional[Any] = None,
                  **kwargs):
