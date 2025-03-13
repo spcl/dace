@@ -855,6 +855,32 @@ class StructToContainerGroups(ppl.Pass):
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
                                 name_replacements[oldname] = newname
 
+        sdfg.save("replaced.sdfgz", compress=True)
+
+        registered_names, registered_descs = map(list, zip(*registered_members))
+
+        # Collect unused arrays
+        used_containers = set()
+        def collect_used_containers(sdfg):
+            for state in sdfg.states():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.AccessNode):
+                        if node.data is not None and node.data in registered_names:
+                            used_containers.add(node.data)
+                    if isinstance(node, dace.nodes.NestedSDFG):
+                        collect_used_containers(node.sdfg)
+
+        collect_used_containers(sdfg)
+
+        unused_containers = set(registered_names) - used_containers
+
+        for container in unused_containers:
+            desc = sdfg.arrays[container]
+            sdfg.remove_data(container, validate=True)
+            registered_names.remove(container)
+            registered_members.remove((container, desc))
+            registered_descs.remove(desc)
+
         # Generate the flattener functions
         for name, desc in sdfg.arrays.items():
             if isinstance(desc, dace.data.Structure) and not isinstance(
@@ -862,7 +888,6 @@ class StructToContainerGroups(ppl.Pass):
             ):
                 self._generate_flattener(sdfg, name, desc, registered_members)
 
-        registered_names, registered_descs = zip(*registered_members)
 
         if self._interface_with_struct_copy:
             flatten_lib_node = Flattener(
@@ -1768,3 +1793,62 @@ class StructToContainerGroups(ppl.Pass):
 
     def annotates_memlets():
         return False
+
+# =================================================================================================
+# Utility functions
+
+def clean_trivial_views(sdfg: dace.SDFG):
+    repl_dict = dict()
+    for state in sdfg.states():
+        edges_to_rm = set()
+        edges_to_add = set()
+        nodes_to_rm = set()
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.AccessNode):
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    clean_container_groups(node.sdfg)
+        for edge in state.edges():
+            # AccessNode ->(views) AccessNode
+            # And the view covers the whole dimension of left hand array
+            if isinstance(edge.src, dace.nodes.AccessNode) and isinstance(
+                edge.dst, dace.nodes.AccessNode
+            ) and edge.src_conn is None and edge.dst_conn == "views":
+                subset = edge.data.subset
+                shape_as_subset = dace.subsets.Range.from_array(
+                    sdfg.arrays[edge.src.data].shape
+                )
+                if subset == shape_as_subset:
+                    # Rm view node
+                    for oe in state.out_edges(edge.dst):
+                        mem = copy.deepcopy(oe.data)
+                        mem.data = edge.src.data
+                        edges_to_add.add(
+                            (edge.src, oe.src_conn, oe.dst, oe.dst_conn, mem)
+                        )
+                        if oe.src_conn not in edge.src.out_connectors:
+                            edge.src.add_out_connector(oe.src_conn)
+                        edges_to_rm.add(
+                            oe
+                        )
+                    edges_to_rm.add(edge)
+                    nodes_to_rm.add(edge.dst)
+                    repl_dict[edge.dst.data] = edge.src.data
+
+        for edge in edges_to_rm:
+            state.remove_edge(edge)
+        for edge in edges_to_add:
+            state.add_edge(*edge)
+        for node in nodes_to_rm:
+            state.remove_node(node)
+
+        # Replace all occurences
+        state.replace_dict(repl_dict)
+        sdfg.replace_dict(repl_dict)
+
+
+
+
+
+
+
+# =================================================================================================
