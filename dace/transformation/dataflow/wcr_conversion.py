@@ -151,7 +151,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # If state fission is necessary to keep semantics, do it first
         if state.in_degree(input) > 0:
-            new_state = helpers.state_fission_after(sdfg, state, tasklet)
+            new_state = helpers.state_fission_after(state, tasklet)
         else:
             new_state = state
 
@@ -193,7 +193,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 match = re.match(r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' % (re.escape(outconn), re.escape(inconn), ops), cstr)
                 if match is None:
                     match = re.match(
-                            r'^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn)), cstr)
+                        r'^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn)), cstr)
                     if match is None:
                         func_rhs = r'^\s*%s\s*=\s*(%s)\((.*),\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs,
                                                                                  re.escape(inconn))
@@ -269,7 +269,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     outedge.data.wcr = f'lambda a,b: a {op} b'
             # At this point we are leading to an access node again and can
             # traverse further up
-    
+
 
 class WCRToAugAssign(transformation.SingleStateTransformation):
     """
@@ -292,7 +292,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         if expr_index == 0:
-            edges = graph.edges_between(self.tasklet, self.output) 
+            edges = graph.edges_between(self.tasklet, self.output)
         else:
             edges = graph.edges_between(self.tasklet, self.map_exit)
         if len(edges) != 1:
@@ -306,7 +306,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             return False
 
         return True
-    
+
     def apply(self, state: SDFGState, sdfg: SDFG):
         if self.expr_index == 0:
             edge = state.edges_between(self.tasklet, self.output)[0]
@@ -320,7 +320,9 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edge.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            scal_name, scal_desc = sdfg.add_scalar('tmp', sdfg.arrays[self.output.data].dtype, transient=True,
+            scal_name, scal_desc = sdfg.add_scalar('tmp',
+                                                   sdfg.arrays[self.output.data].dtype,
+                                                   transient=True,
                                                    find_new_name=True)
             state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in1', Memlet.from_array(scal_name, scal_desc))
             state.add_edge(in_access, None, new_tasklet, '__in2', copy.deepcopy(edge.data))
@@ -340,10 +342,11 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 e.data.wcr = None
             in_access = state.add_access(self.output.data)
             new_tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, f"__out = {code}")
-            scal_name, scal_desc = sdfg.add_scalar('tmp', sdfg.arrays[self.output.data].dtype, transient=True,
+            scal_name, scal_desc = sdfg.add_scalar('tmp',
+                                                   sdfg.arrays[self.output.data].dtype,
+                                                   transient=True,
                                                    find_new_name=True)
             state.add_edge(self.tasklet, edge.src_conn, new_tasklet, '__in1', Memlet.from_array(scal_name, scal_desc))
             state.add_memlet_path(in_access, map_entry, new_tasklet, memlet=copy.deepcopy(edge.data), dst_conn='__in2')
             state.add_edge(new_tasklet, '__out', self.map_exit, edge.dst_conn, edge.data)
             state.remove_edge(edge)
-        
