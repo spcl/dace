@@ -4,6 +4,7 @@ from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
 from .dead_dataflow_elimination import DeadDataflowElimination
 from .dead_state_elimination import DeadStateElimination
+from .duplicate_const_arrays import DuplicateConstArrays
 from .fusion_inline import FuseStates, InlineSDFGs
 from .optional_arrays import OptionalArrayInference
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
