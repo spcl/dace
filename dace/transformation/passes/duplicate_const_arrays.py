@@ -364,3 +364,5 @@ class DuplicateConstArrays(ppl.Pass):
                     assert isinstance(b[0].code, str)
                     for src,dst in gpu_host_name_map.items():
                         b[0].code = b[0].code.replace(src,dst)
+
+        pipeline_results["const_arrays"] = const_arrays
