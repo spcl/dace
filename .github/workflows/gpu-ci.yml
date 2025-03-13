@@ -13,9 +13,8 @@ env:
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-
 concurrency:
-  group: ci-${{github.ref}}-${{github.event.pull_request.number || github.run_number}}
+  group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
 
 jobs:

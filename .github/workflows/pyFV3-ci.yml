@@ -17,6 +17,10 @@ defaults:
     run:
       shell: bash
 
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
 jobs:
     build_and_validate_pyFV3:
       if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"

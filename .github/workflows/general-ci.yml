@@ -9,7 +9,7 @@ on:
     branches: [ main, ci-fix ]
 
 concurrency:
-  group: ci-${{github.ref}}-${{github.event.pull_request.number || github.run_number}}
+  group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
 
 jobs:
