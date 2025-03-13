@@ -102,8 +102,12 @@ class RecodeAttributeNodes(ast.NodeTransformer):
             idx = idx.strip('()')
         idx_syms: Set[str] = set()
         if not isinstance(val.slice, ast.Name):
-            for fsym in pystr_to_symbolic(idx).free_symbols:
-                idx_syms.add(str(fsym))
+            symbolic_idx = pystr_to_symbolic(idx)
+            if not isinstance(symbolic_idx, list):
+                symbolic_idx = [symbolic_idx]
+            for sym in symbolic_idx:
+                for fsym in sym.free_symbols:
+                    idx_syms.add(str(fsym))
         else:
             idx_syms.add(idx)
         if any([isym in self.tasklet.in_connectors or isym in self.tasklet.out_connectors for isym in idx_syms]):
