@@ -628,8 +628,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         current_node = view_node
                         current_desc = current_desc.members[member_name]
                         current_subset= view_edge.data.subset
-                        if i==len(view_nodes)-1:
-                            data_path.append(tmp_memlet_part)
+                        #if i==len(view_nodes)-1:
+                        data_path.append(tmp_memlet_part)
                     else:
                         # View on a subset
                         
