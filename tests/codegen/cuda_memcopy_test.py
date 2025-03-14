@@ -79,7 +79,7 @@ def _perform_2d_gpu_copy_test(c_order: bool, ):
     m = re.search(r'(cuda|hip)Memcpy2DAsync\b', code)
     assert m is not None
 
-    # Now run the sdfg.
+    # Generate input data.
     ref = {
         "A": cp.array(cp.random.rand(20, 30), dtype=cp.float64, order="C" if c_order else "F"),
         "B": cp.array(cp.random.rand(20, 30), dtype=cp.float64, order="C" if c_order else "F"),
@@ -158,7 +158,7 @@ def _perform_1d_gpu_copy(
         m = re.search(r'(cuda|hip)Memcpy2DAsync\b', code)
         assert m is not None
 
-    # Now run the sdfg.
+    # Generate input data.
     ref = {
         "A": cp.array(cp.random.rand(20, 20), dtype=cp.float64, order="C"),
         "B": cp.array(cp.random.rand(20, 20), dtype=cp.float64, order="C"),
@@ -171,6 +171,73 @@ def _perform_1d_gpu_copy(
         ref["B"][3, 0:8] = src_subset
     else:
         ref["B"][0:8, 4] = src_subset
+
+    # Now run the SDFG
+    csdfg(**res)
+
+    assert all(cp.all(ref[k] == res[k]) for k in ref.keys())
+
+
+def _make_pseudo_1d_copy_sdfg(c_order: bool, ) -> dace.SDFG:
+    """An SDFG that performs a 2D copy that can be turned into a 1d copy.
+    """
+    sdfg = dace.SDFG(f'gpu_pseudo_1d_copy_{"corder" if c_order else "forder"}_sdfg')
+    state = sdfg.add_state(is_start_block=True)
+
+    for aname in 'AB':
+        sdfg.add_array(
+            name=aname,
+            shape=(20, 30),
+            dtype=dace.float64,
+            storage=dace.StorageType.GPU_Global,
+            transient=False,
+            strides=((30, 1) if c_order else (1, 20)),
+        )
+
+    cpy_subset = "1:18, 0:30" if c_order else "0:20, 2:29"
+    state.add_nedge(
+        state.add_access("A"),
+        state.add_access("B"),
+        dace.Memlet(f"A[{cpy_subset}] -> [{cpy_subset}]"),
+    )
+    sdfg.validate()
+
+    return sdfg
+
+
+def _perform_pseudo_1d_copy_test(c_order: bool):
+    sdfg = _make_pseudo_1d_copy_sdfg(c_order=c_order)
+    assert count_node(sdfg, dace_nodes.AccessNode) == 2
+    assert count_node(sdfg, dace_nodes.MapEntry) == 0
+
+    # Now generate the code.
+    csdfg = sdfg.compile()
+
+    # Ensure that the copy was not turned into a Map
+    assert count_node(csdfg.sdfg, dace_nodes.AccessNode) == 2
+    assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
+
+    code = sdfg.generate_code()[0].clean_code
+    m = re.search(r'(cuda|hip)MemcpyAsync\b', code)
+    assert m is not None
+
+    # Generate input data.
+    ref = {
+        "A": cp.array(cp.random.rand(20, 30), dtype=cp.float64, order="C" if c_order else "F"),
+        "B": cp.array(cp.random.rand(20, 30), dtype=cp.float64, order="C" if c_order else "F"),
+    }
+
+    # We can not use `deepcopy` or `.copy()` because this would set the strides to `C` order.
+    res = {}
+    for name in ref.keys():
+        res[name] = cp.empty_like(ref[name])
+        res[name][:] = ref[name][:]
+
+    # Perform the reference computation.
+    if c_order:
+        ref["B"][1:18, 0:30] = ref["A"][1:18, 0:30]
+    else:
+        ref["B"][0:20, 2:29] = ref["A"][0:20, 2:29]
 
     # Now run the SDFG
     csdfg(**res)
@@ -325,6 +392,16 @@ def test_gpu_1d_copy_col_row():
     _perform_1d_gpu_copy(src_row=False, dst_row=True)
 
 
+@pytest.mark.gpu
+def test_gpu_pseudo_1d_copy_c_order():
+    _perform_pseudo_1d_copy_test(c_order=True)
+
+
+@pytest.mark.gpu
+def test_gpu_pseudo_1d_copy_f_order():
+    _perform_pseudo_1d_copy_test(c_order=False)
+
+
 if __name__ == '__main__':
     test_gpu_shared_to_global_1D()
     test_gpu_shared_to_global_1D_accumulate()
@@ -335,3 +412,5 @@ if __name__ == '__main__':
     test_gpu_1d_copy_col_row()
     test_gpu_1d_copy_col_col()
     test_gpu_1d_copy()
+    test_gpu_pseudo_1d_copy_c_order()
+    test_gpu_pseudo_1d_copy_f_order()

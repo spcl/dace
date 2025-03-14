@@ -987,11 +987,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
                 is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
 
-            # Test if the 2D copy can be expressed as a continuous 1d copy.
-            #  NOTE: The `memlet_copy_to_absolute_strides()` function also handles this
-            #  case and naturally outputs strides and shapes that are degenerated.
-            #  This code remains here for backward compatibility.
-            #  TODO: Find a way to test it.
+            # Test if it is possible to transform a 2D copy into a 1D copy, this is possible if
+            #  the allocation happens to be continuous.
+            # NOTE: It seems that the `memlet_copy_to_absolute_strides()` function already does
+            #   this, the code below is kept if it is still needed, but somebody, who knows the
+            #   code generator should look at it. There are even tests for that, see
+            #   `cuda_memcopy_test.py::test_gpu_pseudo_1d_copy_f_order`, but they most likely
+            #   do not test the code below but the `memlet_copy_to_absolute_strides()` function.
+            # TODO: Figuring out if this can be removed.
             continuous_2d_copy = False
             if dims == 2 and (is_fortran_order or is_c_order):
                 try:
