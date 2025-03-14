@@ -657,6 +657,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
 
     # Memlet checks
+    #  TODO: The `eid` is wrong. Here, `eid` is an enumerate that is based on all edges with a
+    #   STATE. However, in `InvalidSDFGEdgeError.__str__()` the edge is retrieved by accessing
+    #   the list of edges that are stored inside the SDFG, which is different.
     for eid, e in enumerate(state.edges()):
         # Reference check
         if id(e) in references:
