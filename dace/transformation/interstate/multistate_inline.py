@@ -620,13 +620,17 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         member_name = view_edge.data.data.split(".")[-1]
                         not_a_struct = False
                         memlet_part = member_name
+                        current_desc = current_desc.members[member_name]
                         if i < len(view_nodes) - 1:
-                            memlet_part += "[" + view_edge.data.subset.__str__() + "]"
+                            if len(current_desc.shape) == 0 or (len(current_desc.shape) == 1 and current_desc.shape[0] == 1):
+                                memlet_part += ""
+                            else:
+                                memlet_part += "[" + view_edge.data.subset.__str__() + "]"
                         
                         tmp_memlet_part = memlet_part
 
                         current_node = view_node
-                        current_desc = current_desc.members[member_name]
+                        
                         current_subset= view_edge.data.subset
                         #if i==len(view_nodes)-1:
                         data_path.append(tmp_memlet_part)
