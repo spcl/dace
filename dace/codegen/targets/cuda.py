@@ -1026,7 +1026,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     for d in range(dims - 2):
                         callsite_stream.write("}")
 
-            if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
+            elif dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 copysize = ' * '.join(_topy(copy_shape))
                 array_length = copysize
                 copysize += ' * sizeof(%s)' % dtype.ctype
@@ -1072,14 +1072,49 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                      'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, sym2cpp(
                          copy_shape[0]), self.backend, src_location, dst_location, cudastream), cfg, state_id,
                     [src_node, dst_node])
-            elif dims == 2:
+
+            elif dims == 2 and (src_strides[-1] == 1 and dst_strides[-1] == 1):
+                # Copying a 2D array that are in C order, i.e. last stride is 1.
                 callsite_stream.write(
-                    'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
-                    (self.backend, dst_expr, _topy(dst_strides[0]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                     src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
-                     sym2cpp(copy_shape[1]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, sym2cpp(
-                         copy_shape[0]), self.backend, src_location, dst_location, cudastream), cfg, state_id,
-                    [src_node, dst_node])
+                    'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
+                    .format(
+                        backend=self.backend,
+                        dst=dst_expr,
+                        dst_stride=f'({_topy(dst_strides[0])}) * sizeof({dst_node.desc(sdfg).dtype.ctype})',
+                        src=src_expr,
+                        src_stride=f'({sym2cpp(src_strides[0])}) * sizeof({src_node.desc(sdfg).dtype.ctype})',
+                        width=f'({sym2cpp(copy_shape[1])}) * sizeof({dst_node.desc(sdfg).dtype.ctype})',
+                        height=sym2cpp(copy_shape[0]),
+                        kind=f'{self.backend}Memcpy{src_location}To{dst_location}',
+                        stream=cudastream,
+                    ),
+                    cfg,
+                    state_id,
+                    [src_node, dst_node],
+                )
+            elif dims == 2 and (src_strides[0] == 1 and dst_strides[0] == 1):
+                # Copying a 2D array into a 2D array that is in FORTRAN order, i.e. first stride
+                #  is one. The CUDA API can not handle such cases directly, however, by "transposing"
+                #  it is possible to use `Memcyp2DAsync`.
+                callsite_stream.write(
+                    'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
+                    .format(
+                        backend=self.backend,
+                        dst=dst_expr,
+                        dst_stride=f'({_topy(dst_strides[1])}) * sizeof({dst_node.desc(sdfg).dtype.ctype})',
+                        src=src_expr,
+                        src_stride=f'({sym2cpp(src_strides[1])}) * sizeof({src_node.desc(sdfg).dtype.ctype})',
+                        width=f'({sym2cpp(copy_shape[0])}) * sizeof({dst_node.desc(sdfg).dtype.ctype})',
+                        height=sym2cpp(copy_shape[1]),
+                        kind=f'{self.backend}Memcpy{src_location}To{dst_location}',
+                        stream=cudastream,
+                    ),
+                    cfg,
+                    state_id,
+                    [src_node, dst_node],
+                )
+            else:
+                raise NotImplementedError("The requested copy operation is not implemented.")
 
             # Post-copy synchronization
             if is_sync:
