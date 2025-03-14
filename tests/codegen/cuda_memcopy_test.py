@@ -81,8 +81,8 @@ def _perform_2d_gpu_copy_test(c_order: bool, ):
 
     # Now run the sdfg.
     ref = {
-        "A": cp.array(cp.zeros((20, 30)), dtype=cp.float64, order="C" if c_order else "F"),
-        "B": cp.array(cp.ones((20, 30)), dtype=cp.float64, order="C" if c_order else "F"),
+        "A": cp.array(cp.random.rand(20, 30), dtype=cp.float64, order="C" if c_order else "F"),
+        "B": cp.array(cp.random.rand(20, 30), dtype=cp.float64, order="C" if c_order else "F"),
     }
 
     # We can not use `deepcopy` or `.copy()` because this would set the strides to `C` order.
@@ -97,6 +97,80 @@ def _perform_2d_gpu_copy_test(c_order: bool, ):
 
     # Now apply the operation on the reference
     ref["B"][2:7, 3:9] = ref["A"][1:6, 2:8]
+
+    # Now run the SDFG
+    csdfg(**res)
+
+    assert all(cp.all(ref[k] == res[k]) for k in ref.keys())
+
+
+def _make_1d_gpu_copy(
+    src_row: bool,
+    dst_row: bool,
+) -> dace.SDFG:
+    sdfg = dace.SDFG(f'gpu_1d_copy_{"row" if src_row else "col"}_{"row" if src_row else "col"}_copy_sdfg')
+    state = sdfg.add_state(is_start_block=True)
+
+    for aname in 'AB':
+        sdfg.add_array(
+            name=aname,
+            shape=(20, 20),
+            dtype=dace.float64,
+            storage=dace.StorageType.GPU_Global,
+            transient=False,
+        )
+
+    src_subset = "1, 1:9" if src_row else "1:9, 2"
+    dst_subset = "3, 0:8" if dst_row else "0:8, 4"
+
+    state.add_nedge(
+        state.add_access("A"),
+        state.add_access("B"),
+        dace.Memlet(f"A[{src_subset}] -> [{dst_subset}]"),
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def _perform_1d_gpu_copy(
+    src_row: bool,
+    dst_row: bool,
+):
+    sdfg = _make_1d_gpu_copy(src_row=src_row, dst_row=dst_row)
+    assert count_node(sdfg, dace_nodes.AccessNode) == 2
+    assert count_node(sdfg, dace_nodes.MapEntry) == 0
+
+    # Now generate the code.
+    csdfg = sdfg.compile()
+
+    # Ensure that the copy was not turned into a Map
+    assert count_node(csdfg.sdfg, dace_nodes.AccessNode) == 2
+    assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
+
+    # It will always result in a call to `Memcpy2D` except the source and the destination
+    #  operates on rows, then it is a simple 1D copy.
+    if src_row and dst_row:
+        code = sdfg.generate_code()[0].clean_code
+        m = re.search(r'(cuda|hip)MemcpyAsync\b', code)
+        assert m is not None
+    else:
+        code = sdfg.generate_code()[0].clean_code
+        m = re.search(r'(cuda|hip)Memcpy2DAsync\b', code)
+        assert m is not None
+
+    # Now run the sdfg.
+    ref = {
+        "A": cp.array(cp.random.rand(20, 20), dtype=cp.float64, order="C"),
+        "B": cp.array(cp.random.rand(20, 20), dtype=cp.float64, order="C"),
+    }
+    res = {k: v.copy() for k, v in ref.items()}
+
+    # Now perform the reference operation
+    src_subset = ref["A"][1, 1:9] if src_row else ref["A"][1:9, 2]
+    if dst_row:
+        ref["B"][3, 0:8] = src_subset
+    else:
+        ref["B"][0:8, 4] = src_subset
 
     # Now run the SDFG
     csdfg(**res)
@@ -180,12 +254,34 @@ def test_gpu_shared_to_global_1D_accumulate():
     assert m is not None
 
 
+@pytest.mark.gpu
 def test_2d_c_order_gpu_copy():
     _perform_2d_gpu_copy_test(c_order=True)
 
 
+@pytest.mark.gpu
 def test_2d_f_order_gpu_copy():
     _perform_2d_gpu_copy_test(c_order=False)
+
+
+@pytest.mark.gpu
+def test_gpu_1d_copy_row_row():
+    _perform_1d_gpu_copy(src_row=True, dst_row=True)
+
+
+@pytest.mark.gpu
+def test_gpu_1d_copy_row_col():
+    _perform_1d_gpu_copy(src_row=True, dst_row=False)
+
+
+@pytest.mark.gpu
+def test_gpu_1d_copy_col_col():
+    _perform_1d_gpu_copy(src_row=False, dst_row=False)
+
+
+@pytest.mark.gpu
+def test_gpu_1d_copy_col_row():
+    _perform_1d_gpu_copy(src_row=False, dst_row=True)
 
 
 if __name__ == '__main__':
@@ -193,3 +289,7 @@ if __name__ == '__main__':
     test_gpu_shared_to_global_1D_accumulate()
     test_2d_c_order_copy()
     test_2d_f_order_copy()
+    test_gpu_1d_copy_row_row()
+    test_gpu_1d_copy_row_col()
+    test_gpu_1d_copy_col_row()
+    test_gpu_1d_copy_col_col()
