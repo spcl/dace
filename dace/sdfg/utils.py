@@ -796,6 +796,8 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
         node = get_view_node(state, node)
         if node is None or not isinstance(node, nd.AccessNode):
             return None
+        if node in result:
+            break
         desc = sdfg.arrays[node.data]
         result.append(node)
     return result
@@ -865,7 +867,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edges[0]
     if len(out_edges) == len(in_edges) and len(out_edges) != 1:
         return None
-
+    
     in_edge = in_edges[0]
     out_edge = out_edges[0] if len(out_edges) > 0 else None
 
@@ -876,6 +878,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     src_is_data, dst_is_data = False, False
     if isinstance(inmpath[0].src, nd.AccessNode):
         src_is_data = True
+
     if outmpath and isinstance(outmpath[-1].dst, nd.AccessNode):
         dst_is_data = True
 
