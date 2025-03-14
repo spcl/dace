@@ -3,17 +3,17 @@ DaCe: Data-Centric Parallel Programming
 
 *Decoupling domain science from performance optimization.*
 
-DaCe is a parallel programming framework that takes code in Python/NumPy and 
-other programming languages, and maps it to high-performance **CPU, GPU, and FPGA** 
-programs, which can be optimized to achieve state-of-the-art. Internally, DaCe 
-uses the :ref:`sdfg` *data-centric intermediate 
-representation*: A transformable, interactive representation of code based on 
+DaCe is a parallel programming framework that takes code in Python/NumPy and
+other programming languages, and maps it to high-performance **CPU, GPU, and FPGA**
+programs, which can be optimized to achieve state-of-the-art. Internally, DaCe
+uses the :ref:`sdfg` *data-centric intermediate
+representation*: A transformable, interactive representation of code based on
 data movement.
-Since the input code and the SDFG are separate, it is possible to :ref:`optimize a 
-program <optimization>` without changing its source, so that it stays 
+Since the input code and the SDFG are separate, it is possible to :ref:`optimize a
+program <optimization>` without changing its source, so that it stays
 readable. On the other hand, the used optimizations are customizable and user-extensible,
 so they can be written once and reused in many applications.
-With data-centric parallel programming, we enable **direct knowledge transfer** 
+With data-centric parallel programming, we enable **direct knowledge transfer**
 of performance optimization, regardless of the application or the target processor.
 
 DaCe generates high-performance programs for:
@@ -35,14 +35,14 @@ If you use DaCe, cite us:
       booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
       series = {SC '19}
     }
-  
+
 
 
 
 .. toctree::
    :caption: User Guide
    :maxdepth: 2
-   
+
    setup/quickstart
    setup/installation
    setup/config

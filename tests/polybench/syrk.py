@@ -30,8 +30,10 @@ def init_array(C, A, alpha, beta, n, m):
 
 @dace.program(datatype[N, N], datatype[N, M], datatype[1], datatype[1])
 def syrk(C, A, alpha, beta):
+
     @dace.mapscope
     def mult_c_rows(i: _[0:N]):
+
         @dace.map
         def mult_c_cols(j: _[0:i + 1]):
             ic << C[i, j]
@@ -41,6 +43,7 @@ def syrk(C, A, alpha, beta):
 
     @dace.mapscope
     def compute(i: _[0:N], k: _[0:M]):
+
         @dace.map
         def compute_elem(j: _[0:i + 1]):
             ialpha << alpha

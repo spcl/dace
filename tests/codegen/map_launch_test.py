@@ -1,4 +1,3 @@
-
 from typing import Union
 import dace
 import numpy as np
@@ -14,19 +13,19 @@ except ImportError:
 
 
 def _make_sdfg(
-        lb: Union[str, int],
-        ub: Union[str, int],
-        on_gpu: bool,
+    lb: Union[str, int],
+    ub: Union[str, int],
+    on_gpu: bool,
 ) -> tuple[dace.SDFG, dace.nodes.MapEntry]:
     sdfg = dace.SDFG("map_test_" + ("gpu" if on_gpu else "cpu") + f"_{int(time.time())}")
     state = sdfg.add_state(is_start_block=True)
 
     for name in ["i0", "o0"]:
         sdfg.add_array(
-                name,
-                shape=(10,),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=False,
         )
         if on_gpu:
             sdfg.arrays[name].storage = dace.dtypes.StorageType.GPU_Global
@@ -38,13 +37,13 @@ def _make_sdfg(
             assert isinstance(b, int)
 
     _, me, _ = state.add_mapped_tasklet(
-            "map",
-            map_ranges={"__i": f"{lb}:{ub}"},
-            inputs={"__in": dace.Memlet("i0[__i + 5]")},
-            code="__out = __in + 10.0",
-            outputs={"__out": dace.Memlet("o0[__i + 5]")},
-            external_edges=True,
-            )
+        "map",
+        map_ranges={"__i": f"{lb}:{ub}"},
+        inputs={"__in": dace.Memlet("i0[__i + 5]")},
+        code="__out = __in + 10.0",
+        outputs={"__out": dace.Memlet("o0[__i + 5]")},
+        external_edges=True,
+    )
     if on_gpu:
         me.map.schedule = dace.dtypes.ScheduleType.GPU_Device
         # If you change this value, for example to `(32, 1, 1)`, to prove something,
@@ -57,10 +56,10 @@ def _make_sdfg(
 
 
 def _run_test(
-        lb: Union[str, int],
-        ub: Union[str, int],
-        on_gpu: bool,
-        **kwargs,
+    lb: Union[str, int],
+    ub: Union[str, int],
+    on_gpu: bool,
+    **kwargs,
 ):
     xp = cp if on_gpu else np
 
@@ -69,8 +68,8 @@ def _run_test(
 
     sdfg, me = _make_sdfg(lb=lb, ub=ub, on_gpu=on_gpu)
     args = {
-            "i0": xp.array(xp.random.rand(10), dtype=xp.float64, copy=True),
-            "o0": xp.array(xp.random.rand(10), dtype=xp.float64, copy=True),
+        "i0": xp.array(xp.random.rand(10), dtype=xp.float64, copy=True),
+        "o0": xp.array(xp.random.rand(10), dtype=xp.float64, copy=True),
     }
     args.update(kwargs)
     org_args = copy.deepcopy(args)

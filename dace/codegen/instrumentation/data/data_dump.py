@@ -124,9 +124,8 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         local_stream.write(condition_preamble, cfg, state_id)
         defined_symbols = state.defined_symbols()
         for sym, _ in defined_symbols.items():
-            local_stream.write(
-                f'__state->serializer->save_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n', cfg, state_id
-            )
+            local_stream.write(f'__state->serializer->save_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n', cfg,
+                               state_id)
         local_stream.write(condition_postamble, cfg, state_id)
 
     def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.AccessNode,
@@ -242,8 +241,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         for sym, sym_type in defined_symbols.items():
             local_stream.write(
                 f'{cpp.sym2cpp(sym)} = __state->serializer->restore_symbol<{sym_type.ctype}>("{sym}", "{state_id}");\n',
-                cfg, state_id
-            )
+                cfg, state_id)
         local_stream.write(condition_postamble, cfg, state_id)
 
     def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.AccessNode,

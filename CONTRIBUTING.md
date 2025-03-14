@@ -8,7 +8,7 @@ development and the code review process.
 
 We follow the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html), with a few notable exceptions:
 
-* **"Power Features"**: We like Python power features. We use them both externally (to make the Python/Numpy frontend easy to use) and internally. Use of any Python power feature that increases productivity is allowed. 
+* **"Power Features"**: We like Python power features. We use them both externally (to make the Python/Numpy frontend easy to use) and internally. Use of any Python power feature that increases productivity is allowed.
     * **Note on compatibility**: DaCe currently supports Python versions 3.6 and above, please make sure that the feature is supported in those versions, and if not ([dataclasses](https://docs.python.org/3/library/dataclasses.html) for example), please make sure to add a backwards-compatibility dependency. [Example](https://github.com/spcl/dace/blob/205d7c911a74e507d2fcbcc4b6cb5819b026648a/setup.py#L71)
 * **Type Hints**: New functions must include proper Python [typing information](https://docs.python.org/3/library/typing.html), in order to support type checking and smoother development.
 * **Importing classes and functions directly**: This is disallowed, with the exception of directly importing the following main graph components (which are heavily reused throughout the framework): `SDFG, SDFGState, Memlet, InterstateEdge`.
@@ -44,7 +44,7 @@ For automatic styling, we use the [yapf](https://github.com/google/yapf) file fo
 
 ## Tests
 
-We use [pytest](https://www.pytest.org/) for our testing infrastructure. All tests under the `tests/` folder 
+We use [pytest](https://www.pytest.org/) for our testing infrastructure. All tests under the `tests/` folder
 (and any subfolders within) are automatically read and run. The files must be under the right subfolder
 based on the component being tested (e.g., `tests/sdfg/` for IR-related tests), and must have the right
 suffix: either `*_test.py` or `*_cudatest.py`. See [pytest.ini](https://github.com/spcl/dace/blob/main/pytest.ini)
@@ -86,4 +86,3 @@ Use Python docstrings for function/class/file documentation. Since we use [Sphin
 
 File documentation is mostly one or a few sentences documenting the purpose and elements
 in a file. If your file contains more than one class/function, which share a general theme that should be documented, include a docstring for the Python file containing a general explanation (and ideally an example of the topic). [Example](dace/codegen/control_flow.py)
-

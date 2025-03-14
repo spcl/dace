@@ -38,6 +38,7 @@ def test_fusion_with_transient_fpga():
     assert np.allclose(A, expected)
     return sdfg
 
+
 @xilinx_test(assert_ii_1=True)
 def test_fusion_with_transient_fpga_decoupled():
 
@@ -51,7 +52,6 @@ def test_fusion_with_transient_fpga_decoupled():
         sdfg(A=A)
     assert np.allclose(A, expected)
     return sdfg
-
 
 
 if __name__ == "__main__":

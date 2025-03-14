@@ -14,11 +14,11 @@ from dace.transformation import pass_pipeline as ppl
 from dace import data as dt
 from dace import dtypes
 
-
 import sys
 from typing import Literal
 
 dirtype = Literal['in', 'out']
+
 
 class RecodeAttributeNodes(ast.NodeTransformer):
 
@@ -46,8 +46,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         struct: dt.Structure = self.data
         if not node.attr in struct.members:
             raise RuntimeError(
-                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
-            )
+                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition')
 
         # Gather a new connector name and add the appropriate connector.
         new_connector_name = val.id + '_' + node.attr
@@ -78,13 +77,11 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         if self.direction == 'in':
             self.state.add_edge(self.data_node, None, view_node, 'views',
                                 Memlet.from_array(self.data_node.data + '.' + node.attr, self.data.members[node.attr]))
-            self.state.add_edge(view_node, None, self.tasklet, new_connector_name,
-                                Memlet.from_array(view_name, view))
+            self.state.add_edge(view_node, None, self.tasklet, new_connector_name, Memlet.from_array(view_name, view))
         else:
             self.state.add_edge(view_node, 'views', self.data_node, None,
                                 Memlet.from_array(self.data_node.data + '.' + node.attr, self.data.members[node.attr]))
-            self.state.add_edge(self.tasklet, new_connector_name, view_node, None,
-                                Memlet.from_array(view_name, view))
+            self.state.add_edge(self.tasklet, new_connector_name, view_node, None, Memlet.from_array(view_name, view))
         return self.generic_visit(replacement)
 
     def _handle_sliced_access(self, node: ast.Attribute, val: ast.Slice) -> Any:
@@ -93,8 +90,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
             raise ValueError('Invalid ContainerView, can only lift ContainerViews to Structures')
         if not node.attr in struct.members:
             raise RuntimeError(
-                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
-            )
+                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition')
 
         # Gather a new connector name and add the appropriate connector.
         new_connector_name = node.value.value.id + '_slice_' + node.attr
@@ -181,12 +177,13 @@ class RecodeAttributeNodes(ast.NodeTransformer):
                     self.state.add_edge(slice_view_node, 'views', self.data_node, None, self.memlet)
                     self.state.add_edge(self.tasklet, self.connector, slice_view_node, None,
                                         Memlet.from_array(slice_view_name, slice_view))
-            elif (isinstance(node.value, ast.Subscript) and isinstance(node.value.value, ast.Name) and
-                  node.value.value.id == self.connector):
+            elif (isinstance(node.value, ast.Subscript) and isinstance(node.value.value, ast.Name)
+                  and node.value.value.id == self.connector):
                 return self._handle_sliced_access(node, node.value)
             return self.generic_visit(node)
         else:
             raise NotImplementedError()
+
 
 class InterstateEdgeRecoder(ast.NodeTransformer):
 
@@ -197,8 +194,11 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
     views_constructed: Set[str]
     _lifting_state: SDFGState
 
-    def __init__(self, sdfg: SDFG, element: Union[Edge[InterstateEdge], Tuple[ControlFlowBlock, CodeBlock]],
-                 data_name: str, data: Union[dt.Structure, dt.ContainerArray],
+    def __init__(self,
+                 sdfg: SDFG,
+                 element: Union[Edge[InterstateEdge], Tuple[ControlFlowBlock, CodeBlock]],
+                 data_name: str,
+                 data: Union[dt.Structure, dt.ContainerArray],
                  lifting_state: Optional[SDFGState] = None):
         self.sdfg = sdfg
         self.element = element
@@ -211,8 +211,7 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
         struct: dt.Structure = self.data
         if not node.attr in struct.members:
             raise RuntimeError(
-                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
-            )
+                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition')
 
         # Insert the appropriate view, if it does not exist yet.
         view_name = 'v_' + self.data_name + '_' + node.attr
@@ -241,8 +240,7 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
             raise ValueError('Invalid ContainerArray, can only lift ContainerArrays to Structures')
         if not node.attr in struct.members:
             raise RuntimeError(
-                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
-            )
+                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition')
 
         # We first lift the slice into a separate view, and then the attribute access.
         slice_view_name = 'v_' + self.data_name + '_slice'
@@ -308,9 +306,9 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
         if isinstance(self.data, dt.Structure):
             if isinstance(node.value, ast.Name) and node.value.id == self.data_name:
                 return self._handle_simple_name_access(node)
-            elif (isinstance(node.value, ast.Subscript) and isinstance(node.value.slice, ast.Constant) and
-                  node.value.slice.value == 0 and isinstance(node.value.value, ast.Name) and
-                  node.value.value.id == self.data_name):
+            elif (isinstance(node.value, ast.Subscript) and isinstance(node.value.slice, ast.Constant)
+                  and node.value.slice.value == 0 and isinstance(node.value.value, ast.Name)
+                  and node.value.value.id == self.data_name):
                 return self._handle_simple_name_access(node)
             return self.generic_visit(node)
         else:
@@ -331,8 +329,8 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
                 slice_view_node = lift_state.add_access(slice_view_name)
                 lift_state.add_edge(data_node, None, slice_view_node, 'views',
                                     Memlet.from_array(self.data_name, self.sdfg.data(self.data_name)))
-            elif (isinstance(node.value, ast.Subscript) and isinstance(node.value.value, ast.Name) and
-                  node.value.value.id == self.data_name):
+            elif (isinstance(node.value, ast.Subscript) and isinstance(node.value.value, ast.Name)
+                  and node.value.value.id == self.data_name):
                 return self._handle_sliced_access(node, node.value)
             return self.generic_visit(node)
 
@@ -345,6 +343,7 @@ def _data_containers_in_ast(node: ast.AST, arrnames: Set[str]) -> Set[str]:
             if data in arrnames:
                 result.add(data)
     return result
+
 
 class LiftStructViews(ppl.Pass):
     """
@@ -470,9 +469,10 @@ class LiftStructViews(ppl.Pass):
                     if isinstance(block, SDFGState):
                         for node in block.data_nodes():
                             cont = cfg.sdfg.data(node.data)
-                            if (isinstance(cont, (dt.Structure, dt.StructureView, dt.StructureReference)) or
-                                (isinstance(cont, (dt.ContainerView, dt.ContainerArray, dt.ContainerArrayReference)) and
-                                isinstance(cont.stype, dt.Structure))):
+                            if (isinstance(cont, (dt.Structure, dt.StructureView, dt.StructureReference))
+                                    or (isinstance(cont,
+                                                   (dt.ContainerView, dt.ContainerArray, dt.ContainerArrayReference))
+                                        and isinstance(cont.stype, dt.Structure))):
                                 for oedge in block.out_edges(node):
                                     if isinstance(oedge.dst, nd.Tasklet):
                                         res = self._lift_tasklet(block, node, oedge.dst, oedge, cont, oedge.dst_conn,

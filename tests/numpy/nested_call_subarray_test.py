@@ -19,6 +19,7 @@ def nested_call_subarray_prog(a: dace.float32[2], b: dace.float32[2]):
 
 
 def test_ncs_local_program():
+
     @dace.program
     def dace_softmax_localprog(X_in: dace.float32[N], X_out: dace.float32[N]):
         tmp_max = dace.reduce(lambda a, b: a + b, X_in, identity=0)
@@ -43,6 +44,7 @@ def test_nested_sa_call():
 
 
 def test_nested_selfcopy_slice():
+
     @dace.program
     def nested(q, i, j):
         q[3 + j, 4 + i, 0:3] = q[3 - i + 1, 4 + j, 0:3]

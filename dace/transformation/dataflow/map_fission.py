@@ -25,7 +25,7 @@ class MapFission(transformation.SingleStateTransformation):
         semantics after fission.
 
         There are two cases that match map fission:
-        
+
             1. A map with an arbitrary subgraph with more than one computational
                (i.e., non-access) node. The use of arrays connecting the
                computational nodes must be limited to the subgraph, and non

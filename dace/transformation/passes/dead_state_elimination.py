@@ -31,7 +31,7 @@ class DeadStateElimination(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[Union[SDFGState, Edge[InterstateEdge]]]]:
         """
         Removes unreachable states throughout an SDFG.
-        
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -68,7 +68,8 @@ class DeadStateElimination(ppl.Pass):
                         # If only one branch is left, and it is unconditionally executed, inline it.
                         if len(node.branches) == 1:
                             cond, branch = node.branches[0]
-                            if cond is None or self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), sdfg):
+                            if cond is None or self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string),
+                                                                        sdfg):
                                 node.parent_graph.add_node(branch)
                                 for ie in cfg.in_edges(node):
                                     cfg.add_edge(ie.src, branch, ie.data)
@@ -95,7 +96,7 @@ class DeadStateElimination(ppl.Pass):
             set_unconditional_edges: bool = True) -> Tuple[Set[ControlFlowBlock], Set[Edge[InterstateEdge]], bool]:
         """
         Finds "dead" (unreachable) control flow in a CFG. A block is deemed unreachable if it is:
-        
+
             * Unreachable from the starting block
             * Conditions leading to it will always evaluate to False
             * There is another unconditional (always True) inter-state edge that leads to another block
@@ -182,7 +183,8 @@ class DeadStateElimination(ppl.Pass):
         else:
             # Check if any branches are certainly never taken.
             for cond, branch in block.branches:
-                if cond is not None and self._is_definitely_false(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
+                if cond is not None and self._is_definitely_false(symbolic.pystr_to_symbolic(cond.as_string),
+                                                                  block.sdfg):
                     dead_branches.append([cond, branch])
 
         return dead_branches

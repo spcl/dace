@@ -130,7 +130,7 @@ def propagate_assumptions_equal_symbols(condensed_assumptions):
 
     :param condensed_assumptions: Current assumptions over all symbols.
     :return: Returns a tuple consisting of 2 substitution dicts. The first one replaces each symbol with
-    the unique representative of its equivalence class. The second dict replaces each symbol with its numeric 
+    the unique representative of its equivalence class. The second dict replaces each symbol with its numeric
     value (if we assume it to be equal some value, e.g. N==5).
     """
     # Make one set with unique identifier for each equality class
@@ -183,7 +183,7 @@ def parse_assumptions(assumptions, array_symbols):
     keeps only the strongest ones. Afterwards it constructs two substitution dicts for the equality
     assumptions: First dict for symbol==symbol assumptions; second dict for symbol==number assumptions.
     The other assumptions get handled by N tuples of substitution dicts (N = max number of concurrent
-    assumptions for a single symbol). Each tuple is responsible for at most one assumption for each symbol. 
+    assumptions for a single symbol). Each tuple is responsible for at most one assumption for each symbol.
     First dict in the tuple substitutes the symbol with the assumption; second dict restores the initial symbol.
 
     :param assumptions: List of assumption strings.

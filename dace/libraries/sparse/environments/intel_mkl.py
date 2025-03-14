@@ -8,7 +8,7 @@ import warnings
 
 @dace.library.environment
 class IntelMKLSparse:
-    """ 
+    """
     An environment for the Intel Math Kernel Library (MKL), which implements
     the BLAS library and other functions.
     """

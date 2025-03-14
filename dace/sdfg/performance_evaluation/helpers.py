@@ -222,7 +222,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
     """
     Detects loops in a SDFG. For each loop, it identifies (node, oNode, exit).
     We know that there is a backedge from oNode to node that creates the loop and that exit is the exit state of the loop.
-    
+
     :param sdfg_nx: The networkx representation of a SDFG.
     """
 

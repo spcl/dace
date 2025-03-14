@@ -63,7 +63,7 @@ those datatypes.
 ## 6 Expressions
 
 ### 6.1 Arithmetic Conversions
-**NOTE: This is an experimental feature**  
+**NOTE: This is an experimental feature**
 The arithmetic conversions for most binary operators are implemented with casting:
 - If any of the operands is of complex type, but the other operand is a float,
   int or bool, then it is cast to the same complex type.
@@ -93,7 +93,7 @@ may not be supported:
 DaCe and Numpy modules
 
 ### 6.4 Await expression
-Unsupported  
+Unsupported
 
 ### 6.5 The power (**) operator
 Supported. If the base is an integer and the exponent a signed integer, both

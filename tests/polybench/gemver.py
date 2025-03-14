@@ -37,6 +37,7 @@ def init_array(A, u1, v1, u2, v2, w, x, y, z, alpha, beta, n):
 @dace.program(datatype[N, N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N],
               datatype[N], datatype[1], datatype[1])
 def gemver(A, u1, v1, u2, v2, w, x, y, z, alpha, beta):
+
     @dace.map
     def add_uv(i: _[0:N], j: _[0:N]):
         iu1 << u1[i]

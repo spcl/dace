@@ -137,7 +137,7 @@ def test_if_return_both():
         return 2
 
     assert if_return_both(4)[0] == 0
-    assert if_return_both(7)[0] == 1 
+    assert if_return_both(7)[0] == 1
 
 
 def test_if_return_chain():

@@ -80,7 +80,10 @@ int __dace_exit_mpi({sdfg_state_name} *__state) {{
            __dace_comm_size);
     return 0;
 }}
-""".format(params=params_comma, sdfg=sdfg, sdfg_state_name=mangle_dace_state_struct_name(sdfg), file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
+""".format(params=params_comma,
+           sdfg=sdfg,
+           sdfg_state_name=mangle_dace_state_struct_name(sdfg),
+           file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
         return [codeobj]
 
     @staticmethod

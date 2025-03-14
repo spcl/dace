@@ -60,7 +60,7 @@ class Node(object):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k == 'guid': # Skip ID
+            if k == 'guid':  # Skip ID
                 continue
             setattr(result, k, dcpy(v, memo))
         return result
@@ -126,7 +126,12 @@ class Node(object):
         self.in_connectors[connector_name] = dtype
         return True
 
-    def add_out_connector(self, connector_name: str, dtype: Any = None, force: bool = False,) -> bool:
+    def add_out_connector(
+        self,
+        connector_name: str,
+        dtype: Any = None,
+        force: bool = False,
+    ) -> bool:
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
@@ -145,10 +150,10 @@ class Node(object):
         return True
 
     def _add_scope_connectors(
-            self,
-            connector_name: str,
-            dtype: Optional[dtypes.typeclass] = None,
-            force: bool = False,
+        self,
+        connector_name: str,
+        dtype: Optional[dtypes.typeclass] = None,
+        force: bool = False,
     ) -> None:
         """ Adds input and output connector names to `self` in one step.
 
@@ -170,14 +175,14 @@ class Node(object):
                 return False
         # We force unconditionally because we have performed the tests above.
         self.add_in_connector(
-                connector_name=in_connector_name,
-                dtype=dtype,
-                force=True,
+            connector_name=in_connector_name,
+            dtype=dtype,
+            force=True,
         )
         self.add_out_connector(
-                connector_name=out_connector_name,
-                dtype=dtype,
-                force=True,
+            connector_name=out_connector_name,
+            dtype=dtype,
+            force=True,
         )
         return True
 
@@ -404,7 +409,8 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
-    ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
+    ignored_symbols = SetProperty(element_type=str,
+                                  desc='A set of symbols to ignore when computing '
                                   'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
                                   'tasklets, where only string analysis is possible; and to skip globals in Python '
                                   'tasklets that should not be given as parameters to the SDFG.')
@@ -465,7 +471,6 @@ class Tasklet(CodeNode):
         symbols_to_ignore |= self.ignored_symbols
 
         return self.code.get_free_symbols(symbols_to_ignore)
-
 
     def has_side_effects(self, sdfg) -> bool:
         """
@@ -582,7 +587,9 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    ext_sdfg_path = Property(dtype=str, default=None, allow_none=True,
+    ext_sdfg_path = Property(dtype=str,
+                             default=None,
+                             allow_none=True,
                              desc='Path to a file containing the SDFG for this nested SDFG')
     schedule = EnumProperty(dtype=dtypes.ScheduleType,
                             desc="SDFG schedule",
@@ -638,7 +645,7 @@ class NestedSDFG(CodeNode):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip GUID.
-            if k in ('guid',):
+            if k in ('guid', ):
                 continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
@@ -722,9 +729,8 @@ class NestedSDFG(CodeNode):
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
             for conn in connectors:
                 if conn in self.sdfg.symbols:
-                    raise ValueError(
-                        f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
-                        'To pass symbols use "symbol_mapping".')
+                    raise ValueError(f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
+                                     'To pass symbols use "symbol_mapping".')
                 if conn not in self.sdfg.arrays:
                     raise NameError(
                         f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
@@ -779,7 +785,6 @@ class EntryNode(Node):
         self.map.validate(sdfg, state, self)
 
     add_scope_connectors = Node._add_scope_connectors
-
 
 
 # ------------------------------------------------------------------------------
@@ -947,7 +952,9 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    unroll_factor = Property(dtype=int, allow_none=True, default=0,
+    unroll_factor = Property(dtype=int,
+                             allow_none=True,
+                             default=0,
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
@@ -1029,15 +1036,13 @@ class Map(object):
         #  Maps a bit more liberal, but we should probably not.
         if any((ss <= 0) == True for ss in self.range.size()):
             # The CPU and GPU backend tolerate such maps.
-            warnings.warn(
-                f'The iteration range of Map {self.label} is {self.range}, which contains a zero'
-                ' or negative sized range, which is allowed but not recommended.'
-                ' The Map will be turned into a no-ops.')
+            warnings.warn(f'The iteration range of Map {self.label} is {self.range}, which contains a zero'
+                          ' or negative sized range, which is allowed but not recommended.'
+                          ' The Map will be turned into a no-ops.')
         if any((inc <= 0) == True for (_, _, inc) in self.range):
             # Should this be turned into an error?
-            warnings.warn(
-                f'An increment of Map {self.label} was negative, which is allowerd'
-                ' but probably not useful.')
+            warnings.warn(f'An increment of Map {self.label} was negative, which is allowerd'
+                          ' but probably not useful.')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
