@@ -35,7 +35,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     assign_globally_unique_subprogram_names, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, \
     prune_coarsely, consolidate_global_data_into_arg
-from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
+from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Array_Subscript_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -1087,25 +1087,28 @@ class AST_translator:
         # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
         needs_replacement = {}
         offset_replacements = {}
-        for variable_in_call in variables_in_call:
+        # We need to process the arrays last, since they may have dependencies on the other arguments.
+        for variable_in_call in sorted(variables_in_call, key=lambda x: isinstance(x, Array_Subscript_Node)):
             local_name = parameters[variables_in_call.index(variable_in_call)]
 
             local_definition = namefinder.specs.get(local_name.name)
-            if local_definition is None:
-                raise ValueError("Variable " + local_name.name + " is not defined in the function")
-            self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
-            self.all_array_names.append(self.name_mapping[new_sdfg][local_name.name])
+            assert local_definition, f"variable {local_name.name} is not defined in the function"
+
+            mapped_name = new_sdfg._find_new_name(local_name.name)
+            self.name_mapping[new_sdfg][local_name.name] = mapped_name
+            self.all_array_names.append(mapped_name)
+
             read = False
             if local_name.name in read_names:
-                ins_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
-                self.temporary_ins[new_sdfg].append((self.name_mapping[new_sdfg][local_name.name],
+                ins_in_new_sdfg.append(mapped_name)
+                self.temporary_ins[new_sdfg].append((mapped_name,
                                                      self.name_mapping.get(sdfg).get(
                                                          ast_utils.get_name(variable_in_call))))
                 read = True
             write = False
             if local_name.name in write_names:
-                outs_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
-                self.temporary_outs[new_sdfg].append((self.name_mapping[new_sdfg][local_name.name],
+                outs_in_new_sdfg.append(mapped_name)
+                self.temporary_outs[new_sdfg].append((mapped_name,
                                                       self.name_mapping.get(sdfg).get(
                                                           ast_utils.get_name(variable_in_call))))
                 write = True
@@ -1826,7 +1829,7 @@ class AST_translator:
             return [1], [0], [0], [1]
 
     def process_variable_call(self, variable_in_calling_context: ast_internal_classes.FNode,
-                              local_name: ast_internal_classes.FNode, sdfg: SDFG, new_sdfg: SDFG, substate: SDFGState,
+                              local_name: Name_Node, sdfg: SDFG, new_sdfg: SDFG, substate: SDFGState,
                               read: bool, write: bool, local_definition: ast_internal_classes.Var_Decl_Node):
         # We need to first check and have separate handling for:
         # 1. Scalars
