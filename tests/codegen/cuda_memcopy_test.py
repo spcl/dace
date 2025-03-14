@@ -255,6 +255,47 @@ def test_gpu_shared_to_global_1D_accumulate():
 
 
 @pytest.mark.gpu
+def test_gpu_1d_copy():
+    sdfg = dace.SDFG("gpu_1d_copy_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    for aname in 'AB':
+        sdfg.add_array(
+            name=aname,
+            shape=(20, ),
+            dtype=dace.float64,
+            storage=dace.StorageType.GPU_Global,
+            transient=False,
+        )
+    state.add_nedge(
+        state.add_access("A"),
+        state.add_access("B"),
+        dace.Memlet("A[2:13] -> [1:12]"),
+    )
+    sdfg.validate()
+
+    csdfg = sdfg.compile()
+    assert count_node(csdfg.sdfg, dace_nodes.AccessNode) == 2
+    assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
+
+    code = sdfg.generate_code()[0].clean_code
+    m = re.search(r'(cuda|hip)MemcpyAsync\b', code)
+    assert m is not None
+
+    # Now run the sdfg.
+    ref = {
+        "A": cp.array(cp.random.rand(20), dtype=cp.float64),
+        "B": cp.array(cp.random.rand(20), dtype=cp.float64),
+    }
+    res = {k: v.copy() for k, v in ref.items()}
+
+    ref["B"][1:12] = ref["A"][2:13]
+    csdfg(**res)
+
+    assert all(cp.all(ref[k] == res[k]) for k in ref.keys())
+
+
+@pytest.mark.gpu
 def test_2d_c_order_gpu_copy():
     _perform_2d_gpu_copy_test(c_order=True)
 
@@ -293,3 +334,4 @@ if __name__ == '__main__':
     test_gpu_1d_copy_row_col()
     test_gpu_1d_copy_col_row()
     test_gpu_1d_copy_col_col()
+    test_gpu_1d_copy()
