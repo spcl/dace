@@ -21,15 +21,9 @@
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.wavenumber1_a", "value": "false" }
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.wavenumber2_a", "value": "false" }
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.gpoint_fraction_a", "value": "false" }
-{ "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.reference_temperature", "value": "5777.0000000000000" }
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.solar_spectral_irradiance_a", "value": "false" }
-{ "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.nband", "value": "14" }
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.wavenumber1_band_a", "value": "true" }
-{ "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.__f2dace_SA_wavenumber1_band_d_0_s", "value": "14" }
-{ "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.__f2dace_SOA_wavenumber1_band_d_0_s", "value": "1" }
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.wavenumber2_band_a", "value": "true" }
-{ "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.__f2dace_SA_wavenumber2_band_d_0_s", "value": "14" }
-{ "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.__f2dace_SOA_wavenumber2_band_d_0_s", "value": "1" }
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "spectral_def.i_band_number_a", "value": "false" }
 { "type": "ConstTypeInjection", "scope": null, "root": "radiation_ecckd.ckd_model_type", "component": "is_sw", "value": "0" }
 

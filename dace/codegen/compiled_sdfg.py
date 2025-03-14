@@ -406,7 +406,7 @@ class CompiledSDFG(object):
                  for aname, arg in zip(self.argnames, args)})
         argtuple, initargtuple = self._construct_args(kwargs)  # Missing arguments will be detected here.
         # Return values are cached in `self._lastargs`.
-        return self.fast_call(argtuple, initargtuple, do_gpu_check=True)
+        return self.fast_call(argtuple, argtuple, do_gpu_check=True)
 
     def fast_call(
         self,
