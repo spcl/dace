@@ -35,7 +35,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     assign_globally_unique_subprogram_names, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, \
     prune_coarsely, consolidate_global_data_into_arg
-from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Array_Subscript_Node
+from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -1010,7 +1010,6 @@ class AST_translator:
         literals = []
         literal_values = []
         par2 = []
-        to_fix = []
         symbol_arguments = []
 
         # First we need to check if the parameters are literals or variables
@@ -1087,10 +1086,16 @@ class AST_translator:
         # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
         needs_replacement = {}
         offset_replacements = {}
-        # We need to process the arrays last, since they may have dependencies on the other arguments.
-        for variable_in_call in sorted(variables_in_call, key=lambda x: isinstance(x, Array_Subscript_Node)):
-            local_name = parameters[variables_in_call.index(variable_in_call)]
 
+        # We need to process the arrays last, since they may have dependencies on the other arguments.
+        def _send_array_args_to_end(x) -> bool:
+            local_x = parameters[variables_in_call.index(x)].name
+            local_def_x = namefinder.specs.get(local_x)
+            assert isinstance(local_def_x, Var_Decl_Node)
+            return bool(local_def_x.sizes)
+
+        for variable_in_call in sorted(variables_in_call, key=_send_array_args_to_end):
+            local_name = parameters[variables_in_call.index(variable_in_call)]
             local_definition = namefinder.specs.get(local_name.name)
             assert local_definition, f"variable {local_name.name} is not defined in the function"
 
