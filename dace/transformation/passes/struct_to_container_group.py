@@ -2,11 +2,13 @@
 """This module contains classes and functions that implement the grid-strided map tiling
 transformation."""
 
+import ast
 import copy
 import math
 import re
 from typing import Any, Dict, List
 import dace
+from dace.codegen.control_flow import ConditionalBlock
 from dace.codegen.targets import cpp
 from dace.libraries.standard import CodeLibraryNode
 from dace.sdfg import SDFG, NestedDict, SDFGState
@@ -1796,6 +1798,126 @@ class StructToContainerGroups(ppl.Pass):
 
 # =================================================================================================
 # Utility functions
+
+def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
+    arrays_that_have_become_scalars = dict()
+    for name, desc in sdfg.arrays.items():
+        if (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.shape[0] == 1
+            and desc.transient):
+            scalarized = dace.data.Scalar(
+                dtype=desc.dtype,
+                transient=True,
+                storage=desc.storage,
+                allow_conflicts=desc.allow_conflicts,
+                location=desc.location,
+                lifetime=desc.lifetime,
+                debuginfo=desc.debuginfo,
+            )
+            arrays_that_have_become_scalars[name] = ("scalar_" + name, desc.dtype, scalarized)
+
+            sdfg.add_datadesc("scalar_" + name, scalarized, find_new_name=False)
+
+    for state in sdfg.states():
+        edges_to_add = set()
+        edges_to_rm = set()
+        nodes_to_rm = set()
+
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                replace_length_one_arrays_with_scalars(node.sdfg)
+
+            if isinstance(node, dace.nodes.AccessNode):
+                if node.data in arrays_that_have_become_scalars:
+                    new_name, (dtype, scalarized) = arrays_that_have_become_scalars[node.data]
+                    an = state.add_access(new_name)
+
+                    for ie in state.in_edges(node):
+                        mem = copy.deepcopy(ie.data)
+                        if mem.data == node.data:
+                            mem.data = new_name
+                        edges_to_add.add((ie.src, ie.src_conn, an, ie.dst_conn, mem))
+                    for oe in state.out_edges(node):
+                        mem = copy.deepcopy(oe.data)
+                        if mem.data == node.data:
+                            mem.data = new_name
+                        edges_to_add.add((an, oe.src_conn, oe.dst, oe.dst_conn, mem))
+                    for ie in state.in_edges(node):
+                        edges_to_rm.add(ie)
+                    for oe in state.out_edges(node):
+                        edges_to_rm.add(oe)
+                    nodes_to_rm.add(node)
+
+        for edge in edges_to_add:
+            state.add_edge(*edge)
+        for edge in edges_to_rm:
+            state.remove_edge(edge)
+        for node in nodes_to_rm:
+            state.remove_node(node)
+
+    # Remove all views coming out of these scalars
+    for state in sdfg.states():
+        edges_to_add = set()
+        edges_to_rm = set()
+        nodes_to_rm = set()
+
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.AccessNode):
+                if node.data in arrays_that_have_become_scalars:
+                    for oe in state.out_edges(node):
+                        if isinstance(sdfg.arrays[oe.dst.data], dace.data.View):
+                            assert oe.dst_conn == "views"
+                            for oe2 in state.out_edges(oe.dst):
+                                edges_to_rm.add(oe2)
+                                mem = copy.deepcopy(mem)
+                                mem.data = node.data
+                                assert oe.src_conn is None
+                                edges_to_add.add((node, oe.src_conn, oe2.dst, oe2.dst_conn, mem))
+                            edges_to_rm.add(oe)
+                            nodes_to_rm.add(oe.dst)
+
+        for edge in edges_to_add:
+            state.add_edge(*edge)
+        for edge in edges_to_rm:
+            state.remove_edge(edge)
+        for node in nodes_to_rm:
+            state.remove_node(node)
+
+    # Now we need to replace all occurences of the old arrays with the new ones in any interstate edge
+    # Or conditional block
+    for old_name, new_name in arrays_that_have_become_scalars.items():
+        rename_on_if_conds(sdfg, old_name, new_name)
+
+    for edge in sdfg.edges():
+        edge.replace_dict(arrays_that_have_become_scalars)
+
+
+def rename_on_if_conds(sdfg: dace.SDFG, src: str, dst: str):
+    gpu_host_name_map = {src: dst}
+
+    for node in sdfg.all_nodes():
+        if not isinstance(node, ConditionalBlock):
+            continue
+
+        for b in node.branches:
+            if b[0] is None:
+                continue
+            if isinstance(b[0].code, list):
+                for i, el in enumerate(b[0].code):
+                    if isinstance(el, str):
+                        for src,dst in gpu_host_name_map.items():
+                            b[0].code[i] = b[0].code[i].replace(src,dst)
+                    else:
+                        def replace_x_with_y(expr: ast.Expr, repl_dict) -> ast.Expr:
+                            expr_str = ast.unparse(expr).strip()
+                            for src,dst in repl_dict.items():
+                                modified_str = expr_str.replace(src, dst)
+                            return ast.parse(modified_str, mode="eval").body
+                        b[0].code[i] = replace_x_with_y(b[0].code[i], gpu_host_name_map)
+            else:
+                assert isinstance(b[0].code, str)
+                for src,dst in gpu_host_name_map.items():
+                    b[0].code = b[0].code.replace(src,dst)
+
 
 def clean_trivial_views(sdfg: dace.SDFG):
     repl_dict = dict()

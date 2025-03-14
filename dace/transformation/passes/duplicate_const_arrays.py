@@ -203,8 +203,9 @@ class DuplicateConstArrays(ppl.Pass):
                                 if ie.data is not None and ie.data.data is not None and ie.dst_conn != "views":
                                     if isinstance(sdfg.arrays[node.data], dtype):
                                         arrays_written_to[node.data] += 1
-                    if isinstance(node, dace.nodes.NestedSDFG):
-                        collect_writes(node.sdfg, arrays_written_to, dtype)
+                    # No need to be recursive, data needs to be passed and retaken from NestedSDFG
+                    #if isinstance(node, dace.nodes.NestedSDFG):
+                    #    collect_writes(node.sdfg, arrays_written_to, dtype)
             for inter_edge in sdfg.edges():
                 if isinstance(inter_edge.data, dace.InterstateEdge):
                     for assignment in inter_edge.data.assignments:
