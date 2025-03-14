@@ -15,12 +15,13 @@ from dace.sdfg import SDFG, NestedDict, SDFGState
 from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.data import ContainerArray, Structure, View
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
 
 from collections import OrderedDict
 from typing import Set, Union
 import typing
-from dace import data
+from dace import InterstateEdge, data
 from dace.data import Data
 from dace import serialize, symbolic
 from dace.properties import OrderedDictProperty, Property, make_properties
@@ -31,6 +32,7 @@ import sympy
 
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.sdfg import utils as sdutil
+from dace.transformation.passes.duplicate_const_arrays import DuplicateConstArrays
 
 
 class ContainerGroupFlatteningMode(Enum):
@@ -857,7 +859,8 @@ class StructToContainerGroups(ppl.Pass):
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
                                 name_replacements[oldname] = newname
 
-        sdfg.save("replaced.sdfgz", compress=True)
+        if self._save_steps:
+            sdfg.save("replaced.sdfgz", compress=True)
 
         registered_names, registered_descs = map(list, zip(*registered_members))
 
@@ -882,6 +885,10 @@ class StructToContainerGroups(ppl.Pass):
             registered_names.remove(container)
             registered_members.remove((container, desc))
             registered_descs.remove(desc)
+
+        # Do not simplify until flattener is generated it will remove things
+        replace_length_one_arrays_with_scalars(sdfg)
+        clean_trivial_views(sdfg)
 
         # Generate the flattener functions
         for name, desc in sdfg.arrays.items():
@@ -947,7 +954,6 @@ class StructToContainerGroups(ppl.Pass):
                     an = dace.nodes.AccessNode(outname)
                     entry_interface.add_node(an)
                     arr = sdfg.arrays[outname]
-                    assert not isinstance(arr, dace.data.Scalar)
 
                     entry_interface.add_edge(
                         flatten_lib_node,
@@ -963,26 +969,35 @@ class StructToContainerGroups(ppl.Pass):
                     sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
                 else:
                     #sdfg.replace(outname, "gpu_" + outname)
+                    if not isinstance(sdfg.arrays[outname], dace.data.Scalar):
+                        an0 = entry_interface.add_access(outname)
+                        an1 = entry_interface.add_access("gpu_" + outname)
 
-                    an0 = entry_interface.add_access("host_" + outname)
-                    an1 = entry_interface.add_access(outname)
+                        arr = sdfg.arrays[outname]
+                        arr.storage = dace.dtypes.StorageType.CPU_Heap
+                        arr2 = copy.deepcopy(arr)
+                        arr2.storage = dace.dtypes.StorageType.GPU_Global
+                        sdfg.add_datadesc("gpu_" + outname, arr2, find_new_name=False)
 
-                    arr = sdfg.arrays[outname]
-                    arr.storage = dace.dtypes.StorageType.GPU_Global
-                    arr2 = copy.deepcopy(arr)
-                    arr2.storage = dace.dtypes.StorageType.CPU_Heap
-                    sdfg.add_datadesc("host_" + outname, arr2, find_new_name=False)
-
-                    entry_interface.add_edge(
-                        flatten_lib_node,
-                        outname.lower(),
-                        an0,
-                        None,
-                        dace.Memlet(expr="host_" + outname),
-                    )
-                    entry_interface.add_edge(
-                        an0, None, an1, None, dace.Memlet(expr="host_" + outname)
-                    )
+                        entry_interface.add_edge(
+                            flatten_lib_node,
+                            outname.lower(),
+                            an0,
+                            None,
+                            dace.Memlet(expr=outname),
+                        )
+                        entry_interface.add_edge(
+                            an0, None, an1, None, dace.Memlet(expr=outname)
+                        )
+                    else:
+                        an0 = entry_interface.add_access(outname)
+                        entry_interface.add_edge(
+                            flatten_lib_node,
+                            outname.lower(),
+                            an0,
+                            None,
+                            dace.Memlet(expr=outname),
+                        )
 
                     if outname.lower() not in flatten_lib_node.out_connectors:
                         flatten_lib_node.add_out_connector(outname.lower())
@@ -999,16 +1014,22 @@ class StructToContainerGroups(ppl.Pass):
             exit_interface.add_node(deflatten_lib_node)
             for inname in set(registered_names):
                 if self._interface_to_gpu:
-                    an0 = exit_interface.add_access("host_" + inname)
-                    an1 = exit_interface.add_access(inname)
-                    assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
+                    # If scalar skip
+                    if not isinstance(sdfg.arrays[inname], dace.data.Scalar):
+                        an0 = exit_interface.add_access(inname)
+                        an1 = exit_interface.add_access("gpu_" + inname)
 
-                    exit_interface.add_edge(
-                        an1, None, an0, None, dace.Memlet(expr="host_" + inname)
-                    )
-                    exit_interface.add_edge(
-                        an0, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr="host_" + inname)
-                    )
+                        exit_interface.add_edge(
+                            an1, None, an0, None, dace.Memlet(expr=inname)
+                        )
+                        exit_interface.add_edge(
+                            an0, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr=inname)
+                        )
+                    else:
+                        an = exit_interface.add_access(inname)
+                        exit_interface.add_edge(
+                            an, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr=inname)
+                        )
                 else:
                     an = exit_interface.add_access(inname)
                     assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
@@ -1069,8 +1090,7 @@ class StructToContainerGroups(ppl.Pass):
 
             if self._verbose:
                 if self._simplify:
-                    print("SDFG validated, calling simplify")
-                    sdfg.simplify()
+                    sdfg.simplify(validate=self._validate, validate_all=self._validate_all)
 
         if self._clean_container_grous:
             clean_container_groups(sdfg)
@@ -1088,6 +1108,8 @@ class StructToContainerGroups(ppl.Pass):
 
         if self._validate or self._validate_all:
             sdfg.validate()
+        if self._simplify:
+            sdfg.simplify(validate=self._validate, validate_all=self._validate_all)
 
     def _can_be_applied(
         self,
@@ -1433,10 +1455,6 @@ class StructToContainerGroups(ppl.Pass):
                     )
                 )
 
-        # for node in nodes_to_rm:
-        #    state.remove_node(node)
-        # for edge in edges_to_add:
-        #    state.add_edge(*edge)
         return nodes_to_rm, edges_to_add
 
     def _process_and_pad_struct_to_view_view_chain(
@@ -1803,32 +1821,39 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
     arrays_that_have_become_scalars = dict()
     for name, desc in sdfg.arrays.items():
         if (isinstance(desc, dace.data.Array) and len(desc.shape) == 1 and desc.shape[0] == 1
-            and desc.transient):
+            and desc.transient and not isinstance(desc, dace.data.Scalar) and
+            not isinstance(desc, dace.data.View)):
             scalarized = dace.data.Scalar(
                 dtype=desc.dtype,
                 transient=True,
-                storage=desc.storage,
+                storage=dace.dtypes.StorageType.Register,
                 allow_conflicts=desc.allow_conflicts,
                 location=desc.location,
                 lifetime=desc.lifetime,
                 debuginfo=desc.debuginfo,
             )
-            arrays_that_have_become_scalars[name] = ("scalar_" + name, desc.dtype, scalarized)
+            arrays_that_have_become_scalars[name] = (name, scalarized)
 
-            sdfg.add_datadesc("scalar_" + name, scalarized, find_new_name=False)
+    for old_name, (new_name, desc) in arrays_that_have_become_scalars.items():
+        sdfg.remove_data(old_name, validate=False)
+    for old_name, (new_name, desc) in arrays_that_have_become_scalars.items():
+        sdfg.add_datadesc(new_name, desc, find_new_name=False)
+        assert not isinstance(desc, dace.data.View)
 
     for state in sdfg.states():
-        edges_to_add = set()
-        edges_to_rm = set()
         nodes_to_rm = set()
 
         for node in state.nodes():
             if isinstance(node, dace.nodes.NestedSDFG):
                 replace_length_one_arrays_with_scalars(node.sdfg)
 
+            # Update edges per ndoe as in a change it might have an impact
+            edges_to_add = set()
+            edges_to_rm = set()
+
             if isinstance(node, dace.nodes.AccessNode):
                 if node.data in arrays_that_have_become_scalars:
-                    new_name, (dtype, scalarized) = arrays_that_have_become_scalars[node.data]
+                    new_name, scalarized = arrays_that_have_become_scalars[node.data]
                     an = state.add_access(new_name)
 
                     for ie in state.in_edges(node):
@@ -1836,23 +1861,28 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
                         if mem.data == node.data:
                             mem.data = new_name
                         edges_to_add.add((ie.src, ie.src_conn, an, ie.dst_conn, mem))
+
                     for oe in state.out_edges(node):
                         mem = copy.deepcopy(oe.data)
                         if mem.data == node.data:
                             mem.data = new_name
                         edges_to_add.add((an, oe.src_conn, oe.dst, oe.dst_conn, mem))
+
                     for ie in state.in_edges(node):
                         edges_to_rm.add(ie)
+
                     for oe in state.out_edges(node):
                         edges_to_rm.add(oe)
+
                     nodes_to_rm.add(node)
 
-        for edge in edges_to_add:
-            state.add_edge(*edge)
-        for edge in edges_to_rm:
-            state.remove_edge(edge)
+            for edge in edges_to_rm:
+                state.remove_edge(edge)
+            for edge in edges_to_add:
+                state.add_edge(*edge)
         for node in nodes_to_rm:
             state.remove_node(node)
+
 
     # Remove all views coming out of these scalars
     for state in sdfg.states():
@@ -1884,17 +1914,17 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
 
     # Now we need to replace all occurences of the old arrays with the new ones in any interstate edge
     # Or conditional block
-    for old_name, new_name in arrays_that_have_become_scalars.items():
+    for old_name, (new_name, _) in arrays_that_have_become_scalars.items():
         rename_on_if_conds(sdfg, old_name, new_name)
 
     for edge in sdfg.edges():
-        edge.replace_dict(arrays_that_have_become_scalars)
+        edge.data.replace_dict(arrays_that_have_become_scalars)
 
 
-def rename_on_if_conds(sdfg: dace.SDFG, src: str, dst: str):
+def rename_on_if_conds(sdfg: dace.SDFG, src: str, dst: str, recursive=False):
     gpu_host_name_map = {src: dst}
 
-    for node in sdfg.all_nodes():
+    for _, node in enumerate(sdfg.nodes()) if not recursive else sdfg.all_nodes_recursive():
         if not isinstance(node, ConditionalBlock):
             continue
 
@@ -1909,14 +1939,14 @@ def rename_on_if_conds(sdfg: dace.SDFG, src: str, dst: str):
                     else:
                         def replace_x_with_y(expr: ast.Expr, repl_dict) -> ast.Expr:
                             expr_str = ast.unparse(expr).strip()
-                            for src,dst in repl_dict.items():
+                            for src, dst in repl_dict.items():
                                 modified_str = expr_str.replace(src, dst)
                             return ast.parse(modified_str, mode="eval").body
                         b[0].code[i] = replace_x_with_y(b[0].code[i], gpu_host_name_map)
             else:
                 assert isinstance(b[0].code, str)
                 for src,dst in gpu_host_name_map.items():
-                    b[0].code = b[0].code.replace(src,dst)
+                    b[0].code = b[0].code.replace(src, dst)
 
 
 def clean_trivial_views(sdfg: dace.SDFG):
@@ -1929,32 +1959,70 @@ def clean_trivial_views(sdfg: dace.SDFG):
             if isinstance(node, dace.nodes.AccessNode):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     clean_container_groups(node.sdfg)
-        for edge in state.edges():
+
+        edges = state.edges()
+        while len(edges) > 0:
+            edge = edges.pop(0)
             # AccessNode ->(views) AccessNode
             # And the view covers the whole dimension of left hand array
+
+            # A -> B B is view of A
             if isinstance(edge.src, dace.nodes.AccessNode) and isinstance(
                 edge.dst, dace.nodes.AccessNode
             ) and edge.src_conn is None and edge.dst_conn == "views":
                 subset = edge.data.subset
                 shape_as_subset = dace.subsets.Range.from_array(
-                    sdfg.arrays[edge.src.data].shape
+                    sdfg.arrays[edge.src.data]
                 )
                 if subset == shape_as_subset:
+                    # This is an edge that goes A -> B where B is a view of A
+                    # And the view B is reduntant
+
+                    # Remove edge A -> B
+                    # Reroute all edges of type B -> C to be A -> C
+                    # Update edges
+
+                    repl_dict[edge.dst.data] = edge.src.data
+
                     # Rm view node
                     for oe in state.out_edges(edge.dst):
                         mem = copy.deepcopy(oe.data)
                         mem.data = edge.src.data
-                        edges_to_add.add(
-                            (edge.src, oe.src_conn, oe.dst, oe.dst_conn, mem)
+                        state.add_edge(
+                            edge.src, edge.src_conn, oe.dst, oe.dst_conn, mem
                         )
-                        if oe.src_conn not in edge.src.out_connectors:
-                            edge.src.add_out_connector(oe.src_conn)
-                        edges_to_rm.add(
+                        state.remove_edge(
                             oe
                         )
-                    edges_to_rm.add(edge)
-                    nodes_to_rm.add(edge.dst)
-                    repl_dict[edge.dst.data] = edge.src.data
+                    state.remove_edge(edge)
+                    state.remove_node(edge.dst)
+                    edges = state.edges()
+
+                # A -> B A is view of B
+            elif isinstance(edge.src, dace.nodes.AccessNode) and isinstance(
+                edge.dst, dace.nodes.AccessNode
+            ) and edge.dst_conn is None and edge.src_conn == "views":
+                subset = edge.data.subset
+                shape_as_subset = dace.subsets.Range.from_array(
+                    sdfg.arrays[edge.dst.data]
+                )
+                if subset == shape_as_subset:
+
+                    repl_dict[edge.src.data] = edge.dst.data
+
+                    # Rm view node
+                    for ie in state.in_edges(edge.src):
+                        mem = copy.deepcopy(ie.data)
+                        mem.data = edge.dst.data
+                        state.add_edge(
+                            ie.src, ie.src_conn, edge.dst, edge.dst_conn, mem
+                        )
+                        state.remove_edge(
+                            ie
+                        )
+                    state.remove_edge(edge)
+                    state.remove_node(edge.src)
+                    edges = state.edges()
 
         for edge in edges_to_rm:
             state.remove_edge(edge)
@@ -1963,10 +2031,20 @@ def clean_trivial_views(sdfg: dace.SDFG):
         for node in nodes_to_rm:
             state.remove_node(node)
 
-        # Replace all occurences
-        state.replace_dict(repl_dict)
-        sdfg.replace_dict(repl_dict)
+        # Some view access ndoes might have become
+        # without in or out edges
+        for node in state.nodes():
+            if (isinstance(node, dace.nodes.AccessNode) and
+                state.in_degree(node) == 0 and state.out_degree(node) == 0):
+                state.remove_node(node)
 
+    for edge in sdfg.edges():
+        edge.data.replace_dict(repl_dict)
+    for edge in sdfg.all_interstate_edges(recursive=True):
+        edge.data.replace_dict(repl_dict)
+
+    for src, dst in repl_dict.items():
+        rename_on_if_conds(sdfg, src, dst, recursive=False)
 
 
 
