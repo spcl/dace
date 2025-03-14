@@ -518,7 +518,8 @@ class AST_translator:
 
         self.transient_mode = True
         self.translate(self.startpoint.execution_part.execution, sdfg, cfg)
-        sdfg.validate()
+        #sdfg.simplify()
+        #sdfg.validate()
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG,
                                cfg: ControlFlowRegion):
@@ -1975,7 +1976,7 @@ class AST_translator:
                     # such accesses must always collapse to elements
                     shape, offsets, strides, subset = self.compute_array_shape(parent, sdfg, current_structure)
                     last_read, last_written = self.add_array_to_element_view_pair_in_tower(sdfg, array, name_chain,
-                                                                                           member, substate, last_read,
+                                                                                           parent, substate, last_read,
                                                                                            last_written, read, write,
                                                                                            subset)
                     current_structure = current_structure.stype
@@ -3379,7 +3380,9 @@ def create_sdfg_from_fortran_file_with_options(
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = sdfg
         ast2sdfg.translate(program, sdfg, sdfg)
-        sdfg.validate()
+        from dace.transformation.pass_pipeline import FixedPointPipeline
+        from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
+        FixedPointPipeline([ScalarToSymbolPromotion()]).apply_pass(sdfg, {})
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
         sdfg.validate()
         sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
