@@ -972,33 +972,42 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
                 self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, self._cpu_codegen._packed_types))
+            # In certain cases `copy_shape` might be adapted, but we will never change `dims`.
             dims = len(copy_shape)
 
             dtype = dst_node.desc(sdfg).dtype
 
-            # Handle unsupported copy types
-            if dims == 2 and (src_strides[-1] != 1 or dst_strides[-1] != 1):
-                # NOTE: Special case of continuous copy
-                # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
-                # with copy shape [I, J] and strides [J*K, K], [J, 1]
+            # Test if the 2D copy can be expressed as a continuous 1d copy.
+            continuous_2d_copy = False
+            is_fortran_order = src_strides[1] == 1 and dst_strides[1] == 1
+            is_c_order = src_strides[0] == 1 and dst_strides[0] == 1
+            if dims == 2 and (is_fortran_order or is_c_order):
                 try:
-                    is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
-                    is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
+                    if is_c_order:
+                        is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
+                        is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
+                    elif is_fortran_order:
+                        is_src_cont = src_strides[1] / src_strides[0] == copy_shape[0]
+                        is_dst_cont = dst_strides[1] / dst_strides[0] == copy_shape[0]
+                    else:
+                        is_src_cont = False
+                        is_dst_cont = False
                 except (TypeError, ValueError):
                     is_src_cont = False
                     is_dst_cont = False
                 if is_src_cont and is_dst_cont:
-                    dims = 1
+                    continuous_2d_copy = True
                     copy_shape = [copy_shape[0] * copy_shape[1]]
-                    src_strides = [src_strides[1]]
-                    dst_strides = [dst_strides[1]]
+                    src_strides = [src_strides[1 if is_c_order else 0]]
+                    dst_strides = [dst_strides[1 if is_c_order else 0]]
                 else:
                     raise NotImplementedError('2D copy only supported with one stride')
 
-            # Currently we only support ND copies when they can be represented
-            # as a 1D copy or as a 2D strided copy
             if dims > 2:
-                if src_strides[-1] != 1 or dst_strides[-1] != 1:
+                # Currently we only support ND copies when they can be represented
+                # as a 1D copy or as a 2D strided copy
+                if not is_c_order:
+                    # TODO: Implement the FORTRAN case.
                     raise NotImplementedError(
                         'GPU copies are not supported for N-dimensions if they cannot be represented by a strided copy\n'
                         f'  Nodes: src {src_node} ({src_storage}), dst {dst_node}({dst_storage})\n'
@@ -1026,7 +1035,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     for d in range(dims - 2):
                         callsite_stream.write("}")
 
-            elif dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
+            elif dims == 1 or continuous_2d_copy:
                 copysize = ' * '.join(_topy(copy_shape))
                 array_length = copysize
                 copysize += ' * sizeof(%s)' % dtype.ctype
@@ -1064,16 +1073,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                                                     backend=self.backend), cfg,
                                 state_id, [src_node, dst_node])
                     callsite_stream.write('}')
-            elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
-                callsite_stream.write(
-                    'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
-                    (self.backend, dst_expr, _topy(dst_strides[0]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                     src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
-                     'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, sym2cpp(
-                         copy_shape[0]), self.backend, src_location, dst_location, cudastream), cfg, state_id,
-                    [src_node, dst_node])
 
-            elif dims == 2 and (src_strides[-1] == 1 and dst_strides[-1] == 1):
+            elif dims == 2 and is_c_order:
                 # Copying a 2D array that are in C order, i.e. last stride is 1.
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
@@ -1092,7 +1093,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     state_id,
                     [src_node, dst_node],
                 )
-            elif dims == 2 and (src_strides[0] == 1 and dst_strides[0] == 1):
+            elif dims == 2 and is_fortran_order:
                 # Copying a 2D array into a 2D array that is in FORTRAN order, i.e. first stride
                 #  is one. The CUDA API can not handle such cases directly, however, by "transposing"
                 #  it is possible to use `Memcyp2DAsync`.
@@ -1161,7 +1162,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
                     self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
-
                 dims = len(copy_shape)
 
                 funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage), _get_storagename(dst_storage), dims)
