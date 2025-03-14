@@ -1,0 +1,36 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+
+jobs:
+  linting:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    name: pre-commit
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python 3.9
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+        cache: 'pip'
+
+    - name: Install linting tools
+      run: pip install .[linting]
+
+    - name: Run linting tools
+      id: lint
+      continue-on-error: true
+      run: pre-commit run --all-files
+
+    - name: Show git diff
+      if: steps.lint.outcome == 'failure'
+      run: |
+        ./.github/workflows/scripts/show-git-diff.sh

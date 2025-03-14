@@ -341,12 +341,10 @@ class MapFusion(transformation.SingleStateTransformation):
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
         #  or `None` if the maps can not be structurally fused.
-        param_repl = self.can_topologically_be_fused(
-            first_map_entry=first_map_entry,
-            second_map_entry=second_map_entry,
-            graph=graph,
-            sdfg=sdfg,
-        )
+        param_repl = self.can_topologically_be_fused(first_map_entry=first_map_entry,
+                                                     second_map_entry=second_map_entry,
+                                                     graph=graph,
+                                                     sdfg=sdfg)
         if param_repl is None:
             return False
 
@@ -903,10 +901,10 @@ class MapFusion(transformation.SingleStateTransformation):
                 raise NotImplementedError()
             pre_exit_edge = pre_exit_edges[0]
 
-            (new_inter_shape_raw, new_inter_shape, squeezed_dims) = (self.compute_reduced_intermediate(
+            (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
                 producer_subset=pre_exit_edge.data.dst_subset,
                 inter_desc=inter_desc,
-            ))
+            )
 
             # This is the name of the new "intermediate" node that we will create.
             #  It will only have the shape `new_inter_shape` which is basically its

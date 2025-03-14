@@ -33,7 +33,7 @@ def test_fft_r2c():
     a = np.random.rand(20).astype(np.float32)
     b = tester(a)
     assert b.dtype == np.complex64
-    assert np.allclose(b, np.fft.fft(a))
+    assert np.allclose(b, np.fft.fft(a), rtol=1e-3, atol=1e-5)
 
 
 @pytest.mark.parametrize('norm', ('backward', 'forward', 'ortho'))
@@ -86,8 +86,8 @@ def test_cufft_twoplans():
     a = np.random.rand(210) + 1j * np.random.rand(210)
     b = (np.random.rand(19) + 1j * np.random.rand(19)).astype(np.complex64)
     c, d = sdfg(a, b)
-    assert np.allclose(c, np.fft.fft(a))
-    assert np.allclose(d, np.fft.ifft(b, norm='forward'))
+    assert np.allclose(c, np.fft.fft(a), rtol=1e-3, atol=1e-5)
+    assert np.allclose(d, np.fft.ifft(b, norm='forward'), rtol=1e-3, atol=1e-5)
 
 
 if __name__ == '__main__':

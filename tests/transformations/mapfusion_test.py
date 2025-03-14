@@ -62,23 +62,27 @@ def apply_fusion(
         with dace.config.temporary_config():
             dace.Config.set("optimizer", "match_exception", value=True)
             if apply_once:
-                sdfg.apply_transformations(MapFusion(
-                    strict_dataflow=strict_dataflow,
-                    allow_serial_map_fusion=allow_serial_map_fusion,
-                    allow_parallel_map_fusion=allow_parallel_map_fusion,
-                    only_if_common_ancestor=only_if_common_ancestor,
-                ),
-                                           validate=True,
-                                           validate_all=True)
+                sdfg.apply_transformations(
+                    MapFusion(
+                        strict_dataflow=strict_dataflow,
+                        allow_serial_map_fusion=allow_serial_map_fusion,
+                        allow_parallel_map_fusion=allow_parallel_map_fusion,
+                        only_if_common_ancestor=only_if_common_ancestor,
+                    ),
+                    validate=True,
+                    validate_all=True,
+                )
             else:
-                sdfg.apply_transformations_repeated(MapFusion(
-                    strict_dataflow=strict_dataflow,
-                    allow_serial_map_fusion=allow_serial_map_fusion,
-                    allow_parallel_map_fusion=allow_parallel_map_fusion,
-                    only_if_common_ancestor=only_if_common_ancestor,
-                ),
-                                                    validate=True,
-                                                    validate_all=True)
+                sdfg.apply_transformations_repeated(
+                    MapFusion(
+                        strict_dataflow=strict_dataflow,
+                        allow_serial_map_fusion=allow_serial_map_fusion,
+                        allow_parallel_map_fusion=allow_parallel_map_fusion,
+                        only_if_common_ancestor=only_if_common_ancestor,
+                    ),
+                    validate=True,
+                    validate_all=True,
+                )
     except:
         safe_view(org_sdfg)
         safe_view(sdfg)

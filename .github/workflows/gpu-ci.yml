@@ -13,6 +13,9 @@ env:
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
 
 jobs:
   test-gpu:
