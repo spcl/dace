@@ -167,7 +167,7 @@ def test_view_offset_removal():
 
     assert np.allclose(inout[1, 1:], inout[2, 1:])
 
-    
+
 if __name__ == '__main__':
     test_redundant_array_removal()
     test_redundant_array_1_into_2_dims("O", False)

@@ -40,7 +40,7 @@ jobs:
       run: |
         papi_avail
 
-    - name: Run parallel pytest 
+    - name: Run parallel pytest
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=unique
@@ -55,7 +55,7 @@ jobs:
         source ~/.venv/bin/activate # activate venv
         ./tests/mpi_test.sh
 
-        
+
     - name: Test MPI with pytest
       run: |
         export NOSTATUSBAR=1
@@ -64,7 +64,7 @@ jobs:
         export DACE_cache=unique
         source ~/.venv/bin/activate # activate venv
         mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "mpi"
-    
+
     - name: Test ScaLAPACK PBLAS with pytest
       run: |
         export NOSTATUSBAR=1

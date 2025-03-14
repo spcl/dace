@@ -79,12 +79,9 @@ class FullMapFusion(ppl.Pass):
         default=True,
         desc='If True, validates the SDFG after all transformations have been applied.',
     )
-    validate_all = properties.Property(
-        dtype=bool,
-        default=False,
-        desc='If True, validates the SDFG after each transformation applies.'
-    )
-
+    validate_all = properties.Property(dtype=bool,
+                                       default=False,
+                                       desc='If True, validates the SDFG after each transformation applies.')
 
     def __init__(
         self,
@@ -146,23 +143,21 @@ class FullMapFusion(ppl.Pass):
         # We have to pass the single use data at construction. This is because that
         #  `fusion._pipeline_results` is only defined, i.e. not `None` during `apply()`
         #  but during `can_be_applied()` it is not available. Thus we have to set it here.
-        fusion = MapFusion(
-            only_inner_maps=self.only_inner_maps,
-            only_toplevel_maps=self.only_toplevel_maps,
-            strict_dataflow=self.strict_dataflow,
-            assume_always_shared=self.assume_always_shared,
-            allow_serial_map_fusion=self.allow_serial_map_fusion,
-            allow_parallel_map_fusion=self.allow_parallel_map_fusion,
-            only_if_common_ancestor=self.only_if_common_ancestor,
-            single_use_data=pipeline_results["FindSingleUseData"]
-        )
+        fusion = MapFusion(only_inner_maps=self.only_inner_maps,
+                           only_toplevel_maps=self.only_toplevel_maps,
+                           strict_dataflow=self.strict_dataflow,
+                           assume_always_shared=self.assume_always_shared,
+                           allow_serial_map_fusion=self.allow_serial_map_fusion,
+                           allow_parallel_map_fusion=self.allow_parallel_map_fusion,
+                           only_if_common_ancestor=self.only_if_common_ancestor,
+                           single_use_data=pipeline_results["FindSingleUseData"])
 
         try:
             pazz = pmp.PatternMatchAndApplyRepeated(
-                    [fusion],
-                    permissive=False,
-                    validate=False,
-                    validate_all=self.validate_all,
+                [fusion],
+                permissive=False,
+                validate=False,
+                validate_all=self.validate_all,
             )
             result = pazz.apply_pass(sdfg, pipeline_results)
 

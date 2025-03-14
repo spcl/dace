@@ -12,8 +12,10 @@ nnz = dace.symbol('nnz')
 
 @dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz], dace.float32[W], dace.float32[H])
 def spmv(A_row, A_col, A_val, x, b):
+
     @dace.mapscope(_[0:H])
     def compute_row(i):
+
         @dace.map(_[A_row[i]:A_row[i + 1]])
         def compute(j):
             a << A_val[j]
@@ -292,6 +294,7 @@ def test_dynamic_map_with_step():
 
 @pytest.mark.gpu
 def test_dynamic_multidim_map():
+
     @dace.program
     def tester(a: dace.float32[H, W, nnz]):
         A = dace.ndarray([H, W, nnz], dtype=dace.float32, storage=dace.StorageType.GPU_Global)
@@ -308,6 +311,7 @@ def test_dynamic_multidim_map():
 
 @pytest.mark.skip('Nested maps with work-stealing thread-block schedule are currently unsupported')
 def test_dynamic_nested_map():
+
     @dace.program
     def nested2(A: dace.float32[W], i: dace.int32, j: dace.int32):
         A[j] = i * 10 + j

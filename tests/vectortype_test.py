@@ -71,8 +71,8 @@ def test_vector_type_cast():
 
 
 def test_vector_reduction():
-    """ 
-    Tests "horizontal" summation (hadd) of vector types using 
+    """
+    Tests "horizontal" summation (hadd) of vector types using
     write-conflicted memlets.
     """
     sdfg = dace.SDFG('vectorhadd')
@@ -97,7 +97,7 @@ def test_vector_reduction():
 
 
 def test_vector_to_vector_wcr():
-    """ 
+    """
     Tests write-conflicted memlets from vectors on vectors.
     """
     sdfg = dace.SDFG('vectoradd')
@@ -123,8 +123,8 @@ def test_vector_to_vector_wcr():
 
 
 def test_vector_reduction_atomic():
-    """ 
-    Tests "horizontal" summation (hadd) of vector types using 
+    """
+    Tests "horizontal" summation (hadd) of vector types using
     write-conflicted memlets, with atomics.
     """
     sdfg = dace.SDFG('vectorhadd_atomic')
@@ -148,8 +148,8 @@ def test_vector_reduction_atomic():
 
 @pytest.mark.gpu
 def test_vector_reduction_gpu():
-    """ 
-    Tests "horizontal" summation (hadd) of vector types using 
+    """
+    Tests "horizontal" summation (hadd) of vector types using
     write-conflicted memlets.
     """
     sdfg = dace.SDFG('vectorhadd_gpu')

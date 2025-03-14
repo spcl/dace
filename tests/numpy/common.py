@@ -41,7 +41,9 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                         cast inputs.
         :param max_value: The maximum value allowed in the inputs.
     """
+
     def decorator(func):
+
         def test():
             dp = dace.program(device=device)(func)
 

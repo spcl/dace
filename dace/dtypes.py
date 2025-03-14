@@ -762,7 +762,7 @@ class vector(typeclass):
 
 class stringtype(pointer):
     """
-    A specialization of the string data type to improve 
+    A specialization of the string data type to improve
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
@@ -999,7 +999,7 @@ class callback(typeclass):
     def is_scalar_function(self) -> bool:
         """
         Returns True if the callback is a function that returns a scalar
-        value (or nothing). Scalar functions are the only ones that can be 
+        value (or nothing). Scalar functions are the only ones that can be
         used within a `dace.tasklet` explicitly.
         """
         from dace import data
@@ -1594,7 +1594,7 @@ def is_array(obj: Any) -> bool:
 
 def is_gpu_array(obj: Any) -> bool:
     """
-    Returns True if an object is a GPU array, i.e., implements the 
+    Returns True if an object is a GPU array, i.e., implements the
     ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
     etc.). If the interface is supported, pointers can be directly obtained using the
     ``_array_interface_ptr`` function.

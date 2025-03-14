@@ -63,9 +63,8 @@ def test_stree_mpath_nested():
     simplified = dace.Config.get_bool('optimizer', 'automatic_simplification')
 
     if simplified:
-        assert [type(n)
-                for n in stree.preorder_traversal()][1:] == [tn.MapScope, tn.MapScope, tn.GeneralLoopScope,
-                                                             tn.TaskletNode]
+        assert [type(n) for n in stree.preorder_traversal()
+                ][1:] == [tn.MapScope, tn.MapScope, tn.GeneralLoopScope, tn.TaskletNode]
 
     tasklet: tn.TaskletNode = list(stree.preorder_traversal())[-1]
 

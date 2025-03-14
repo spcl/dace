@@ -210,9 +210,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
-    targets.update(
-        {v['name']: k(frame, sdfg)
-         for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets})
+    targets.update({
+        v['name']: k(frame, sdfg)
+        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets
+    })
 
     # Query all code generation targets and instrumentation providers in SDFG
     _get_codegen_targets(sdfg, frame)

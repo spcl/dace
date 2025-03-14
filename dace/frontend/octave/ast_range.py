@@ -5,6 +5,7 @@ from .ast_node import AST_Node
 
 
 class AST_RangeExpression(AST_Node):
+
     def __init__(self, context, lhs, rhs):
         AST_Node.__init__(self, context)
         self.lhs = lhs
@@ -55,6 +56,7 @@ class AST_RangeExpression(AST_Node):
             new.next = self.next
             new.generate_code(sdfg, state)
         else:
-            raise NotImplementedError("Code generation for Range with non-constant bounds not " "implemented")
+            raise NotImplementedError("Code generation for Range with non-constant bounds not "
+                                      "implemented")
 
     __str__ = __repr__

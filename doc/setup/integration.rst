@@ -4,7 +4,7 @@ Integrating SDFGs in Existing Programs
 ======================================
 
 Compiling an SDFG creates a standalone dynamic library (``.so``, ``.dll``, or ``.dylib``) file that can be reused in
-existing programs, written in any language that supports calling C functions (or Foreign Function Interface, FFI). 
+existing programs, written in any language that supports calling C functions (or Foreign Function Interface, FFI).
 The library can be linked to the program at compile time, or loaded at runtime to Python using the :class:`~dace.codegen.compiled_sdfg.CompiledSDFG`
 class.
 
@@ -40,7 +40,7 @@ Example usage:
     # Create an array with custom padding
     a = dace.data.make_array_from_descriptor(custom_desc)
     # Alternatively, sdfg.arrays['A'] could have been used as an argument
-    
+
     # A is a valid GPU (CuPy) array that can be used in the SDFG or outside of it
     A[:] = 1
 
@@ -53,7 +53,7 @@ Compiled SDFG objects
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. note::
-    If performance of each call is not a concern (for example, if the SDFG runs for a long time), it is always preferable 
+    If performance of each call is not a concern (for example, if the SDFG runs for a long time), it is always preferable
     to :ref:`call the SDFG object itself <calling_sdfgs>` or the ``@dace`` function.
 
 
@@ -78,11 +78,11 @@ Internally, the :class:`~dace.codegen.compiled_sdfg.CompiledSDFG` class is a wra
 you to call the SDFG's entry point function, perform basic type checking, and argument marshalling (i.e., array to pointer,
 Python callback to function pointer, etc.).
 
-Since the compiled SDFG is a low-level interface, it is much faster to call than the Python interface. 
-`We show this behavior in the Benchmarking tutorial <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb>`_. 
+Since the compiled SDFG is a low-level interface, it is much faster to call than the Python interface.
+`We show this behavior in the Benchmarking tutorial <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb>`_.
 However, it requires caution as opposed to calling the ``@dace.program`` or the ``SDFG`` object because:
 
-    * Each array return value is represented internally as a single array (not reallocated every call) and will be 
+    * Each array return value is represented internally as a single array (not reallocated every call) and will be
       **reused** across calls.
     * Less type checking is performed, so data may be reinterpreted if passed wrong.
     * The closure of the program (e.g., scalar fields in a class) will **not** be recomputed and thus may be stale.
@@ -93,7 +93,7 @@ Internal Structure and Functions
 
 The build folder contains the compiled SDFG file (``program.sdfg``), the exact used configuration file for reproducibility,
 and several subfolders: ``src`` for source code, ``build`` for the linked library, ``include`` for
-an auto-generated header file that can be used to call the library, ``profiling`` for profiling, ``perf`` and ``data`` for 
+an auto-generated header file that can be used to call the library, ``profiling`` for profiling, ``perf`` and ``data`` for
 instrumentation, ``map`` for source maps (used in debugging), and ``sample``, which contains a short code sample that
 demonstrates how to invoke the library from C.
 
@@ -116,7 +116,7 @@ The header file contains the function prototypes and the struct definition for t
 C/C++ and C ABI-Compatible Languages
 ------------------------------------
 
-The header file can be used to call the compiled SDFG from C, C++, or FORTRAN programs. The following example shows how 
+The header file can be used to call the compiled SDFG from C, C++, or FORTRAN programs. The following example shows how
 to call a compiled SDFG from C:
 
 .. code-block:: c

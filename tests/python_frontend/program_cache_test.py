@@ -4,10 +4,11 @@ import numpy as np
 
 
 def test_cache_same_args():
-    """ 
+    """
     Tests that two subsequent calls to a program does not trigger
     recompilation.
     """
+
     @dace.program
     def test(x):
         return x * x
@@ -19,10 +20,11 @@ def test_cache_same_args():
 
 
 def test_cache_different_args():
-    """ 
+    """
     Tests that two subsequent calls to a program with different shapes does
     trigger recompilation.
     """
+
     @dace.program
     def test(x):
         return x * x
@@ -39,6 +41,7 @@ def test_cache_different_args():
 
 
 def test_cache_return_values():
+
     @dace.program
     def test(x):
         return x * x
@@ -50,6 +53,7 @@ def test_cache_return_values():
 
 
 def test_cache_argument_names():
+
     @dace.program
     def test(C: dace.float32[20], A: dace.float64[30]):
         A *= 5

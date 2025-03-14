@@ -58,12 +58,7 @@ def test_applyto_pattern():
     transient = next(aname for aname, desc in sdfg.arrays.items() if desc.transient)
     access_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == transient)
 
-    assert MapFusion.can_be_applied_to(
-            sdfg,
-            first_map_exit=mult_exit,
-            array=access_node,
-            second_map_entry=add_entry
-    )
+    assert MapFusion.can_be_applied_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
     MapFusion.apply_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
 
     assert len([node for node in state.nodes() if isinstance(node, dace.nodes.MapEntry)]) == 1
@@ -86,23 +81,12 @@ def test_applyto_pattern_2():
     map_exit_1 = next(e.src for e in state.in_edges(tmp) if isinstance(e.src, dace.nodes.MapExit))
     map_entry_2 = next(e.dst for e in state.out_edges(tmp) if isinstance(e.dst, dace.nodes.MapEntry))
 
-    assert not MapFusion.can_be_applied_to(
-            sdfg,
-            first_map_exit=map_exit_1,
-            array=tmp,
-            second_map_entry=map_entry_2
-    )
+    assert not MapFusion.can_be_applied_to(sdfg, first_map_exit=map_exit_1, array=tmp, second_map_entry=map_entry_2)
     with pytest.raises(
             ValueError,
             match='Transformation cannot be applied on the given subgraph \("can_be_applied" failed\)',
     ):
-        MapFusion.apply_to(
-            sdfg,
-            verify=True,
-            first_map_exit=map_exit_1,
-            array=tmp,
-            second_map_entry=map_entry_2
-        )
+        MapFusion.apply_to(sdfg, verify=True, first_map_exit=map_exit_1, array=tmp, second_map_entry=map_entry_2)
 
 
 def test_applyto_subgraph():

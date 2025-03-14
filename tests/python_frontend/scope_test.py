@@ -108,6 +108,7 @@ def test_reassignment_while():
     val = reassignment_while(A, B)
     assert np.allclose(val, ref)
 
+
 def test_reassignment_view():
     """
     Tests the disallowed behavior of reassigning to a view

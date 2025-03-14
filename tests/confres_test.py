@@ -12,6 +12,7 @@ H = dace.symbol('H')
 
 @dace.program(dace.float32[W, H], dace.float32[H, W, H], dace.float32[3], dace.float32[1])
 def confres_test(A, B, red1, red2):
+
     @dace.map(_[0:H - 1, 0:W - 1])
     def compute(i, j):
         a << A[j, i]

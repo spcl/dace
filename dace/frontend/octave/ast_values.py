@@ -5,6 +5,7 @@ from .ast_node import AST_Node
 
 
 class AST_Ident(AST_Node):
+
     def __init__(self, context, value):
         AST_Node.__init__(self, context)
         if isinstance(value, str):
@@ -71,6 +72,7 @@ class AST_Ident(AST_Node):
 
 
 class AST_Constant(AST_Node):
+
     def __init__(self, context, value):
         AST_Node.__init__(self, context)
         self.value = value

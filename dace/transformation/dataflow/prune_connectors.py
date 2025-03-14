@@ -90,7 +90,7 @@ class PruneConnectors(pm.SingleStateTransformation):
 
 
 class PruneSymbols(pm.SingleStateTransformation):
-    """ 
+    """
     Removes unused symbol mappings from nested SDFGs, as well as internal
     symbols if necessary.
     """

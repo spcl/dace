@@ -13,7 +13,7 @@ def aligned_ndarray(arr, alignment=64):
     """
     Allocates a and returns a copy of ``arr`` as an ``alignment``-byte aligned
     array. Useful for aligned vectorized access.
-    
+
     Based on https://stackoverflow.com/a/20293172/6489142
     """
     if (arr.ctypes.data % alignment) == 0:

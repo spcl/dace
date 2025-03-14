@@ -5,6 +5,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 
 
 def test_conditional():
+
     @dace.program
     def conditional(in1, out):
         for i in dace.map[0:10]:
@@ -22,6 +23,7 @@ def test_conditional():
 
 
 def test_conditional_nested():
+
     @dace.program
     def conditional(in1, out):
         for i in dace.map[0:10]:
@@ -43,6 +45,7 @@ def test_conditional_nested():
 
 
 def test_runtime_conditional():
+
     @dace.program
     def rconditional(in1, out, mask):
         for i in dace.map[0:10]:
@@ -64,6 +67,7 @@ def test_runtime_conditional():
 def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     N = dace.symbol('N')
     M = dace.symbol('M')
+
     @dace.program
     def sparse(A: dace.float32[M, N], ind: dace.int32[M, N]):
         for i, j in dace.map[0:M, 0:N]:
@@ -93,15 +97,13 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     if inner_out.volume != 1:
         raise RuntimeError('Expected a volume of 1 on the inner output memlet')
     if inner_out.subset[0] != (0, i, 1) or inner_out.subset[1] != (0, N - 1, 1):
-        raise RuntimeError('Expected subset of inner out memlet to be [0:i+1, 0:N], found ' +
-            str(inner_out.subset))
+        raise RuntimeError('Expected subset of inner out memlet to be [0:i+1, 0:N], found ' + str(inner_out.subset))
 
     outer_out = map_state.edges()[3].data
     if outer_out.volume != M * N:
         raise RuntimeError('Expected a volume of M*N on the outer output memlet')
     if outer_out.subset[0] != (0, M - 1, 1) or outer_out.subset[1] != (0, N - 1, 1):
-        raise RuntimeError('Expected subset of outer out memlet to be [0:M, 0:N], found ' +
-            str(outer_out.subset))
+        raise RuntimeError('Expected subset of outer out memlet to be [0:M, 0:N], found ' + str(outer_out.subset))
 
 
 if __name__ == '__main__':

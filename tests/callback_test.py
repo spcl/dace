@@ -38,6 +38,7 @@ donothing = dace.symbol('donothing', dace.callback(None))
 
 @dace.program
 def callback_test(A: dace.uint32[2], B: dace.uint32[2]):
+
     @dace.map(_[0:2])
     def index(i):
         a << A[i]

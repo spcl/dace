@@ -5,6 +5,7 @@ from .ast_node import AST_Node
 
 
 class AST_ArrayAccess(AST_Node):
+
     def __init__(self, context, arrayname, accdims):
         AST_Node.__init__(self, context)
         self.arrayname = arrayname
