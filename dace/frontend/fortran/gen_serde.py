@@ -679,7 +679,9 @@ add_line(serialize(x->{z.name} != nullptr), s);
                 candidates = {f"x%{v[0]}": v[1].children for k, v in array_map.items()
                               if k[0] == f"{z.type}" and z.rank <= k[1]}
                 f90_ser_ops.extend(generate_pointer_meta_f90(f"x%{z.name}", z.rank, candidates))
-                cpp_ser_ops.append(f"""add_line("=> missing", s);""")
+                cpp_ser_ops.append(f"""
+if (x->{z.name}) add_line(serialize_array(x->{z.name}), s);
+""")
 
                 # TODO: pointer types have a whole bunch of different, best-effort strategies. For our purposes, we will
                 #  only populate this when it points to a different component of the same structure.
@@ -979,6 +981,8 @@ namespace serde {{
         assert(missing == 1);
         return read_array<T>(s);
     }}
+
+    template<typename T> std::string serialize_array(T* arr);
 
     {cpp_deserializer_fns}
     {cpp_serializer_fns}
