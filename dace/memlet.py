@@ -534,6 +534,17 @@ class Memlet(object):
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
+        # Negative size is explicitly allowed.
+        #  Strictly speaking this is only needed if the Memlet is between two AccessNodes.
+        #  If it is between an AccessNode and a Map* then it is fine, because both the CPU
+        #  and GPU backend can handle this.
+        if self.subset is not None:
+            if any((ss < 0) == True for ss in self.subset.size()):
+                raise ValueError(f'The subset of the edge contains a negative size; the size was {self.subset.size()}')
+        if self.other_subset is not None:
+            if any((ss < 0) == True for ss in self.other_subset.size()):
+                raise ValueError(
+                    f'The subset of the edge contains a negative size; the size was {self.other_subset.size()}')
 
     def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
         """
