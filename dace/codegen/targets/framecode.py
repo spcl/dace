@@ -939,8 +939,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         l_start = loop_analysis.get_init_assignment(cfr)
                         l_step = loop_analysis.get_loop_stride(cfr)
                         sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
-                                                        infer_expr_type(l_step, global_symbols),
-                                                        infer_expr_type(l_end, global_symbols))
+                                                         infer_expr_type(l_step, global_symbols),
+                                                         infer_expr_type(l_end, global_symbols))
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]

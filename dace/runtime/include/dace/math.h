@@ -253,7 +253,7 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::com
 
 // Computes Python modulus (also NumPy remainder)
 // Formula: num - (num // den) * den
-// NOTE: This is different than Python math.remainder and C remainder, 
+// NOTE: This is different than Python math.remainder and C remainder,
 // which are equaivalent to the IEEE remainder: num - round(num / den) * den
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
@@ -321,7 +321,7 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> round(const std::complex<T>& a) 
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T sign(const T& x) {
     return T( (T(0) < x) - (x < T(0)) );
-    // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0); 
+    // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0);
 }
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign(const std::complex<T>& x) {
@@ -331,7 +331,7 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign(const std::complex<T>& x) {
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T sign_numpy_2(const T& x) {
     return T( (T(0) < x) - (x < T(0)) );
-    // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0); 
+    // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0);
 }
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign_numpy_2(const std::complex<T>& x) {
@@ -341,7 +341,7 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign_numpy_2(const std::complex<
 // Computes the Heaviside step function
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a, const T& b) {
-    return (a < 0) ? 0 : ( (a > 0) ? 1 : b); 
+    return (a < 0) ? 0 : ( (a > 0) ? 1 : b);
 }
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a) {
@@ -505,7 +505,7 @@ static DACE_CONSTEXPR DACE_HDFI void np_frexp(const T& a, T& mantissa, int& expo
 namespace dace
 {
     namespace math
-    {       
+    {
         static DACE_CONSTEXPR_HOSTDEV typeless_pi pi{};
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
@@ -645,7 +645,7 @@ namespace dace
         }
         #endif
     }
-    
+
 }
 
 

@@ -148,7 +148,7 @@ def block_parent_tree(cfg: ControlFlowRegion,
     """
     Computes an upward-pointing tree of each control flow block, pointing to the "parent block" it belongs to (in terms
     of structured control flow). More formally, each block is either mapped to its immediate dominator with out
-    degree >= 2, one block upwards if the block occurs after a loop and `with_loops` is True, or the start block if 
+    degree >= 2, one block upwards if the block occurs after a loop and `with_loops` is True, or the start block if
     no such block exist.
 
     :param sdfg: The SDFG to analyze.
@@ -289,8 +289,8 @@ def _blockorder_topological_sort(
         stop: ControlFlowBlock = None,
         visited: Set[ControlFlowBlock] = None,
         loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None) -> Iterator[ControlFlowBlock]:
-    """ 
-    Helper function for ``blockorder_topological_sort``. 
+    """
+    Helper function for ``blockorder_topological_sort``.
 
     :param cfg: CFG.
     :param start: Starting block for traversal.

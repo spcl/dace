@@ -55,16 +55,13 @@ class FullMapFusion(ppl.Pass):
     )
 
     validate = properties.Property(
-            dtype=bool,
-            default=True,
-            desc='If True, validates the SDFG after all transformations have been applied.',
-            )
-    validate_all = properties.Property(
-            dtype=bool,
-            default=False,
-            desc='If True, validates the SDFG after each transformation applies.'
+        dtype=bool,
+        default=True,
+        desc='If True, validates the SDFG after all transformations have been applied.',
     )
-
+    validate_all = properties.Property(dtype=bool,
+                                       default=False,
+                                       desc='If True, validates the SDFG after each transformation applies.')
 
     def __init__(
         self,
@@ -114,12 +111,10 @@ class FullMapFusion(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
 
-        fusion = MapFusion(
-                only_inner_maps=self.only_inner_maps,
-                only_toplevel_maps=self.only_toplevel_maps,
-                strict_dataflow=self.strict_dataflow,
-                assume_always_shared=self.assume_always_shared
-        )
+        fusion = MapFusion(only_inner_maps=self.only_inner_maps,
+                           only_toplevel_maps=self.only_toplevel_maps,
+                           strict_dataflow=self.strict_dataflow,
+                           assume_always_shared=self.assume_always_shared)
 
         try:
             # The short answer why we do this is because  `fusion._pipeline_results` is
@@ -128,10 +123,10 @@ class FullMapFusion(ppl.Pass):
             assert fusion._single_use_data is None
             fusion._single_use_data = pipeline_results["FindSingleUseData"]
             pazz = pmp.PatternMatchAndApplyRepeated(
-                    [fusion],
-                    permissive=False,
-                    validate=False,
-                    validate_all=self.validate_all,
+                [fusion],
+                permissive=False,
+                validate=False,
+                validate_all=self.validate_all,
             )
             result = pazz.apply_pass(sdfg, pipeline_results)
 

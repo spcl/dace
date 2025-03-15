@@ -16,7 +16,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
 
     Currently, it can only be applied to applications targeting Xilinx FPGAs, and to subgraphs that purely communicate through streams. It can be applied in two ways:
     1. Where the widths of the internal paths remain unchanged while the external paths are widened by the multi-pumping factor. This gives the benefit of increased throughput at the same critical-resource footprint.
-    2. Where the widths of the internal paths are divided by the multi-pumping factor, while the widths of the external paths remain unchanged. This gives the benefit of a reduced critical-resource footprint at the same throughput. 
+    2. Where the widths of the internal paths are divided by the multi-pumping factor, while the widths of the external paths remain unchanged. This gives the benefit of a reduced critical-resource footprint at the same throughput.
     '''
     # TODO 3rd approach: where the subgraph is just clocked faster without introducing gearboxing. This could help designs where the subgraph reaches II=2, then by clocking it two times faster, it essentially behaves as II=1 from the slow clock domain.
     factor = properties.Property(dtype=int,
@@ -32,12 +32,12 @@ class TemporalVectorization(transformation.SubgraphTransformation):
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
         Temporal vectorization can be applied if:
-        1. There is one outermost map in the subgraph. 
-        2. All of the non- source and sink nodes are only accessed within this subgraph. 
-        3. All of the source and sink nodes are either streams or scalars. 
+        1. There is one outermost map in the subgraph.
+        2. All of the non- source and sink nodes are only accessed within this subgraph.
+        3. All of the source and sink nodes are either streams or scalars.
         4. If the approach is 1, then either:
             - The elemental type of the streams must be a vector type.
-            - The elemental type must be convertible to a vector type. 
+            - The elemental type must be convertible to a vector type.
             - Data packers/issuers are allowed to be inserted at the cost of performance through additional data plumbing overhead.
         5. If the approach is 2, all the elemental types of the streams must be a vector type that is integer divisable by the multi-pumping factor.
         '''

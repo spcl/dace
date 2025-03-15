@@ -38,7 +38,7 @@ class ArrayElimination(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
         Removes redundant arrays and access nodes.
-        
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -219,7 +219,11 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                                xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0,
+                                xform.setup_match(sdfg,
+                                                  state.parent_graph.cfg_id,
+                                                  state_id,
+                                                  candidate,
+                                                  0,
                                                   override=True)
 
                                 # Try to apply
@@ -240,7 +244,11 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                                xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0,
+                                xform.setup_match(sdfg,
+                                                  state.parent_graph.cfg_id,
+                                                  state_id,
+                                                  candidate,
+                                                  0,
                                                   override=True)
 
                                 # Try to apply

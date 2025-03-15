@@ -39,7 +39,7 @@ class ExpandReduceMPI(ExpandTransformation):
                 """
             code += f"""
                     MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});
-                }} else {{            
+                }} else {{
             """
         code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});"
         if in_place:

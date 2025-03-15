@@ -67,8 +67,9 @@ class ExpandGemmPure(ExpandTransformation):
             raise SyntaxError("Matrix sizes must match")
         res = equal(trans_shape_a[1], trans_shape_b[0])
         if res is None:
-            warnings.warn(f"First matrix columns {trans_shape_a[1]} may not match "
-                          f"second matrix rows {trans_shape_b[0]}", UserWarning)
+            warnings.warn(
+                f"First matrix columns {trans_shape_a[1]} may not match "
+                f"second matrix rows {trans_shape_b[0]}", UserWarning)
         elif not res:
             raise SyntaxError("Matrix sizes must match")
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
@@ -100,8 +101,10 @@ class ExpandGemmPure(ExpandTransformation):
         # Initialization / beta map
         if equal_valued(0, node.beta):
             init_state.add_mapped_tasklet(
-                'gemm_init', {'_o%d' % i: '0:%s' % symstr(d)
-                              for i, d in enumerate(shape_c)}, {},
+                'gemm_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(shape_c)
+                }, {},
                 'out = 0', {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
         elif equal_valued(1, node.beta):
@@ -123,20 +126,23 @@ class ExpandGemmPure(ExpandTransformation):
             else:
                 raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
 
-            init_state.add_mapped_tasklet("gemm_init", {"__i%d" % i: "0:%s" % s
-                                                        for i, s in enumerate([M, N])}, {
-                                                            "__c": dace.Memlet.simple("_cin", memlet_idx),
-                                                        },
+            init_state.add_mapped_tasklet("gemm_init", {
+                "__i%d" % i: "0:%s" % s
+                for i, s in enumerate([M, N])
+            }, {
+                "__c": dace.Memlet.simple("_cin", memlet_idx),
+            },
                                           add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
                                           external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet("gemm", {"__i%d" % i: "0:%s" % s
-                                          for i, s in enumerate([M, N, K])},
-                                 {
-                                     "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-                                     "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
-                                 },
+        state.add_mapped_tasklet("gemm", {
+            "__i%d" % i: "0:%s" % s
+            for i, s in enumerate([M, N, K])
+        }, {
+            "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+            "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
+        },
                                  mul_program,
                                  {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
                                  external_edges=True,
@@ -698,7 +704,7 @@ to_kernel = data""")
             tasklet_inputs = {"from_kernel", "prev_c"} if not equal_valued(0, node.beta) else {"from_kernel"}
             tasklet = state.add_tasklet(
                 "write_C", tasklet_inputs, {"to_memory"}, f"""\
-if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :                                               
+if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
     to_memory = {mul_accumulated}{add_prev_c}
 """)
             state.add_memlet_path(pipe,
@@ -838,7 +844,7 @@ if m >= {L} and not {entry_pipeline.pipeline.drain_condition()}:
 # - if we are working on second assigned row or second tile and we have something to drain
 # - if k = K-1 and m>=L: each PE has just finished to compute something
 # - if we are in the draining phase
-# How: 
+# How:
 # - if k = K-1 and m>=L: then the PE drains its own result
 #-  otherwise, if k_drain<p forward data coming from previous PEs (this could happens also in the drain phase)
 if((n0 > 0 or tm > 0)  and k_drain <p and m_drain <{T}) or  (k=={K}-1 and m>= {L}) or ({entry_pipeline.pipeline.drain_condition()} and k_drain < p):

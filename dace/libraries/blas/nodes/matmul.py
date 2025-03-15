@@ -35,7 +35,8 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
-            raise ValueError("Matrix multiplication connector " "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector "
+                             "\"{}\" not found.".format(name))
     return res_lhs, res_rhs, res_out
 
 
@@ -44,7 +45,7 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     Detects whether a matrix multiplication is a batched matrix multiplication
     and returns its parameters (strides, batch size), or an empty dictionary if
     batched multiplication is not detected.
-    
+
     :param a: Data descriptor for the first tensor.
     :param b: Data descriptor for the second tensor.
     :param c: Data descriptor for the output tensor (optional).
@@ -52,7 +53,8 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
              and c); and b (batch size).
     """
     if len(a_shape) > 3 or len(b_shape) > 3 or (c_shape and len(c_shape) > 3):
-        raise ValueError('Tensor dimensions too large for (batched) matrix ' 'multiplication')
+        raise ValueError('Tensor dimensions too large for (batched) matrix '
+                         'multiplication')
     if len(a_shape) <= 2 and len(b_shape) <= 2:
         return {}
 
@@ -161,7 +163,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                     beta = 1.0
                     cin = False
                 else:
-                    warnings.warn("Unsupported WCR in output of MatMul " "library node: {}".format(c[0].data.wcr))
+                    warnings.warn("Unsupported WCR in output of MatMul "
+                                  "library node: {}".format(c[0].data.wcr))
             gemm = Gemm(node.name + 'gemm', location=node.location, alpha=node.alpha, beta=beta, cin=cin)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):

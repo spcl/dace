@@ -64,10 +64,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
-    
+
         * Size of data must be 1, it must not be a stream and must be transient.
         * Only inputs to candidate scalars must be either arrays or tasklets.
-        * All tasklets that lead to it must have one statement, one output, 
+        * All tasklets that lead to it must have one statement, one output,
           and may have zero or more **array** inputs and not be in a scope.
         * Scalar must not be accessed with a write-conflict resolution.
         * Scalar must not be written to more than once in a state.
@@ -318,7 +318,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
                  defined_syms: Set[str]) -> None:
         """
         Initializes AST transformer.
-        
+
         """
         self.in_edges = in_edges
         self.out_edges = out_edges
@@ -400,9 +400,9 @@ def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
 
 def _handle_connectors(state: sd.SDFGState, node: nodes.Tasklet, mapping: Dict[str, Tuple[str, subsets.Range]],
                        ignore: Set[str], in_edges: bool) -> bool:
-    """ 
+    """
     Adds new connectors and removes unused connectors after indirection
-    promotion. 
+    promotion.
     """
     if in_edges:
         orig_edges = {e.dst_conn: e for e in state.in_edges(node)}
@@ -544,7 +544,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
     This removes each read-only access node as well as all of its descendant
     edges (in memlet trees) and connectors. Descends recursively to nested
     SDFGs and modifies tasklets (Python and C++).
-    
+
     :param sdfg: The SDFG to operate on.
     :param array_names: Mapping between scalar names to replace and their
                         replacement symbol name.
@@ -658,7 +658,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         to be used within states as part of memlets, and allows further
         transformations (such as loop detection) to use the information for
         optimization.
-        
+
         :param sdfg: The SDFG to run the pass on.
         :param ignore: An optional set of strings of scalars to ignore.
         :param transients_only: If False, also considers global data descriptors (e.g., arguments).

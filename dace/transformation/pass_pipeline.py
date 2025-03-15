@@ -31,7 +31,7 @@ class Modifies(Flag):
     Memlets = auto()  #: Memlets' existence, contents, or properties were modified
     Nodes = AccessNodes | Scopes | Tasklets | NestedSDFGs  #: Modification of any dataflow node (contained in an SDFG state) was made
     Edges = InterstateEdges | Memlets  #: Any edge (memlet or inter-state) was modified
-    CFG = States | InterstateEdges #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
+    CFG = States | InterstateEdges  #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
     Everything = Descriptors | Symbols | CFG | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
@@ -43,7 +43,7 @@ class Pass:
     transformations, as well as the SDFG simplification process, extend Pass.
     Passes may depend on each other through a ``Pipeline`` object, which will ensure dependencies are met and that
     passes do not run redundantly.
-    
+
     A Pass is defined by one main method: ``apply_pass``. This method receives the SDFG to manipulate/analyze, as well
     as the previous ``Pipeline`` results, if run in the context of a pipeline. The other three, pipeline-related
     methods are:
@@ -137,6 +137,7 @@ class Pass:
     def set_opts(self, opts: Dict[str, Any]) -> None:
         pass
 
+
 @properties.make_properties
 class VisitorPass(Pass):
     """
@@ -221,7 +222,7 @@ class StatePass(Pass):
     """
     A specialized Pass type that applies to each SDFG state separately. Such a pass is realized by implementing the
     ``apply`` method, which accepts a single state.
-    
+
     :see: Pass
     """
 
@@ -274,16 +275,18 @@ class ControlFlowRegionPass(Pass):
     A specialized Pass type that applies to each control flow region separately, buttom up. Such a pass is realized by
     implementing the ``apply`` method, which accepts a single control flow region, and assumes the pass was already
     applied to each control flow region nested inside of that.
-    
+
     :see: Pass
     """
 
     CATEGORY: str = 'Helper'
 
-    apply_to_conditionals = properties.Property(dtype=bool, default=False,
+    apply_to_conditionals = properties.Property(dtype=bool,
+                                                default=False,
                                                 desc='Whether or not to apply to conditional blocks. If false, do ' +
                                                 'not apply to conditional blocks, but only their children.')
-    top_down = properties.Property(dtype=bool, default=False,
+    top_down = properties.Property(dtype=bool,
+                                   default=False,
                                    desc='Whether or not to apply top down (i.e., parents before children)')
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:
@@ -327,7 +330,7 @@ class ScopePass(Pass):
     """
     A specialized Pass type that applies to each scope (e.g., Map, Consume, Pipeline) separately. Such a pass is
     realized by implementing the ``apply`` method, which accepts a scope entry node and its parent SDFG state.
-    
+
     :see: Pass
     """
 
@@ -421,7 +424,7 @@ class Pipeline(Pass):
 
     def _add_dependencies(self, passes: List[Pass]):
         """
-        Verifies pass uniqueness in pipeline and adds missing dependencies from ``depends_on`` of each pass. 
+        Verifies pass uniqueness in pipeline and adds missing dependencies from ``depends_on`` of each pass.
 
         :param passes: The passes to add dependencies for.
         """
@@ -466,7 +469,7 @@ class Pipeline(Pass):
         """
         Which elements of the SDFG (e.g., memlets, state structure) are modified by this pipeline, if run successfully.
         Computed as the union of all modified elements of each pass in the pipeline.
-        
+
         :return: A ``Modifies`` set of flags of modified elements.
         """
         result = Modifies.Nothing
@@ -578,12 +581,7 @@ class Pipeline(Pass):
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {
-            'type': 'Pipeline',
-            'transformation': type(self).__name__,
-            'CATEGORY': type(self).CATEGORY,
-            **props
-        }
+        return {'type': 'Pipeline', 'transformation': type(self).__name__, 'CATEGORY': type(self).CATEGORY, **props}
 
 
 @properties.make_properties
@@ -591,7 +589,7 @@ class FixedPointPipeline(Pipeline):
     """
     A special type of Pipeline that applies its ``Pass`` objects in repeated succession until they all stop modifying
     the SDFG (i.e., by returning None).
-    
+
     :see: Pipeline
     """
 
@@ -612,7 +610,7 @@ class FixedPointPipeline(Pipeline):
         retval = {}
         while True:
             newret = super().apply_pass(sdfg, state)
-            
+
             # Remove dependencies from pipeline
             if newret:
                 newret = {k: v for k, v in newret.items() if k in self._pass_names}

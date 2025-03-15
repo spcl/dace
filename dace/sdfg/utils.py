@@ -176,8 +176,8 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
 
 class StopTraversal(Exception):
     """
-    Special exception that stops DFS conditional traversal beyond the current node. 
-    
+    Special exception that stops DFS conditional traversal beyond the current node.
+
     :see: dfs_conditional
     """
     pass
@@ -188,7 +188,7 @@ def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent
     Produce nodes in a depth-first ordering with an optional condition to stop traversal.
     If ``StopTraversal`` is raised during iteration, the outgoing edges of the current node
     will not be traversed.
-    
+
     :param G: An input DiGraph (may have cycles).
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
@@ -341,14 +341,14 @@ def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool
     """
     Returns a set of nodes that appear in any of the paths from ``source``
     to ``targets``. Optionally, a condition can be given to control traversal.
-    
+
     :param G: The graph to traverse.
     :param source: Source node.
-    :param targets: 
+    :param targets:
 
-    :note: This algorithm uses a modified depth-first search, adapted from 
+    :note: This algorithm uses a modified depth-first search, adapted from
            ``networkx.all_simple_paths``.
-    
+
     :note: The algorithm is written for directed *graphs*. For multigraphs, use
            ``networkx.all_simple_paths``!
 
@@ -1238,7 +1238,6 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     """
     from dace.transformation.interstate import StateFusion, BlockFusion  # Avoid import loop
 
-
     if progress is None and not config.Config.get_bool('progress'):
         progress = False
 
@@ -1304,15 +1303,19 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     return counter
 
 
-def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+def inline_control_flow_regions(sdfg: SDFG,
+                                types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
                                 ignore_region_types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
-                                progress: bool = None, lower_returns: bool = False,
+                                progress: bool = None,
+                                lower_returns: bool = False,
                                 eliminate_dead_states: bool = False) -> int:
     if types:
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) in types]
     elif ignore_region_types:
-        blocks = [n for n, _ in sdfg.all_nodes_recursive()
-                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in ignore_region_types]
+        blocks = [
+            n for n, _ in sdfg.all_nodes_recursive()
+            if isinstance(n, AbstractControlFlowRegion) and type(n) not in ignore_region_types
+        ]
     else:
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, AbstractControlFlowRegion)]
     count = 0
@@ -1349,7 +1352,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                      inaccurate, requires ``tqdm``). If None, prints out
                      progress if over 5 seconds have passed. If False, never
                      shows progress bar.
-    :param multistate: Include 
+    :param multistate: Include
     :return: The total number of SDFGs inlined.
     """
     # Avoid import loops
@@ -1462,8 +1465,10 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     # Traverse children until states are not empty
     for succ in state.parent_graph.successors(state):
-        result |= set(dfs_conditional(state.parent_graph, sources=[succ],
-                                      condition=lambda parent, _: parent.number_of_nodes() == 0))
+        result |= set(
+            dfs_conditional(state.parent_graph,
+                            sources=[succ],
+                            condition=lambda parent, _: parent.number_of_nodes() == 0))
 
     # Filter out empty states
     result = {s for s in result if not s.number_of_nodes() == 0}
@@ -1703,9 +1708,9 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
             that fall before or after the sizes, or between two consecutive dimensions, are considered new axes.
         * Third, the remainder of the dimensions of the original (non-view) data descriptor are considered
             "squeezed".
-    
+
     For example, a scalar view ``A[i, j] -> v`` would return ``({}, [], [0, 1])``.
-    Example 2: ``A[0:2, 3:5, i, j, 0:N] -> V[0:2, 0, 0:2, 0, 0:N, 0]`` would return 
+    Example 2: ``A[0:2, 3:5, i, j, 0:N] -> V[0:2, 0, 0:2, 0, 0:N, 0]`` would return
     ``({0: 0, 2: 1, 3: 2, 4: 4}, [1, 5], [3])``.
     :param vdesc: The data descriptor of the view.
     :param adesc: The data descriptor of the viewed data container.
@@ -1771,7 +1776,7 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
 
 def check_sdfg(sdfg: SDFG):
     """ Checks that the parent attributes of an SDFG are correct.
-    
+
     :param sdfg: The SDFG to check.
     :raises AssertionError: If any of the parent attributes are incorrect.
     """
@@ -1897,7 +1902,7 @@ def get_thread_local_data(sdfg: SDFG) -> List[str]:
     """ Returns a list of all data that are thread-local in the SDFG.
 
     This method DOES NOT apply recursively to nested SDFGs. It is also does not take into account outer Maps.
-    
+
     :param sdfg: The SDFG to check.
     :return: A list of the names of all data that are thread-local in the SDFG.
     """

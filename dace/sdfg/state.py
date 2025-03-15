@@ -112,9 +112,9 @@ class BlockGraphView(object):
     # Traversal methods
 
     @abc.abstractmethod
-    def all_nodes_recursive(
-        self,
-        predicate: Optional[Callable[[NodeT, GraphT], bool]] = None) -> Iterator[Tuple[NodeT, GraphT]]:
+    def all_nodes_recursive(self,
+                            predicate: Optional[Callable[[NodeT, GraphT],
+                                                         bool]] = None) -> Iterator[Tuple[NodeT, GraphT]]:
         """
         Iterate over all nodes in this graph or subgraph.
         This includes control flow blocks, nodes in those blocks, and recursive control flow blocks and nodes within
@@ -217,7 +217,9 @@ class BlockGraphView(object):
     # Query, subgraph, and replacement methods
 
     @abc.abstractmethod
-    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool = False,
+    def used_symbols(self,
+                     all_symbols: bool,
+                     keep_defined_in_mapping: bool = False,
                      with_contents: bool = True) -> Set[str]:
         """
         Returns a set of symbol names that are used in the graph.
@@ -248,7 +250,7 @@ class BlockGraphView(object):
         """
         Determines what data is read and written in this graph.
         Does not include reads to subsets of containers that have previously been written within the same state.
-        
+
         :return: A two-tuple of sets of things denoting ({data read}, {data written}).
         """
         return set(), set()
@@ -354,7 +356,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Traversal methods
 
-    def all_nodes_recursive(self, predicate = None) -> Iterator[Tuple[NodeT, GraphT]]:
+    def all_nodes_recursive(self, predicate=None) -> Iterator[Tuple[NodeT, GraphT]]:
         for node in self.nodes():
             yield node, self
             if isinstance(node, nd.NestedSDFG) and node.sdfg:
@@ -654,7 +656,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             return False
         return True
 
-    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool = False,
+    def used_symbols(self,
+                     all_symbols: bool,
+                     keep_defined_in_mapping: bool = False,
                      with_contents: bool = True) -> Set[str]:
         if not with_contents:
             return set()
@@ -749,7 +753,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         return defined_syms
 
-
     def _read_and_write_sets(self) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
         """
         Determines what data is read and written in this subgraph, returning
@@ -791,19 +794,13 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 #   we assume that the whole array is written, which is the default behaviour.
                 ac_desc = n.desc(self.sdfg)
                 in_subsets = {
-                    in_edge: (
-                        sbs.Range.from_array(ac_desc)
-                        if in_edge.data.dst_subset is None
-                        else in_edge.data.dst_subset
-                    )
+                    in_edge:
+                    (sbs.Range.from_array(ac_desc) if in_edge.data.dst_subset is None else in_edge.data.dst_subset)
                     for in_edge in in_edges
                 }
                 out_subsets = {
-                    out_edge: (
-                        sbs.Range.from_array(ac_desc)
-                        if out_edge.data.src_subset is None
-                        else out_edge.data.src_subset
-                    )
+                    out_edge:
+                    (sbs.Range.from_array(ac_desc) if out_edge.data.src_subset is None else out_edge.data.src_subset)
                     for out_edge in out_edges
                 }
 
@@ -821,11 +818,10 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         return copy.deepcopy((read_set, write_set))
 
-
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
         Determines what data is read and written in this subgraph.
-        
+
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
@@ -876,7 +872,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif edge.data.data not in descs:
                 # The edge reads data from the outside, and the Memlet is directly indicating what is read.
                 if (isinstance(edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode)):
-                    continue    # Ignore code->code edges.
+                    continue  # Ignore code->code edges.
                 additional_descs = {edge.data.data: sdfg.arrays[edge.data.data]}
 
             elif isinstance(edge.dst, (nd.AccessNode, nd.CodeNode)) and isinstance(edge.src, nd.EntryNode):
@@ -888,11 +884,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 top_source_edge = self.graph.memlet_path(edge)[0]
                 if not isinstance(top_source_edge.src, nd.AccessNode):
                     continue
-                additional_descs = (
-                        {top_source_edge.src.data: top_source_edge.src.desc(sdfg)}
-                        if top_source_edge.src.data not in descs
-                        else {}
-                )
+                additional_descs = ({
+                    top_source_edge.src.data: top_source_edge.src.desc(sdfg)
+                } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
                 # Same case as above, but for outgoing Memlets.
@@ -902,10 +896,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if (
-                        (not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                        and (oedge.data.data not in additional_descs)
-                    ):
+                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
+                            and (oedge.data.data not in additional_descs)):
                         additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
 
             else:
@@ -1050,7 +1042,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Traversal methods
 
-    def all_nodes_recursive(self, predicate = None) -> Iterator[Tuple[NodeT, GraphT]]:
+    def all_nodes_recursive(self, predicate=None) -> Iterator[Tuple[NodeT, GraphT]]:
         for node in self.nodes():
             yield node, self
             if predicate is None or predicate(node, self):
@@ -1125,9 +1117,12 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                                with_contents: bool = True) -> Tuple[Set[str], Set[str], Set[str]]:
         raise NotImplementedError()
 
-    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool = False,
+    def used_symbols(self,
+                     all_symbols: bool,
+                     keep_defined_in_mapping: bool = False,
                      with_contents: bool = True) -> Set[str]:
-        return self._used_symbols_internal(all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
+        return self._used_symbols_internal(all_symbols,
+                                           keep_defined_in_mapping=keep_defined_in_mapping,
                                            with_contents=with_contents)[0]
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
@@ -1261,7 +1256,9 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
     post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')
     invariant_conditions = DictProperty(key_type=str, value_type=list, desc='Invariant conditions for this block')
-    ranges = DictProperty(key_type=str, value_type=Range, default={},
+    ranges = DictProperty(key_type=str,
+                          value_type=Range,
+                          default={},
                           desc='Variable ranges across this block, typically within loops')
 
     executions = SymbolicProperty(default=0,
@@ -1558,9 +1555,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = pre_ret if pre_ret is not None else SDFGState(label=json_obj['label'],
-                                                            sdfg=context['sdfg'],
-                                                            debuginfo=None)
+        ret = pre_ret if pre_ret is not None else SDFGState(
+            label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
 
         rec_ci = {
             'sdfg': context['sdfg'],
@@ -1909,11 +1905,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                            language=dtypes.Language.Python,
                            debuginfo=None,
                            external_edges=False,
-                           input_nodes: Optional[Union[Dict[str, nd.AccessNode],
-                                                       List[nd.AccessNode],
+                           input_nodes: Optional[Union[Dict[str, nd.AccessNode], List[nd.AccessNode],
                                                        Set[nd.AccessNode]]] = None,
-                           output_nodes: Optional[Union[Dict[str, nd.AccessNode],
-                                                        List[nd.AccessNode],
+                           output_nodes: Optional[Union[Dict[str, nd.AccessNode], List[nd.AccessNode],
                                                         Set[nd.AccessNode]]] = None,
                            propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
@@ -2670,7 +2664,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     start blocks there are, etc.
     """
 
-    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None,
+    def __init__(self,
+                 label: str = '',
+                 sdfg: Optional['SDFG'] = None,
                  parent: Optional['AbstractControlFlowRegion'] = None):
         OrderedDiGraph.__init__(self)
         ControlGraphView.__init__(self)
@@ -2805,7 +2801,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                 dst = block_to_state_map[self.start_block] if self.start_block in block_to_state_map else self.start_block
                 parent.add_edge(b_edge.src, dst, b_edge.data)
                 parent.remove_edge(b_edge)
-            
+
             end_state = None
             if len(to_connect) > 0:
                 end_state = parent.add_state(self.label + '_end')
@@ -2965,7 +2961,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     ###################################################################
     # Traversal methods
 
-    def all_control_flow_regions(self, recursive=False, load_ext=False,
+    def all_control_flow_regions(self,
+                                 recursive=False,
+                                 load_ext=False,
                                  parent_first=True) -> Iterator['AbstractControlFlowRegion']:
         """ Iterate over this and all nested control flow regions. """
         if parent_first:
@@ -2975,14 +2973,17 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
                         if node.sdfg:
-                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
+                            yield from node.sdfg.all_control_flow_regions(recursive=recursive,
+                                                                          load_ext=load_ext,
                                                                           parent_first=parent_first)
                         elif load_ext:
                             node.load_external(block)
-                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
+                            yield from node.sdfg.all_control_flow_regions(recursive=recursive,
+                                                                          load_ext=load_ext,
                                                                           parent_first=parent_first)
             elif isinstance(block, AbstractControlFlowRegion):
-                yield from block.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
+                yield from block.all_control_flow_regions(recursive=recursive,
+                                                          load_ext=load_ext,
                                                           parent_first=parent_first)
         if not parent_first:
             yield self
@@ -3180,7 +3181,7 @@ class ControlFlowRegion(AbstractControlFlowRegion):
     semantics, such as a loop or a function call.
     """
 
-    def __init__(self, label = '', sdfg = None, parent = None):
+    def __init__(self, label='', sdfg=None, parent=None):
         super().__init__(label, sdfg, parent)
 
 
@@ -3236,7 +3237,7 @@ class LoopRegion(ControlFlowRegion):
                  update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
                  sdfg: Optional['SDFG'] = None,
-                 update_before_condition = True):
+                 update_before_condition=True):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
@@ -3301,9 +3302,10 @@ class LoopRegion(ControlFlowRegion):
         def recursive_inline_cf_regions(region: ControlFlowRegion) -> None:
             for block in region.nodes():
                 if ((isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalBlock))
-                    and not isinstance(block, LoopRegion)):
+                        and not isinstance(block, LoopRegion)):
                     recursive_inline_cf_regions(block)
                     block.inline(lower_returns=lower_returns)
+
         recursive_inline_cf_regions(self)
 
         # Add all boilerplate loop states necessary for the structure.
@@ -3374,8 +3376,7 @@ class LoopRegion(ControlFlowRegion):
 
         # Add condition checking edges and connect the guard state.
         cond_expr = self.loop_condition.code
-        parent.add_edge(guard_state, end_state,
-                        dace.InterstateEdge(CodeBlock(astutils.negate_expr(cond_expr)).code))
+        parent.add_edge(guard_state, end_state, dace.InterstateEdge(CodeBlock(astutils.negate_expr(cond_expr)).code))
         parent.add_edge(guard_state, self.start_block, dace.InterstateEdge(CodeBlock(cond_expr).code))
 
         # Connect any end states from the loop's internal state machine to the tail state so they end a
@@ -3463,8 +3464,7 @@ class LoopRegion(ControlFlowRegion):
             l_end = loop_analysis.get_loop_end(self)
             l_start = loop_analysis.get_init_assignment(self)
             l_step = loop_analysis.get_loop_stride(self)
-            inferred_type = dtypes.result_type_of(infer_expr_type(l_start, alltypes),
-                                                  infer_expr_type(l_step, alltypes),
+            inferred_type = dtypes.result_type_of(infer_expr_type(l_start, alltypes), infer_expr_type(l_step, alltypes),
                                                   infer_expr_type(l_end, alltypes))
             init_rhs = loop_analysis.get_init_assignment(self)
             if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
@@ -3571,7 +3571,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
             if c is not None:
                 read_memlets.extend(memlets_in_ast(c.code[0], self.sdfg.arrays))
         return read_memlets
-    
+
     def _used_symbols_internal(self,
                                all_symbols: bool,
                                defined_syms: Optional[Set] = None,
@@ -3619,7 +3619,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
         json['branches'] = [(condition.to_json() if condition is not None else None, cfg.to_json())
                             for condition, cfg in self._branches]
         return json
-    
+
     @classmethod
     def from_json(cls, json_obj, context=None):
         context = context or {'sdfg': None, 'parent_graph': None}
@@ -3741,16 +3741,20 @@ class NamedRegion(ControlFlowRegion):
 
     debuginfo = DebugInfoProperty()
 
-    def __init__(self, label: str, sdfg: Optional['SDFG']=None, debuginfo: Optional[dtypes.DebugInfo]=None):
+    def __init__(self, label: str, sdfg: Optional['SDFG'] = None, debuginfo: Optional[dtypes.DebugInfo] = None):
         super().__init__(label, sdfg)
         self.debuginfo = debuginfo
+
 
 @make_properties
 class FunctionCallRegion(NamedRegion):
 
     arguments = DictProperty(str, str)
 
-    def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None,
-                 debuginfo: Optional[dtypes.DebugInfo]=None):
+    def __init__(self,
+                 label: str,
+                 arguments: Dict[str, str] = {},
+                 sdfg: 'SDFG' = None,
+                 debuginfo: Optional[dtypes.DebugInfo] = None):
         super().__init__(label, sdfg, debuginfo)
         self.arguments = arguments

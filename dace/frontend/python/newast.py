@@ -191,13 +191,13 @@ def parse_dace_program(name: str,
     Parses a ``@dace.program`` function into an SDFG.
 
     :param src_ast: The AST of the Python program to parse.
-    :param visitor: A ProgramVisitor object returned from 
+    :param visitor: A ProgramVisitor object returned from
                     ``preprocess_dace_program``.
     :param closure: An object that contains the @dace.program closure.
     :param simplify: If True, simplification pass will be performed.
     :param save: If True, saves source mapping data for this SDFG.
-    :param progress: If True, prints a progress bar of the parsing process. 
-                        If None (default), prints after 5 seconds of parsing. 
+    :param progress: If True, prints a progress bar of the parsing process.
+                        If None (default), prints after 5 seconds of parsing.
                         If False, never prints progress.
     :return: A 2-tuple of SDFG and its reduced (used) closure.
     """
@@ -451,10 +451,11 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map(
-            'indirection', {'__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-                            for i, (s, e, t) in enumerate(mapped_rng)},
-            debuginfo=pvisitor.current_lineinfo)
+        ind_entry, ind_exit = graph.add_map('indirection', {
+            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+            for i, (s, e, t) in enumerate(mapped_rng)
+        },
+                                            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -1342,9 +1343,10 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update(self.sdfg.arrays)
 
         # MPI-related stuff
-        result.update(
-            {v: self.sdfg.process_grids[v]
-             for k, v in self.variables.items() if v in self.sdfg.process_grids})
+        result.update({
+            v: self.sdfg.process_grids[v]
+            for k, v in self.variables.items() if v in self.sdfg.process_grids
+        })
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
@@ -1466,8 +1468,8 @@ class ProgramVisitor(ExtNodeVisitor):
     def _symbols_from_params(self, params: List[Tuple[str, Union[str, dtypes.typeclass]]],
                              memlet_inputs: Dict[str, Memlet]) -> Dict[str, symbolic.symbol]:
         """
-        Returns a mapping between symbol names to their type, as a symbol 
-        object to maintain compatibility with global symbols. Used to maintain 
+        Returns a mapping between symbol names to their type, as a symbol
+        object to maintain compatibility with global symbols. Used to maintain
         typed symbols in SDFG scopes (e.g., map, consume).
         """
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -1900,7 +1902,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_consume_inputs(self, node: ast.FunctionDef) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
-        
+
             :return: A 5-tuple of Stream name, internal stream name,
                      (PE index, number of PEs), condition, chunk size.
         """
@@ -2179,7 +2181,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_nedge(internal_node, exit_node, dace.Memlet())
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
-        """ 
+        """
         Adds symbols from nested SDFG mapping values (if appear as globals)
         to current SDFG.
         """
@@ -2588,10 +2590,9 @@ class ProgramVisitor(ExtNodeVisitor):
         langInf = None
         side_effects = None
         if isinstance(node, ast.FunctionDef) and hasattr(node, 'decorator_list') and isinstance(
-                node.decorator_list,
-                list) and len(node.decorator_list) > 0 and hasattr(node.decorator_list[0], 'args') and isinstance(
-                    node.decorator_list[0].args, list) and len(node.decorator_list[0].args) > 0 and hasattr(
-                        node.decorator_list[0].args[0], 'value'):
+                node.decorator_list, list) and len(node.decorator_list) > 0 and hasattr(
+                    node.decorator_list[0], 'args') and isinstance(node.decorator_list[0].args, list) and len(
+                        node.decorator_list[0].args) > 0 and hasattr(node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
@@ -3300,8 +3301,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 results.extend(self._gettype(n))
         else:
             rval = self._gettype(node.value)
-            if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays and
-                self.sdfg.arrays[rval[0][0]].shape == (len(elts),)):
+            if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays
+                    and self.sdfg.arrays[rval[0][0]].shape == (len(elts),)):
                 # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as
                 # the number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses
                 # to constant indexes (according to the number of elements in the lhs). These expansions can then be
@@ -4016,10 +4017,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # Map internal SDFG symbols by adding keyword arguments
         symbols = sdfg.used_symbols(all_symbols=False)
         try:
-            mapping = infer_symbols_from_datadescriptor(
-                sdfg, {k: self.sdfg.arrays[v]
-                       for k, v in args if v in self.sdfg.arrays},
-                set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            mapping = infer_symbols_from_datadescriptor(sdfg, {
+                k: self.sdfg.arrays[v]
+                for k, v in args if v in self.sdfg.arrays
+            }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
         except ValueError as ex:
             raise DaceSyntaxError(self, node, str(ex))
         if len(mapping) == 0:  # Default to same-symbol mapping
@@ -5739,8 +5740,10 @@ class ProgramVisitor(ExtNodeVisitor):
             index_mapping,
             inputs={
                 '__arr': input_memlet,
-                **{f'__inp{i}': m
-                   for i, m in enumerate(index_memlets)}
+                **{
+                    f'__inp{i}': m
+                    for i, m in enumerate(index_memlets)
+                }
             },
             outputs={'__out': output_memlet},
             code=f'__out = __arr[{access_str}]',

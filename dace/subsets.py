@@ -21,6 +21,7 @@ def nng(expr):
     except AttributeError:  # No free_symbols in expr
         return expr
 
+
 def bounding_box_cover_exact(subset_a, subset_b) -> bool:
     min_elements_a = subset_a.min_element()
     max_elements_a = subset_a.max_element()
@@ -29,17 +30,15 @@ def bounding_box_cover_exact(subset_a, subset_b) -> bool:
 
     # Covering only make sense if the two subsets have the same number of dimensions.
     if len(min_elements_a) != len(min_elements_b):
-        return ValueError(
-                f"A bounding box of dimensionality {len(min_elements_a)} cannot"
-                f" test covering a bounding box of dimensionality {len(min_elements_b)}."
-        )
+        return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                          f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
     return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                 and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
-                                            min_elements_b, max_elements_b)])
+                for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)])
 
-def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> bool:
+
+def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> bool:
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
     min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
@@ -47,13 +46,10 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> 
 
     # Covering only make sense if the two subsets have the same number of dimensions.
     if len(min_elements_a) != len(min_elements_b):
-        return ValueError(
-                f"A bounding box of dimensionality {len(min_elements_a)} cannot"
-                f" test covering a bounding box of dimensionality {len(min_elements_b)}."
-        )
+        return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                          f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
-                                min_elements_b, max_elements_b):
+    for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
         # NOTE: We first test for equality, which always returns True or False. If the equality test returns
         # False, then we test for less-equal and greater-equal, which may return an expression, leading to
         # TypeError. This is a workaround for the case where two expressions are the same or equal and
@@ -61,15 +57,16 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> 
 
         # lower bound: first check whether symbolic positive condition applies
         if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-            if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
-                    symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+            if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb))
+                    or symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
                 return False
         # upper bound: first check whether symbolic positive condition applies
         if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-            if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
-                    symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+            if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore))
+                    or symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                 return False
     return True
+
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
@@ -81,7 +78,7 @@ class Subset(object):
         # Subsets of different dimensionality can never cover each other.
         if self.dims() != other.dims():
             return ValueError(
-                    f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
+                f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
             )
 
         if not Config.get('optimizer', 'symbolic_positive'):
@@ -100,20 +97,21 @@ class Subset(object):
                 return False
 
             return True
-        
+
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
 
         # Subsets of different dimensionality can never cover each other.
         if self.dims() != other.dims():
             return ValueError(
-                    f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
+                f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
             )
 
         # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
         try:
-            bounding_box_cover = bounding_box_cover_exact(self, other) if symbolic_positive else bounding_box_symbolic_positive(self, other)
+            bounding_box_cover = bounding_box_cover_exact(
+                self, other) if symbolic_positive else bounding_box_symbolic_positive(self, other)
             if not bounding_box_cover:
                 return False
         except TypeError:
@@ -129,10 +127,10 @@ class Subset(object):
                 # self.start % self.step == other.index % self.step
                 if isinstance(other, Indices):
                     try:
-                        return all(
-                            [(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) ==
-                              symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
-                             for (start, _, step), i in zip(self.ranges, other.indices)])
+                        return all([(symbolic.simplify_ext(nng(start)) %
+                                     symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) %
+                                     symbolic.simplify_ext(nng(step))) == True
+                                    for (start, _, step), i in zip(self.ranges, other.indices)])
                     except:
                         return False
                 if isinstance(other, Range):
@@ -143,11 +141,10 @@ class Subset(object):
                         other_steps = [r[2] for r in other.ranges]
                         for start, step, ostart, ostep in zip(self.min_element(), self_steps, other.min_element(),
                                                               other_steps):
-                            if not (ostep % step == 0 and
-                                    ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
-                                     (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(
-                                         nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(
-                                         nng(ostep))) == True)):
+                            if not (ostep % step == 0 and (
+                                (symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
+                                (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step))
+                                 == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
                                 return False
                     except:
                         return False
@@ -158,7 +155,6 @@ class Subset(object):
 
         except TypeError:
             return False
-
 
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
@@ -735,7 +731,7 @@ class Range(Subset):
     def squeeze(self, ignore_indices: Optional[List[int]] = None, offset: bool = True) -> List[int]:
         """
         Removes size-1 ranges from the subset and returns a list of dimensions that remain.
-        
+
         For example, ``[i:i+10, j]`` will change the range to ``[i:i+10]`` and return ``[0]``.
         If ``offset`` is True, the subset will become ``[0:10]``.
 
@@ -771,7 +767,7 @@ class Range(Subset):
 
     def unsqueeze(self, axes: Sequence[int]) -> List[int]:
         """ Adds 0:1 ranges to the subset, in the indices contained in axes.
-        
+
         The method is mostly used to restore subsets that had their length-1
         ranges removed (i.e., squeezed subsets). Hence, the method is
         called 'unsqueeze'.
@@ -1119,7 +1115,7 @@ class Indices(Subset):
 
     def unsqueeze(self, axes: Sequence[int]) -> List[int]:
         """ Adds zeroes to the subset, in the indices contained in axes.
-        
+
         The method is mostly used to restore subsets that had their
         zero-indices removed (i.e., squeezed subsets). Hence, the method is
         called 'unsqueeze'.
@@ -1211,7 +1207,7 @@ class SubsetUnion(Subset):
         return result
 
     def covers(self, other):
-        """ 
+        """
         Returns True if this SubsetUnion covers another subset (using a bounding box).
         If other is another SubsetUnion then self and other will
         only return true if self is other. If other is a different type of subset
@@ -1227,13 +1223,13 @@ class SubsetUnion(Subset):
             return False
         else:
             return any(s.covers(other) for s in self.subset_list)
-        
+
     def covers_precise(self, other):
-        """ 
+        """
         Returns True if this SubsetUnion covers another
         subset. If other is another SubsetUnion then self and other will
         only return true if self is other. If other is a different type of subset
-        true is returned when one of the subsets in self is equal to other 
+        true is returned when one of the subsets in self is equal to other
         """
 
         if isinstance(other, SubsetUnion):
@@ -1370,7 +1366,7 @@ class SubsetUnion(Subset):
         for subset in self.subset_list:
             result |= subset.free_symbols
         return result
-    
+
     def replace(self, repl_dict):
         for subset in self.subset_list:
             subset.replace(repl_dict)
@@ -1380,11 +1376,11 @@ class SubsetUnion(Subset):
         min = 0
         for subset in self.subset_list:
             try:
-                if subset.num_elements() < min or min ==0:
+                if subset.num_elements() < min or min == 0:
                     min = subset.num_elements()
             except:
                 continue
-            
+
         return min
 
     def to_bounding_box_subset(self) -> Union[Range, None]:
@@ -1408,8 +1404,8 @@ class SubsetUnion(Subset):
 
 def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType,
                          bre: symbolic.SymbolicType):
-    """ 
-    Special cases of subset unions. If case found, returns pair of 
+    """
+    Special cases of subset unions. If case found, returns pair of
     (min,max), otherwise returns None.
     """
     if are + 1 == brb:
@@ -1473,7 +1469,7 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
 def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box union.
-        
+
         :param subset_a: The first subset.
         :param subset_b: The second subset.
         :return: A Subset object whose size is at least the union of the two inputs. If union failed, returns None.
@@ -1498,16 +1494,15 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             # TODO(later): More involved Strided-Tiled Range union
             return bounding_box_union(subset_a, subset_b)
         else:
-            warnings.warn(
-                'Unrecognized Subset type %s in union, degenerating to'
-                ' bounding box' % type(subset_a).__name__)
+            warnings.warn('Unrecognized Subset type %s in union, degenerating to'
+                          ' bounding box' % type(subset_a).__name__)
             return bounding_box_union(subset_a, subset_b)
     except TypeError:  # cannot determine truth value of Relational
         return None
 
 
 def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
-    """ 
+    """
     Returns the union of two Subset lists.
 
     :param subset_a: The first subset.
@@ -1534,6 +1529,7 @@ def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
 
     except TypeError:
         return None
+
 
 def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
     """

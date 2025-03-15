@@ -21,7 +21,7 @@
 <ellipse fill="none" stroke="#000000" stroke-width="3" stroke-miterlimit="10" cx="126.5" cy="261.48" rx="13.33" ry="10"/>
 <ellipse fill="#FFFFFF" cx="126.5" cy="261.48" rx="13.33" ry="10"/>
 <text transform="matrix(1 0 0 1 123.1664 265.5311)" font-family="'Arial'" font-size="10px">B</text>
-<polygon fill="#FFFFFF" stroke="#000000" stroke-width="0.5" stroke-miterlimit="10" points="31.36,131.49 42.78,120.06 
+<polygon fill="#FFFFFF" stroke="#000000" stroke-width="0.5" stroke-miterlimit="10" points="31.36,131.49 42.78,120.06
 	102.24,120.06 113.67,131.49 113.67,142.92 102.24,154.35 42.78,154.35 31.36,142.92 "/>
 <text transform="matrix(1 0 0 1 57.5091 139.2788)" font-family="'Courier New'" font-size="10px">b = a</text>
 <g>
@@ -54,7 +54,7 @@
 </g>
 <text transform="matrix(1 0 0 1 70.711 121.6248)" font-family="'Courier New'" font-size="6px">a</text>
 <text transform="matrix(1 0 0 1 70.7111 155.6516)" font-family="'Courier New'" font-size="6px">b</text>
-<polygon fill="#FFFFFF" stroke="#000000" stroke-width="0.5" stroke-miterlimit="10" points="140.13,131.49 151.56,120.06 
+<polygon fill="#FFFFFF" stroke="#000000" stroke-width="0.5" stroke-miterlimit="10" points="140.13,131.49 151.56,120.06
 	211.01,120.06 222.44,131.49 222.44,142.92 211.01,154.35 151.56,154.35 140.13,142.92 "/>
 <text transform="matrix(1 0 0 1 163.285 139.2788)" font-family="'Courier New'" font-size="10px">b = -a</text>
 <g>

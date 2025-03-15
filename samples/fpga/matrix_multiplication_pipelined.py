@@ -195,8 +195,7 @@ if __name__ == "__main__":
         sdfg = make_sdfg(True, n, k, m)
         sdfg.specialize(dict(M=m, N=n, K=k))
 
-    print("Matrix multiplication {}x{}x{} ({}specialized)".format(m, n, k,
-                                                                  "" if args["specialize"] else "not "))
+    print("Matrix multiplication {}x{}x{} ({}specialized)".format(m, n, k, "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([n, k], dtype=dace.float32.type)

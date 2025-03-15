@@ -68,9 +68,9 @@ class Memlet(object):
                  debuginfo: Optional[dtypes.DebugInfo] = None,
                  wcr_nonatomic: bool = False,
                  allow_oob: bool = False):
-        """ 
+        """
         Constructs a Memlet.
-        
+
         :param expr: A string expression of the this memlet, given as an ease
                      of use API. Must follow one of the following forms:
                      1. ``ARRAY``,
@@ -82,7 +82,7 @@ class Memlet(object):
         :param subset: The subset to take from the data attached to the edge,
                        represented either as a string or a Subset object.
         :param other_subset: The subset to offset into the other side of the
-                             memlet, represented either as a string or a Subset 
+                             memlet, represented either as a string or a Subset
                              object.
         :param volume: The exact number of elements moved using this
                        memlet, or the maximum number of elements if
@@ -91,14 +91,14 @@ class Memlet(object):
                        is runtime-defined and unbounded.
         :param dynamic: If True, the number of elements moved in this memlet
                         is defined dynamically at runtime.
-        :param wcr: A lambda function (represented as a string or Python AST) 
+        :param wcr: A lambda function (represented as a string or Python AST)
                     specifying how write-conflicts are resolved. The syntax
-                    of the lambda function receives two elements: ``current`` 
-                    value and `new` value, and returns the value after 
+                    of the lambda function receives two elements: ``current``
+                    value and `new` value, and returns the value after
                     resolution. For example, summation is represented by
                     ``'lambda cur, new: cur + new'``.
         :param debuginfo: Line information from the generating source code.
-        :param wcr_nonatomic: If True, overrides the automatic code generator 
+        :param wcr_nonatomic: If True, overrides the automatic code generator
                               decision and treat all write-conflict resolution
                               operations as non-atomic, which might cause race
                               conditions in the general case.
@@ -143,7 +143,6 @@ class Memlet(object):
         self.allow_oob = allow_oob
 
         self.guid = generate_element_id(self)
-
 
     @staticmethod
     def from_memlet(memlet: 'Memlet') -> 'Memlet':
@@ -237,16 +236,16 @@ class Memlet(object):
         return node
 
     def is_empty(self) -> bool:
-        """ 
+        """
         Returns True if this memlet carries no data. Memlets without data are
-        primarily used for connecting nodes to scopes without transferring 
-        data to them. 
+        primarily used for connecting nodes to scopes without transferring
+        data to them.
         """
         return (self.data is None and self.subset is None and self.other_subset is None)
 
     @property
     def num_accesses(self):
-        """ 
+        """
         Returns the total memory movement volume (in elements) of this memlet.
         """
         return self.volume
@@ -267,7 +266,7 @@ class Memlet(object):
         """
         DEPRECATED: Constructs a Memlet from string-based expressions.
 
-        :param data: The data object or name to access. 
+        :param data: The data object or name to access.
         :param subset_str: The subset of `data` that is going to
                             be accessed in string format. Example: '0:N'.
         :param wcr_str: A lambda function (as a string) specifying
@@ -347,7 +346,7 @@ class Memlet(object):
         # [subset] syntax
         if expr.startswith('['):
             return None, SubsetProperty.from_string(expr[1:-1])
-      
+
         # array[subset] syntax
         arrname, subset_str = expr[:-1].split('[')
         if not dtypes.validate_name(arrname):
@@ -397,8 +396,8 @@ class Memlet(object):
 
     def try_initialize(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                        edge: 'dace.sdfg.graph.MultiConnectorEdge'):
-        """ 
-        Tries to initialize the internal fields of the memlet (e.g., src/dst 
+        """
+        Tries to initialize the internal fields of the memlet (e.g., src/dst
         subset) once it is added to an SDFG as an edge.
         """
         from dace.sdfg.nodes import AccessNode, CodeNode  # Avoid import loops
@@ -447,7 +446,7 @@ class Memlet(object):
 
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
-        """ 
+        """
         Constructs a Memlet that transfers an entire array's contents.
 
         :param dataname: The name of the data descriptor in the SDFG.
@@ -468,7 +467,7 @@ class Memlet(object):
     def replace(self, repl_dict):
         """
         Substitute a given set of symbols with a different set of symbols.
-        
+
         :param repl_dict: A dict of string symbol names to symbols with
                           which to replace them.
         """
@@ -550,8 +549,8 @@ class Memlet(object):
 
     def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
         """
-        Returns a set of symbols used in this edge's properties. 
-        
+        Returns a set of symbols used in this edge's properties.
+
         :param all_symbols: If False, only returns the set of symbols that will be used
                             in the generated code and are needed as arguments.
         :param edge: If given, provides richer context-based tests for the case
@@ -618,7 +617,7 @@ class Memlet(object):
 
     def get_stride(self, sdfg: 'dace.sdfg.SDFG', map: 'dace.sdfg.nodes.Map', dim: int = -1) -> 'dace.symbolic.SymExpr':
         """ Returns the stride of the underlying memory when traversing a Map.
-            
+
             :param sdfg: The SDFG in which the memlet resides.
             :param map: The map in which the memlet resides.
             :param dim: The dimension that is incremented. By default it is the innermost.
