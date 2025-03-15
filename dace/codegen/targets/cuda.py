@@ -978,14 +978,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             dims = len(copy_shape)
             dtype = dst_node.desc(sdfg).dtype
 
-            if dims == 1:
-                # In 1D there is no difference between FORTRAN or C order, thus we will set them
-                #  to the same value. The value indicates if the stride is `1`
-                is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
-                is_c_order = is_fortran_order
-            else:
-                is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
-                is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
+            # In 1D there is no difference between FORTRAN or C order, thus we will set them
+            #  to the same value. The value indicates if the stride is `1`
+            is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
+            is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
 
             # Test if it is possible to transform a 2D copy into a 1D copy, this is possible if
             #  the allocation happens to be continuous.
