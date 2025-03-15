@@ -374,7 +374,7 @@ class CPUCodeGen(TargetCodeGenerator):
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         name = alloc_name
 
-        tokens = node.data.split('.')
+        tokens = node.data.replace('->', '.').split('.')
         top_desc = sdfg.arrays[tokens[0]]
         # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
         # TODO: Study what is needed in the DaCe stack to ensure this assumption is correct.

@@ -4,6 +4,7 @@ import ast
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
+import warnings
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
 from dace.frontend.python import astutils
@@ -165,7 +166,10 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                                 ast_find.generic_visit(code)
                                         except astutils.NameFound:
                                             # then add the hint expression 
-                                            leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body + leaf.src.code.code
+                                            try:
+                                                leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body + leaf.src.code.code
+                                            except AttributeError:  # Cannot produce type hint
+                                                warnings.warn(f'Cannot generate type hint for dataflow-eliminated connector type {ctype} in {leaf.src}')
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')

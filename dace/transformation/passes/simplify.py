@@ -23,7 +23,7 @@ SIMPLIFY_PASSES = [
     InlineSDFGs,
     InlineControlFlowRegions,
     ScalarToSymbolPromotion,
-    ControlFlowRaising,
+    # ControlFlowRaising,
     FuseStates,
     OptionalArrayInference,
     ConstantPropagation,

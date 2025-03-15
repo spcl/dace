@@ -2022,7 +2022,7 @@ class Reference:
         if debuginfo is not None:
             result.debuginfo = debuginfo
 
-        # References are always transient
+        # References are transient by default
         result.transient = True
         result.byval = False
         return result

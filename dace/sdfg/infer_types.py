@@ -170,7 +170,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
                                                    state=state,
                                                    child_nodes=state.scope_children())
 
-        # Take care of remaining scalars without access nodes
+        # Take care of remaining scalars and structures without access nodes
         for aname, desc in scope.arrays.items():
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
             if not desc.transient and scope.parent_sdfg is not None and desc.lifetime != dtypes.AllocationLifetime.Global:

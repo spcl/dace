@@ -632,9 +632,15 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
     # Collect predecessors
     if not isinstance(node, nodes.AccessNode):
         for edge in state.in_edges(node):
-            for e in state.memlet_path(edge):
+            mpath = state.memlet_path(edge)
+            for e in mpath:
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
+            # Collect predecessor views
+            view_preds = utils.get_all_view_edges(state, mpath[0].src)
+            for pred in view_preds:
+                nodes_to_move.add(pred.src)
+                orig_edges.add(pred)
 
     # Collect nodes_to_move
     for edge in state.edge_bfs(node):
@@ -643,7 +649,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
 
         if not isinstance(edge.dst, nodes.AccessNode):
             for iedge in state.in_edges(edge.dst):
-                if iedge == edge:
+                if iedge is edge:
                     continue
 
                 for e in state.memlet_path(iedge):
@@ -694,6 +700,12 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
 
     for e in orig_edges:
         newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+
+    # Remove now-duplicate reference sets
+    for n in nodes_to_move:
+        if (isinstance(n, nodes.AccessNode) and 'set' in n.in_connectors
+                and len(list(newstate.in_edges_by_connector(n, 'set'))) == 0):
+            n.remove_in_connector('set')
 
     return newstate
 

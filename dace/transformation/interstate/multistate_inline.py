@@ -105,7 +105,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             # We can not compare shapes directly, we have to consider the symbol map
             #  for that. Clone the descriptor because the operation is inplace.
-            inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
+            inner_desc = dc(nested_sdfg.sdfg.arrays[edge.dst_conn])
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
             if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
                 return False

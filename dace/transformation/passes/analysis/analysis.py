@@ -725,6 +725,11 @@ class FindReferenceSources(ppl.Pass):
                         if e.dst_conn != 'set':
                             continue
                         true_src = state.memlet_path(e)[0].src
+                        while isinstance(true_src, nd.AccessNode) and isinstance(sdfg.arrays[true_src.data], dt.View):
+                            e = state.in_edges(true_src)[0]
+                            true_src = e.src
+                        true_src = state.memlet_path(e)[0].src
+                        
                         if isinstance(true_src, nd.CodeNode):
                             # Code  -> Reference
                             result[anode.data].add(true_src)
@@ -775,6 +780,103 @@ class FindReferenceSources(ppl.Pass):
 
             top_result[sdfg.cfg_id] = result
         return top_result
+
+
+
+@dataclass(unsafe_hash=True)
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class FindReferenceUses(ppl.Pass):
+    """
+    For each non-reference data descriptor, finds all uses of it in references.
+    Traces outwards through nested SDFGs if a non-transient reference is used. 
+    Returns a dictionary of {(SDFG ID, array name): [(SDFG ID, reference name), ...]
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    trace_through_code = properties.Property(dtype=bool, default=True, desc='Trace outputs through tasklets.')
+    
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.Memlets
+
+    def depends_on(self):
+        return {FindReferenceSources}
+
+    def apply_pass(self, top_sdfg: SDFG, pipeline_results) -> Dict[Tuple[int, str], Set[Tuple[int, str]]]:
+        """
+        :return: A dictionary mapping each data descriptor name to a set of (SDFG ID, reference data descriptor name).
+        """
+        refsources: Dict[int, Dict[str, Set[Union[Memlet, nd.CodeNode]]]] = pipeline_results['FindReferenceSources']
+
+        result: Dict[Tuple[int, str], Set[Tuple[int, str]]] = defaultdict(set)
+
+        allsdfgs = list(top_sdfg.all_sdfgs_recursive())
+        parents = {s.parent_sdfg for s in allsdfgs}
+        children = defaultdict(list)
+        for s in allsdfgs:
+            children[s.parent_sdfg].append(s)
+        sdfg_tree_leaves: List[SDFG] = [s for s in allsdfgs if s not in parents]
+
+        # Traverse SDFG tree upwards from leaves to root
+        keep = {}
+        frontier = list(sdfg_tree_leaves)
+        visited = set()
+        while frontier:
+            new_frontier = []
+            for sd in frontier:
+                if sd is None or sd in visited:
+                    continue
+                visited.add(sd)
+                for ref, sources in refsources[sd.sdfg_id].items():
+                    for source in sources:
+                        src_sdfg = sd
+                        if isinstance(source, Memlet):
+                            sdata = (sd.sdfg_id, source.data)
+                        elif isinstance(source, nd.AccessNode):
+                            sdata = (sd.sdfg_id, source.data)
+                        elif isinstance(source, nd.NestedSDFG):
+                            # We are guaranteed to have seen this nested SDFG
+                            e = next(e for e in source.sdfg.parent.out_edges(source) if e.data.data == ref)
+                            src_sdfg = source.sdfg
+                            sdata = (source.sdfg.sdfg_id, e.src_conn)
+                        else:
+                            continue
+
+                        # If view, find viewed node and use that
+                        if isinstance(src_sdfg.arrays[sdata[1]], dt.View):
+                            for state in src_sdfg.states():
+                                for dnode in state.data_nodes():
+                                    if dnode.data == sdata[1]:
+                                        orig = sdutil.get_last_view_node(state, dnode)
+                                        sdata = (sdata[0], orig.data)
+
+                        # Add the reference to the node's children
+                        result[sdata].add((sd.sdfg_id, ref))
+
+                    if not sd.arrays[ref].transient:
+                        keep[(sd.sdfg_id, ref)] = sd.parent_nsdfg_node
+                if all(c in visited for c in children[sd.parent_sdfg]):
+                    # Only go up the tree if all children were visited
+                    new_frontier.append(sd.parent_sdfg)
+            frontier = new_frontier
+            # End of loop
+
+        # Recursively add children of children (transitive closure)
+        g = nx.DiGraph()
+        for k, vs in result.items():
+            for v in vs:
+                g.add_edge(k, v)
+        tc = nx.transitive_closure(g)
+
+        result.clear()
+        for u, v in tc.edges():
+            result[u].add(v)
+
+        return result
 
 
 @properties.make_properties

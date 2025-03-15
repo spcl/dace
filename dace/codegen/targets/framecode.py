@@ -23,7 +23,7 @@ from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.analysis import StateReachability, FindReferenceSources, loop_analysis
+from dace.transformation.passes.analysis import StateReachability, FindReferenceSources, loop_analysis, FindReferenceUses
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -618,6 +618,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         refsources_pass = FindReferenceSources()
         refsources_pass.trace_through_code = True
         refsources = refsources_pass.apply_pass(top_sdfg, {})
+        refuses_pass = FindReferenceUses()
+        refuses = refuses_pass.apply_pass(top_sdfg, dict(FindReferenceSources=refsources))
 
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
@@ -637,10 +639,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     instances[node.data].append((state, node))
 
                     # Find array reference sources and keep them allocated throughout the reference's usage
+                    # (within the same SDFG)
                     if node.data in refsources[sdfg.sdfg_id]:
-                        for src in refsources[sdfg.sdfg_id][node.data]:
-                            if isinstance(src, Memlet):
-                                instances[src.data].append((state, node))
+                        def _mark_parent_instance(curelem):
+                            for src in refsources[sdfg.sdfg_id][curelem.data]:
+                                if isinstance(src, Memlet):
+                                    instances[src.data].append((state, node))
+                                    if src.data in refsources[sdfg.sdfg_id]:
+                                        _mark_parent_instance(src)
+                        _mark_parent_instance(node)
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
@@ -750,6 +757,21 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 curstate: SDFGState = None
                 multistate = False
 
+                # If a data container is used or set to a non-transient reference outside of
+                # the current SDFG, mark it as "to deallocate in the last use of the topmost SDFG"
+                multisdfg = False
+                topmost_sdfg = sdfg
+                if (sdfg.sdfg_id, name) in refuses:
+                    sdfgs_in_which_this_container_is_in = set(sid for sid, _ in refuses[(sdfg.sdfg_id, name)])
+                    if len(sdfgs_in_which_this_container_is_in) > 1:
+                        multisdfg = True
+                        currsdfg = sdfg
+                        while currsdfg is not None:
+                            if currsdfg.sdfg_id in sdfgs_in_which_this_container_is_in:
+                                topmost_sdfg = currsdfg
+                            currsdfg = currsdfg.parent_sdfg
+
+
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
                 for isedge in sdfg.all_interstate_edges():
                     if name in self.free_symbols(isedge.data):
@@ -761,7 +783,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         multistate = True
 
                 for state in sdfg.states():
-                    if multistate:
+                    if multistate or multisdfg:
                         break
                     sdict = state.scope_dict()
                     for node in state.nodes():
@@ -794,8 +816,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if multistate:
                         break
 
-                if multistate:
-                    alloc_scope = sdfg
+                if multistate or multisdfg:
+                    alloc_scope = topmost_sdfg
                 else:
                     alloc_scope = curscope
                     alloc_state = curstate
@@ -839,7 +861,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
             fsymbols = fsyms[sdfg.cfg_id]
             if (not isinstance(curscope, nodes.EntryNode)
-                    and utils.is_nonfree_sym_dependent(first_node_instance, desc, first_state_instance, fsymbols)):
+                    and utils.is_nonfree_sym_dependent(first_node_instance, desc, first_state_instance, fsymbols)
+                and (not isinstance(curscope, SDFG) or curscope == sdfg)):
                 # Allocate in first State, deallocate in last State
                 if first_state_instance != last_state_instance:
                     # If any state is not reachable from first state, find common denominators in the form of
