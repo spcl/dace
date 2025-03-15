@@ -1738,17 +1738,19 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         gdims = 'dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims))
         bdims = ', '.join(_topy(block_dims))
 
-        # Prepare an empty-grid check for runtime grids
-        dimcheck = ''
+        # Ensure that an empty or negative sized iteration space does not causes an
+        #  error. It is important that we check for `== 0` and `< 0`, this is for
+        #  compatibility with the CPU backend, which considers these as a no-ops.
         if is_persistent:
-            dimcheck = 'dace_number_blocks == 0'
+            dimcheck = 'dace_number_blocks <= 0'
         else:
+            single_dimchecks = []
             for gdim in grid_dims:
-                if symbolic.issymbolic(gdim) and (gdim > 0) != True:
-                    if not dimcheck:
-                        dimcheck = f'({_topy(gdim)}) == 0'
-                    else:
-                        dimcheck += f' || ({_topy(gdim)}) == 0'
+                # We only issue a check if we can known at code generation time, that
+                #  the size is positive we omit the test.
+                if (gdim > 0) != True:
+                    single_dimchecks.append(f'(({_topy(gdim)}) <= 0)')
+            dimcheck = ' || '.join(single_dimchecks)
 
         if dimcheck:
             emptygrid_warning = ''
