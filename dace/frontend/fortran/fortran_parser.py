@@ -1796,11 +1796,11 @@ class AST_translator:
         sdfg.arrays[view_name] = view_to_member
         if read:
             new_read = substate.add_read(view_name)
-            substate.add_edge(last_read, None, new_read, None, dpcp(memlet))
+            substate.add_edge(last_read, None, new_read, 'views', dpcp(memlet))
             last_read = new_read
         if write:
             new_written = substate.add_write(view_name)
-            substate.add_edge(new_written, None, last_written, None, dpcp(memlet))
+            substate.add_edge(new_written, 'views', last_written, None, dpcp(memlet))
             last_written = new_written
 
         return last_read, last_written
@@ -1942,11 +1942,11 @@ class AST_translator:
                     memlet = Memlet.from_array(viewname, sdfg.arrays[viewname])
                     if write:
                         res_v_read = substate.add_read(reshape_viewname)
-                        substate.add_edge(res_v_read, None, rv, None, dpcp(memlet))
+                        substate.add_edge(res_v_read, 'views', rv, None, dpcp(memlet))
                         rv = res_v_read
                     if read:
                         res_v_write = substate.add_write(reshape_viewname)
-                        substate.add_edge(wv, None, res_v_write, None, dpcp(memlet))
+                        substate.add_edge(wv, None, res_v_write, 'views', dpcp(memlet))
                         wv = res_v_write
 
             local_shape, local_strides = self.fix_shapes_before_adding_nested(sdfg, new_sdfg, local_shape,
@@ -3387,6 +3387,8 @@ def create_sdfg_from_fortran_file_with_options(
         ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = sdfg
+        with open("/home/alex/fcdc/dycpreast_full.txt","w") as f:
+            f.write(str(program))
         ast2sdfg.translate(program, sdfg, sdfg)
         from dace.transformation.pass_pipeline import FixedPointPipeline
         from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
