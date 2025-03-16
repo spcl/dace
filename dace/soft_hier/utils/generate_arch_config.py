@@ -41,7 +41,7 @@ def generate_arg_cfg(
     soc_register_size="0x00010000",
     soc_register_eoc="0x90000000",
     soc_register_wakeup="0x90000004",
-    sync_base="0x40000000",
+    sync_base="0x50000000",
     sync_interleave="0x00000080",
     sync_special_mem="0x00000040"
 ):
@@ -247,7 +247,7 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size,
     if combos:
         max_OI = max([OI_func(combo[3], combo[4], combo[2]) for combo in combos
                     if _check_combo(combo, tcdm_usage_func)])
-        filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/2]
+        filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/8]
         return filtered_combos
     return combos
 
