@@ -560,7 +560,19 @@ class Flattener(CodeLibraryNode):
         self.code = code
 
     def generate_code(self, inputs, outputs):
-        return self.code
+        all_code = f"""
+#pragma omp parallel
+{{
+#pragma omp single
+{{
+{{
+{self.code}
+}}
+#pragma omp taskwait
+}}
+}}
+"""
+        return all_code
 
 
 @make_properties
@@ -632,12 +644,17 @@ class StructToContainerGroups(ppl.Pass):
 
             # If arr.shape is (1,) DaCe generates a scalar, no need to loop + [i] access will be wrong
             if (arr.shape != (1,)):
+                fl = []
                 for dim in arr.shape:
-                    fe = f"for (auto {letter} = 0; {letter} < {dim}; {letter}++){{\n"
-                    _cstr += fe
-                    _cstr_reverse += fe
+                    if len(fl) == 0:
+                        fl.append(f"#pragma omp simd\nfor (auto {letter} = 0; {letter} < {dim}; {letter}++){{")
+                    else:
+                        fl.append(f"for (auto {letter} = 0; {letter} < {dim}; {letter}++){{")
                     used_letters.append(letter)
                     letter = chr(ord(letter) + 1)
+                # Fortran Order High change first dimension has stride 1
+                _cstr += "\n".join(list(reversed(fl))) + "\n"
+                _cstr_reverse += "\n".join(list(reversed(fl))) + "\n"
 
             access_cpp_str = " + ".join(
                 [
@@ -683,7 +700,13 @@ class StructToContainerGroups(ppl.Pass):
                         member_arr = member_arr.stype
 
             if not isinstance(member_arr, dace.data.Scalar):
-                ompfor = f"#pragma omp parallel for collapse({len(used_letters)}) schedule(static)\n"
+                if len(arr.shape) > 2:
+                    ompfor = f"#pragma omp taskloop\n"
+                elif len(arr.shape) == 2:
+                    #ompfor = f"#pragma omp taskloop\n"
+                    ompfor = f"#pragma omp task\n"
+                else:
+                    ompfor = ""
                 _cstr = ompfor + _cstr
                 _cstr_reverse = ompfor + _cstr_reverse
 
@@ -1884,7 +1907,8 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
             state.remove_node(node)
 
 
-    # Remove all views coming out of these scalars
+    # Remove all views coming out of these scalars (but also replace the names everywhere)
+    repl_dict = dict()
     for state in sdfg.states():
         edges_to_add = set()
         edges_to_rm = set()
@@ -1904,6 +1928,7 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
                                 edges_to_add.add((node, oe.src_conn, oe2.dst, oe2.dst_conn, mem))
                             edges_to_rm.add(oe)
                             nodes_to_rm.add(oe.dst)
+                        repl_dict[oe.dst.data] = node.data
 
         for edge in edges_to_add:
             state.add_edge(*edge)
@@ -1912,13 +1937,33 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
         for node in nodes_to_rm:
             state.remove_node(node)
 
-    # Now we need to replace all occurences of the old arrays with the new ones in any interstate edge
-    # Or conditional block
-    for old_name, (new_name, _) in arrays_that_have_become_scalars.items():
-        rename_on_if_conds(sdfg, old_name, new_name)
+    for name in repl_dict:
+        if name in sdfg.arrays:
+            sdfg.remove_data(name, validate=False)
 
-    for edge in sdfg.edges():
-        edge.data.replace_dict(arrays_that_have_become_scalars)
+    for edge, _ in sdfg.all_edges_recursive():
+        if isinstance(edge, InterstateEdge):
+            edge.data.replace_dict(repl_dict)
+    for edge in sdfg.all_interstate_edges(recursive=True):
+        edge.data.replace_dict(repl_dict)
+
+
+    # For all scalars remove zero indices
+    scalar_names = [name for name, arr in sdfg.arrays.items() if isinstance(arr, dace.data.Scalar)]
+    for edge, _ in sdfg.all_edges_recursive():
+        if isinstance(edge, InterstateEdge):
+            for dst in scalar_names:
+                edge.data.replace_complex_iedge(dst, dst, remove_zero_index=True)
+    for edge in sdfg.all_interstate_edges(recursive=True):
+        for dst in scalar_names:
+            edge.data.replace_complex_iedge(dst, dst, remove_zero_index=True)
+
+
+    for src, dst in repl_dict.items():
+        rename_on_if_conds(sdfg, src, dst, recursive=False)
+
+    sdfg.replace_dict(repl_dict)
+
 
 
 def rename_on_if_conds(sdfg: dace.SDFG, src: str, dst: str, recursive=False):
@@ -2038,14 +2083,20 @@ def clean_trivial_views(sdfg: dace.SDFG):
                 state.in_degree(node) == 0 and state.out_degree(node) == 0):
                 state.remove_node(node)
 
-    for edge in sdfg.edges():
-        edge.data.replace_dict(repl_dict)
+    for name in repl_dict:
+        if name in sdfg.arrays:
+            sdfg.remove_data(name, validate=False)
+
+    for edge, _ in sdfg.all_edges_recursive():
+        if isinstance(edge, InterstateEdge):
+            edge.data.replace_dict(repl_dict)
     for edge in sdfg.all_interstate_edges(recursive=True):
         edge.data.replace_dict(repl_dict)
 
     for src, dst in repl_dict.items():
         rename_on_if_conds(sdfg, src, dst, recursive=False)
 
+    sdfg.replace_dict(repl_dict)
 
 
 
