@@ -139,7 +139,7 @@ class Pass:
         for opt_name in opts:
             if not opt_name.startswith(pass_pattern):
                 continue
-            attr_name = opt_name[0:len(pass_pattern)]
+            attr_name = opt_name[len(pass_pattern):]
             assert hasattr(
                 self, attr_name
             ), f"Tried to set attribute '{attr_name}' on a '{self.__class__.__name__}' instance, but that option is unknown."
