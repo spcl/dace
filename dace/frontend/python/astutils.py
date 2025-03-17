@@ -570,7 +570,6 @@ class ASTFindReplaceComplex(ast.NodeTransformer):
             if isinstance(val, str):
                 #This is a corner case where the data path is just a scalar, so we don't need to replace indices
                 new_node = ast.copy_location(ast.parse(val), node)
-                print(ast.unparse(new_node))
                 self.replace_count += 1
                 return new_node
             if len(val)<2:

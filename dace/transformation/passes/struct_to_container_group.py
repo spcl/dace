@@ -1055,7 +1055,6 @@ class StructToContainerGroups(ppl.Pass):
                         )
                 else:
                     an = exit_interface.add_access(inname)
-                    assert not isinstance(sdfg.arrays[inname], dace.data.Scalar)
                     exit_interface.add_edge(
                         an, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr=inname)
                     )
@@ -1076,7 +1075,6 @@ class StructToContainerGroups(ppl.Pass):
             ):
                 an = dace.nodes.AccessNode(outname)
                 exit_interface.add_node(an)
-                assert not isinstance(sdfg.arrays[outname], dace.data.Scalar)
                 exit_interface.add_edge(
                     an, None, deflatten_lib_node, None, dace.Memlet()
                 )
