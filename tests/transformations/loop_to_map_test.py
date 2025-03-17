@@ -1004,6 +1004,38 @@ def test_ptr_in_loop_header():
     sdfg.validate()
     sdfg.compile()
 
+def test_array_in_nested_loop_header():
+    """
+    Tests that the Loop2Map works correctly with arrays used in a nested loop header.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [64], dace.int32)
+    sdfg.add_array("B", [64], dace.int32)
+
+    loop1 = LoopRegion("loop", "i < 64", "i", "i = 0", "i = i + 1")
+    sdfg.add_node(loop1, is_start_block=True)
+    loop2 = LoopRegion("loop2", "j < 64", "j", "j = 0", "j = j + 1")
+    loop1.add_node(loop2, is_start_block=True)
+    loop3 = LoopRegion("loop3", "k < B[0]", "k", "k = 0", "k = k + 1")
+    loop2.add_node(loop3, is_start_block=True)
+    loop3.add_state("loop_body")
+
+    s = loop1.add_state()
+    tasklet = s.add_tasklet("init", {}, {"out"}, "out = 0")
+    access = s.add_access("A")
+    s.add_edge(tasklet, "out", access, None, dace.Memlet("A[i]"))
+    loop1.add_edge(loop2, s, dace.InterstateEdge())
+
+    sdfg.validate()
+    
+
+    # Should turn both loops into maps
+    num_apps = sdfg.apply_transformations_repeated(LoopToMap)
+    assert num_apps == 2, f"Expected 2 applications, got {num_apps}"
+
+    # Should still validate and compile
+    sdfg.validate()
+    sdfg.compile()
 
 
 if __name__ == "__main__":
@@ -1051,3 +1083,4 @@ if __name__ == "__main__":
     test_empty_views_in_body()
     test_nested_loop_symbols()
     test_ptr_in_loop_header()
+    test_array_in_nested_loop_header()
