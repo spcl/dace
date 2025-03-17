@@ -67,7 +67,6 @@ class ToGPU(ppl.Pass):
                         #raise Exception("A")
                         arr.transient = False
                         _sdfg = sdfg
-                        print(sdfg.label, _sdfg.label, arr, arr_name)
                         while _sdfg is not None:
                             if _sdfg == root:
                                 if arr_name not in _sdfg.arrays:
@@ -93,7 +92,6 @@ class ToGPU(ppl.Pass):
 
                             _sdfg = _sdfg.parent_sdfg
 
-        print("z_w_con_c" in root.arrays)
         print("Arrays added:")
         print(arrays_added)
         # Now go through all nodes and pass arguments needed to nested SDFGs

@@ -429,6 +429,8 @@ def get_demangled_container_group_member_name(
     ):
         demangled_name += f"__m_Leaf"
         return demangled_name
+
+
     raise Exception(f"Name Hierarchy {name_hierarchy} Not in ContainerGroups 2")
 
 
@@ -992,6 +994,7 @@ class StructToContainerGroups(ppl.Pass):
                     sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
                 else:
                     #sdfg.replace(outname, "gpu_" + outname)
+                    assert outname in sdfg.arrays, f"{outname} not in {sdfg.arrays.keys()}"
                     if not isinstance(sdfg.arrays[outname], dace.data.Scalar):
                         an0 = entry_interface.add_access(outname)
                         an1 = entry_interface.add_access("gpu_" + outname)
@@ -1928,7 +1931,8 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
                                 edges_to_add.add((node, oe.src_conn, oe2.dst, oe2.dst_conn, mem))
                             edges_to_rm.add(oe)
                             nodes_to_rm.add(oe.dst)
-                        repl_dict[oe.dst.data] = node.data
+                        if node.data != oe.dst.data:
+                            repl_dict[oe.dst.data] = node.data
 
         for edge in edges_to_add:
             state.add_edge(*edge)
@@ -1947,7 +1951,6 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
     for edge in sdfg.all_interstate_edges(recursive=True):
         edge.data.replace_dict(repl_dict)
 
-
     # For all scalars remove zero indices
     scalar_names = [name for name, arr in sdfg.arrays.items() if isinstance(arr, dace.data.Scalar)]
     for edge, _ in sdfg.all_edges_recursive():
@@ -1957,7 +1960,6 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
     for edge in sdfg.all_interstate_edges(recursive=True):
         for dst in scalar_names:
             edge.data.replace_complex_iedge(dst, dst, remove_zero_index=True)
-
 
     for src, dst in repl_dict.items():
         rename_on_if_conds(sdfg, src, dst, recursive=False)
