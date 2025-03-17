@@ -135,7 +135,15 @@ class Pass:
         return result
 
     def set_opts(self, opts: Dict[str, Any]) -> None:
-        pass
+        pass_pattern = self.__class__.__name__ + "."
+        for opt_name in opts:
+            if not opt_name.startswith(pass_pattern):
+                continue
+            attr_name = opt_name[0:len(pass_pattern)]
+            assert hasattr(
+                self, attr_name
+            ), f"Tried to set attribute '{attr_name}' on a '{self.__class__.__name__}' instance, but that option is unknown."
+            setattr(self, attr_name, opts[opt_name])
 
 
 @properties.make_properties
