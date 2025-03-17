@@ -186,6 +186,78 @@ end subroutine inner_loops
                     assert memlet.subset[1] == (1, 10, 1)
 
 
+def test_pass_an_arrayslice_that_looks_like_a_scalar_from_outside_with_literal_size():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+contains
+  real function f(d, dz)
+    integer, intent(in) :: dz
+    ! TODO: We currently cannot handle an assumed shape `(:)` here.
+    real, intent(in) :: d(dz)  ! Dependency on `dz`.
+    f = sum(d)
+  end function f
+end module lib
+
+subroutine main(d)
+  use lib
+  integer :: i
+  integer :: sz
+  real, intent(inout) :: d(50)
+  do i=1, 50
+    d(i) = i * 1.0
+  end do
+  sz = 0
+  do i=2,3
+    sz = sz + i
+  end do
+  d(1) = f(d(11), 5)  ! Passing literal `5`
+end subroutine main
+""").check_with_gfortran().get()
+    g = create_singular_sdfg_from_string(sources, 'main')
+    g.simplify()
+    g.compile()
+
+    d = np.full([50], 42, order="F", dtype=np.float32)
+    g(d=d)
+    assert d[0] == 65
+
+
+def test_pass_an_arrayslice_that_looks_like_a_scalar_from_outside_with_symbolic_size():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+contains
+  real function f(d, dz)
+    integer, intent(in) :: dz
+    ! TODO: We currently cannot handle an assumed shape `(:)` here.
+    real, intent(in) :: d(dz)  ! Dependency on `dz`.
+    f = sum(d)
+  end function f
+end module lib
+
+subroutine main(d)
+  use lib
+  integer :: i
+  integer :: sz
+  real, intent(inout) :: d(50)
+  do i=1, 50
+    d(i) = i * 1.0
+  end do
+  sz = 0
+  do i=2,3
+    sz = sz + i
+  end do
+  d(1) = f(d(11), sz)  ! `sz == 5`, but we are passing it symbolically.
+end subroutine main
+""").check_with_gfortran().get()
+    g = create_singular_sdfg_from_string(sources, 'main')
+    g.simplify()
+    g.compile()
+
+    d = np.full([50], 42, order="F", dtype=np.float32)
+    g(d=d)
+    assert d[0] == 65
+
+
 if __name__ == "__main__":
     test_fortran_frontend_array_3dmap()
     test_fortran_frontend_array_access()

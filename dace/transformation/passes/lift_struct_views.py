@@ -403,38 +403,49 @@ class LiftStructViews(ppl.Pass):
 
     def _lift_isedge(self, cfg: ControlFlowRegion, edge: Edge[InterstateEdge], result: Dict[str, Set[str]]) -> bool:
         lifted_something = False
-        for k in edge.data.assignments.keys():
-            assignment = edge.data.assignments[k]
-            assignment_str = str(assignment)
-            assignment_ast = ast.parse(assignment_str)
-            data_in_edge = _data_containers_in_ast(assignment_ast, cfg.sdfg.arrays.keys())
-            for data in data_in_edge:
-                if '.' in data:
-                    continue
-                container = cfg.sdfg.arrays[data]
-                if isinstance(container, (dt.Structure, dt.ContainerArray)):
-                    visitor = InterstateEdgeRecoder(cfg.sdfg, edge, data, container)
-                    new_code = visitor.visit(assignment_ast)
-                    edge.data.assignments[k] = astutils.unparse(new_code)
-                    assignment_ast = new_code
-                    if visitor.views_constructed:
-                        result[data].update(visitor.views_constructed)
-                        lifted_something = True
-        if not edge.data.is_unconditional():
-            condition_ast = edge.data.condition.code[0]
-            data_in_edge = _data_containers_in_ast(condition_ast, cfg.sdfg.arrays.keys())
-            for data in data_in_edge:
-                if '.' in data:
-                    continue
-                container = cfg.sdfg.arrays[data]
-                if isinstance(container, (dt.Structure, dt.ContainerArray)):
-                    visitor = InterstateEdgeRecoder(cfg.sdfg, edge, data, container)
-                    new_code = visitor.visit(condition_ast)
-                    edge.data.condition = CodeBlock([new_code])
-                    condition_ast = new_code
-                    if visitor.views_constructed:
-                        result[data].update(visitor.views_constructed)
-                        lifted_something = True
+        lifting_state = None
+        while True:
+            lifted_this_round = False
+            for k in edge.data.assignments.keys():
+                assignment = edge.data.assignments[k]
+                assignment_str = str(assignment)
+                assignment_ast = ast.parse(assignment_str)
+                data_in_edge = _data_containers_in_ast(assignment_ast, cfg.sdfg.arrays.keys())
+                for data in data_in_edge:
+                    if '.' in data:
+                        continue
+                    container = cfg.sdfg.arrays[data]
+                    if isinstance(container, (dt.Structure, dt.ContainerArray)):
+                        visitor = InterstateEdgeRecoder(cfg.sdfg, edge, data, container, lifting_state)
+                        new_code = visitor.visit(assignment_ast)
+                        if lifting_state is None:
+                            lifting_state = visitor._lifting_state
+                        edge.data.assignments[k] = astutils.unparse(new_code)
+                        assignment_ast = new_code
+                        if visitor.views_constructed:
+                            result[data].update(visitor.views_constructed)
+                            lifted_this_round = True
+            if not edge.data.is_unconditional():
+                condition_ast = edge.data.condition.code[0]
+                data_in_edge = _data_containers_in_ast(condition_ast, cfg.sdfg.arrays.keys())
+                for data in data_in_edge:
+                    if '.' in data:
+                        continue
+                    container = cfg.sdfg.arrays[data]
+                    if isinstance(container, (dt.Structure, dt.ContainerArray)):
+                        visitor = InterstateEdgeRecoder(cfg.sdfg, edge, data, container, lifting_state)
+                        new_code = visitor.visit(condition_ast)
+                        if lifting_state is None:
+                            lifting_state = visitor._lifting_state
+                        edge.data.condition = CodeBlock([new_code])
+                        condition_ast = new_code
+                        if visitor.views_constructed:
+                            result[data].update(visitor.views_constructed)
+                            lifted_this_round = True
+            if lifted_this_round:
+                lifted_something = True
+            else:
+                break
         return lifted_something
 
     def _lift_tasklet(self, state: SDFGState, data_node: nd.AccessNode, tasklet: nd.Tasklet,

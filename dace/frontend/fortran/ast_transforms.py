@@ -1277,6 +1277,7 @@ class IndexExtractor(NodeTransformer):
             self.scope_vars.visit(ast)
             self.structures = ast.structures
 
+
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
@@ -1309,6 +1310,77 @@ class IndexExtractor(NodeTransformer):
 
         return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=newer_indices,
                                                          line_number=node.line_number)
+
+    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
+        newspec = []
+        for child in node.specifications:
+            lister = IndexExtractorNodeLister()
+            lister.visit(child)
+            res = lister.nodes
+            temp = self.count
+            tmp_child = self.visit(child)
+            if res is not None:
+                for j, parent_node in res:
+                    for idx, i in enumerate(j.indices):
+
+                        if isinstance(i, ast_internal_classes.ParDecl_Node):
+                            continue
+                        else:
+                            tmp_name = "tmp_index_" + str(temp)
+                            temp = temp + 1
+                            if self.normalize_offsets:
+                                var_name = ""
+                                if isinstance(j, ast_internal_classes.Name_Node):
+                                    var_name = j.name
+                                    variable = self.scope_vars.get_var(child.parent, var_name)
+                                elif parent_node is not None:
+                                    struct, variable, _ = self.structures.find_definition(
+                                        self.scope_vars, parent_node, j.name
+                                    )
+                                    var_name = j.name.name
+                                else:
+                                    var_name = j.name.name
+                                    variable = self.scope_vars.get_var(child.parent, var_name)
+
+                                offset = variable.offsets[idx]
+                                if not isinstance(offset, ast_internal_classes.FNode):
+                                    # check if offset is a number
+                                    try:
+                                        offset = int(offset)
+                                    except:
+                                        raise ValueError(f"Offset {offset} is not a number")
+                                    offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
+                                newspec.append(
+                                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                                    ast_internal_classes.Var_Decl_Node(name=tmp_name,
+                                                                       type="INTEGER",
+                                                                       sizes=None,
+                                                                       init=ast_internal_classes.BinOp_Node(
+                                                                                op="-",
+                                                                                lval=self.replacements[tmp_name][0],
+                                                                                rval=offset,
+                                                                                line_number=child.line_number, parent=child.parent),
+                                                                            line_number=child.line_number)],
+                                    line_number=child.line_number))
+                           
+                            else:
+                                newspec.append(
+                                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                                    ast_internal_classes.Var_Decl_Node(name=tmp_name,
+                                                                       type="INTEGER",
+                                                                       sizes=None,
+                                                                       init=ast_internal_classes.BinOp_Node(
+                                                                                op="-",
+                                                                                lval=self.replacements[tmp_name][0],
+                                                                                rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                                                line_number=child.line_number, parent=child.parent),
+                                                                       line_number=child.line_number)],
+                                    line_number=child.line_number))
+                            self.replacements.pop(tmp_name)    
+
+            newspec.append(tmp_child)
+
+        return ast_internal_classes.Specification_Part_Node(specifications=newspec,typedecls=node.typedecls,symbols=node.symbols,uses=node.uses,enums=node.enums,line_number=node.line_number)    
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -1386,6 +1458,8 @@ class IndexExtractor(NodeTransformer):
                                             rval=ast_internal_classes.Int_Literal_Node(value="1"),
                                             line_number=child.line_number, parent=child.parent),
                                         line_number=child.line_number, parent=child.parent))
+                            self.replacements.pop(tmp_name)    
+
             newbody.append(tmp_child)
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
