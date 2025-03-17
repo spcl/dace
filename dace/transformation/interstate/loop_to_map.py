@@ -401,12 +401,15 @@ class LoopToMap(xf.MultiStateTransformation):
                             write_set.add(e.data.data)
 
         # Add headers of any nested loops and conditional blocks
-        for node in self.loop.nodes():
+        nodelist = list(self.loop.nodes())
+        while nodelist:
+            node = nodelist.pop()
             if isinstance(node, (LoopRegion, ConditionalBlock)):
                 code_blocks = node.get_meta_codeblocks()
                 free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
                 free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
                 read_set |= set(free_syms)
+                nodelist.extend(node.nodes())
 
         # Add data from edges
         for edge in self.loop.all_interstate_edges():
