@@ -1174,24 +1174,25 @@ class SubsetUnion(Subset):
 
     subset_list: List[Range]
 
-    def __init__(self, subset):
+    def __init__(self, subset: Optional[Subset] = None):
         self.subset_list = []
-        if isinstance(subset, SubsetUnion):
-            self.subset_list = subset.subset_list
-        elif isinstance(subset, list):
-            for subset in subset:
-                if not subset:
-                    break
-                if isinstance(subset, Range):
-                    self.subset_list.append(subset)
-                elif isinstance(subset, Indices):
-                    self.subset_list.append(Range.from_indices(subset))
-                elif isinstance(subset, SubsetUnion):
-                    self.subset_list.extend(subset.subset_list)
-                else:
-                    raise NotImplementedError
-        elif isinstance(subset, (Range, Indices)):
-            self.subset_list = [subset]
+        if subset is not None:
+            if isinstance(subset, SubsetUnion):
+                self.subset_list = subset.subset_list
+            elif isinstance(subset, list):
+                for subset in subset:
+                    if not subset:
+                        break
+                    if isinstance(subset, Range):
+                        self.subset_list.append(subset)
+                    elif isinstance(subset, Indices):
+                        self.subset_list.append(Range.from_indices(subset))
+                    elif isinstance(subset, SubsetUnion):
+                        self.subset_list.extend(subset.subset_list)
+                    else:
+                        raise NotImplementedError
+            elif isinstance(subset, (Range, Indices)):
+                self.subset_list = [subset]
 
     def offset(self, other, negative, indices=None, offset_end=True):
         for subs in self.subset_list:
