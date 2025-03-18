@@ -35,11 +35,19 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     # TODO: Fill SDFG contents
     stree = insert_state_boundaries_to_tree(stree)  # after WAW, before label, etc.
 
-    # TODO: create_state_boundary
-    #     TODO: When creating a state boundary, include all inter-state assignments that precede it.
-    # TODO: create_loop_block
-    # TODO: create_conditional_block
-    # TODO: create_dataflow_scope
+    # Start with an empty state, ..
+    current_state = result.add_state(is_start_block=True)
+
+    # .. then add children one by one.
+    for child in stree.children:
+        # create_state_boundary
+        if isinstance(child, tn.StateBoundaryNode):
+            # TODO: When creating a state boundary, include all inter-state assignments that precede it.
+            current_state = create_state_boundary(child, result, current_state, state_boundary_behavior)
+
+        # TODO: create_loop_block
+        # TODO: create_conditional_block
+        # TODO: create_dataflow_scope
 
     return result
 
@@ -168,8 +176,11 @@ def create_state_boundary(bnode: tn.StateBoundaryNode, sdfg_region: ControlFlowR
     :param behavior: The state boundary behavior with which to create the boundary.
     :return: The newly created state.
     """
+    if behavior != StateBoundaryBehavior.STATE_TRANSITION:
+        raise ValueError("Only STATE_TRANSITION is supported as StateBoundaryBehavior in this prototype.")
+
     # TODO: Some boundaries (control flow, state labels with goto) could not be fulfilled with every
     #       behavior. Fall back to state transition in that case.
-    scope: tn.ControlFlowScope = bnode.parent
-    assert scope is not None
-    pass
+
+    label = "cf_state_boundary" if bnode.due_to_control_flow else "state_boundary"
+    return sdfg_region.add_state_after(state, label=label)

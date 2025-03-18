@@ -208,6 +208,26 @@ def test_state_boundaries_propagation(boundary):
         assert [tn.MapScope, tn.TaskletNode, tn.TaskletNode] == node_types[1:]
 
 
+@pytest.mark.parametrize("control_flow", (True, False))
+def test_create_state_boundary_state_transition(control_flow):
+    sdfg = dace.SDFG("tester")
+    state = sdfg.add_state("start", is_start_block=True)
+    bnode = tn.StateBoundaryNode(control_flow)
+
+    t2s.create_state_boundary(bnode, sdfg, state, t2s.StateBoundaryBehavior.STATE_TRANSITION)
+    new_label = "cf_state_boundary" if control_flow else "state_boundary"
+    assert ["start", new_label] == [state.label for state in sdfg.states()]
+
+
+@pytest.mark.xfail(reason="Not yet implemented")
+def test_create_state_boundary_empty_memlet(control_flow):
+    sdfg = dace.SDFG("tester")
+    state = sdfg.add_state("start", is_start_block=True)
+    bnode = tn.StateBoundaryNode(control_flow)
+
+    t2s.create_state_boundary(bnode, sdfg, state, t2s.StateBoundaryBehavior.EMPTY_MEMLET)
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -220,3 +240,6 @@ if __name__ == '__main__':
     test_state_boundaries_state_transition()
     test_state_boundaries_propagation(boundary=False)
     test_state_boundaries_propagation(boundary=True)
+    test_create_state_boundary_state_transition(control_flow=True)
+    test_create_state_boundary_state_transition(control_flow=False)
+    test_create_state_boundary_empty_memlet()
