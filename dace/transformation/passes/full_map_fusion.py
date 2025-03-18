@@ -1,9 +1,8 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Set
+from collections import defaultdict
+from typing import Any, Dict, Optional
 
-import warnings
-
-from dace import SDFG, SDFGState, properties, transformation
+from dace import SDFG, properties, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
@@ -53,6 +52,8 @@ class FullMapFusion(ppl.Pass):
         default=False,
         desc='If `True` then all intermediates will be classified as shared.',
     )
+    number_of_rounds = properties.Property(dtype=int, default=None, allow_none=True,
+                                           desc='If set, only applies a certain number of pattern matching rounds.')
 
     validate = properties.Property(
         dtype=bool,
@@ -69,6 +70,7 @@ class FullMapFusion(ppl.Pass):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
+        number_of_rounds: Optional[int] = None,
         validate: Optional[bool] = None,
         validate_all: Optional[bool] = None,
         **kwargs: Any,
@@ -82,6 +84,8 @@ class FullMapFusion(ppl.Pass):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
+        if number_of_rounds is not None:
+            self.number_of_rounds = number_of_rounds
         if validate is not None:
             self.validate = validate
         if validate_all is not None:
@@ -128,7 +132,14 @@ class FullMapFusion(ppl.Pass):
                 validate=False,
                 validate_all=self.validate_all,
             )
-            result = pazz.apply_pass(sdfg, pipeline_results)
+            if self.number_of_rounds is not None:
+                result = defaultdict(list)
+                for round in range(self.number_of_rounds):
+                    round_result = pazz._apply_pass(sdfg, pipeline_results, apply_once=True)
+                    if round_result:
+                        result.update(round_result)
+            else:
+                result = pazz.apply_pass(sdfg, pipeline_results)
 
         finally:
             fusion._single_use_data = None

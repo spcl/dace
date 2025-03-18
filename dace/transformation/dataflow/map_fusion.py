@@ -5,6 +5,7 @@ import copy
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, Iterable
 
 import dace
+import networkx as nx
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, validation
 from dace.transformation import helpers
@@ -380,11 +381,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
             # If the second map is not reachable from the intermediate node, then
             #  the output is pure and we can end here.
-            if not self.is_node_reachable_from(
-                    graph=state,
-                    begin=intermediate_node,
-                    end=second_map_entry,
-            ):
+            if not nx.has_path(state._nx, intermediate_node, second_map_entry):
                 pure_outputs.add(out_edge)
                 continue
 
@@ -467,9 +464,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 # If the second map entry is not immediately reachable from the intermediate
                 #  node, then ensure that there is not path that goes to it.
                 if intermediate_node_out_edge.dst is not second_map_entry:
-                    if self.is_node_reachable_from(graph=state,
-                                                   begin=intermediate_node_out_edge.dst,
-                                                   end=second_map_entry):
+                    if nx.has_path(state._nx, intermediate_node_out_edge.dst, second_map_entry):
                         return None
                     continue
 
@@ -1448,7 +1443,7 @@ class MapFusion(transformation.SingleStateTransformation):
                     return True
 
         # Test if the data is referenced in the interstate edges.
-        for edge in sdfg.edges():
+        for edge in sdfg.all_interstate_edges():
             if data_name in edge.data.free_symbols:
                 # The data is used in the inter state edges. So it is shared.
                 return True
@@ -1598,40 +1593,6 @@ class MapFusion(transformation.SingleStateTransformation):
         second_map.params = copy.deepcopy(first_map.params)
         second_map.range = copy.deepcopy(first_map.range)
 
-    def is_node_reachable_from(
-        self,
-        graph: Union[dace.SDFG, dace.SDFGState],
-        begin: nodes.Node,
-        end: nodes.Node,
-    ) -> bool:
-        """Test if the node `end` can be reached from `begin`.
-
-        Essentially the function starts a DFS at `begin`. If an edge is found that lead
-        to `end` the function returns `True`. If the node is never found `False` is
-        returned.
-
-        :param graph: The graph to operate on.
-        :param begin: The start of the DFS.
-        :param end: The node that should be located.
-        """
-
-        def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-            return (edge.dst for edge in graph.out_edges(node))
-
-        to_visit: List[nodes.Node] = [begin]
-        seen: Set[nodes.Node] = set()
-
-        while len(to_visit) > 0:
-            node: nodes.Node = to_visit.pop()
-            if node == end:
-                return True
-            elif node not in seen:
-                to_visit.extend(next_nodes(node))
-            seen.add(node)
-
-        # We never found `end`
-        return False
-
     def _is_data_accessed_downstream(
         self,
         data: str,
@@ -1651,19 +1612,8 @@ class MapFusion(transformation.SingleStateTransformation):
         :param begin: The node to start exploration; The node itself is ignored.
         """
 
-        def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-            return (edge.dst for edge in graph.out_edges(node))
-
-        # Dataflow graph is acyclic, so we do not need to keep a list of
-        #  what we have visited.
-        to_visit: List[nodes.Node] = list(next_nodes(begin))
-        while len(to_visit) > 0:
-            node = to_visit.pop()
-            if isinstance(node, nodes.AccessNode) and node.data == data:
-                return True
-            to_visit.extend(next_nodes(node))
-
-        return False
+        reachable_dnodes = [n for n in graph.bfs_nodes(begin) if isinstance(n, nodes.AccessNode) and n.data == data]
+        return len(reachable_dnodes) > 0
 
     def get_access_set(
         self,

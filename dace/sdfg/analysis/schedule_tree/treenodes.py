@@ -4,10 +4,13 @@ from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from typing import Dict, Iterator, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Set, Union
+
+if TYPE_CHECKING:
+    from dace import SDFG
 
 INDENTATION = '  '
 
@@ -18,7 +21,8 @@ class UnsupportedScopeException(Exception):
 
 @dataclass
 class ScheduleTreeNode:
-    parent: Optional['ScheduleTreeScope'] = field(default=None, init=False)
+    parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
+    sdfg: Optional['SDFG'] = field(default=None, init=False, repr=False)
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'
@@ -68,6 +72,7 @@ class ControlFlowScope(ScheduleTreeScope):
 @dataclass
 class DataflowScope(ScheduleTreeScope):
     node: nodes.EntryNode
+    state: Optional[SDFGState]
 
 
 @dataclass
@@ -196,6 +201,7 @@ class IfScope(ControlFlowScope):
     If branch scope.
     """
     condition: CodeBlock
+    cond_block: Optional[ConditionalBlock]
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'

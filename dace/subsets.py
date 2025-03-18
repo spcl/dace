@@ -23,10 +23,16 @@ def nng(expr):
 
 
 def bounding_box_cover_exact(subset_a, subset_b) -> bool:
-    min_elements_a = subset_a.min_element()
-    max_elements_a = subset_a.max_element()
-    min_elements_b = subset_b.min_element()
-    max_elements_b = subset_b.max_element()
+    p_subset_a = subset_a
+    p_subset_b = subset_b
+    if isinstance(subset_a, SubsetUnion):
+        p_subset_a = subset_a.to_bounding_box_subset()
+    if isinstance(subset_b, SubsetUnion):
+        p_subset_b = subset_b.to_bounding_box_subset()
+    min_elements_a = p_subset_a.min_element()
+    max_elements_a = p_subset_a.max_element()
+    min_elements_b = p_subset_b.min_element()
+    max_elements_b = p_subset_b.max_element()
 
     # Covering only make sense if the two subsets have the same number of dimensions.
     if len(min_elements_a) != len(min_elements_b):

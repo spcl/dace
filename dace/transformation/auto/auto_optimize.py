@@ -660,7 +660,7 @@ def auto_optimize(sdfg: SDFG,
     move_small_arrays_to_stack(sdfg)
 
     # Make all independent arrays persistent
-    make_transients_persistent(sdfg, device)
+    #make_transients_persistent(sdfg, device)
 
     if symbols:
         # Specialize for all known symbols
