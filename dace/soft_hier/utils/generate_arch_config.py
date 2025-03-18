@@ -182,72 +182,107 @@ def _check_combo(combo, tcdm_usage_func=None):
 
 
 def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, 
-                    tcdm_usage_func=None, OI_func=None, min_tiling_size=64, 
+                    elem_size=1,
+                    tcdm_usage_func=None, 
+                    OI_func_type=1, 
+                    min_tiling_size=64, 
                     redmule_h=64, redmule_w=16, hbm_bw=512):
-    dim_x, dim_y = thread_group_dims
-    peak_performance = 2 * dim_x * dim_y * redmule_h * redmule_w
+    dim_m, dim_n = thread_group_dims
+    num_clusters = dim_m * dim_n
+    peak_performance = 2 * dim_m * dim_n * redmule_h * redmule_w
 
     ridge_OI = peak_performance / hbm_bw
     print(f"Ridge OI: {ridge_OI}")
 
-    # Default TCDM usage calculation if none provided
-    if tcdm_usage_func is None:
-        tcdm_usage_func = lambda m, n, k: 2 * (2 * m * k + 2 * k * n + m * n)
-    
-    if OI_func is None:
-        OI_func = lambda m, n, k: m * n * k / (m * n + m * k + n * k)
-    
-    max_OI_func = lambda m, n, k: m * n * k / (m * n + m * k + n * k)
-    # Unpack thread group dimensions
-    
-    combos = []
-
-    def factors(n):
-        result = []
-        # iterate up to the square root of n
-        for i in range(1, int(n ** 0.5) + 1):
-            if n % i == 0:
-                result.append(i)
-                if i != n // i:
-                    result.append(n // i)
-        return sorted(result)
-    
-    if (M_val % dim_x != 0) or (N_val % dim_y != 0):
+    #TODO: whether to remap the thread group dimensions
+    if min_tiling_size * dim_m > M_val and min_tiling_size * dim_n > N_val:
         raise ValueError("M and N must be divisible by the thread group dimensions")
 
-    # Generate lists of hardware tile sizes
-    hw_M_list = [i for i in factors(M_val // dim_x) if i >= min_tiling_size]
-    hw_N_list = [i for i in factors(N_val // dim_y) if i >= min_tiling_size]
-    hw_K_list = [i for i in factors(K_val) if i >= min_tiling_size]
+    # Generate lists of thread group dimensions
+    dim_x_list  = [dim_m]
+    dim_y_list  = [dim_n]
+    if min_tiling_size * dim_m > M_val:
+        dim_x_list = [2**i for i in range(0, 6) if 2**i <= M_val // min_tiling_size]
+        dim_y_list = [num_clusters // dim_x for dim_x in dim_x_list]
+    elif min_tiling_size * dim_n > N_val:
+        dim_y_list = [2**i for i in range(0, 6) if 2**i <= N_val // min_tiling_size]
+        dim_x_list = [num_clusters // dim_y for dim_y in dim_y_list]
 
-    print(f"hw_M_list: {hw_M_list}")
-    print(f"hw_N_list: {hw_N_list}")
-    print(f"hw_K_list: {hw_K_list}")
 
-    # Iterate over all combinations of hardware tile sizes.
-    for hw_M in hw_M_list:
-        for hw_N in hw_N_list:
-            for hw_K in hw_K_list:
-                # If the estimated memory footprint exceeds TCDM size,
-                # break out of the innermost loop (assuming hw_K_list is in ascending order).
-                if tcdm_usage_func(hw_M, hw_N, hw_K) > tcdm_size:
-                    break
-                OI = OI_func(hw_M, hw_N, K_val)
-                max_OI = max_OI_func(M_val, N_val, K_val)
-                # If the OI is less than the ridge OI, skip this combination
-                if OI < ridge_OI and max_OI > ridge_OI:
-                    continue
-                # Build the configuration tuple.
-                combo = (M_val, N_val, K_val, hw_M, hw_N, hw_K,
-                        thread_group_dims, tcdm_size)
-                if _check_combo(combo, tcdm_usage_func):
-                    combos.append(combo)
+    print(f"dim_x_list: {dim_x_list}")
+    print(f"dim_y_list: {dim_y_list}")
 
-    # Filter combinations based on the maximum product of hw_M and hw_N.
-    if combos:
-        max_OI = max([OI_func(combo[3], combo[4], combo[2]) for combo in combos
-                    if _check_combo(combo, tcdm_usage_func)])
-        filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/8]
-        return filtered_combos
-    return combos
+    all_combos = []
+
+    for (dim_x, dim_y) in zip(dim_x_list, dim_y_list):
+        # Default TCDM usage calculation if none provided
+        if tcdm_usage_func is None:
+            tcdm_usage_func = lambda m, n, k: elem_size * (2 * m * k + 2 * k * n + m * n)
+        
+        if OI_func_type is 0:
+            OI_func = lambda m, n, k: 2 * m * n * k / (elem_size * (m * n + m * k + n * k))
+        elif OI_func_type is 1:
+            OI_func = lambda m, n, k: 2 * dim_x * dim_y * m * n * k / (elem_size * 
+                                                                (dim_x * dim_y * m * n + 
+                                                                dim_x * m * k + 
+                                                                dim_y * n * k))
+
+        max_OI_func = lambda m, n, k: 2 * m * n * k / (elem_size * (m * n + m * k + n * k))
+        # Unpack thread group dimensions
+        
+        combos = []
+
+        def factors(n):
+            result = []
+            # iterate up to the square root of n
+            for i in range(1, int(n ** 0.5) + 1):
+                if n % i == 0:
+                    result.append(i)
+                    if i != n // i:
+                        result.append(n // i)
+            return sorted(result)
+        
+        if (M_val % dim_x != 0) or (N_val % dim_y != 0):
+            raise ValueError("M and N must be divisible by the thread group dimensions")
+
+        # Generate lists of hardware tile sizes
+        hw_M_list = [i for i in factors(M_val // dim_x) if i >= min_tiling_size]
+        hw_N_list = [i for i in factors(N_val // dim_y) if i >= min_tiling_size]
+        if len(hw_N_list) == 0:
+            hw_N_list = [max([i for i in factors(N_val // dim_y) if i < min_tiling_size])]
+        
+        hw_K_list = [i for i in factors(K_val) if i >= min_tiling_size]
+
+        print(f"hw_M_list: {hw_M_list}")
+        print(f"hw_N_list: {hw_N_list}")
+        print(f"hw_K_list: {hw_K_list}")
+
+        # Iterate over all combinations of hardware tile sizes.
+        for hw_M in hw_M_list:
+            for hw_N in hw_N_list:
+                for hw_K in hw_K_list:
+                    # If the estimated memory footprint exceeds TCDM size,
+                    # break out of the innermost loop (assuming hw_K_list is in ascending order).
+                    if tcdm_usage_func(hw_M, hw_N, hw_K) > tcdm_size:
+                        break
+                    OI = OI_func(hw_M, hw_N, K_val)
+                    max_OI = max_OI_func(M_val, N_val, K_val)
+                    print(f"OI: {OI}, max_OI: {max_OI}")
+                    # If the OI is less than the ridge OI, skip this combination
+                    if OI < ridge_OI and max_OI > ridge_OI:
+                        continue
+                    # Build the configuration tuple.
+                    combo = (M_val, N_val, K_val, hw_M, hw_N, hw_K,
+                            (dim_x, dim_y), tcdm_size)
+                    if _check_combo(combo, tcdm_usage_func):
+                        combos.append(combo)
+
+        # Filter combinations based on the maximum product of hw_M and hw_N.
+        if combos:
+            max_OI = max([OI_func(combo[3], combo[4], combo[2]) for combo in combos
+                        if _check_combo(combo, tcdm_usage_func)])
+            filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/8]
+            all_combos.extend(filtered_combos)
+
+    return all_combos
 

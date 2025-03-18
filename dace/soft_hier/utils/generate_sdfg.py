@@ -638,8 +638,11 @@ def _my_gen_double_buffer_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      output_float,
                      coarsening_factor,
                      mmad_tasklet_str: str,
+                     GEMM_shape=None,
                      is_hbm_interleaved: bool = False):
     sdfg = dace.SDFG("GEMM")
+    if GEMM_shape is not None:
+        (M, N, K) = GEMM_shape
     tM, tN, tK = hardware_matmul_mnk
     tM *= coarsening_factor
     tN *= coarsening_factor
@@ -840,6 +843,7 @@ def _my_gen_BSP_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      coarsening_factor,
                      mmad_tasklet_str: str,
                      BSP_generator_func: typing.Callable[...,any],
+                     summa_range=None,
                      GEMM_shape=None,
                      is_hbm_interleaved: bool = False):
     if GEMM_shape is not None:
@@ -1029,14 +1033,24 @@ def _my_gen_BSP_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
     thread_coarsened_map_exit.add_in_connector("IN_C")
 
 
-    (pre_shift_code_block, 
-    BSP_stride,
-    BSP_init_code_block, 
-    BSP_loop_code_block, 
-    BSP_compute_code_block, 
-    BSP_communication_code_block, 
-    BSP_sync, 
-    post_shift_code_block) = BSP_generator_func(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K)
+    if summa_range is None:
+        (pre_shift_code_block, 
+        BSP_stride,
+        BSP_init_code_block, 
+        BSP_loop_code_block, 
+        BSP_compute_code_block, 
+        BSP_communication_code_block, 
+        BSP_sync, 
+        post_shift_code_block) = BSP_generator_func(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K)
+    else:
+        (pre_shift_code_block, 
+        BSP_stride,
+        BSP_init_code_block, 
+        BSP_loop_code_block, 
+        BSP_compute_code_block, 
+        BSP_communication_code_block, 
+        BSP_sync, 
+        post_shift_code_block) = BSP_generator_func(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K, summa_range)
     # BSP_compute_code_block = None
     BSPTransformer.apply_to(sdfg, accumulator=accumulator_an, map_entry=block_tiled_map_entry, transient=local_access_nodes["local_A"], 
                             options={"npe_x": gM, "npe_y": gN, 

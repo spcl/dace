@@ -2394,8 +2394,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                         callsite_stream.write('{', cfg, state_id, scope_entry)
 
             if len(brange) == 2:
-                x_length = brange.max_element()[0] + 1
-                y_length = brange.max_element()[1] + 1
+                x_length = brange.max_element()[1] + 1
+                y_length = brange.max_element()[0] + 1
                 self._soft_hier_dims = [x_length, y_length]
                 for i in range(min(len(brange), 3)):
                     varname = scope_map.params[i]
@@ -2407,7 +2407,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
                 for i in range(min(len(brange), 3)):
-                    varname = scope_map.params[i]
+                    varname = scope_map.params[-i-1]
                     condition = ''
                     condition += '%s <= %s' % (varname, brange.max_element()[i])
                     if len(condition) > 0:

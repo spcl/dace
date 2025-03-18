@@ -5,12 +5,16 @@ class InterleaveHandler:
     array = None
     block_shape:tuple = None
     cluster_dims:tuple = None
+    cluster_dims_dace:tuple = None
     split_scheme:tuple = None
     placement_scheme:tuple = None
     def __init__(self, array:np.array, cluster_dims:tuple, block_shape:tuple):
         self.array = array
         self.block_shape = block_shape
-        self.cluster_dims = cluster_dims
+        self.cluster_dims_dace = cluster_dims
+        (dim_x, dim_y) = cluster_dims
+        num_clusters = dim_x * dim_y
+        self.cluster_dims = (int(sqrt(num_clusters)), int(sqrt(num_clusters)))
         
     def print_info(self):
         print("Array shape: ", self.array.shape)
@@ -55,7 +59,10 @@ class InterleaveHandler:
             raise ValueError("Cluster dimensions must be multiples of 4")
         split_x = self.split_scheme[0]
         split_y = self.split_scheme[1]
-        if split_x % dim_x != 0 or split_y % dim_y != 0:
+        print(split_x, split_y)
+        (dim_x_dace, dim_y_dace) = self.cluster_dims_dace
+        if split_x % dim_x_dace != 0 or split_y % dim_y_dace != 0:
+            print(split_x, split_y, dim_x_dace, dim_y_dace)
             raise ValueError("Split scheme must be multiples of cluster dimensions")
         place_base = [
             [0, 0, 1, 1],
@@ -73,11 +80,18 @@ class InterleaveHandler:
                 else:
                     real_place_base[i][j] = place_base[i % 4][j % 4]
         for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
-            place = real_place_base[i % dim_x][j % dim_y]
+            pi_dace = i % dim_x_dace
+            pj_dace = j % dim_y_dace
+
+            p_real = pi_dace * dim_y_dace + pj_dace
+            pi_real = p_real // dim_y
+            pj_real = p_real % dim_y
+
+            place = real_place_base[pi_real][pj_real]
             if place == 1:
-                channel_id = j % dim_y
+                channel_id = pj_real % dim_y
             else:
-                channel_id = 2 * dim_y + dim_x + i % dim_x
+                channel_id = 2 * dim_y + dim_x + pi_real % dim_x
             self.placement_scheme += (channel_id,)
             
 
