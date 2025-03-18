@@ -23,6 +23,7 @@ from dace.sdfg.analysis.cutout import SDFGCutout
 class RemainderLoop(transformation.SingleStateTransformation):
     inner_work_map_entry = transformation.PatternNode(nodes.MapEntry)
     tblock_type = Property(dtype=dtypes.ScheduleType, default=dtypes.ScheduleType.GPU_ThreadBlock, allow_none=False)
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.inner_work_map_entry)]
@@ -153,9 +154,9 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 for symbol in free_symbols:
                                     symbols_to_ensure_in_scope.add(str(symbol))
 
-        thread_block_map_entry = [v for v in state.all_nodes_between(dev_entry, state.exit_node(dev_entry)) if isinstance(
-            v, nodes.MapEntry) and v.schedule == self.tblock_type]
-        assert(len(thread_block_map_entry) == 1)
+        thread_block_map_entry = list(set([v for v in state.all_nodes_between(dev_entry, state.exit_node(dev_entry)) if isinstance(
+            v, nodes.MapEntry) and v.schedule == self.tblock_type]))
+        assert(len(thread_block_map_entry) == 1), f"{thread_block_map_entry}"
 
         for param in thread_block_map_entry[0].map.params:
             symbols_to_ensure_in_scope.add(param)
@@ -485,7 +486,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             kernel_sdfg.add_array(
                                 name=n.data,
                                 shape=arr.shape,
-                                stride=arr.stride,
+                                strides=arr.strides,
                                 transient=True,
                                 dtype=arr.dtype,
                                 storage=arr.storage,
