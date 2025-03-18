@@ -328,6 +328,36 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         self.out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.do_not_remove: Set[str] = set()
 
+    def _get_requested_range(self, node: ast.Subscript, memlet_subset: subsets.Subset) -> subsets.Subset:
+        """
+        Returns the requested range from a subscript node, which consists of the memlet subset composed with the
+        tasklet subset.
+
+        :param node: The subscript node.
+        :param memlet_subset: The memlet subset.
+        :return: The requested range.
+        """
+        arrname, tasklet_slice = astutils.subscript_to_ast_slice(node)
+        arrname = arrname if arrname in self.arrays else None
+        if len(tasklet_slice) < len(memlet_subset):
+            new_tasklet_slice = [(None, None, None)] * len(memlet_subset)
+            # Unsqueeze all index dimensions from orig_subset into tasklet_subset
+            j = 0
+            for i, (start, end, _) in enumerate(memlet_subset.ndrange()):
+                if start != end:
+                    new_tasklet_slice[i] = tasklet_slice[j]
+                    j += 1
+
+            # Sanity check
+            if j != len(tasklet_slice):
+                raise IndexError(f'Only {j} out of {len(tasklet_slice)} indices were provided in subset expression '
+                                 f'"{astutils.unparse(node)}", found during composing with memlet of subset '
+                                 f'"{memlet_subset}".')
+            tasklet_slice = new_tasklet_slice
+
+        tasklet_subset = subsets.Range(astutils.astrange_to_symrange(tasklet_slice, self.arrays, arrname))
+        return memlet_subset.compose(tasklet_subset)
+
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # Convert subscript to symbol name
         node = self.generic_visit(node)
@@ -336,8 +366,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             new_name = dt.find_new_name(node_name, self.connector_names)
             self.connector_names.add(new_name)
 
-            orig_subset = self.in_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
+            subset = self._get_requested_range(node, self.in_edges[node_name].subset)
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.in_mapping[new_name] = (node_name, subset)
@@ -348,8 +377,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             new_name = dt.find_new_name(node_name, self.connector_names)
             self.connector_names.add(new_name)
 
-            orig_subset = self.out_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
+            subset = self._get_requested_range(node, self.out_edges[node_name].subset)
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.out_mapping[new_name] = (node_name, subset)

@@ -2,11 +2,11 @@ name: GPU Tests
 
 on:
   push:
-    branches: [ main, ci-fix ]
+    branches: [ main, v1/maintenance, ci-fix ]
   pull_request:
-    branches: [ main, ci-fix ]
+    branches: [ main, v1/maintenance, ci-fix ]
   merge_group:
-    branches: [ main, ci-fix ]
+    branches: [ main, v1/maintenance, ci-fix ]
 
 env:
   CUDACXX: /usr/local/cuda/bin/nvcc

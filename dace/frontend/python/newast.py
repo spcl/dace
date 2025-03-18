@@ -1319,7 +1319,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.replace_dict(repl_dict)
 
         propagate_states(self.sdfg)
-        for state, memlet, inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
+        for state, memlet, _inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
             if state is not None and state.dynamic_executions:
                 memlet.dynamic = True
 
@@ -2366,8 +2366,11 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
                                                 update_expr=incr[indices[0]],
                                                 inverted=False)
-            _, first_subblock, _, _ = self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno,
-                                                            extra_symbols=extra_syms, parent=loop_region,
+            _, first_subblock, _, _ = self._recursive_visit(node.body,
+                                                            f'for_{node.lineno}',
+                                                            node.lineno,
+                                                            extra_symbols=extra_syms,
+                                                            parent=loop_region,
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
@@ -2449,7 +2452,10 @@ class ProgramVisitor(ExtNodeVisitor):
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False)
 
         # Parse body
-        self._recursive_visit(node.body, f'while_{node.lineno}', node.lineno, parent=loop_region,
+        self._recursive_visit(node.body,
+                              f'while_{node.lineno}',
+                              node.lineno,
+                              parent=loop_region,
                               unconnected_last_block=False)
 
         if test_region is not None:
@@ -2540,7 +2546,6 @@ class ProgramVisitor(ExtNodeVisitor):
             node = node.parent_graph
         return False
 
-
     def visit_Break(self, node: ast.Break):
         if not self._has_loop_ancestor(self.cfg_target):
             raise DaceSyntaxError(self, node, "Break block outside loop region")
@@ -2572,8 +2577,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
-            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}',
-                                          sdfg=self.sdfg)
+            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}', sdfg=self.sdfg)
             cond_block.add_branch(None, else_body)
             # Visit recursively
             self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
@@ -2933,7 +2937,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 osqueezed = [i for i in range(len(op_subset)) if i not in osqz]
                 wsqueezed = [i for i in range(len(wtarget_subset)) if i not in wsqz]
                 rsqueezed = [i for i in range(len(rtarget_subset)) if i not in rsqz]
-
 
                 if (boolarr or indirect_indices
                         or (sqz_wsub.size() == sqz_osub.size() and sqz_wsub.size() == sqz_rsub.size())):
@@ -3358,8 +3361,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
-            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                    (isinstance(result, str) and any(result in x for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
+            if not (
+                    result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+                (isinstance(result, str) and any(
+                    result in x
+                    for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3467,7 +3473,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             cname = self.sdfg.find_new_constant(f'__ind{i}_{true_name}')
                             self.sdfg.add_constant(cname, carr)
                             # Add constant to descriptor repository
-                            self.sdfg.add_array(cname, carr.shape, dtypes.dtype_to_typeclass(carr.dtype.type),
+                            self.sdfg.add_array(cname,
+                                                carr.shape,
+                                                dtypes.dtype_to_typeclass(carr.dtype.type),
                                                 transient=True)
                             if numpy.array(arr).dtype == numpy.bool_:
                                 boolarr = cname
@@ -4769,7 +4777,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 evald = astutils.evalnode(node.items[0].context_expr, self.globals)
                 if hasattr(evald, "name"):
                     named_region_name: str = evald.name
-                else:            
+                else:
                     named_region_name = f"Named Region {node.lineno}"
                 named_region = NamedRegion(named_region_name, debuginfo=self.current_lineinfo)
                 self.cfg_target.add_node(named_region)
