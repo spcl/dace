@@ -84,6 +84,7 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     g = create_singular_sdfg_from_string(sources, entry_point='main')
+    g.build_folder = 'bugger'
     g.simplify(verbose=True)
     g.compile()
     d = np.full([5, 5], 42, order="F", dtype=np.float32)
@@ -261,6 +262,7 @@ end subroutine main
     fortran_parser.global_struct_instance_counter = 0
 
     g = create_singular_sdfg_from_string(sources, entry_point='main')
+    g.build_folder = 'bugger'
     g.simplify(verbose=True)
     g.compile()
 

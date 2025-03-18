@@ -1849,6 +1849,9 @@ class AST_translator:
 
         # Get name of variable in SDFG of calling context or globalSDFG if that fails
 
+        # if 'prog/t_nh_prog' in str(variable_in_calling_context) and 'tmp_index_' in str(variable_in_calling_context):
+        #     breakpoint()
+
         sdfg_name = self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_calling_context))
         if sdfg_name is None:
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(
@@ -2586,6 +2589,7 @@ class AST_translator:
                         self.temporary_sym_dict[new_sdfg.name]["sym_" + s.name] = s.name
                         i = i.subs(s, sym.symbol("sym_" + s.name))
                     else:
+                        breakpoint()
                         print(f"Symbol {s.name} not found in arrays")
                         raise ValueError(f"Symbol {s.name} not found in arrays")
 
