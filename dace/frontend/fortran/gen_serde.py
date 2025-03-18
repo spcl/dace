@@ -564,8 +564,12 @@ def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> Serde
             array_serializers[(tag, rank)] = generate_array_serializer_f90(t, rank, tag)
 
     # C++ SerDe related data structures.
-    sdfg_structs: Dict[str, dace.data.Structure] = {v.name: v for k, v in g.arrays.items()
-                                                    if isinstance(v, dace.data.Structure)}
+    sdfg_structs: Dict[str, dace.data.Structure] = {
+        v.name: v for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)}
+    sdfg_structs_from_arrays: Dict[str, dace.data.Structure] = {
+        v.stype.name: v.stype for k, v in g.arrays.items()
+        if isinstance(v, dace.data.ContainerArray) and isinstance(v.stype, dace.data.Structure)}
+    sdfg_structs.update(sdfg_structs_from_arrays)
     sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
                                                                  for k, v in sdfg_structs.items()}
 
