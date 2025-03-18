@@ -2,6 +2,7 @@
 """ This module initializes the inter-state transformations package."""
 
 from .block_fusion import BlockFusion
+from .condition_fusion import ConditionFusion
 from .continue_to_condition import ContinueToCondition
 from .state_fusion import StateFusion
 from .state_fusion_with_happens_before import StateFusionExtended
