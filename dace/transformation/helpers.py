@@ -741,9 +741,9 @@ def isolate_nested_sdfg(
     #  as input to the nested SDFG and the nested SDFG itself.
     #  Note that the AccessNodes serving as input and output of the nested SDFG
     #  belonging to the pre and post set, respectively, as well.
-    middle_nodes: Set[nodes.Node] = {nested_sdfg}
+    middle_nodes: Set[nodes.Node] = {nsdfg_node}
     for iedge in state.in_edges(nsdfg_node):
-        if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedges.src.desc(state.sdfg), data.View):
+        if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedge.src.desc(state.sdfg), data.View):
             if is_applicable:
                 return False
             raise ValueError("Can only split if the inputs to the nested SDFG are AccessNodes to non view data.")
@@ -754,8 +754,8 @@ def isolate_nested_sdfg(
         #  requires that the whole array is mapped inside. So if there would be
         #  multiple incoming edges the original SDFG would be invalid, because the
         #  same memory would be written to multiple times.
-        if ((not all(iedge.src is nested_sdfg for iedge in state.in_edges(oedge.dst)))
-                or (not isinstance(oedge.dst, nodes.AccessNode)) or isinstance(oedges.dst, data.View)):
+        if ((not all(iedge.src is nsdfg_node for iedge in state.in_edges(oedge.dst)))
+                or (not isinstance(oedge.dst, nodes.AccessNode)) or isinstance(oedge.dst, data.View)):
             if is_applicable:
                 return False
             raise ValueError(
@@ -809,7 +809,7 @@ def isolate_nested_sdfg(
 
     # Now add the edges, we only have to inspect the incoming ones.
     for old_dst in pre_nodes:
-        new_dst = pre_old_to_new_map[old_node]
+        new_dst = pre_old_to_new_map[old_dst]
         for old_iedge in state.in_edges(old_dst):
             old_src = old_iedge.src
             new_src = pre_old_to_new_map[old_src]
