@@ -730,7 +730,7 @@ def isolate_nested_sdfg(
     pre_nodes: Set[nodes.Node] = set()
     to_visit: List[nodes.Node] = []
     for iedge in state.in_edges(nsdfg_node):
-        to_visit.extend(iiedge for iiedge in state.in_edges(iedge.src))
+        to_visit.extend(iiedge.src for iiedge in state.in_edges(iedge.src))
     visited: Set[nodes.Node] = set()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
@@ -739,7 +739,7 @@ def isolate_nested_sdfg(
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
     if len(pre_nodes) > 0:
-        pre_nodes.update(iedge.src for edge in state.in_edges(nsdfg_node))
+        pre_nodes.update(iedge.src for iedge in state.in_edges(nsdfg_node))
 
     # These are the nodes of the middle state. Which are all access nodes that serves
     #  as input to the nested SDFG and the nested SDFG itself.
