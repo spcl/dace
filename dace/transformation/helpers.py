@@ -775,19 +775,13 @@ def isolate_nested_sdfg(
         for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
     }
 
-    # The second reason, that there are input dependencies that have to be satisfied.
-    #  However, if there are no nodes in the post state, then there are no dependencies.
+    # The second reason, are read dependencies, for this we have to look at the incoming
+    #  edges and add any node that we need.
     if len(post_nodes) != 0:
-        # The first source of them are the nodes used as output of the nested SDFG.
-        post_nodes.update(oedge.dst for oedge in state.out_edges(nsdfg_node))
-
-        # The second source of a read dependency is if the read is from a node that belongs
-        #  to the pre state. This is a little bit of an obscure case and only happens if
-        #  there are parallel paths along the nested SDFG.
         for pnode in post_nodes.copy():
             for iedge in state.in_edges(pnode):
                 node: nodes.Node = iedge.src
-                if node in pre_nodes:
+                if node not in post_nodes:
                     if (not isinstance(node, nodes.AccessNode)) or isinstance(node.desc(state.sdfg), data.View):
                         if test_if_applicable:
                             return False
