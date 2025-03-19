@@ -702,21 +702,21 @@ class StateBoundaryNode(ScheduleTreeNode):
 # Classes based on Python's AST NodeVisitor/NodeTransformer for schedule tree nodes
 class ScheduleNodeVisitor:
 
-    def visit(self, node: ScheduleTreeNode):
+    def visit(self, node: ScheduleTreeNode, **kwargs: Any):
         """Visit a node."""
         if isinstance(node, list):
-            return [self.visit(snode) for snode in node]
+            return [self.visit(snode, **kwargs) for snode in node]
         if isinstance(node, ScheduleTreeScope) and hasattr(self, 'visit_scope'):
-            return self.visit_scope(node)
+            return self.visit_scope(node, **kwargs)
 
         method = 'visit_' + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
-        return visitor(node)
+        return visitor(node, **kwargs)
 
-    def generic_visit(self, node: ScheduleTreeNode):
+    def generic_visit(self, node: ScheduleTreeNode, **kwargs: Any):
         if isinstance(node, ScheduleTreeScope):
             for child in node.children:
-                self.visit(child)
+                self.visit(child, **kwargs)
 
 
 class ScheduleNodeTransformer(ScheduleNodeVisitor):

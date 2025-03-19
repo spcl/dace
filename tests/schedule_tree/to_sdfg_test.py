@@ -228,6 +228,61 @@ def test_create_state_boundary_empty_memlet(control_flow):
     t2s.create_state_boundary(bnode, sdfg, state, t2s.StateBoundaryBehavior.EMPTY_MEMLET)
 
 
+def test_create_tasklet_raw():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla2', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+    assert len(sdfg.states()) == 1
+    state = sdfg.states()[0]
+    first_tasklet, write_read_node, second_tasklet, write_node = state.nodes()
+
+    assert first_tasklet.label == "bla"
+    assert not first_tasklet.in_connectors
+    assert first_tasklet.out_connectors.keys() == {"out"}
+
+    assert second_tasklet.label == "bla2"
+    assert second_tasklet.in_connectors.keys() == {"inp"}
+    assert second_tasklet.out_connectors.keys() == {"out"}
+
+    assert [(first_tasklet, write_read_node), (write_read_node, second_tasklet),
+            (second_tasklet, write_node)] == [(edge.src, edge.dst) for edge in state.edges()]
+
+
+def test_create_tasklet_waw():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla2', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+    assert len(sdfg.states()) == 2
+    s1, s2 = sdfg.states()
+
+    s1_tasklet, s1_anode = s1.nodes()
+    assert [(s1_tasklet, s1_anode)] == [(edge.src, edge.dst) for edge in s1.edges()]
+
+    s2_tasklet, s2_anode = s2.nodes()
+    assert [(s2_tasklet, s2_anode)] == [(edge.src, edge.dst) for edge in s2.edges()]
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -243,3 +298,5 @@ if __name__ == '__main__':
     test_create_state_boundary_state_transition(control_flow=True)
     test_create_state_boundary_state_transition(control_flow=False)
     test_create_state_boundary_empty_memlet()
+    test_create_tasklet_raw()
+    test_create_tasklet_waw()

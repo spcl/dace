@@ -7,7 +7,7 @@ from dace.sdfg.sdfg import SDFG, ControlFlowRegion
 from dace.sdfg.state import SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from enum import Enum, auto
-from typing import Dict, List, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 
 class StateBoundaryBehavior(Enum):
@@ -28,26 +28,78 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     # Set SDFG descriptor repository
     result = SDFG(stree.name, propagate=False)
     result.arg_names = copy.deepcopy(stree.arg_names)
-    result._arrays = copy.deepcopy(stree.containers)
+    for key, container in stree.containers.items():
+        result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
     result.symbols = copy.deepcopy(stree.symbols)
 
     # TODO: Fill SDFG contents
     stree = insert_state_boundaries_to_tree(stree)  # after WAW, before label, etc.
 
-    # Start with an empty state, ..
-    current_state = result.add_state(is_start_block=True)
+    class StreeToSDFG(tn.ScheduleNodeVisitor):
 
-    # .. then add children one by one.
-    for child in stree.children:
-        # create_state_boundary
-        if isinstance(child, tn.StateBoundaryNode):
+        def __init__(self) -> None:
+            self._state_stack: List[SDFGState] = []
+            self._current_state: Optional[SDFGState] = None
+            self.access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
+
+        def _push_state(self, state: SDFGState) -> None:
+            """Push a state on the stack of states. Set it as self._current_state and setup an access_cache dictionary."""
+            self._state_stack.append(state)
+            self._current_state = state
+            self.access_cache[state] = {}
+
+        def _pop_state(self, label: Optional[str] = None) -> SDFGState:
+            """Pops the last state from the stack. Replaces `self._current_state` and cleans up the access_cache."""
+            if not self._state_stack:
+                raise ValueError("Can't pop state from empty stack.")
+
+            popped = self._state_stack.pop()
+            if label:
+                assert popped.label.startswith(label)
+
+            self._current_state = None if not self._state_stack else self._state_stack[-1]
+
+            del self.access_cache[popped]
+
+            return popped
+
+        def visit_ScheduleTreeRoot(self, node: tn.ScheduleTreeRoot, sdfg: SDFG) -> None:
+            self._push_state(sdfg.add_state(label="tree_root", is_start_block=True))
+            self.visit(node.children, sdfg=sdfg)
+
+        def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
             # TODO: When creating a state boundary, include all inter-state assignments that precede it.
-            current_state = create_state_boundary(child, result, current_state, state_boundary_behavior)
+            self._push_state(
+                create_state_boundary(node, sdfg, self._current_state, StateBoundaryBehavior.STATE_TRANSITION))
 
-        # TODO: create_loop_block
-        # TODO: create_conditional_block
-        # TODO: create_dataflow_scope
+        def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
+            # Add Tasklet to current state
+            tasklet = node.node
+            self._current_state.add_node(tasklet)
+
+            # Connect inputs and outputs
+            cache = self.access_cache[self._current_state]
+            for name, memlet in node.in_memlets.items():
+                # cache read access
+                if memlet.data not in cache:
+                    cache[memlet.data] = self._current_state.add_read(memlet.data)
+
+                access_node = cache[memlet.data]
+                self._current_state.add_memlet_path(access_node, tasklet, dst_conn=name, memlet=memlet)
+
+            for name, memlet in node.out_memlets.items():
+                # we always write to a new access_node
+                access_node = self._current_state.add_write(memlet.data)
+                self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
+
+                # cache write access node (or update an existing one) for read after write cases
+                cache[memlet.data] = access_node
+
+    # TODO: create_loop_block
+    # TODO: create_conditional_block
+    # TODO: create_dataflow_scope
+    StreeToSDFG().visit(stree, sdfg=result)
 
     return result
 
