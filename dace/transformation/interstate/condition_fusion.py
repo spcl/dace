@@ -3,7 +3,7 @@
 
 import copy
 
-from dace import sdfg as sd, properties, InterstateEdge
+from dace import sdfg as sd, properties
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
@@ -50,6 +50,7 @@ class ConditionFusion(xf.MultiStateTransformation):
             return True
 
         # Case 2: Nested conditional blocks
+        # TODO: Implement this case
 
         return False
 
@@ -176,7 +177,7 @@ class ConditionFusion(xf.MultiStateTransformation):
         for i, (cnd, cfg) in enumerate(cblck1.branches):
             cfg.label = f"{cblck1.label}_{i}"
             for j, node in enumerate(cfg.nodes()):
-                node.label = f"{cfg.label}_{node.label}_{j}"
+                node.label = f"{node.label}_{j}"
 
         # Fix sdfg parents
         for _, cfg in cblck1.branches:
