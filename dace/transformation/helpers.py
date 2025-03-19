@@ -635,7 +635,6 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
-    breakpoint()
 
     # Collect nodes_to_move
     for edge in state.edge_bfs(node):
@@ -650,7 +649,6 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
                 for e in state.memlet_path(iedge):
                     nodes_to_move.add(e.src)
                     orig_edges.add(e)
-    breakpoint()
 
     # Define boundary nodes
     for node in set(nodes_to_move):
@@ -667,7 +665,6 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
                 if oedge.dst not in nodes_to_move:
                     boundary_nodes.add(node)
                     break
-    breakpoint()
 
     # Duplicate boundary nodes
     new_nodes = {}
@@ -675,7 +672,6 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
         node_ = copy.deepcopy(node)
         state.add_node(node_)
         new_nodes[node] = node_
-    breakpoint()
 
     for edge in state.edges():
         if edge.src in boundary_nodes and edge.dst in boundary_nodes:
@@ -685,78 +681,55 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
             state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
         elif edge.dst in boundary_nodes:
             state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
-    breakpoint()
 
     # Move nodes
     state.remove_nodes_from(nodes_to_move)
-    breakpoint()
 
     for n in nodes_to_move:
         if isinstance(n, nodes.NestedSDFG):
             # Set the new parent state
             n.sdfg.parent = newstate
-    breakpoint()
 
     newstate.add_nodes_from(nodes_to_move)
-    breakpoint()
 
     for e in orig_edges:
         newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
-    breakpoint()
 
     return newstate
 
 
 def isolate_nested_sdfg(
-        sdfg: SDFG,
         state: SDFGState,
         nsdfg_node: nodes.NestedSDFG,
-) -> tuple[SDFGState, SDFGState, SDFGState]:
+        is_applicable: bool = False,
+) -> Union[Tuple[SDFGState, SDFGState, SDFGState], bool]:
     """Isolate the nested SDFG.
 
-    The function will split `state` into three states. The second or middle state,
-    which is the original state, will contain the NestedSDFG, `nsdfg_node`, with the
-    AccessNodes that serves as input and output.
-    The first state will contain everything that should be sequenced before the
-    nested SDFG node and the third node contains everything that is sequenced
-    after the nested SDFG node.
+    The function will split `state` into three states:
+    - Pre State: Contains the data flow that is needed to compute the dependency
+        of the nested SDFG.
+    - Middle State: This state contains the nested SDFG and the nodes that are needed
+        as input or output to the nested SDFG.
+    - Post State: Contains the data flow that uses the data that was computed
+        by the nested SDFG.
 
-    The important aspect of this transformation is, that it will not increase the
-    number of AccessNodes that writes to a transient data, it might, however,
-    add new AccessNodes that read to data.
+    The important aspect of this function is, that it will not increase the
+    number of AccessNodes that are written to, it might, however, add new AccessNodes
+    that read data.
+
+    :param state: The state on which we operate.
+    :param nested_sdfg: The nested SDFG node that should be isolated.
+    :param is_applicable: If `True` then do not perform the splitting, only verify
+        that it can be performed by returning either `True` or `False`.
     """
 
-    # This function will generate three states:
-    #   - Pre State: Contains the data flow that is needed to compute the dependency
-    #       of the nested SDFG.
-    #   - Middle State: This state contains the nested SDFG, besides that it only
-    #       contains the nodes that are needed for input and output.
-    #   - Post State: Contains the data flow that uses the data that was computed
-    #       by the nested SDFG.
-    #
-    #  We will now go through the nodes of the original state and classify them,
-    #  i.e. in which state should they belong. We will handle the edges later.
-    #  Furthermore, it might happen that a node appears in multiple sets, in that
-    #  case it is a boundary node that we have to replicate.
-
     # These are the nodes that will be moved to the Pre State, they are found through
-    #  a backwards bfs starting from the nodes that serves as input. However, it might
-    #  contain more.
-    pre_nodes: set[nodes.Node] = set()
-
-    # These are the nodes of the middle state. Note that they have to be recreated
-    #  because the original nodes are moved either to the Pre or Post state.
-    middle_nodes: set[nodes.Node] = {nsdfg_node}
-
-    # These are the nodes that belongs to the Post State. They are defined by not
-    #  belonging to the other two sets.
-    post_nodes: set[nodes.Node] = set()
-
-    # As mentioned above, the pre nodes are found by performing a reverse traversal
-    #  of the data flow graph starting from the input nodes of the nested SDFG.
-    #  However, the source of all incoming edges also belongs to that.
-    to_visit: list[nodes.Node] = [ iedge.src for iedge in state.in_edges(nsdfg_node) ]
-    visited: set[nodes.Node] = set()
+    #  a backwards search starting from the nodes that serves as input to the nested
+    #  SDFG. It is important that these nodes, that serves as input to the nested
+    #  SDFG are also belonging to this set.
+    pre_nodes: Set[nodes.Node] = set()
+    to_visit: List[nodes.Node] = [ iedge.src for iedge in state.in_edges(nsdfg_node) ]
+    visited: Set[nodes.Node] = set()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
         if node_to_process in visited:
@@ -764,11 +737,16 @@ def isolate_nested_sdfg(
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
 
-    # The middle state only contains the nested SDFG node and the nodes that are
-    #  directly adjacent to the nested SDFG.
+    # These are the nodes of the middle state. Which are all access nodes that serves
+    #  as input to the nested SDFG and the nested SDFG itself.
+    #  Note that the AccessNodes serving as input and output of the nested SDFG
+    #  belonging to the pre and post set, respectively, as well.
+    middle_nodes: Set[nodes.Node] = {nested_sdfg}
     for iedge in state.in_edges(nsdfg_node):
-        assert isinstance(iedge.src, nodes.AccessNode)
-        assert not isinstance(iedges.src, data.View)
+        if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedges.src.desc(state.sdfg), data.View):
+            if is_applicable:
+                return False
+            raise ValueError("Can only split if the inputs to the nested SDFG are AccessNodes to non view data.")
         middle_nodes.add(iedge.src)
     for oedge in state.out_edges(nsdfg_node):
         # We require that there is only one incoming edge on an output node. This seems
@@ -776,46 +754,100 @@ def isolate_nested_sdfg(
         #  requires that the whole array is mapped inside. So if there would be
         #  multiple incoming edges the original SDFG would be invalid, because the
         #  same memory would be written to multiple times.
-        assert state.in_edges(oedge.dst) == 1
-        assert isinstance(oedge.dst, nodes.AccessNode)
-        assert not isinstance(oedges.dst, data.View)
+        if (
+            (not all(iedge.src is nested_sdfg for iedge in state.in_edges(oedge.dst)))
+            or (not isinstance(oedge.dst, nodes.AccessNode))
+            or isinstance(oedges.dst, data.View)
+        ):
+            if is_applicable:
+                return False
+            raise ValueError("Can only split if the out to the nested SDFG are AccessNodes to non view data and the AccessNodes are only connected to the nested SDFG.")
         middle_nodes.add(oedge.dst)
 
-    # Now we make a first guess of the nodes belonging to the Post State.
-    middle_nodes.union(
+    # These are the nodes that belongs to the Post State. There are two reasons why a
+    #  node belongs to the set of post nodes.
+    #  The first is that the node does not belong to any other set.
+    post_nodes: Set[nodes.Node] = {
             node for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
+    }
+
+    # The second reason, that there are input dependencies that have to be satisfied.
+    #  The first source of them are the nodes used as output of the nested SDFG.
+    post_nodes.update(
+        oedge.dst for oedge in state.out_edges(nsdfg_node)
     )
 
+    # The second source of a read dependency is if the read is from a node that belongs
+    #  to the pre state. This is a little bit of an obscure case and only happens if
+    #  there are parallel paths along the nested SDFG.
+    for pnode in post_nodes.copy():
+        for iedge in state.in_edges(pnode):
+            node: nodes.Node = iedge.src
+            if node in pre_nodes:
+                if (not isinstance(node, nodes.AccessNode)) or isinstance(node.desc(state.sdfg), data.View):
+                    if is_applicable:
+                        return False
+                    raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
+                post_nodes.add(node)
 
+    if is_applicable:
+        return True
 
+    # Now we are creating the two new states.
+    parent_graph = state.parent_graph
+    pre_state: dace.SDFGState = parent_graph.add_state_before(state=state, label=(state.label + "_pre_state" if state.label else None))
+    post_state: dace.SDFGState = parent_graph.add_state_after(state=state, label=(state.label + "_post_state" if state.label else None))
 
+    # We will now populate the pre state.
+    pre_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
+    for node in pre_nodes:
+        new_node = copy.deepcopy(node) if node in middle_nodes  else node
+        pre_old_to_new_map[node] = new_node
+        pre_state.add_node(new_node)
 
+    # Now add the edges, we only have to inspect the incoming ones.
+    for old_dst in pre_nodes:
+        new_dst = pre_old_to_new_map[old_node]
+        for old_iedge in state.in_edges(old_dst):
+            old_src = old_iedge.src
+            new_src = pre_old_to_new_map[old_src]
+            pre_state.add_edge(
+                    new_src,
+                    old_iedge.src_conn,
+                    new_dst,
+                    old_iedge.dst_conn,
+                    copy.deepcopy(old_iedge.data),
+            )
 
+    # Now we will populate the post state.
+    post_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
+    for node in post_nodes:
+        new_node = copy.deepcopy(node) if (node in middle_nodes or node in pre_nodes) else node
+        post_old_to_new_map[node] = new_node
+        post_state.add_node(new_node)
 
+    # Now make the connections inside the post node. For this we only have to look
+    #  at the outgoing edges in the original state.
+    for old_src in post_nodes:
+        new_src = post_old_to_new_map[old_src]
+        for old_oedge in state.out_edges(old_src):
+            old_dst = old_oedge.dst
+            new_dst = post_old_to_new_map[old_dst]
+            post_state.add_edge(
+                    new_src,
+                    old_oedge.src_conn,
+                    new_dst,
+                    old_oedge.dst_conn,
+                    copy.deepcopy(old_oedge.data),
+            )
 
+    # Remove all nodes from the middle state that are not classified as middle nodes,
+    #  this will also remove all the edges that are no longer needed.
+    for node in list(state.nodes()):
+        if node not in middle_nodes:
+            state.remove_node(node)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return (pre_state, state, post_state)
 
 
 def _get_internal_subset(internal_memlet: Memlet,
