@@ -726,9 +726,11 @@ def isolate_nested_sdfg(
     # These are the nodes that will be moved to the Pre State, they are found through
     #  a backwards search starting from the nodes that serves as input to the nested
     #  SDFG. It is important that these nodes, that serves as input to the nested
-    #  SDFG are also belonging to this set.
+    #  SDFG are also belonging to this set. But they are only added if they needed.
     pre_nodes: Set[nodes.Node] = set()
-    to_visit: List[nodes.Node] = [iedge.src for iedge in state.in_edges(nsdfg_node)]
+    to_visit: List[nodes.Node] = []
+    for iedge in state.in_edges(nsdfg_node):
+        to_visit.extend(iiedge for iiedge in state.in_edges(iedge.src))
     visited: Set[nodes.Node] = set()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
@@ -736,6 +738,8 @@ def isolate_nested_sdfg(
             continue
         pre_nodes.add(node_to_process)
         to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
+    if len(pre_nodes) > 0:
+        pre_nodes.update(iedge.src for edge in state.in_edges(nsdfg_node))
 
     # These are the nodes of the middle state. Which are all access nodes that serves
     #  as input to the nested SDFG and the nested SDFG itself.
@@ -772,21 +776,23 @@ def isolate_nested_sdfg(
     }
 
     # The second reason, that there are input dependencies that have to be satisfied.
-    #  The first source of them are the nodes used as output of the nested SDFG.
-    post_nodes.update(oedge.dst for oedge in state.out_edges(nsdfg_node))
+    #  However, if there are no nodes in the post state, then there are no dependencies.
+    if len(post_nodes) != 0:
+        # The first source of them are the nodes used as output of the nested SDFG.
+        post_nodes.update(oedge.dst for oedge in state.out_edges(nsdfg_node))
 
-    # The second source of a read dependency is if the read is from a node that belongs
-    #  to the pre state. This is a little bit of an obscure case and only happens if
-    #  there are parallel paths along the nested SDFG.
-    for pnode in post_nodes.copy():
-        for iedge in state.in_edges(pnode):
-            node: nodes.Node = iedge.src
-            if node in pre_nodes:
-                if (not isinstance(node, nodes.AccessNode)) or isinstance(node.desc(state.sdfg), data.View):
-                    if is_applicable:
-                        return False
-                    raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
-                post_nodes.add(node)
+        # The second source of a read dependency is if the read is from a node that belongs
+        #  to the pre state. This is a little bit of an obscure case and only happens if
+        #  there are parallel paths along the nested SDFG.
+        for pnode in post_nodes.copy():
+            for iedge in state.in_edges(pnode):
+                node: nodes.Node = iedge.src
+                if node in pre_nodes:
+                    if (not isinstance(node, nodes.AccessNode)) or isinstance(node.desc(state.sdfg), data.View):
+                        if is_applicable:
+                            return False
+                        raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
+                    post_nodes.add(node)
 
     if is_applicable:
         return True
