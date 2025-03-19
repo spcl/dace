@@ -818,14 +818,15 @@ def isolate_nested_sdfg(
         new_dst = pre_old_to_new_map[old_dst]
         for old_iedge in state.in_edges(old_dst):
             old_src = old_iedge.src
-            new_src = pre_old_to_new_map[old_src]
-            pre_state.add_edge(
-                new_src,
-                old_iedge.src_conn,
-                new_dst,
-                old_iedge.dst_conn,
-                copy.deepcopy(old_iedge.data),
-            )
+            if old_src in pre_nodes:
+                new_src = pre_old_to_new_map[old_src]
+                pre_state.add_edge(
+                    new_src,
+                    old_iedge.src_conn,
+                    new_dst,
+                    old_iedge.dst_conn,
+                    copy.deepcopy(old_iedge.data),
+                )
 
     # Now we will populate the post state.
     post_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
@@ -840,14 +841,15 @@ def isolate_nested_sdfg(
         new_src = post_old_to_new_map[old_src]
         for old_oedge in state.out_edges(old_src):
             old_dst = old_oedge.dst
-            new_dst = post_old_to_new_map[old_dst]
-            post_state.add_edge(
-                new_src,
-                old_oedge.src_conn,
-                new_dst,
-                old_oedge.dst_conn,
-                copy.deepcopy(old_oedge.data),
-            )
+            if old_dst in post_nodes:
+                new_dst = post_old_to_new_map[old_dst]
+                post_state.add_edge(
+                    new_src,
+                    old_oedge.src_conn,
+                    new_dst,
+                    old_oedge.dst_conn,
+                    copy.deepcopy(old_oedge.data),
+                )
 
     # Remove all nodes from the middle state that are not classified as middle nodes,
     #  this will also remove all the edges that are no longer needed.
