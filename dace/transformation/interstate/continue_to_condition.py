@@ -71,3 +71,12 @@ class ContinueToCondition(xf.MultiStateTransformation):
 
         for node in to_remove:
             outer_cfg.remove_node(node)
+
+        # Fix sdfg parents
+        for _, cfg in pg.branches:
+            for st in cfg.all_states():
+                for node in st.nodes():
+                    if isinstance(node, sd.nodes.NestedSDFG):
+                        node.sdfg.parent_sdfg = cfg.sdfg
+                st.sdfg = cfg.sdfg
+            cfg.reset_cfg_list()

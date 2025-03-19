@@ -188,7 +188,7 @@ class ConditionFusion(xf.MultiStateTransformation):
 
         # Fix sdfg parents
         for _, cfg in cblck1.branches:
-            for st in cfg.nodes():
+            for st in cfg.all_states():
                 for node in st.nodes():
                     if isinstance(node, sd.nodes.NestedSDFG):
                         node.sdfg.parent_sdfg = cfg.sdfg
