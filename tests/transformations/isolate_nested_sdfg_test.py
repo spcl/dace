@@ -57,6 +57,34 @@ def _make_nested_sdfg_simple() -> dace.SDFG:
     return sdfg
 
 
+def _make_nested_sdfg_adding() -> dace.SDFG:
+    """Make an SDFG that adds the inputs together.
+    """
+    sdfg = dace.SDFG("adding_nested_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    for name in "ABC":
+        sdfg.add_array(
+            name=name,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=False,
+        )
+    state.add_mapped_tasklet(
+        "comp",
+        map_ranges={"__i": "0:10"},
+        inputs={
+            "__in1": dace.Memlet("A[__i]"),
+            "__in2": dace.Memlet("B[__i]"),
+        },
+        code="__out = __in1 + __in2",
+        outputs={"__out": dace.Memlet("C[__i]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
 def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
     """Creates a nested SDFG that is already isolated.
     """
@@ -171,6 +199,75 @@ def _make_non_empty_post_state_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_n
     return outer_sdfg, state, nsdfg
 
 
+def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG]:
+    """Creates an SDFG that has a path around the nested SDFG.
+    """
+    outer_sdfg = dace.SDFG("multi_path_nested_sdfg")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    aname_small = ["A", "T1", "T2", "T3"]
+    aname_big = ["T4", "B"]
+
+    for name in aname_small + aname_big:
+        outer_sdfg.add_array(
+            name=name,
+            shape=((10, ) if name in aname_small else (20, )),
+            dtype=dace.float64,
+            transient=(len(name) != 1),
+        )
+    A, T1, T2, T3, T4, B = (state.add_access(name) for name in aname_small + aname_big)
+
+    state.add_mapped_tasklet(
+        "comp_pre1",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("A[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("T1[__i]")},
+        external_edges=True,
+        input_nodes={A},
+        output_nodes={T1},
+    )
+
+    inner_sdfg = _make_nested_sdfg_adding()
+    nsdfg_node = state.add_nested_sdfg(
+        sdfg=inner_sdfg,
+        parent=outer_sdfg,
+        inputs={"A", "B"},
+        outputs={"C"},
+        symbol_mapping={},
+    )
+    state.add_edge(A, None, nsdfg_node, "A", dace.Memlet("A[0:10]"))
+    state.add_edge(T1, None, nsdfg_node, "B", dace.Memlet("T1[0:10]"))
+
+    state.add_edge(nsdfg_node, "C", T2, None, dace.Memlet("T2[0:10]"))
+    state.add_mapped_tasklet(
+        "comp_post1",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("A[__i]")},
+        code="__out = __in + 2.0",
+        outputs={"__out": dace.Memlet("T3[__i]")},
+        external_edges=True,
+        input_nodes={A},
+        output_nodes={T3},
+    )
+
+    state.add_nedge(T3, T4, dace.Memlet("T3[0:10] -> [0:10]"))
+    state.add_nedge(T2, T4, dace.Memlet("T2[0:10] -> [10:20]"))
+    state.add_mapped_tasklet(
+        "comp_post2",
+        map_ranges={"__i": "0:20"},
+        inputs={"__in": dace.Memlet("T4[__i]")},
+        code="__out = __in + 3.0",
+        outputs={"__out": dace.Memlet("B[__i]")},
+        external_edges=True,
+        input_nodes={T4},
+        output_nodes={B},
+    )
+    outer_sdfg.validate()
+
+    return outer_sdfg, state, nsdfg_node
+
+
 def test_already_isolated_sdfg():
     sdfg, state, nsdfg_node = _make_already_isloated_nested_sdfg()
 
@@ -268,3 +365,42 @@ def test_non_empty_post_set():
     assert {"T", "B"} == {n.data for n in post_ac_nodes}
     assert count_node(post_state, dace_nodes.MapEntry) == 1
     assert post_state.number_of_nodes() == 5
+
+
+def test_multi_path_islolation():
+    sdfg, state, nsdfg_node = _make_multi_path_nested_sdfg()
+
+    assert sdfg.start_block is state
+    assert sdfg.number_of_nodes() == 1
+    assert count_node(sdfg, dace_nodes.NestedSDFG) == 1
+    assert count_node(sdfg, dace_nodes.AccessNode) == 6
+    assert count_node(sdfg, dace_nodes.MapEntry) == 3
+    assert count_node(nsdfg_node.sdfg, dace_nodes.AccessNode) == 3
+    assert count_node(nsdfg_node.sdfg, dace_nodes.MapEntry) == 1
+    initial_writes = count_writes(sdfg)
+
+    # Now perform the split
+    pre_state, middle_state, post_state = isolate_nested_sdfg(state=state, nsdfg_node=nsdfg_node)
+
+    assert sdfg.number_of_nodes() == 3
+    assert sdfg.start_block is pre_state
+    assert initial_writes == count_writes(sdfg)
+
+    pre_ac_nodes = count_node(pre_state, dace_nodes.AccessNode, return_nodes=True)
+    pre_me_nodes = count_node(pre_state, dace_nodes.MapEntry, return_nodes=True)
+    assert len(pre_ac_nodes) == 2
+    assert {"A", "T1"} == {n.data for n in pre_ac_nodes}
+    assert len(pre_me_nodes) == 1
+    assert all(me.map.label.startswith("comp_pre") for me in pre_me_nodes)
+
+    middle_ac_nodes = count_node(middle_state, dace_nodes.AccessNode, return_nodes=True)
+    assert len(middle_ac_nodes) == 3
+    assert {"A", "T1", "T2"} == {n.data for n in middle_ac_nodes}
+    assert count_node(middle_state, dace_nodes.NestedSDFG) == 1
+
+    post_ac_nodes = count_node(post_state, dace_nodes.AccessNode, return_nodes=True)
+    post_me_nodes = count_node(post_state, dace_nodes.MapEntry, return_nodes=True)
+    assert len(post_ac_nodes) == 5
+    assert {"A", "T3", "T2", "T4", "B"} == {n.data for n in post_ac_nodes}
+    assert len(post_me_nodes) == 2
+    assert all(me.map.label.startswith("comp_post") for me in post_me_nodes)
