@@ -96,8 +96,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self.no_inline_named_regions = no_inline_named_regions
 
         pass_opts = {
-            'no_inline_function_call_regions': self.no_inline_function_call_regions,
-            'no_inline_named_regions': self.no_inline_named_regions,
+            'InlineControlFlowRegions.no_inline_function_call_regions': self.no_inline_function_call_regions,
+            'InlineControlFlowRegions.no_inline_named_regions': self.no_inline_named_regions,
         }
         if pass_options:
             pass_opts.update(pass_options)

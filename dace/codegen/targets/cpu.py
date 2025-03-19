@@ -578,14 +578,21 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
-            callsite_stream.write("delete[] %s;\n" % alloc_name, cfg, state_id, node)
+            if isinstance(nodedesc, data.Array):
+                callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
+            else:
+                callsite_stream.write(f"delete {alloc_name};\n", cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
+            if isinstance(nodedesc, data.Array):
+                deleteop = "delete[]"
+            else:
+                deleteop = "delete"
             callsite_stream.write(
-                """#pragma omp parallel
+                f"""#pragma omp parallel
                 {{
-                    delete[] {name};
-                }}""".format(name=alloc_name),
+                    {deleteop} {alloc_name};
+                }}""",
                 cfg,
                 state_id,
                 node,

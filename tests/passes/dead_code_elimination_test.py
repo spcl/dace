@@ -266,6 +266,54 @@ def test_dde_inout(libnode):
     sdfg.validate()
 
 
+def test_dde_inout_two_states():
+    """Test two states with read/write in second state."""
+
+    sdfg = dace.SDFG("dde_inout_two_states")
+    sdfg.add_scalar("tmp", dace.float32)
+    sdfg.add_scalar("computed", dace.float32, transient=True)
+
+    start_state = sdfg.add_state("start_state", is_start_block=True)
+    s1_read_tmp = start_state.add_read("tmp")
+    s1_write_computed = start_state.add_write("computed")
+
+    # upstream tasklet that writes a transient (to be read in a separate state)
+    first_tasklet = start_state.add_tasklet("write", {"read_tmp"}, {"write_computed"},
+                                            "write_computed = read_tmp * 2 + 1")
+    start_state.add_memlet_path(s1_read_tmp, first_tasklet, dst_conn="read_tmp", memlet=dace.Memlet(data="tmp"))
+    start_state.add_memlet_path(first_tasklet,
+                                s1_write_computed,
+                                src_conn="write_computed",
+                                memlet=dace.Memlet(data="computed"))
+
+    next_state = sdfg.add_state_after(start_state, "next_state")
+    s2_write_computed = next_state.add_write("computed")
+    s2_read_computed = next_state.add_read("computed")
+    s2_write_tmp = next_state.add_write("tmp")
+
+    # downstream tasklet that reads _and_ writes a transient
+    second_tasklet = next_state.add_tasklet(
+        "read_write", {"read_computed"}, {"write_tmp", "write_computed"},
+        "write_computed = 2 * read_computed\nwrite_tmp = write_computed + read_computed")
+    next_state.add_memlet_path(s2_read_computed,
+                               second_tasklet,
+                               dst_conn="read_computed",
+                               memlet=dace.Memlet(data="computed"))
+    next_state.add_memlet_path(second_tasklet, s2_write_tmp, src_conn="write_tmp", memlet=dace.Memlet(data="tmp"))
+    next_state.add_memlet_path(second_tasklet,
+                               s2_write_computed,
+                               src_conn="write_computed",
+                               memlet=dace.Memlet(data="computed"))
+
+    results = {}
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, results)
+
+    dde_results = results["DeadDataflowElimination"][0]
+    assert dde_results.get(start_state) is None, "No changes to `start_state` expected."
+    expected_cleanup = dde_results.get(next_state)
+    assert expected_cleanup == {s2_write_computed}, "Expected to clean up write to `computed` from `next_state`."
+
+
 def test_dce():
     """ End-to-end test evaluating both dataflow and state elimination. """
     # Code should end up as b[:] = a + 2; b += 1
@@ -438,6 +486,7 @@ if __name__ == '__main__':
     test_dde_scope_reconnect()
     test_dde_inout(False)
     test_dde_inout(True)
+    test_dde_inout_two_states()
     test_dce()
     test_dce_callback()
     test_dce_callback_manual()
