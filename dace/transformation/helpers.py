@@ -699,9 +699,9 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
 
 
 def isolate_nested_sdfg(
-        state: SDFGState,
-        nsdfg_node: nodes.NestedSDFG,
-        is_applicable: bool = False,
+    state: SDFGState,
+    nsdfg_node: nodes.NestedSDFG,
+    is_applicable: bool = False,
 ) -> Union[Tuple[SDFGState, SDFGState, SDFGState], bool]:
     """Isolate the nested SDFG.
 
@@ -728,7 +728,7 @@ def isolate_nested_sdfg(
     #  SDFG. It is important that these nodes, that serves as input to the nested
     #  SDFG are also belonging to this set.
     pre_nodes: Set[nodes.Node] = set()
-    to_visit: List[nodes.Node] = [ iedge.src for iedge in state.in_edges(nsdfg_node) ]
+    to_visit: List[nodes.Node] = [iedge.src for iedge in state.in_edges(nsdfg_node)]
     visited: Set[nodes.Node] = set()
     while len(to_visit) > 0:
         node_to_process = to_visit.pop()
@@ -754,28 +754,26 @@ def isolate_nested_sdfg(
         #  requires that the whole array is mapped inside. So if there would be
         #  multiple incoming edges the original SDFG would be invalid, because the
         #  same memory would be written to multiple times.
-        if (
-            (not all(iedge.src is nested_sdfg for iedge in state.in_edges(oedge.dst)))
-            or (not isinstance(oedge.dst, nodes.AccessNode))
-            or isinstance(oedges.dst, data.View)
-        ):
+        if ((not all(iedge.src is nested_sdfg for iedge in state.in_edges(oedge.dst)))
+                or (not isinstance(oedge.dst, nodes.AccessNode)) or isinstance(oedges.dst, data.View)):
             if is_applicable:
                 return False
-            raise ValueError("Can only split if the out to the nested SDFG are AccessNodes to non view data and the AccessNodes are only connected to the nested SDFG.")
+            raise ValueError(
+                "Can only split if the out to the nested SDFG are AccessNodes to non view data and the AccessNodes are only connected to the nested SDFG."
+            )
         middle_nodes.add(oedge.dst)
 
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
     #  The first is that the node does not belong to any other set.
     post_nodes: Set[nodes.Node] = {
-            node for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
+        node
+        for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
     }
 
     # The second reason, that there are input dependencies that have to be satisfied.
     #  The first source of them are the nodes used as output of the nested SDFG.
-    post_nodes.update(
-        oedge.dst for oedge in state.out_edges(nsdfg_node)
-    )
+    post_nodes.update(oedge.dst for oedge in state.out_edges(nsdfg_node))
 
     # The second source of a read dependency is if the read is from a node that belongs
     #  to the pre state. This is a little bit of an obscure case and only happens if
@@ -795,13 +793,17 @@ def isolate_nested_sdfg(
 
     # Now we are creating the two new states.
     parent_graph = state.parent_graph
-    pre_state: dace.SDFGState = parent_graph.add_state_before(state=state, label=(state.label + "_pre_state" if state.label else None))
-    post_state: dace.SDFGState = parent_graph.add_state_after(state=state, label=(state.label + "_post_state" if state.label else None))
+    pre_state: dace.SDFGState = parent_graph.add_state_before(state=state,
+                                                              label=(state.label +
+                                                                     "_pre_state" if state.label else None))
+    post_state: dace.SDFGState = parent_graph.add_state_after(state=state,
+                                                              label=(state.label +
+                                                                     "_post_state" if state.label else None))
 
     # We will now populate the pre state.
     pre_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
     for node in pre_nodes:
-        new_node = copy.deepcopy(node) if node in middle_nodes  else node
+        new_node = copy.deepcopy(node) if node in middle_nodes else node
         pre_old_to_new_map[node] = new_node
         pre_state.add_node(new_node)
 
@@ -812,11 +814,11 @@ def isolate_nested_sdfg(
             old_src = old_iedge.src
             new_src = pre_old_to_new_map[old_src]
             pre_state.add_edge(
-                    new_src,
-                    old_iedge.src_conn,
-                    new_dst,
-                    old_iedge.dst_conn,
-                    copy.deepcopy(old_iedge.data),
+                new_src,
+                old_iedge.src_conn,
+                new_dst,
+                old_iedge.dst_conn,
+                copy.deepcopy(old_iedge.data),
             )
 
     # Now we will populate the post state.
@@ -834,11 +836,11 @@ def isolate_nested_sdfg(
             old_dst = old_oedge.dst
             new_dst = post_old_to_new_map[old_dst]
             post_state.add_edge(
-                    new_src,
-                    old_oedge.src_conn,
-                    new_dst,
-                    old_oedge.dst_conn,
-                    copy.deepcopy(old_oedge.data),
+                new_src,
+                old_oedge.src_conn,
+                new_dst,
+                old_oedge.dst_conn,
+                copy.deepcopy(old_oedge.data),
             )
 
     # Remove all nodes from the middle state that are not classified as middle nodes,

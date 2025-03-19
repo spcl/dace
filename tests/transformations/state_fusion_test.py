@@ -480,7 +480,10 @@ def test_check_paths():
     do_fuse = StateFusion()._check_paths(
         first_state=block_0,
         second_state=block_5,
-        match_nodes={qm_b0_w: qm_b5, m1_b0_w: m1_b5},
+        match_nodes={
+            qm_b0_w: qm_b5,
+            m1_b0_w: m1_b5
+        },
         nodes_first=[q_b0_w],
         nodes_second=[q_b5_w],
         second_input={precip_fall_b5, m1_b5, qm_b5},
