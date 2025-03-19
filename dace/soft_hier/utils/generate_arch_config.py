@@ -36,7 +36,7 @@ def generate_arg_cfg(
     noc_outstanding=64,
     noc_link_width=1024,
     instruction_mem_base="0x80000000",
-    instruction_mem_size="0x00010000",
+    instruction_mem_size="0x00800000",
     soc_register_base="0x90000000",
     soc_register_size="0x00010000",
     soc_register_eoc="0x90000000",
