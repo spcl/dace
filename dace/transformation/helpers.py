@@ -707,7 +707,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
     return newstate
 
 
-def isolated_nested_sdfg(
+def isolate_nested_sdfg(
         sdfg: SDFG,
         state: SDFGState,
         nsdfg_node: nodes.NestedSDFG,
@@ -726,21 +726,65 @@ def isolated_nested_sdfg(
     add new AccessNodes that read to data.
     """
 
-    # These are the three node sets.
-    predecessor_nodes: set[nodes.Node] = set()
-    predecessor_edges: dict[tuple[nodes.Node, nodes.Node], graph.MultiConnectorEdge] = dict()
-    middle_nodes: set[nodes.Node] = set()
-    middle_edges: dict[tuple[nodes.Node, nodes.Node], graph.MultiConnectorEdge] = dict()
-    successor_nodes: set[nodes.Node] = set()
-    successor_edges: dict[tuple[nodes.Node, nodes.Node], graph.MultiConnectorEdge] = dict()
+    # This function will generate three states:
+    #   - Pre State: Contains the data flow that is needed to compute the dependency
+    #       of the nested SDFG.
+    #   - Middle State: This state contains the nested SDFG, besides that it only
+    #       contains the nodes that are needed for input and output.
+    #   - Post State: Contains the data flow that uses the data that was computed
+    #       by the nested SDFG.
+    #
+    #  We will now go through the nodes of the original state and classify them,
+    #  i.e. in which state should they belong. We will handle the edges later.
+    #  Furthermore, it might happen that a node appears in multiple sets, in that
+    #  case it is a boundary node that we have to replicate.
 
-    # The edges in the middle state contains only the NestedSDFG and the AccessNodes
-    #  that are needed for its input.
-    middle_nodes.add(nsdfg_node)
+    # These are the nodes that will be moved to the Pre State, they are found through
+    #  a backwards bfs starting from the nodes that serves as input. However, it might
+    #  contain more.
+    pre_nodes: set[nodes.Node] = set()
+
+    # These are the nodes of the middle state. Note that they have to be recreated
+    #  because the original nodes are moved either to the Pre or Post state.
+    middle_nodes: set[nodes.Node] = {nsdfg_node}
+
+    # These are the nodes that belongs to the Post State. They are defined by not
+    #  belonging to the other two sets.
+    post_nodes: set[nodes.Node] = set()
+
+    # As mentioned above, the pre nodes are found by performing a reverse traversal
+    #  of the data flow graph starting from the input nodes of the nested SDFG.
+    #  However, the source of all incoming edges also belongs to that.
+    to_visit: list[nodes.Node] = [ iedge.src for iedge in state.in_edges(nsdfg_node) ]
+    visited: set[nodes.Node] = set()
+    while len(to_visit) > 0:
+        node_to_process = to_visit.pop()
+        if node_to_process in visited:
+            continue
+        pre_nodes.add(node_to_process)
+        to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
+
+    # The middle state only contains the nested SDFG node and the nodes that are
+    #  directly adjacent to the nested SDFG.
     for iedge in state.in_edges(nsdfg_node):
         assert isinstance(iedge.src, nodes.AccessNode)
+        assert not isinstance(iedges.src, data.View)
+        middle_nodes.add(iedge.src)
+    for oedge in state.out_edges(nsdfg_node):
+        # We require that there is only one incoming edge on an output node. This seems
+        #  like a restriction but it is not, because the inliner for nested SDFGs
+        #  requires that the whole array is mapped inside. So if there would be
+        #  multiple incoming edges the original SDFG would be invalid, because the
+        #  same memory would be written to multiple times.
+        assert state.in_edges(oedge.dst) == 1
+        assert isinstance(oedge.dst, nodes.AccessNode)
+        assert not isinstance(oedges.dst, data.View)
+        middle_nodes.add(oedge.dst)
 
-
+    # Now we make a first guess of the nodes belonging to the Post State.
+    middle_nodes.union(
+            node for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
+    )
 
 
 
