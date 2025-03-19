@@ -701,7 +701,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
 def isolate_nested_sdfg(
     state: SDFGState,
     nsdfg_node: nodes.NestedSDFG,
-    is_applicable: bool = False,
+    test_if_applicable: bool = False,
 ) -> Union[Tuple[SDFGState, SDFGState, SDFGState], bool]:
     """Isolate the nested SDFG.
 
@@ -719,7 +719,7 @@ def isolate_nested_sdfg(
 
     :param state: The state on which we operate.
     :param nested_sdfg: The nested SDFG node that should be isolated.
-    :param is_applicable: If `True` then do not perform the splitting, only verify
+    :param test_if_applicable: If `True` then do not perform the splitting, only verify
         that it can be performed by returning either `True` or `False`.
     """
 
@@ -748,7 +748,7 @@ def isolate_nested_sdfg(
     middle_nodes: Set[nodes.Node] = {nsdfg_node}
     for iedge in state.in_edges(nsdfg_node):
         if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedge.src.desc(state.sdfg), data.View):
-            if is_applicable:
+            if test_if_applicable:
                 return False
             raise ValueError("Can only split if the inputs to the nested SDFG are AccessNodes to non view data.")
         middle_nodes.add(iedge.src)
@@ -760,7 +760,7 @@ def isolate_nested_sdfg(
         #  same memory would be written to multiple times.
         if ((not all(iedge.src is nsdfg_node for iedge in state.in_edges(oedge.dst)))
                 or (not isinstance(oedge.dst, nodes.AccessNode)) or isinstance(oedge.dst, data.View)):
-            if is_applicable:
+            if test_if_applicable:
                 return False
             raise ValueError(
                 "Can only split if the out to the nested SDFG are AccessNodes to non view data and the AccessNodes are only connected to the nested SDFG."
@@ -789,12 +789,12 @@ def isolate_nested_sdfg(
                 node: nodes.Node = iedge.src
                 if node in pre_nodes:
                     if (not isinstance(node, nodes.AccessNode)) or isinstance(node.desc(state.sdfg), data.View):
-                        if is_applicable:
+                        if test_if_applicable:
                             return False
                         raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
                     post_nodes.add(node)
 
-    if is_applicable:
+    if test_if_applicable:
         return True
 
     # Now we are creating the two new states.
