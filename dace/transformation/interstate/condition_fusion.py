@@ -34,13 +34,19 @@ class ConditionFusion(xf.MultiStateTransformation):
                 return False
             if len(graph.edges_between(self.cblck1, self.cblck2)) != 1:
                 return False
+
             edge = graph.edges_between(self.cblck1, self.cblck2)[0]
             if edge.data.condition.as_string != "1":
                 return False
-            
-            # Why does this not work? We should be able to copy the assignments in the edge. 
-            if len(edge.data.assignments) != 0: 
+            if any(
+                [
+                    cnd is not None
+                    and cnd.get_free_symbols() & edge.data.assignments.keys() != set()
+                    for cnd, _ in self.cblck2.branches
+                ]
+            ):
                 return False
+
             return True
 
         # Case 2: Nested conditional blocks
@@ -70,10 +76,20 @@ class ConditionFusion(xf.MultiStateTransformation):
         assert (
             len(outer_cfg.edges_between(cblck1, cblck2)) == 1
         ), "Multiple edges between conditional blocks"
+
         cblck_edge = outer_cfg.edges_between(cblck1, cblck2)[0]
         assert (
             cblck_edge.data.condition.as_string == "1"
         ), "Edge between conditional blocks has conditions"
+
+        # Edge between cblck1 and cblck2 may have assignments, but only if none of the conditions in cblck2 depend on them
+        assert all(
+            [
+                cnd is None
+                or cnd.get_free_symbols() & cblck_edge.data.assignments.keys() == set()
+                for cnd, _ in cblck2.branches
+            ]
+        ), "Assignments in edge are used in cblck2"
 
         # There should be exactly one or no else branches in each conditional block
         cblck1_elses = len([True for cnd, cfg in cblck1.branches if cnd is None])
@@ -118,7 +134,7 @@ class ConditionFusion(xf.MultiStateTransformation):
                     n.sdfg = cfg2.sdfg
                     n.parent_graph = cfg2
                 cblck1.add_branch(cnd2, cfg2)
-        
+
         # Add the conditons of cblck2 to cblck1 and copy the cfgs
         for i, (cnd, cfg) in enumerate(cblck2.branches):
             for j in range(orig_blck1_branches):
@@ -161,13 +177,12 @@ class ConditionFusion(xf.MultiStateTransformation):
             cfg.label = f"{cblck1.label}_{i}"
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{cfg.label}_{node.label}_{j}"
-              
+
         # Fix sdfg parents
         for _, cfg in cblck1.branches:
             for st in cfg.nodes():
                 for node in st.nodes():
                     if isinstance(node, sd.nodes.NestedSDFG):
                         node.sdfg.parent_sdfg = cfg.sdfg
-                st.sdfg = cfg.sdfg        
+                st.sdfg = cfg.sdfg
             cfg.reset_cfg_list()
-          
