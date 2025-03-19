@@ -32,6 +32,8 @@ class ConditionFusion(xf.MultiStateTransformation):
         if expr_index == 0:
             if len(graph.successors(self.cblck1)) != 1:
                 return False
+            if len(graph.predecessors(self.cblck2)) != 1:
+                return False
             if len(graph.edges_between(self.cblck1, self.cblck2)) != 1:
                 return False
 
@@ -72,6 +74,11 @@ class ConditionFusion(xf.MultiStateTransformation):
         assert (
             outer_cfg.successors(cblck1)[0] == cblck2
         ), "Consecutive conditional block is not a successor"
+
+        # Check if cblck2 has a single predecessor
+        assert (
+            len(outer_cfg.predecessors(cblck2)) == 1
+        ), "Conditional block has no or multiple predecessors"
 
         # Edge between cblck1 and cblck2 should not have any conditions
         assert (
