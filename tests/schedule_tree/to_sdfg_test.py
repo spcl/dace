@@ -283,6 +283,31 @@ def test_create_tasklet_waw():
     assert [(s2_tasklet, s2_anode)] == [(edge.src, edge.dst) for edge in s2.edges()]
 
 
+def test_create_for_loop():
+    # Manually create a schedule tree
+    # yapf: disable
+    loop=tn.ForScope(
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+        header=cf.ForScope(
+            itervar="i", init="0", condition=CodeBlock("i<3"), update="i+1",
+            dispatch_state=None, parent=None, last_block=True, guard=None, body=None, init_edges=[]
+        )
+    )
+    stree=tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': dace.data.Array(dace.float64, [20])},
+        children=[loop]
+    )
+    # yapf: enable
+    assert stree is not None
+
+    sdfg = stree.as_sdfg()
+    assert sdfg is not None
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -300,3 +325,4 @@ if __name__ == '__main__':
     test_create_state_boundary_empty_memlet()
     test_create_tasklet_raw()
     test_create_tasklet_waw()
+    test_create_for_loop()

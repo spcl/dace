@@ -1,13 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections import defaultdict
-from dace.memlet import Memlet
-from dace.sdfg import nodes, memlet_utils as mmu
-from dace.sdfg.sdfg import SDFG, ControlFlowRegion
+from dace.sdfg import nodes, memlet_utils as mmu, utils as sdfg_utils
+from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from enum import Enum, auto
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Set
 
 
 class StateBoundaryBehavior(Enum):
@@ -73,6 +72,39 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._push_state(
                 create_state_boundary(node, sdfg, self._current_state, StateBoundaryBehavior.STATE_TRANSITION))
 
+        def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
+            before_state = self._current_state
+            self._push_state(sdfg.add_state(label="loop_guard"))
+            guard_state = self._current_state
+            sdfg.add_edge(before_state, self._current_state,
+                          InterstateEdge(assignments=dict({node.header.itervar: node.header.init})))
+
+            self._push_state(sdfg.add_state(label="loop_body"))
+            body_state = self._current_state
+            sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.condition))
+            self.visit(node.children, sdfg=sdfg)
+            sdfg.add_edge(self._current_state, guard_state,
+                          InterstateEdge(assignments=dict({node.header.itervar: node.header.update})))
+
+            self._push_state(sdfg.add_state(label="loop_after"))
+            after_state = self._current_state
+            negated_condition = f"not {node.header.condition}" if isinstance(
+                node.header.condition, str) else f"not {node.header.condition.as_string}"
+            sdfg.add_edge(guard_state, after_state, InterstateEdge(condition=negated_condition))
+
+        def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
+            # TODO
+            pass
+
+        def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
+            # AFAIK we don't have support for do-while loops in the gt4py -> dace bridge.
+            # Implementing this is thus not necessary for the first prototype.
+            raise NotImplementedError
+
+        def visit_GeneralLoopScope(self, node: tn.GeneralLoopScope, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError
+
         def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
             # Add Tasklet to current state
             tasklet = node.node
@@ -100,6 +132,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     # TODO: create_conditional_block
     # TODO: create_dataflow_scope
     StreeToSDFG().visit(stree, sdfg=result)
+
+    # Convert LoopRegions to "normal" SDFG control flow
+    sdfg_utils.inline_loop_blocks(result)
 
     return result
 
@@ -229,7 +264,8 @@ def create_state_boundary(bnode: tn.StateBoundaryNode, sdfg_region: ControlFlowR
     :return: The newly created state.
     """
     if behavior != StateBoundaryBehavior.STATE_TRANSITION:
-        raise ValueError("Only STATE_TRANSITION is supported as StateBoundaryBehavior in this prototype.")
+        # Only STATE_TRANSITION is supported as StateBoundaryBehavior in this prototype.
+        raise NotImplementedError
 
     # TODO: Some boundaries (control flow, state labels with goto) could not be fulfilled with every
     #       behavior. Fall back to state transition in that case.
