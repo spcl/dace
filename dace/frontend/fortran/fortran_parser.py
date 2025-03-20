@@ -2698,6 +2698,7 @@ class ParseConfig:
                  entry_points: Union[None, SPEC, List[SPEC]] = None,
                  config_injections: Optional[List[ConstInjection]] = None,
                  do_not_prune: Union[None, SPEC, List[SPEC]] = None,
+                 do_not_rename: Union[None, SPEC, List[SPEC]] = None,
                  make_noop: Union[None, SPEC, List[SPEC]] = None,
                  ast_checkpoint_dir: Union[None, str, Path] = None,
                  consolidate_global_data: bool = True):
@@ -2717,6 +2718,11 @@ class ParseConfig:
         elif isinstance(do_not_prune, tuple):
             do_not_prune = [do_not_prune]
         do_not_prune = list({x for x in entry_points + do_not_prune})
+        if not do_not_rename:
+            do_not_rename = []
+        elif isinstance(do_not_rename, tuple):
+            do_not_rename = [do_not_rename]
+        do_not_rename = list({x for x in entry_points + do_not_rename})
         if not make_noop:
             make_noop = []
         elif isinstance(make_noop, tuple):
@@ -2729,6 +2735,7 @@ class ParseConfig:
         self.entry_points: List[SPEC] = entry_points
         self.config_injections: List[ConstInjection] = config_injections or []
         self.do_not_prune: List[SPEC] = do_not_prune
+        self.do_not_rename: List[SPEC] = do_not_rename
         self.make_noop: List[SPEC] = make_noop
         self.ast_checkpoint_dir = ast_checkpoint_dir
         self.consolidate_global_data = consolidate_global_data
@@ -2893,8 +2900,8 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
     print("FParser Op: Rename uniquely...")
-    ast = assign_globally_unique_subprogram_names(ast, set(cfg.entry_points))
-    ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
+    ast = assign_globally_unique_subprogram_names(ast, set(cfg.do_not_rename))
+    ast = assign_globally_unique_variable_names(ast, set(cfg.do_not_rename))
     ast = consolidate_uses(ast)
     _checkpoint_ast(cfg, 'ast_v5.f90', ast)
 
