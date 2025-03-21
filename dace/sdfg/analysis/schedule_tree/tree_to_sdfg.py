@@ -88,13 +88,23 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             self._push_state(sdfg.add_state(label="loop_after"))
             after_state = self._current_state
-            negated_condition = f"not {node.header.condition}" if isinstance(
-                node.header.condition, str) else f"not {node.header.condition.as_string}"
-            sdfg.add_edge(guard_state, after_state, InterstateEdge(condition=negated_condition))
+            sdfg.add_edge(guard_state, after_state, InterstateEdge(condition=f"not {node.header.condition.as_string}"))
 
         def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
-            # TODO
-            pass
+            before_state = self._current_state
+            self._push_state(sdfg.add_state(label="guard_state"))
+            guard_state = self._current_state
+            sdfg.add_edge(before_state, guard_state, InterstateEdge())
+
+            self._push_state(sdfg.add_state(label="loop_body"))
+            body_state = self._current_state
+            sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.test))
+            self.visit(node.children, sdfg=sdfg)
+            sdfg.add_edge(self._current_state, guard_state, InterstateEdge())
+
+            self._push_state(sdfg.add_state(label="loop_after"))
+            after_state = self._current_state
+            sdfg.add_edge(guard_state, after_state, InterstateEdge(f"not {node.header.test.as_string}"))
 
         def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
             # AFAIK we don't have support for do-while loops in the gt4py -> dace bridge.
@@ -128,13 +138,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 # cache write access node (or update an existing one) for read after write cases
                 cache[memlet.data] = access_node
 
-    # TODO: create_loop_block
     # TODO: create_conditional_block
     # TODO: create_dataflow_scope
     StreeToSDFG().visit(stree, sdfg=result)
-
-    # Convert LoopRegions to "normal" SDFG control flow
-    sdfg_utils.inline_loop_blocks(result)
 
     return result
 

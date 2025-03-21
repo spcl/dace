@@ -302,10 +302,37 @@ def test_create_for_loop():
         children=[loop]
     )
     # yapf: enable
-    assert stree is not None
 
     sdfg = stree.as_sdfg()
-    assert sdfg is not None
+    sdfg.validate()
+
+
+def test_create_while_loop():
+    # Manually create a schedule tree
+    # yapf: disable
+    loop=tn.WhileScope(
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+        header=cf.WhileScope(
+            test=CodeBlock("A[1] > 5"),
+            dispatch_state=None,
+            last_block=True,
+            parent=None,
+            guard=None,
+            body=None
+        )
+    )
+    stree=tn.ScheduleTreeRoot(
+        name='tester',
+        containers={'A': dace.data.Array(dace.float64, [20])},
+        children=[loop]
+    )
+    # yapf: enable
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
 
 
 if __name__ == '__main__':
@@ -326,3 +353,4 @@ if __name__ == '__main__':
     test_create_tasklet_raw()
     test_create_tasklet_waw()
     test_create_for_loop()
+    test_create_while_loop()
