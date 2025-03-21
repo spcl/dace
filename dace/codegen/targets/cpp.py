@@ -963,13 +963,22 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
                                                               or connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
-                callsite_stream.write(
-                    'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                    % (node._cuda_stream, common.get_gpu_backend()),
-                    cfg,
-                    state_id,
-                    node,
-                )
+                if isinstance(node._cuda_stream, str):
+                    callsite_stream.write(
+                        'int __dace_current_stream_id = %s;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
+                        % (node._cuda_stream, common.get_gpu_backend()),
+                        cfg,
+                        state_id,
+                        node,
+                    )
+                else:
+                    callsite_stream.write(
+                        'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
+                        % (node._cuda_stream, common.get_gpu_backend()),
+                        cfg,
+                        state_id,
+                        node,
+                    )
             else:
                 callsite_stream.write(
                     '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
@@ -1500,7 +1509,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
-        cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
+        cudastream = f"__state->gpu_context->streams[{node._cuda_stream}]"
     else:  # Only default stream is used
         cudastream = 'nullptr'
 
