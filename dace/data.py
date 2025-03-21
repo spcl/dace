@@ -210,6 +210,8 @@ class Data:
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
             raise TypeError('Shape must be a list or tuple of integer values '
                             'or symbols')
+        if any((shp < 0) == True for shp in self.shape):
+            raise TypeError(f'Found negative shape in Data, its shape was {self.shape}')
         return True
 
     def to_json(self):
@@ -1471,12 +1473,20 @@ class Array(Data):
         super(Array, self).validate()
         if len(self.strides) != len(self.shape):
             raise TypeError('Strides must be the same size as shape')
+        if len(self.offset) != len(self.shape):
+            raise TypeError('Offset must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer values or symbols')
+        if any(not isinstance(off, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for off in self.offset):
+            raise TypeError('Offset must be a list or tuple of integer values or symbols')
 
-        if len(self.offset) != len(self.shape):
-            raise TypeError('Offset must be the same size as shape')
+        # Actually it would be enough to only enforce the non negativity only if the shape is larger than one.
+        if any((stride < 0) == True for stride in self.strides):
+            raise TypeError(f'Found negative strides in array, they were {self.strides}')
+        if (self.total_size < 0) == True:
+            raise TypeError(f'The total size of an array must be positive but it was negative {self.total_size}')
 
     def covers_range(self, rng):
         if len(rng) != len(self.shape):
