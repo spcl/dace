@@ -108,11 +108,14 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine
     kind = f"(kind={kind})" if kind else ''
     if typ == 'logical':
         op = '\n'.join(['y = merge(1, 0, x)', "write (io, '(g0)', advance='no') y"])
+    elif typ == 'real':
+        op = "write (buf, '(e28.20)') x; write (io, '(A)', advance='no') trim(adjustl(buf))"
     else:
         op = "write (io, '(g0)', advance='no') x"
 
     return Subroutine_Subprogram(get_reader(f"""
 subroutine {fn_name}(io, x, cleanup, nline)
+  character(len=50) :: buf
   integer :: io
   {typ}{kind}, intent(in) :: x
   integer :: y
@@ -631,7 +634,7 @@ void add_line(long long x, std::ostream& s, bool trailing_newline=true) {{
     if (trailing_newline) s << std::endl;
 }}
 void add_line(long double x, std::ostream& s, bool trailing_newline=true) {{
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     if (trailing_newline) s << std::endl;
 }}
 void add_line(bool x, std::ostream& s, bool trailing_newline=true) {{
@@ -660,17 +663,17 @@ std::string serialize(long long x) {{
 }}
 std::string serialize(float x) {{
     std::stringstream s;
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     return s.str();
 }}
 std::string serialize(double x) {{
     std::stringstream s;
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     return s.str();
 }}
 std::string serialize(long double x) {{
     std::stringstream s;
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     return s.str();
 }}
 std::string serialize(bool x) {{
