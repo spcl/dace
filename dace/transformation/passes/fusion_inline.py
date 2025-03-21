@@ -88,16 +88,6 @@ class InlineSDFGs(ppl.Pass):
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} SDFGs.'
 
-    def set_opts(self, opts):
-        opt_keys = [
-            'multistate',
-        ]
-
-        for k in opt_keys:
-            attr_k = InlineSDFGs.__name__ + '.' + k
-            if attr_k in opts:
-                setattr(self, k, opts[attr_k])
-
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
@@ -165,18 +155,6 @@ class InlineControlFlowRegions(ppl.Pass):
 
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} regions.'
-
-    def set_opts(self, opts):
-        opt_keys = [
-            'no_inline_loops',
-            'no_inline_conditional',
-            'no_inline_function_call_regions',
-            'no_inline_named_regions',
-        ]
-
-        for k in opt_keys:
-            if k in opts:
-                setattr(self, k, opts[k])
 
 
 @dataclass(unsafe_hash=True)

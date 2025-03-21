@@ -16,7 +16,7 @@ from dace.transformation.dataflow import MapFusion, MapExpansion
 def count_node(sdfg: SDFG, node_type):
     nb_nodes = 0
     for rsdfg in sdfg.all_sdfgs_recursive():
-        for state in sdfg.states():
+        for state in rsdfg.states():
             for node in state.nodes():
                 if isinstance(node, node_type):
                     nb_nodes += 1
