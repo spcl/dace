@@ -1,11 +1,10 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-"""Implements the serial map fusing transformation."""
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, Iterable
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import dace
-from dace import data, dtypes, properties, subsets, symbolic, transformation
+from dace import data, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, validation
 from dace.transformation import helpers
 
@@ -53,8 +52,8 @@ class MapFusion(transformation.SingleStateTransformation):
     `partition_first_outputs()` will only be created if the data is not referred downstream in
     the dataflow.
 
-    In order to determine if an intermediate can be removed or has to be kept, it is in general
-    necessary to scan the whole SDFG, which is the default behaviour. There are two ways to
+    In order to determine if an intermediate can be removed or has to be kept, it is in generally
+    necessary to scan the whole SDFG, which is the default behaviour. There are three ways to
     speed this up. The first way is to set `assume_always_shared` to `True`. In this case the
     transformation will not perform the scan, but assume that the data is shared, i.e. used
     somewhere else. This might lead to dead data flow.
@@ -63,24 +62,46 @@ class MapFusion(transformation.SingleStateTransformation):
     transformation will use it instead to determine if a intermediate can be removed.
     Note that `assume_always_shared` takes precedence.
     For this pattern the `FullMapFusion` pass is provided, that combines the analysis
-    pass and `MapFusion`
+    pass and `MapFusion`.
+    The third way is to pass the result of `FindSingleUseData` as `single_use_data` argument
+    to the constructor.
+
+    By default this transformation only handles the case where to maps are right after each other,
+    separated by an intermediate array. However, by setting `allow_parallel_map_fusion` to `True`,
+    the transformation will be _in addition_ also be able to handle the case where the Maps are
+    parallel (parallel here means that neither of the two Map can be reached from the other; see
+    `is_parallel()`). If you only want to perform parallel map fusion you also have to set
+    `allow_serial_map_fusion` to `False`.
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
     :param assume_always_shared: Assume that all intermediates are shared.
+    :param allow_serial_map_fusion: Allow serial map fusion, by default `True`.
+    :param allow_parallel_map_fusion: Allow to merge parallel maps, by default `False`.
+    :param only_if_common_ancestor: In parallel map fusion mode, only fuse if both map
+        have a common direct ancestor.
+    :param single_use_data: Which data containers are only used in one location,
+        if not passed the transformation will scan the SDFG every time.
 
     :note: This transformation modifies more nodes than it matches.
     :note: If `assume_always_shared` is `True` then the transformation will assume that
             all intermediates are shared. This avoids the problems mentioned above with
             the cache at the expense of the creation of dead dataflow.
-    :note: If the renaming is not unique the transformation might fail.
     """
 
-    # Pattern Nodes
+    # Pattern Nodes: For the serial map fusion
+    #  NOTE: Can only be accessed in the `can_serial_map_fusion_be_applied()` and the
+    #   `apply_serial_map_fusion()` functions.
     first_map_exit = transformation.transformation.PatternNode(nodes.MapExit)
     array = transformation.transformation.PatternNode(nodes.AccessNode)
     second_map_entry = transformation.transformation.PatternNode(nodes.MapEntry)
+
+    # Pattern Nodes: For the parallel map fusion
+    #  NOTE: Can only be used in the `can_parallel_map_fusion_be_applied()` and the
+    #   `apply_map_fusion_parallel()` functions.
+    first_parallel_map_entry = transformation.transformation.PatternNode(nodes.MapEntry)
+    second_parallel_map_entry = transformation.transformation.PatternNode(nodes.MapEntry)
 
     # Settings
     only_toplevel_maps = properties.Property(
@@ -104,12 +125,33 @@ class MapFusion(transformation.SingleStateTransformation):
         desc="If `True` then all intermediates will be classified as shared.",
     )
 
+    allow_serial_map_fusion = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If `True`, the default, then allow serial map fusion.",
+    )
+
+    allow_parallel_map_fusion = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` then also perform parallel map fusion, disabled by default.",
+    )
+    only_if_common_ancestor = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` restrict parallel map fusion to maps that have a direct common ancestor.",
+    )
+
     def __init__(
         self,
         only_inner_maps: Optional[bool] = None,
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
+        allow_serial_map_fusion: Optional[bool] = None,
+        allow_parallel_map_fusion: Optional[bool] = None,
+        only_if_common_ancestor: Optional[bool] = None,
+        single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -121,21 +163,39 @@ class MapFusion(transformation.SingleStateTransformation):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
+        if allow_serial_map_fusion is not None:
+            self.allow_serial_map_fusion = allow_serial_map_fusion
+        if allow_parallel_map_fusion is not None:
+            self.allow_parallel_map_fusion = allow_parallel_map_fusion
+        if only_if_common_ancestor is not None:
+            self.only_if_common_ancestor = only_if_common_ancestor
 
         # See comment in `is_shared_data()` for more information.
-        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
+        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = single_use_data
 
     @classmethod
     def expressions(cls) -> Any:
         """Get the match expression.
 
-        The transformation matches the exit node of the top Map that is connected to
-        an access node that again is connected to the entry node of the second Map.
-        An important note is, that the transformation operates not just on the
-        matched nodes, but more or less on anything that has an incoming connection
-        from the first Map or an outgoing connection to the second Map entry.
+        The function returns a list of two expressions.
+
+        The first, index `0`, is used by the serial map fusion. It consists of the
+        exit node of the first map, `first_map_exit`, the intermediate array, `array`,
+        and the map entry node of the second map, `second_map_entry`. An important note
+        is, that the transformation operates not just on the matched nodes, but more
+        or less on anything that has an incoming connection from the first Map or an
+        outgoing connection to the second Map entry.
+
+        The second expression, index `1`, is used by parallel map fusion. It matches
+        any two maps entries, `first_parallel_map_entry` and `second_parallel_map_entry
+        in a state.
         """
-        return [dace.sdfg.utils.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
+        map_fusion_serial_match = dace.sdfg.utils.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)
+
+        map_fusion_parallel_match = graph.OrderedMultiDiConnectorGraph()
+        map_fusion_parallel_match.add_nodes_from([cls.first_parallel_map_entry, cls.second_parallel_map_entry])
+
+        return [map_fusion_serial_match, map_fusion_parallel_match]
 
     def can_be_applied(
         self,
@@ -144,21 +204,139 @@ class MapFusion(transformation.SingleStateTransformation):
         sdfg: dace.SDFG,
         permissive: bool = False,
     ) -> bool:
-        """Tests if the matched Maps can be merged.
+        """Checks if the map fusion can be applied.
+
+        Depending on the value of `expr_index` the function will dispatch the call
+        either to `can_serial_map_fusion_be_applied()` or
+        `can_parallel_map_fusion_be_applied()`, see there for more information.
+        """
+        # Perform some checks of the deferred configuration data.
+        if not (self.allow_parallel_map_fusion or self.allow_serial_map_fusion):
+            raise ValueError("Disabled serial and parallel map fusion.")
+        assert expr_index == self.expr_index
+        assert self.expr_index in [0, 1], f"Found invalid 'expr_index' {self.expr_index}"
+
+        # To ensures that the `{src,dst}_subset` are properly set, run initialization.
+        #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
+        for edge in graph.edges():
+            edge.data.try_initialize(sdfg, graph, edge)
+
+        # Now perform the dispatch.
+        if self.allow_serial_map_fusion and expr_index == 0:
+            return self.can_serial_map_fusion_be_applied(
+                graph=graph,
+                sdfg=sdfg,
+            )
+
+        elif self.allow_parallel_map_fusion and expr_index == 1:
+            return self.can_parallel_map_fusion_be_applied(
+                graph=graph,
+                sdfg=sdfg,
+            )
+
+        # Non of the cases applied
+        return False
+
+    def apply(
+        self,
+        graph: Union[dace.SDFGState, dace.SDFG],
+        sdfg: dace.SDFG,
+    ) -> None:
+        """Apply the map fusion.
+
+        Depending on the settings the function will either dispatch to
+        `apply_serial_map_fusion()` or to `apply_parallel_map_fusion()`.
+        """
+        # Perform some checks of the deferred configuration data.
+        if not (self.allow_parallel_map_fusion or self.allow_serial_map_fusion):
+            raise ValueError("Disabled serial and parallel map fusion.")
+        assert self.expr_index in [0, 1]
+
+        # To ensures that the `{src,dst}_subset` are properly set, run initialization.
+        #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
+        for edge in graph.edges():
+            edge.data.try_initialize(sdfg, graph, edge)
+
+        # Now perform the dispatch.
+        if self.expr_index == 0:
+            assert self.allow_serial_map_fusion
+            return self.apply_serial_map_fusion(
+                graph=graph,
+                sdfg=sdfg,
+            )
+
+        elif self.expr_index == 1:
+            assert self.allow_parallel_map_fusion
+            return self.apply_parallel_map_fusion(
+                graph=graph,
+                sdfg=sdfg,
+            )
+
+        else:
+            raise NotImplementedError(f"Encountered unknown expression index {self.expr_index}")
+
+    def can_parallel_map_fusion_be_applied(
+        self,
+        graph: Union[SDFGState, SDFG],
+        sdfg: dace.SDFG,
+    ) -> bool:
+        """Check if the matched Maps can be fused in parallel."""
+
+        # NOTE: The after this point it is not legal to access the matched nodes
+        first_map_entry: nodes.MapEntry = self.first_parallel_map_entry
+        second_map_entry: nodes.MapEntry = self.second_parallel_map_entry
+
+        assert self.expr_index == 1
+        assert isinstance(first_map_entry, nodes.MapEntry)
+        assert isinstance(second_map_entry, nodes.MapEntry)
+
+        # We will now check if the two maps are parallel.
+        if not self.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry):
+            return False
+
+        # Check the structural properties of the Maps. The function will return
+        #  the `dict` that describes how the parameters must be renamed (for caching)
+        #  or `None` if the maps can not be structurally fused.
+        param_repl = self.can_topologically_be_fused(
+            first_map_entry=first_map_entry,
+            second_map_entry=second_map_entry,
+            graph=graph,
+            sdfg=sdfg,
+        )
+        if param_repl is None:
+            return False
+
+        # Test if they have they share a node as direct ancestor.
+        if self.only_if_common_ancestor:
+            # TODO(phimuell): Improve this such that different AccessNode that refer
+            #   to the same data are also considered the same; Probably an overkill.
+            first_ancestors: Set[nodes.Node] = {e1.src for e1 in graph.in_edges(first_map_entry)}
+            if not any(e2.src in first_ancestors for e2 in graph.in_edges(second_map_entry)):
+                return False
+
+        return True
+
+    def can_serial_map_fusion_be_applied(
+        self,
+        graph: Union[SDFGState, SDFG],
+        sdfg: dace.SDFG,
+    ) -> bool:
+        """Tests if the matched Maps can be merged serially.
 
         The two Maps are mergeable iff:
         * Checks general requirements, see `can_topologically_be_fused()`.
         * Tests if there are read write dependencies.
         * Tests if the decomposition exists.
         """
-        # To ensures that the `{src,dst}_subset` are properly set, run initialization.
-        #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
-        for edge in graph.edges():
-            edge.data.try_initialize(sdfg, graph, edge)
-
+        # NOTE: The after this point it is not legal to access the matched nodes
         first_map_entry: nodes.MapEntry = graph.entry_node(self.first_map_exit)
         first_map_exit: nodes.MapExit = self.first_map_exit
         second_map_entry: nodes.MapEntry = self.second_map_entry
+
+        assert self.expr_index == 0
+        assert isinstance(first_map_exit, nodes.MapExit)
+        assert isinstance(second_map_entry, nodes.MapEntry)
+        assert isinstance(self.array, nodes.AccessNode)
 
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
@@ -212,7 +390,52 @@ class MapFusion(transformation.SingleStateTransformation):
 
         return True
 
-    def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:
+    def apply_parallel_map_fusion(
+        self,
+        graph: Union[dace.SDFGState, dace.SDFG],
+        sdfg: dace.SDFG,
+    ) -> None:
+        """Performs parallel map fusion.
+
+        Essentially this function will move all input connectors from one map,
+        i.e. its MapEntry and MapExit nodes, to the other map.
+        """
+
+        # NOTE: The after this point it is not legal to access the matched nodes
+        first_map_entry: nodes.MapEntry = self.first_parallel_map_entry
+        first_map_exit: nodes.MapExit = graph.exit_node(first_map_entry)
+        second_map_entry: nodes.MapEntry = self.second_parallel_map_entry
+        second_map_exit: nodes.MapExit = graph.exit_node(second_map_entry)
+
+        # Before we do anything we perform the renaming, i.e. we will rename the
+        #  parameters of the second map such that they match the one of the first map.
+        self.rename_map_parameters(
+            first_map=first_map_entry.map,
+            second_map=second_map_entry.map,
+            second_map_entry=second_map_entry,
+            state=graph,
+        )
+
+        # Now we relocate all connectors from the second to the first map and remove
+        #  the respective node of the second map.
+        for to_node, from_node in [
+            (first_map_entry, second_map_entry),
+            (first_map_exit, second_map_exit),
+        ]:
+            self.relocate_nodes(
+                from_node=from_node,
+                to_node=to_node,
+                state=graph,
+                sdfg=sdfg,
+            )
+            # The relocate function does not remove the node, so we must do it.
+            graph.remove_node(from_node)
+
+    def apply_serial_map_fusion(
+        self,
+        graph: Union[dace.SDFGState, dace.SDFG],
+        sdfg: dace.SDFG,
+    ) -> None:
         """Performs the serial Map fusing.
 
         The function first computes the map decomposition and then handles the
@@ -224,11 +447,9 @@ class MapFusion(transformation.SingleStateTransformation):
         :param graph: The SDFG state we are operating on.
         :param sdfg: The SDFG we are operating on.
         """
-        # To ensures that the `{src,dst}_subset` are properly set, run initialization.
-        #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
-        for edge in graph.edges():
-            edge.data.try_initialize(sdfg, graph, edge)
+        assert self.expr_index == 0
 
+        # NOTE: The after this point it is not legal to access the matched nodes
         first_map_exit: nodes.MapExit = self.first_map_exit
         second_map_entry: nodes.MapEntry = self.second_map_entry
         second_map_exit: nodes.MapExit = graph.exit_node(self.second_map_entry)
@@ -463,7 +684,6 @@ class MapFusion(transformation.SingleStateTransformation):
             found_second_map = False
             consumer_subsets: List[subsets.Subset] = []
             for intermediate_node_out_edge in state.out_edges(intermediate_node):
-
                 # If the second map entry is not immediately reachable from the intermediate
                 #  node, then ensure that there is not path that goes to it.
                 if intermediate_node_out_edge.dst is not second_map_entry:
@@ -497,7 +717,7 @@ class MapFusion(transformation.SingleStateTransformation):
                     if inner_consumer_edge.data.src_subset is None:
                         return None
                     consumer_subsets.append(inner_consumer_edge.data.src_subset)
-            assert found_second_map, f"Found '{intermediate_node}' which looked like a pure node, but is not one."
+            assert (found_second_map), f"Found '{intermediate_node}' which looked like a pure node, but is not one."
             assert len(consumer_subsets) != 0
 
             # The consumer still uses the original symbols of the second map, so we must rename them.
@@ -673,7 +893,6 @@ class MapFusion(transformation.SingleStateTransformation):
             inter_node: nodes.AccessNode = out_edge.dst
             inter_name = inter_node.data
             inter_desc = inter_node.desc(sdfg)
-            inter_shape = inter_desc.shape
 
             # Now we will determine the shape of the new intermediate. This size of
             #  this temporary is given by the Memlet that goes into the first map exit.
@@ -1069,6 +1288,35 @@ class MapFusion(transformation.SingleStateTransformation):
         param_repl = self.find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
         return param_repl
 
+    def is_parallel(
+        self,
+        graph: SDFGState,
+        node1: nodes.Node,
+        node2: nodes.Node,
+    ) -> bool:
+        """Tests if `node1` and `node2` are parallel in the data flow graph.
+
+        The function considers two nodes parallel in the data flow graph, if `node2`
+        can not be reached from `node1` and vice versa.
+
+        :param graph: The state on which we operate.
+        :param node1: The first node to check.
+        :param node2: The second node to check.
+        """
+        # In order to be parallel they must be in the same scope.
+        scope = graph.scope_dict()
+        if scope[node1] != scope[node2]:
+            return False
+
+        # The `all_nodes_between()` function traverse the graph and returns `None` if
+        #  `end` was not found. We have to call it twice, because we do not know
+        #  which node is upstream if they are not parallel.
+        if self.is_node_reachable_from(graph=graph, begin=node1, end=node2):
+            return False
+        elif self.is_node_reachable_from(graph=graph, begin=node2, end=node1):
+            return False
+        return True
+
     def has_inner_read_write_dependency(
         self,
         first_map_entry: nodes.MapEntry,
@@ -1251,7 +1499,6 @@ class MapFusion(transformation.SingleStateTransformation):
         read_write_map_1 = set(read_map_1.keys()).intersection(write_map_1.keys())
         datas_to_inspect = read_write_map_1.intersection(exchange_names)
         for data_to_inspect in datas_to_inspect:
-
             # Now get all subsets of the data container that the first map reads
             #  from or writes to and check if they are pointwise.
             all_subsets: List[subsets.Subset] = []
@@ -1273,6 +1520,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 ))
             if not self.test_if_subsets_are_point_wise(all_subsets):
                 return True
+            del all_subsets
 
         # If there is no intersection between the input and output data, then we can
         #  we have nothing to check.
@@ -1284,7 +1532,7 @@ class MapFusion(transformation.SingleStateTransformation):
         #  are pointwise, i.e. in each iteration the same locations are accessed.
         #  Essentially they all boil down to `a += 1`.
         for inout_data_name in fused_inout_data_names:
-            all_subsets: List[subsets.Subset] = []
+            all_subsets = []
             # The subsets that define reading are given by the first map's entry node
             all_subsets.extend(
                 self.find_subsets(
@@ -1307,6 +1555,7 @@ class MapFusion(transformation.SingleStateTransformation):
             # Now we can test if these subsets are point wise
             if not self.test_if_subsets_are_point_wise(all_subsets):
                 return True
+            del all_subsets
 
         # No read write dependency was found.
         return False
@@ -1398,7 +1647,8 @@ class MapFusion(transformation.SingleStateTransformation):
         #  This value is set for example by the `FullMapFusion` pass.
         # TODO(phimuell): Change this once the issue is resolved.
         if self._single_use_data is not None:
-            assert sdfg in self._single_use_data, f"`_single_use_data` was set, but does not contain information about the SDFG '{sdfg.name}'."
+            assert (sdfg in self._single_use_data
+                    ), f"`_single_use_data` was set, but does not contain information about the SDFG '{sdfg.name}'."
             single_use_data: Set[str] = self._single_use_data[sdfg]
             return data.data not in single_use_data
 
@@ -1410,7 +1660,7 @@ class MapFusion(transformation.SingleStateTransformation):
         data: nodes.AccessNode,
         state: dace.SDFGState,
         sdfg: dace.SDFG,
-    ) -> None:
+    ) -> bool:
         """Scans `sdfg` to determine if `data` is shared.
 
         Essentially, this function determine, if the intermediate AccessNode `data` is
@@ -1500,7 +1750,7 @@ class MapFusion(transformation.SingleStateTransformation):
             return None
 
         # The ranges, however, we apply some post processing to them.
-        simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))
+        simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))  # noqa: E731 [lambda-assignment]
         first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
             param: tuple(simp(r) for r in rng)
             for param, rng in zip(first_params, first_map.range)
@@ -1579,7 +1829,9 @@ class MapFusion(transformation.SingleStateTransformation):
         :param state: The SDFGState on which we operate.
         """
         # Compute the replacement dict.
-        repl_dict: Dict[str, str] = self.find_parameter_remapping(first_map=first_map, second_map=second_map)
+        repl_dict: Dict[
+            str, str] = self.find_parameter_remapping(  # type: ignore[assignment]  # Guaranteed to be not `None`.
+                first_map=first_map, second_map=second_map)
 
         if repl_dict is None:
             raise RuntimeError("The replacement does not exist")
@@ -1600,7 +1852,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
     def is_node_reachable_from(
         self,
-        graph: Union[dace.SDFG, dace.SDFGState],
+        graph: dace.SDFGState,
         begin: nodes.Node,
         end: nodes.Node,
     ) -> bool:
@@ -1683,11 +1935,11 @@ class MapFusion(transformation.SingleStateTransformation):
         :param state: The state in which we operate.
         """
         if isinstance(scope_node, nodes.MapEntry):
-            get_edges = lambda node: state.in_edges(node)
-            other_node = lambda e: e.src
+            get_edges = lambda node: state.in_edges(node)  # noqa: E731 [lambda-assignment]
+            other_node = lambda e: e.src  # noqa: E731 [lambda-assignment]
         else:
-            get_edges = lambda node: state.out_edges(node)
-            other_node = lambda e: e.dst
+            get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
+            other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
         access_set: Set[nodes.AccessNode] = {
             node
             for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
@@ -1720,12 +1972,14 @@ class MapFusion(transformation.SingleStateTransformation):
         #  This influences how we have to proceed.
         if isinstance(scope_node, nodes.MapEntry):
             outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
-            get_subset = lambda e: e.data.src_subset
-            get_inner_edges = lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:])
+            get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
+            get_inner_edges = (  # noqa: E731 [lambda-assignment]
+                lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:]))
         else:
             outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
-            get_subset = lambda e: e.data.dst_subset
-            get_inner_edges = lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:])
+            get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
+            get_inner_edges = (  # noqa: E731 [lambda-assignment]
+                lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:]))
 
         found_subsets: List[subsets.Subset] = []
         for edge in outer_edges_to_inspect:
