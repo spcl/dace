@@ -4,6 +4,7 @@ transformation."""
 
 import ast
 import copy
+from typing import Union
 
 from sympy import Set
 import dace
@@ -826,7 +827,7 @@ def all_states(sdfg: dace.SDFGState, cfg: ControlFlowBlock):
     return states
 
 
-def get_used_data(sdfg: dace.SDFG, cfg: ControlFlowBlock | dace.SDFGState):
+def get_used_data(sdfg: dace.SDFG, cfg: Union[ControlFlowBlock, dace.SDFGState]):
     if isinstance(cfg, dace.SDFGState):
         data_used = set()
         if isinstance(cfg, dace.SDFGState):
