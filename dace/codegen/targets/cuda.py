@@ -163,7 +163,7 @@ class CUDACodeGen(TargetCodeGenerator):
                         and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
 
                     # NOTE: If possible `memlet_copy_to_absolute_strides()` will collapse a
-                    #   ND copy into a 1D copy if the memory is continuous. In that case
+                    #   ND copy into a 1D copy if the memory is contiguous. In that case
                     #   `copy_shape` will only have one element.
                     copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
                         None, nsdfg, state, e, e.src, e.dst)
@@ -174,7 +174,7 @@ class CUDACodeGen(TargetCodeGenerator):
                         # NOTE: We do not check if the stride is `1`. See `_emit_copy()` for more.
                         continue
                     elif dims == 2:
-                        # Because `memlet_copy_to_absolute_strides()` handles continuous copies
+                        # Because `memlet_copy_to_absolute_strides()` handles contiguous copies
                         #  transparently, we only have to check if we have FORTRAN or C order.
                         #  If we do not have them, then we have to turn this into a Map.
                         is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
@@ -182,7 +182,9 @@ class CUDACodeGen(TargetCodeGenerator):
                         if is_c_order or is_fortran_order:
                             continue
                     elif dims > 2:
-                        if not (src_strides[-1] != 1 or dst_strides[-1] != 1):
+                        # Any higher dimensional copies must be C order. If not turn it
+                        #  into a copy map.
+                        if src_strides[-1] == 1 and dst_strides[-1] == 1:
                             continue
 
                     # Turn unsupported copy to a map
@@ -984,14 +986,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
 
             # Test if it is possible to transform a 2D copy into a 1D copy, this is possible if
-            #  the allocation happens to be continuous.
+            #  the allocation happens to be contiguous.
             # NOTE: It seems that the `memlet_copy_to_absolute_strides()` function already does
             #   this, the code below is kept if it is still needed, but somebody, who knows the
             #   code generator should look at it. There are even tests for that, see
             #   `cuda_memcopy_test.py::test_gpu_pseudo_1d_copy_f_order`, but they most likely
             #   do not test the code below but the `memlet_copy_to_absolute_strides()` function.
             # TODO: Figuring out if this can be removed.
-            continuous_2d_copy = False
             if dims == 2 and (is_fortran_order or is_c_order):
                 try:
                     if is_c_order:
@@ -1007,7 +1008,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     is_src_cont = False
                     is_dst_cont = False
                 if is_src_cont and is_dst_cont:
-                    continuous_2d_copy = True
                     copy_shape = [copy_shape[0] * copy_shape[1]]
                     src_strides = [src_strides[1 if is_c_order else 0]]
                     dst_strides = [dst_strides[1 if is_c_order else 0]]
