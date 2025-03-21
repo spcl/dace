@@ -72,6 +72,22 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._push_state(
                 create_state_boundary(node, sdfg, self._current_state, StateBoundaryBehavior.STATE_TRANSITION))
 
+        def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_StateLabel(self, node: tn.StateLabel, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_GotoNode(self, node: tn.GotoNode, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_AssignNode(self, node: tn.AssignNode, sdfg: SDFG) -> None:
+            # TODO: We'll need these symbol assignments
+            raise NotImplementedError(f"{type(node)} not implemented")
+
         def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
             before_state = self._current_state
             self._push_state(sdfg.add_state(label="loop_guard"))
@@ -107,13 +123,54 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             sdfg.add_edge(guard_state, after_state, InterstateEdge(f"not {node.header.test.as_string}"))
 
         def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
-            # AFAIK we don't have support for do-while loops in the gt4py -> dace bridge.
-            # Implementing this is thus not necessary for the first prototype.
-            raise NotImplementedError
+            # AFAIK we don't support for do-while loops in the gt4py -> dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
 
         def visit_GeneralLoopScope(self, node: tn.GeneralLoopScope, sdfg: SDFG) -> None:
             # Let's see if we need this for the first prototype ...
-            raise NotImplementedError
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
+            # TODO
+            # add guard state
+            # add true_state
+            # visit children
+
+            # only add merge state and close it if there's no `ElseScope` following
+            # 1. find this node in node.parent.children
+            # 2. check if there's an `ElseScope` following this block
+            # The above two-step process works even if we have nested if statements because
+            # the nested if statement would be in the children of this node.
+            raise NotImplementedError("TODO: IfScope not yet implemented")
+
+        def visit_StateIfScope(self, node: tn.StateIfScope, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_BreakNode(self, node: tn.BreakNode, sdfg: SDFG) -> None:
+            # AFAIK we don't support for break statements in the gt4py/dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_ContinueNode(self, node: tn.ContinueNode, sdfg: SDFG) -> None:
+            # AFAIK we don't support for continue statements in the gt4py/dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_ElifScope(self, node: tn.ElifScope, sdfg: SDFG) -> None:
+            # AFAIK we don't support elif scopes in the gt4py/dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_ElseScope(self, node: tn.ElseScope, sdfg: SDFG) -> None:
+            # TODO
+            # last_state = self._current_state  # the last block of the if-(elif-)branch
+            # add merge_state
+            # connect last_state -> merge_state
+
+            # ??? How to get the guard-state? (leverage the currently unused state_stack)
+            # add false_state
+            # visit children
+
+            # connect self._current_state to merge_state
+            raise NotImplementedError("TODO: ElseScope not yet implemented")
 
         def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
             # Add Tasklet to current state
