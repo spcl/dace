@@ -41,7 +41,7 @@ def generate_arg_cfg(
     soc_register_size="0x00010000",
     soc_register_eoc="0x90000000",
     soc_register_wakeup="0x90000004",
-    sync_base="0x50000000",
+    sync_base="0x60000000",
     sync_interleave="0x00000080",
     sync_special_mem="0x00000040"
 ):
@@ -173,11 +173,11 @@ def _check_combo(combo, tcdm_usage_func=None):
     tcdm_usage = tcdm_usage_func(hwM, hwN, hwK)
     if tcdm_usage > tcdm_size:
         return False
-    if tcdm_usage < (tcdm_size // 2):
-        if (hwM * dim_x >= M_val // 2) and (hwN * dim_y >= N_val // 2):
-            pass
-        else:   
-            return False
+    # if tcdm_usage < (tcdm_size // 2):
+    #     if (hwM * dim_x >= M_val // 2) and (hwN * dim_y >= N_val // 2):
+    #         pass
+    #     else:   
+    #         return False
     return True
 
 
