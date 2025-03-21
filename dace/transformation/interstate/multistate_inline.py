@@ -288,8 +288,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for nstate in nsdfg.states():
             if nstate.label in statenames:
                 newname = data.find_new_name(nstate.label, statenames)
-                statenames.add(newname)
                 nstate.label = newname
+            statenames.add(nstate.label)
 
         #######################################################
         # Add nested SDFG states into top-level SDFG
