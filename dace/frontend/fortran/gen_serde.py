@@ -404,6 +404,12 @@ def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     alias_map = alias_specs(ast)
     uses, ser_ops, ser_ops_cpp, des_ops, consistent_ops_cpp = [], [], [], [], []
     if GLOBAL_DATA_OBJ_NAME in g.arrays:
+        sdfg_structs: Dict[str, dace.data.Structure] = {
+            v.name: v for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)}
+        all_sa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys()
+                                       if z.startswith("__f2dace_SA_")}
+        all_soa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys()
+                                        if z.startswith("__f2dace_SOA_")}
         gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
         for mod in walk(ast, Module):
             mname = find_name_of_node(mod)
@@ -430,11 +436,18 @@ call serialize(io, {vname}, cleanup=.false.)
 add_line(serialize_array(g->{vname}), s);
 """)
                     # NOTE: Arrays are not to be included in the `consistent_ops`.
+                    rank = len(vtype.shape)
+                    sa_vars = [all_sa_vars.get(f"__f2dace_SA_{vname}_d_{dim}_s") for dim in range(rank)]
+                    sa_vars = '\n'.join([f"g->{v} = m.size.at({dim});" for dim, v in enumerate(sa_vars) if v])
+                    soa_vars = [all_soa_vars.get(f"__f2dace_SOA_{vname}_d_{dim}_s") for dim in range(rank)]
+                    soa_vars = '\n'.join([f"g->{v} = m.lbound.at({dim});" for dim, v in enumerate(soa_vars) if v])
                     des_ops.append(f"""
 {{
     read_line(s, "# {vname}");
     auto [m, arr] = read_array<{vctyp[:-1]}>(s);
     g->{vname} = arr;
+    {sa_vars}
+    {soa_vars}
 }}
 """)
                 else:
@@ -538,6 +551,10 @@ end module global_data_assertion
 }}
 """
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
+
+
+def strip_last_int(x: str) -> str:
+    return '_'.join(x.split('_')[:-1]) if x.startswith("__f2dace_") else x
 
 
 def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> SerdeCode:
@@ -699,14 +716,11 @@ std::string serialize(bool x) {{
                 continue
             array_map[(f"{z.type}", z.rank)] = (z.name, z.shape)
 
-        def __strip_last_int(x: str) -> str:
-            return '_'.join(x.split('_')[:-1]) if x.startswith("__f2dace_") else x
-
-        all_sa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
+        all_sa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
                                        if z.startswith("__f2dace_SA_")}
-        all_soa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
+        all_soa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
                                         if z.startswith("__f2dace_SOA_")}
-        all_cinjops: Dict[str, Tuple[str, str]] = {__strip_last_int(z): ('.'.join(dt.spec), z)
+        all_cinjops: Dict[str, Tuple[str, str]] = {strip_last_int(z): ('.'.join(dt.spec), z)
                                                    for z, t in sdfg_structs[dt.name].items() if '*' not in t}
         for z in iterate_over_public_components(dt):
             if z.alloc:
