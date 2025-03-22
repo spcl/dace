@@ -642,9 +642,13 @@ void add_line(bool x, std::ostream& s, bool trailing_newline=true) {{
 }}
 template<typename T>
 std::string serialize(const T* x) {{
-    std::stringstream s;
-    add_line(*x, s, false);
-    return s.str();
+    if constexpr (std::is_pointer_v<T>) {{
+        return serialize(*x);
+    }} else {{
+        std::stringstream s;
+        add_line(*x, s, false);
+        return s.str();
+    }}
 }}
 std::string serialize(int x) {{
     std::stringstream s;
@@ -772,7 +776,7 @@ deserialize(&yep, s);
                     soa_vars = [all_soa_vars[f"__f2dace_SOA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
                     soa_vars = '\n'.join([f"x->{v} = m.lbound.at({dim});" for dim, v in enumerate(soa_vars)])
                 cpp_deser_ops.append(f"""
-{{
+if (yep) {{
     auto [m, arr] = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
     {sa_vars}
     {soa_vars}
@@ -1084,12 +1088,19 @@ namespace serde {{
 
     template<typename T>
     T* array_meta::read(std::istream& s) const {{
-        read_line(s, {{"# entries"}});
         auto* buf = new T[volume()];
-        for (int i=0; i<volume(); ++i) {{
-            deserialize(&buf[i], s);
+        if constexpr (std::is_pointer_v<T>) {{
+            auto* bufc = read<std::remove_pointer_t<T>>(s);
+            for (int i = 0; i < volume(); ++i) {{
+                buf[i] = &bufc[i];
+            }}
+        }} else {{
+            read_line(s, {{"# entries"}});
+            for (int i = 0; i < volume(); ++i) {{
+                deserialize(&buf[i], s);
+            }}
+            (*ARRAY_META_DICT())[buf] = *this;
         }}
-        (*ARRAY_META_DICT())[buf] = *this;
         return buf;
     }}
 
