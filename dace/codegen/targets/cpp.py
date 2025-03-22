@@ -1495,7 +1495,7 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
         return
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
-            cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
+            cudastream = f"__state->gpu_context->streams[{e.src._cuda_stream}]" 
             callsite_stream.write(
                 "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (common.get_gpu_backend(), cudastream),
                 sdfg,
