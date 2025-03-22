@@ -12,6 +12,7 @@ from .prune_symbols import RemoveUnusedSymbols
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
 from .symbol_propagation import SymbolPropagation
+from .kernel_launch_restructuring import GPUKernelLaunchRestructure
 from .transient_reuse import TransientReuse
 from .struct_to_container_group import StructToContainerGroups
 
