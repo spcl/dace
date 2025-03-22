@@ -1667,6 +1667,7 @@ class MathFunctions(IntrinsicTransformation):
         # We ignore it a the moment.
         # However, to map into C's trunc, we need to drop it.
         if len(arg.args) > 1:
+            print("AINT with KIND parameter is not supported! Ignoring that parameter.")
             del arg.args[1]
 
         fname = arg.name.name.split('__dace_')[1]
@@ -1678,6 +1679,28 @@ class MathFunctions(IntrinsicTransformation):
             arg.name = ast_internal_classes.Name_Node(name="round")
         else:
             raise NotImplementedError()
+
+        return arg
+
+    def generate_real(arg: ast_internal_classes.Call_Expr_Node):
+
+        # The call to REAL can contain a second KIND parameter.
+        # If it is 8, we need to return a double.
+        if len(arg.args) == 2:
+            assert isinstance(arg.args[1], ast_internal_classes.Int_Literal_Node)
+
+            if arg.args[1].value not in ["4", "8"]:
+                raise NotImplementedError()
+
+            arg.type = "DOUBLE" if arg.args[1].value == "8" else "REAL"
+            func_name = "double" if arg.args[1].value == "8" else "float"
+
+            del arg.args[1]
+        else:
+            arg.type = "REAL"
+            func_name = "float"
+
+        arg.name = ast_internal_classes.Name_Node(name=func_name)
 
         return arg
 
@@ -1722,7 +1745,7 @@ class MathFunctions(IntrinsicTransformation):
         "AINT": MathReplacement("trunc", generate_aint, "FIRST_ARG"),
         "NINT": MathReplacement("iround", generate_aint, "INTEGER"),
         "ANINT": MathReplacement("round", generate_aint, "FIRST_ARG"),
-        "REAL": MathTransformation("float", "REAL"),
+        "REAL": MathReplacement("float", generate_real, "CALL_EXPR"),
         "DBLE": MathTransformation("double", "DOUBLE"),
         "SIN": MathTransformation("sin", "FIRST_ARG"),
         "COS": MathTransformation("cos", "FIRST_ARG"),
@@ -1812,6 +1835,8 @@ class MathFunctions(IntrinsicTransformation):
                 replacement_rule = replacement_rule[input_type]
             if replacement_rule.return_type == "FIRST_ARG":
                 return_type = input_type
+            elif replacement_rule.return_type == "CALL_EXPR":
+                return_type = binop_node.rval.type
             else:
                 return_type = replacement_rule.return_type
 
@@ -2028,6 +2053,8 @@ class FortranIntrinsics:
 
                     if replacement_rule.return_type == "FIRST_ARG":
                         return_type = input_type
+                    elif replacement_rule.return_type == "CALL_EXPR":
+                        return_type = node.type
                     else:
                         return_type = replacement_rule.return_type
 
