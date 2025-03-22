@@ -17,7 +17,7 @@ import dace
 from dace import SDFG
 from dace.frontend.fortran.ast_desugaring import identifier_specs, append_children, set_children, \
     SPEC_TABLE, SPEC, find_name_of_node, alias_specs, remove_self, find_scope_spec, GLOBAL_DATA_OBJ_NAME, \
-    GLOBAL_DATA_TYPE_NAME
+    GLOBAL_DATA_TYPE_NAME, find_type_of_entity
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
 NEW_LINE = "NEW_LINE('A')"
@@ -398,7 +398,8 @@ def _get_basic_serializers() -> List[Subroutine_Subprogram]:
 
 
 def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
-    uses, ser_ops, ser_ops_cpp, des_ops = [], [], [], []
+    alias_map = alias_specs(ast)
+    uses, ser_ops, ser_ops_cpp, des_ops, consistent_ops_cpp = [], [], [], [], []
     if GLOBAL_DATA_OBJ_NAME in g.arrays:
         gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
         for mod in walk(ast, Module):
@@ -419,11 +420,13 @@ def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
 call serialize(io, "# {vname}", cleanup=.false.)
 call serialize(io, {vname}, cleanup=.false.)
 """)
+                vtype = find_type_of_entity(var, alias_map)
                 vctyp = _real_ctype(gdata[vname])
                 if isinstance(gdata[vname], dace.data.Array):
                     ser_ops_cpp.append(f"""
 add_line(serialize_array(g->{vname}), s);
 """)
+                    # NOTE: Arrays are not to be included in the `consistent_ops`.
                     des_ops.append(f"""
 {{
     read_line(s, "# {vname}");
@@ -434,6 +437,13 @@ add_line(serialize_array(g->{vname}), s);
                 else:
                     ser_ops_cpp.append(f"""
 add_line(serialize(g->{vname}), s);
+""")
+                    if vtype.spec == ('LOGICAL',):
+                        vname_val = f"""(g->{vname} ? ".true." : ".false.")"""
+                    else:
+                        vname_val = f"""serialize(g->{vname})"""
+                    consistent_ops_cpp.append(f"""
+consistent["{mname}.{vname}"].insert({vname_val});
 """)
                     des_ops.append(f"""
 read_line(s, "# {vname}");
@@ -453,6 +463,7 @@ end subroutine serialize_global_data
 
     des_ops = '\n'.join(des_ops)
     ser_ops_cpp = '\n'.join(ser_ops_cpp)
+    consistent_ops_cpp = '\n'.join(consistent_ops_cpp)
     cpp_code = f"""
 void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
     {des_ops}
@@ -461,6 +472,65 @@ void deserialize_global_data({GLOBAL_DATA_TYPE_NAME}* g, std::istream& s) {{
 std::string serialize_global_data(const {GLOBAL_DATA_TYPE_NAME}* g) {{
     std::stringstream s;
     {ser_ops_cpp}
+    return s.str();
+}}
+
+enum class SerializationType {{ INVALID, PLAIN, CONST_INJECTION, F90_MODULE }};
+
+std::string serialize_consistent_global_data(
+    std::vector<const {GLOBAL_DATA_TYPE_NAME}*>& gs,
+    SerializationType serialization_type = SerializationType::INVALID)
+{{
+    assert(serialization_type != SerializationType::INVALID);
+    if (gs.empty()) return "";
+
+    std::map<std::string, std::set<std::string>> consistent;
+    for (const auto* g : gs) {{
+        {consistent_ops_cpp}
+    }}
+
+    std::stringstream s;
+    if (serialization_type == SerializationType::F90_MODULE) {{
+        s << R"(
+module global_data_assertion
+contains
+subroutine assert_global_data()
+)";
+        for (const auto& [k, vs] : consistent) {{
+            std::vector<std::string_view> parts = split(k, '.');
+            assert(parts.size() == 2);
+            const auto mname = std::string_view(parts[0]);
+            s << "use " << mname << std::endl;
+        }}
+        s << R"(
+implicit none
+)";
+    }}
+    for (const auto& [k, vs] : consistent) {{
+        if (vs.size() != 1) continue;
+        const auto& v = *vs.begin();
+        if (serialization_type == SerializationType::PLAIN) {{
+            s << k << " = " << v << std::endl;
+        }} else if (serialization_type == SerializationType::CONST_INJECTION) {{
+            const std::string vval = (v == ".true." ? "1" : (v == ".false." ? "0" : v));
+            s << R"({{ "type": "ConstInstanceInjection", "scope": null, )";
+            s << R"("root": ")" << k << R"(", "component": null, "value": ")" << vval << R"(" }})" << std::endl;
+        }} else if (serialization_type == SerializationType::F90_MODULE) {{
+            std::vector<std::string_view> parts = split(k, '.');
+            assert(parts.size() == 2);
+            const auto vname = std::string_view(parts[1]);
+            const auto neqop = (v == ".true." || v == ".false.") ? " .neqv. " : " .ne. ";
+            s << "if (" << vname << neqop << v << ") then" << std::endl;
+            s << R"(\tprint *, "mismatched )" << vname << "; want " << v << R"(, got: ", )" << vname << std::endl;
+            s << "\tcall abort"<< std::endl << "endif" << std::endl;
+        }}
+    }}
+    if (serialization_type == SerializationType::F90_MODULE) {{
+        s << R"(
+end subroutine assert_global_data
+end module global_data_assertion
+)";
+    }}
     return s.str();
 }}
 """
@@ -494,8 +564,12 @@ def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> Serde
             array_serializers[(tag, rank)] = generate_array_serializer_f90(t, rank, tag)
 
     # C++ SerDe related data structures.
-    sdfg_structs: Dict[str, dace.data.Structure] = {v.name: v for k, v in g.arrays.items()
-                                                    if isinstance(v, dace.data.Structure)}
+    sdfg_structs: Dict[str, dace.data.Structure] = {
+        v.name: v for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)}
+    sdfg_structs_from_arrays: Dict[str, dace.data.Structure] = {
+        v.stype.name: v.stype for k, v in g.arrays.items()
+        if isinstance(v, dace.data.ContainerArray) and isinstance(v.stype, dace.data.Structure)}
+    sdfg_structs.update(sdfg_structs_from_arrays)
     sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
                                                                  for k, v in sdfg_structs.items()}
 
@@ -874,10 +948,28 @@ struct {name} {{
 #include <optional>
 #include <algorithm>
 #include <format>
+#include <vector>
+#include <map>
+#include <set>
+#include <ranges>
+#include <string_view>
 
 #include "{g.name}.h"
 
 namespace serde {{
+    std::vector<std::string_view> split(std::string_view s, char delim) {{
+        std::vector<std::string_view> parts;
+        for (int start_pos = 0, next_pos; start_pos < s.length(); start_pos = next_pos + 1) {{
+            next_pos = s.find(delim, start_pos);
+            if (next_pos == s.npos) {{
+                parts.push_back({{s.begin()+start_pos, s.length()-start_pos}});
+                break;
+            }}
+            parts.push_back({{s.begin()+start_pos, static_cast<size_t>(next_pos-start_pos)}});
+        }}
+        return parts;
+    }}
+
     std::string scroll_space(std::istream& s) {{
         std::string out;
         while (!s.eof() && (!s.peek() || isspace(s.peek()))) {{

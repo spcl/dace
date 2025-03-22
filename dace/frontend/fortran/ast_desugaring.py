@@ -1421,6 +1421,9 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     iface_map = interface_specs(ast, alias_map)
     unused_ifaces = set(iface_map.keys())
     for k, v in alias_map.items():
+        if k == ident_spec(v):
+            # The definition itself doesn't count as usage.
+            continue
         if isinstance(v, Interface_Stmt) or isinstance(v.parent.parent, Interface_Block):
             unused_ifaces.difference_update({ident_spec(v)})
 

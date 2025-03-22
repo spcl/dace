@@ -1,0 +1,4 @@
+{ "type": "ConstInstanceInjection", "scope": null, "root": "mo_nonhydrostatic_config.lextra_diffu", "component": null, "value": "1" }
+{ "type": "ConstInstanceInjection", "scope": null, "root": "mo_run_config.timers_level", "component": null, "value": "0" }
+{ "type": "ConstInstanceInjection", "scope": null, "root": "mo_timer.timer_intp", "component": null, "value": "46" }
+{ "type": "ConstInstanceInjection", "scope": null, "root": "mo_timer.timer_solve_nh_veltend", "component": null, "value": "23" }
