@@ -269,7 +269,7 @@ class CPPUnparser:
             self.dispatch(stmt)
 
     def _Expression(self, tree):
-        self.dispatch(tree.bod)
+        self.dispatch(tree.body)
 
     # stmt
     def _Expr(self, tree):
