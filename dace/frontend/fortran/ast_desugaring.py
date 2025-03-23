@@ -3518,7 +3518,7 @@ def inject_const_evals(ast: Program,
 
         for nm in names:
             # We can also directly inject variables' values with `ConstInstanceInjection`.
-            if isinstance(nm.parent, (Entity_Decl, Only_List)):
+            if isinstance(nm.parent, (Entity_Decl, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List)):
                 # We don't want to replace the values in their declarations or imports, but only where their
                 # values are being used.
                 continue

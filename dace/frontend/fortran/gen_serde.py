@@ -108,11 +108,14 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine
     kind = f"(kind={kind})" if kind else ''
     if typ == 'logical':
         op = '\n'.join(['y = merge(1, 0, x)', "write (io, '(g0)', advance='no') y"])
+    elif typ == 'real':
+        op = "write (buf, '(e28.20)') x; write (io, '(A)', advance='no') trim(adjustl(buf))"
     else:
         op = "write (io, '(g0)', advance='no') x"
 
     return Subroutine_Subprogram(get_reader(f"""
 subroutine {fn_name}(io, x, cleanup, nline)
+  character(len=50) :: buf
   integer :: io
   {typ}{kind}, intent(in) :: x
   integer :: y
@@ -401,6 +404,12 @@ def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
     alias_map = alias_specs(ast)
     uses, ser_ops, ser_ops_cpp, des_ops, consistent_ops_cpp = [], [], [], [], []
     if GLOBAL_DATA_OBJ_NAME in g.arrays:
+        sdfg_structs: Dict[str, dace.data.Structure] = {
+            v.name: v for k, v in g.arrays.items() if isinstance(v, dace.data.Structure)}
+        all_sa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys()
+                                       if z.startswith("__f2dace_SA_")}
+        all_soa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[GLOBAL_DATA_TYPE_NAME].keys()
+                                        if z.startswith("__f2dace_SOA_")}
         gdata = g.arrays[GLOBAL_DATA_OBJ_NAME].members
         for mod in walk(ast, Module):
             mname = find_name_of_node(mod)
@@ -427,11 +436,18 @@ call serialize(io, {vname}, cleanup=.false.)
 add_line(serialize_array(g->{vname}), s);
 """)
                     # NOTE: Arrays are not to be included in the `consistent_ops`.
+                    rank = len(vtype.shape)
+                    sa_vars = [all_sa_vars.get(f"__f2dace_SA_{vname}_d_{dim}_s") for dim in range(rank)]
+                    sa_vars = '\n'.join([f"g->{v} = m.size.at({dim});" for dim, v in enumerate(sa_vars) if v])
+                    soa_vars = [all_soa_vars.get(f"__f2dace_SOA_{vname}_d_{dim}_s") for dim in range(rank)]
+                    soa_vars = '\n'.join([f"g->{v} = m.lbound.at({dim});" for dim, v in enumerate(soa_vars) if v])
                     des_ops.append(f"""
 {{
     read_line(s, "# {vname}");
     auto [m, arr] = read_array<{vctyp[:-1]}>(s);
     g->{vname} = arr;
+    {sa_vars}
+    {soa_vars}
 }}
 """)
                 else:
@@ -537,6 +553,10 @@ end module global_data_assertion
     return SerdeCode(f90_serializer=f90_code, cpp_serde=cpp_code)
 
 
+def strip_last_int(x: str) -> str:
+    return '_'.join(x.split('_')[:-1]) if x.startswith("__f2dace_") else x
+
+
 def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> SerdeCode:
     ast = _keep_only_derived_types(ast)
 
@@ -631,7 +651,7 @@ void add_line(long long x, std::ostream& s, bool trailing_newline=true) {{
     if (trailing_newline) s << std::endl;
 }}
 void add_line(long double x, std::ostream& s, bool trailing_newline=true) {{
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     if (trailing_newline) s << std::endl;
 }}
 void add_line(bool x, std::ostream& s, bool trailing_newline=true) {{
@@ -639,9 +659,13 @@ void add_line(bool x, std::ostream& s, bool trailing_newline=true) {{
 }}
 template<typename T>
 std::string serialize(const T* x) {{
-    std::stringstream s;
-    add_line(*x, s, false);
-    return s.str();
+    if constexpr (std::is_pointer_v<T>) {{
+        return serialize(*x);
+    }} else {{
+        std::stringstream s;
+        add_line(*x, s, false);
+        return s.str();
+    }}
 }}
 std::string serialize(int x) {{
     std::stringstream s;
@@ -660,17 +684,17 @@ std::string serialize(long long x) {{
 }}
 std::string serialize(float x) {{
     std::stringstream s;
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     return s.str();
 }}
 std::string serialize(double x) {{
     std::stringstream s;
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     return s.str();
 }}
 std::string serialize(long double x) {{
     std::stringstream s;
-    s << std::setprecision(16) << x;
+    s << std::setprecision(20) << x;
     return s.str();
 }}
 std::string serialize(bool x) {{
@@ -692,14 +716,11 @@ std::string serialize(bool x) {{
                 continue
             array_map[(f"{z.type}", z.rank)] = (z.name, z.shape)
 
-        def __strip_last_int(x: str) -> str:
-            return '_'.join(x.split('_')[:-1]) if x.startswith("__f2dace_") else x
-
-        all_sa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
+        all_sa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
                                        if z.startswith("__f2dace_SA_")}
-        all_soa_vars: Dict[str, str] = {__strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
+        all_soa_vars: Dict[str, str] = {strip_last_int(z): z for z in sdfg_structs[dt.name].keys()
                                         if z.startswith("__f2dace_SOA_")}
-        all_cinjops: Dict[str, Tuple[str, str]] = {__strip_last_int(z): ('.'.join(dt.spec), z)
+        all_cinjops: Dict[str, Tuple[str, str]] = {strip_last_int(z): ('.'.join(dt.spec), z)
                                                    for z, t in sdfg_structs[dt.name].items() if '*' not in t}
         for z in iterate_over_public_components(dt):
             if z.alloc:
@@ -769,7 +790,7 @@ deserialize(&yep, s);
                     soa_vars = [all_soa_vars[f"__f2dace_SOA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
                     soa_vars = '\n'.join([f"x->{v} = m.lbound.at({dim});" for dim, v in enumerate(soa_vars)])
                 cpp_deser_ops.append(f"""
-{{
+if (yep) {{
     auto [m, arr] = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
     {sa_vars}
     {soa_vars}
@@ -807,7 +828,7 @@ if (yep) {{  // BEGINING IF
                         sa_vars, soa_vars = '', ''
                     cpp_ser_ops.append(f"""
 {{
-    const array_meta& m = ARRAY_META_DICT()->at(x->{z.name});
+    const array_meta& m = ARRAY_META_DICT_AT(x->{z.name});
     add_line("# rank", s);
     add_line(m.rank, s);
     add_line("# size", s);
@@ -944,6 +965,7 @@ struct {name} {{
 #include <cassert>
 #include <istream>
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <optional>
 #include <algorithm>
@@ -1009,6 +1031,14 @@ namespace serde {{
     std::map<void*, array_meta>* ARRAY_META_DICT() {{
         static auto* M = new std::map<void*, array_meta>();
         return M;
+    }}
+    template <typename T>
+    const array_meta& ARRAY_META_DICT_AT(T* a) {{
+        if constexpr (std::is_pointer_v<T>) {{
+            return ARRAY_META_DICT_AT(*a);
+        }} else {{
+            return ARRAY_META_DICT()->at(a);
+        }}
     }}
 
     template<typename T>
@@ -1081,18 +1111,25 @@ namespace serde {{
 
     template<typename T>
     T* array_meta::read(std::istream& s) const {{
-        read_line(s, {{"# entries"}});
         auto* buf = new T[volume()];
-        for (int i=0; i<volume(); ++i) {{
-            deserialize(&buf[i], s);
+        if constexpr (std::is_pointer_v<T>) {{
+            auto* bufc = read<std::remove_pointer_t<T>>(s);
+            for (int i = 0; i < volume(); ++i) {{
+                buf[i] = &bufc[i];
+            }}
+        }} else {{
+            read_line(s, {{"# entries"}});
+            for (int i = 0; i < volume(); ++i) {{
+                deserialize(&buf[i], s);
+            }}
+            (*ARRAY_META_DICT())[buf] = *this;
         }}
-        (*ARRAY_META_DICT())[buf] = *this;
         return buf;
     }}
 
     template<typename T>
     std::string serialize_array(T* arr) {{
-        const auto m = ARRAY_META_DICT()->at(static_cast<void*>(arr));
+        const auto m = ARRAY_META_DICT_AT(static_cast<void*>(arr));
         std::stringstream s;
         add_line("# rank", s);
         add_line(m.rank, s);
