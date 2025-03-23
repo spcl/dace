@@ -47,116 +47,6 @@ class ToGPU(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def move_transients_to_top_level(self, root: dace.SDFG):
-        # If we have a transient array, make it live on the top level SDFG
-        # For this, collect all transients that do not exist on top level SDFG
-        # Add them to top level SDFG, if they are arrays and have storage location Default
-        #
-        # for s in sdfg.states():
-        #    for n in s.nodes():
-        #        if isinstance(n, dace.nodes.NestedSDFG):
-        #            self.move_transients_to_top_level(roots + [sdfg], n.sdfg)
-
-        # Add arrays from bottom to up
-        arrays_added = dict()
-        for sdfg, arr_name, arr in root.arrays_recursive():
-            if sdfg != root:
-                if (
-                    arr.transient
-                    and isinstance(arr, dace.data.Array)
-                    and arr.shape != (1,)
-                ):
-                    if (
-                        arr.storage == dace.dtypes.StorageType.Default
-                        or arr.storage == dace.dtypes.CPU_Heap
-                        or arr.storage == dace.dtypes.GPU_Global
-                    ):
-                        arr.transient = False
-                        _sdfg = sdfg
-                        while _sdfg is not None:
-                            if _sdfg == root:
-                                if arr_name not in _sdfg.arrays:
-                                    arr2 = copy.deepcopy(arr)
-                                    if sdfg == root:
-                                        arr2.transient = True
-                                    else:
-                                        arr2.transient = False
-                                    _sdfg.add_datadesc(arr_name, arr2)
-                            else:
-                                if arr_name not in sdfg.arrays:
-                                    arr2 = copy.deepcopy(arr)
-                                    if sdfg == root:
-                                        arr2.transient = True
-                                    else:
-                                        arr2.transient = False
-                                    _sdfg.add_datadesc(arr_name, arr2)
-                            if _sdfg not in arrays_added:
-                                arrays_added[_sdfg] = set([arr_name])
-                            else:
-                                arrays_added[_sdfg].add(arr_name)
-
-                            _sdfg = _sdfg.parent_sdfg
-
-        # Now go through all nodes and pass arguments needed to nested SDFGs
-        # Recursively
-        def pass_args(root: dace.SDFG, sdfg: dace.SDFG):
-            for state in sdfg.states():
-                # edges_to_add = []
-                for node in state.nodes():
-                    if isinstance(node, dace.nodes.NestedSDFG):
-                        if node.sdfg not in arrays_added:
-                            continue
-                        arrays_to_pass = arrays_added[node.sdfg]
-                        ies = state.in_edges(node)
-                        srcs = set([e.src for e in ies])
-                        # Assume Map -> Nested SDFG
-                        assert len(srcs) == 1
-                        src_map_entry = srcs.pop()
-                        for arr_name in arrays_to_pass:
-                            arr = sdfg.arrays[arr_name]
-                            a0 = state.add_access(arr_name)
-                            a1 = state.add_access(arr_name)
-                            src_map_entry.add_in_connector("IN_" + arr_name)
-                            src_map_entry.add_out_connector("OUT_" + arr_name)
-                            src_map_exit = state.exit_node(src_map_entry)
-                            src_map_exit.add_in_connector("IN_" + arr_name)
-                            src_map_exit.add_out_connector("OUT_" + arr_name)
-                            node.add_in_connector(arr_name)
-                            node.add_out_connector(arr_name, force=True)
-                            state.add_edge(
-                                a0,
-                                None,
-                                src_map_entry,
-                                "IN_" + arr_name,
-                                dace.memlet.Memlet.from_array(arr_name, arr),
-                            )
-                            state.add_edge(
-                                src_map_entry,
-                                "OUT_" + arr_name,
-                                node,
-                                arr_name,
-                                dace.memlet.Memlet.from_array(arr_name, arr),
-                            )
-                            state.add_edge(
-                                node,
-                                arr_name,
-                                src_map_exit,
-                                "IN_" + arr_name,
-                                dace.memlet.Memlet.from_array(arr_name, arr),
-                            )
-                            state.add_edge(
-                                src_map_exit,
-                                "OUT_" + arr_name,
-                                a1,
-                                None,
-                                dace.memlet.Memlet.from_array(arr_name, arr),
-                            )
-                            pass_args(root, node.sdfg)
-
-        pass_args(root, root)
-        root.validate()
-        return arrays_added
-
     def get_const_arrays(self, sdfg: dace.SDFG, skip_first_and_last=True):
         arrays_written_to = {
             k: 0
@@ -271,8 +161,8 @@ class ToGPU(ppl.Pass):
             if isinstance(node, dace.nodes.AccessNode):
                 node.setzero = True
 
-        transients_moved_to_top_level = self.move_transients_to_top_level(sdfg)
-        print(f"Move these transients to top-level SDFG: {transients_moved_to_top_level}")
+        #transients_moved_to_top_level = self.move_transients_to_top_level(sdfg)
+        #print(f"Move these transients to top-level SDFG: {transients_moved_to_top_level}")
 
         replace_names = dict()
         descs = set()
