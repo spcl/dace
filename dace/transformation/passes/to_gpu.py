@@ -244,6 +244,32 @@ class ToGPU(ppl.Pass):
 
         # 1. and 2. partially done in the flattening pass
         # Add GPU clones for all arays, copy all non-transients to GPU if already not on GPU
+        for _graph, arr_name, arr in sdfg.arrays_recursive():
+            if isinstance(arr, dace.data.Array):
+                if arr.shape == (1,) or arr.shape == [1,]:
+                    scalar = dace.data.Scalar(
+                        dtype=arr.dtype,
+                        transient=arr.transient,
+                        storage=dace.dtyoes.StorageType.Register,
+                        allow_conflicts=arr.allow_conflicts,
+                        location=arr.location,
+                        lifetime=arr.lifetime,
+                        debuginfo=arr.debuginfo,
+                    )
+                    _graph.remove_data(arr_name, False)
+                    _graph.add_datadesc(arr_name, scalar)
+
+        # Ensure no kernel writes to a scalar in output
+        for node, _graph in sdfg.all_nodes_recursive():
+            if isinstance(node, dace.nodes.MapExit):
+                oes = _graph.out_edges(node)
+                for oe in oes:
+                    if isinstance(oe.dst, dace.nodes.AccessNode):
+                        if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
+                            raise Exception("Writing to scalar!")
+            if isinstance(node, dace.nodes.AccessNode):
+                node.setzero = True
+
         transients_moved_to_top_level = self.move_transients_to_top_level(sdfg)
         print(f"Move these transients to top-level SDFG: {transients_moved_to_top_level}")
 
@@ -679,6 +705,9 @@ class ToGPU(ppl.Pass):
                 parent = sdfg
             s = parent.add_state_before(post, "pred")
             for name, src_loc, dst_loc in moves:
+                arr = sdfg.arrays[name]
+                if isinstance(arr, dace.data.Scalar):
+                    continue
                 if src_loc == "GPU" and dst_loc == "CPU":
                     a0 = s.add_access("gpu_" + name)
                     a1 = s.add_access(name)
@@ -706,6 +735,7 @@ class ToGPU(ppl.Pass):
                     # if src_loc is BOTH
                     assert False, f"{src_loc} -> {dst_loc} not supported"
 
+        sdfg.save("tmp1.sdfgz", compress=True)
         sdfg.validate()
 
         # 6. Decrease number of copy-in and copy-outs
