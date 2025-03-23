@@ -157,12 +157,7 @@ class ToGPU(ppl.Pass):
                 for oe in oes:
                     if isinstance(oe.dst, dace.nodes.AccessNode):
                         if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                            raise Exception("Writing to scalar!")
-            if isinstance(node, dace.nodes.AccessNode):
-                node.setzero = True
-
-        #transients_moved_to_top_level = self.move_transients_to_top_level(sdfg)
-        #print(f"Move these transients to top-level SDFG: {transients_moved_to_top_level}")
+                            raise Exception("GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)!")
 
         replace_names = dict()
         descs = set()
