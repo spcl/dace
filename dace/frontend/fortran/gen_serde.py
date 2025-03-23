@@ -828,7 +828,7 @@ if (yep) {{  // BEGINING IF
                         sa_vars, soa_vars = '', ''
                     cpp_ser_ops.append(f"""
 {{
-    const array_meta& m = ARRAY_META_DICT()->at(x->{z.name});
+    const array_meta& m = ARRAY_META_DICT_AT(x->{z.name});
     add_line("# rank", s);
     add_line(m.rank, s);
     add_line("# size", s);
@@ -965,6 +965,7 @@ struct {name} {{
 #include <cassert>
 #include <istream>
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <optional>
 #include <algorithm>
@@ -1030,6 +1031,14 @@ namespace serde {{
     std::map<void*, array_meta>* ARRAY_META_DICT() {{
         static auto* M = new std::map<void*, array_meta>();
         return M;
+    }}
+    template <typename T>
+    const array_meta& ARRAY_META_DICT_AT(T* a) {{
+        if constexpr (std::is_pointer_v<T>) {{
+            return ARRAY_META_DICT_AT(*a);
+        }} else {{
+            return ARRAY_META_DICT()->at(a);
+        }}
     }}
 
     template<typename T>
@@ -1120,7 +1129,7 @@ namespace serde {{
 
     template<typename T>
     std::string serialize_array(T* arr) {{
-        const auto m = ARRAY_META_DICT()->at(static_cast<void*>(arr));
+        const auto m = ARRAY_META_DICT_AT(static_cast<void*>(arr));
         std::stringstream s;
         add_line("# rank", s);
         add_line(m.rank, s);
