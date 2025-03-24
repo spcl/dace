@@ -242,7 +242,8 @@ class ToGPU(ppl.Pass):
             v for v in self.get_const_arrays(sdfg, True) if not v.startswith("gpu_")
         ]
         const_arrays = []
-        print(f"Constant arrays: {const_arrays}")
+        if self.verbose:
+            print(f"Constant arrays: {const_arrays}")
 
         # 4. Change all top-level maps to GPU schedule
         # Library nodes should know what they are doing
@@ -406,7 +407,8 @@ class ToGPU(ppl.Pass):
             states_to_add = []
             for node in sdutil.dfs_topological_sort(cfg):
                 used_data = get_used_data(sdfg, node)
-                print(f"Data Used By: {node}, are: {used_data}")
+                if self.verbose:
+                    print(f"Data Used By: {node}, are: {used_data}")
                 _arrays_and_locations = dict()
                 for dataname, location in used_data:
                     pruned_dataname = (
@@ -421,14 +423,16 @@ class ToGPU(ppl.Pass):
                             _arrays_and_locations[pruned_dataname] = "BOTH"
                         else:
                             _arrays_and_locations[pruned_dataname] = location
-                print(f"Locations for: {node}, {node.guid}, are: {_arrays_and_locations}")
+                if self.verbose:
+                    print(f"Locations for: {node}, {node.guid}, are: {_arrays_and_locations}")
                 #local_location_history.append(_arrays_and_locations)
                 # Update history
                 _a = copy.deepcopy(local_location_history[-1])
                 for k,v in _arrays_and_locations.items():
                     _a[k] = v
                 local_location_history.append(_a)
-                print(f"Previous Locations for: {node}, {node.guid}, are: {local_location_history[-2]}")
+                if self.verbose:
+                    print(f"Previous Locations for: {node}, {node.guid}, are: {local_location_history[-2]}")
 
                 # 5.4 Decrease granularity to the state of a CFG
 
@@ -456,7 +460,8 @@ class ToGPU(ppl.Pass):
                 for k, v in prev_locs.items():
                     assert v != "BOTH"
 
-                print(f"Moves for {node}: {moves}")
+                if self.verbose:
+                    print(f"Moves for {node}: {moves}")
                 if len(moves) > 0:
                     states_to_add.append((moves, (node, cfg)))
 
@@ -465,7 +470,8 @@ class ToGPU(ppl.Pass):
                     for loc_hist in local_location_history:
                         for k, v in loc_hist.items():
                             current_locs[k] = v
-                    print(current_locs)
+                    if self.verbose:
+                        print(current_locs)
                     _states_to_add, last_locations = insert_state_level_transfers(
                         node, prev_locs, [copy.deepcopy(current_locs)], depth + 1
                     )
@@ -499,9 +505,11 @@ class ToGPU(ppl.Pass):
                 if current == sdfg.start_block or current == end_block:
                     continue
 
-                print(current, type(current))
+                if self.verbose:
+                    print(current, type(current))
                 used_data = get_used_data(sdfg, current)
-                print(f"Data Used By: {current}, are: {used_data}")
+                if self.verbose:
+                    print(f"Data Used By: {current}, are: {used_data}")
 
                 _arrays_and_locations = dict()
 
@@ -518,7 +526,8 @@ class ToGPU(ppl.Pass):
                             _arrays_and_locations[pruned_dataname] = "BOTH"
                         else:
                             _arrays_and_locations[pruned_dataname] = location
-                print(f"Locations for: {current}, {current.guid}, are: {_arrays_and_locations}")
+                if self.verbose:
+                    print(f"Locations for: {current}, {current.guid}, are: {_arrays_and_locations}")
 
                 # Update history
                 _a = copy.deepcopy(location_history[-1])
@@ -557,7 +566,8 @@ class ToGPU(ppl.Pass):
                     for loc_hist in location_history:
                         for k, v in loc_hist.items():
                             current_locs[k] = v
-                    print("Deepen:", current_locs)
+                    if self.verbose:
+                        print("Deepen:", current_locs)
                     _states_to_add, last_location_history = insert_state_level_transfers(
                         current, prev_locs, [copy.deepcopy(current_locs)], 1
                     )
@@ -621,7 +631,6 @@ class ToGPU(ppl.Pass):
                     # if src_loc is BOTH
                     assert False, f"{src_loc} -> {dst_loc} not supported"
 
-        sdfg.save("tmp1.sdfgz", compress=True)
         sdfg.validate()
 
         # 6. Decrease number of copy-in and copy-outs
@@ -665,7 +674,8 @@ class ToGPU(ppl.Pass):
             for k, v in loc_hist.items():
                 current_locs[k] = v
         final_locations = copy.deepcopy(current_locs)
-        print("Final Locations:", final_locations)
+        if self.verbose:
+            print("Final Locations:", final_locations)
         end_state = [s for s in sdfg.states() if sdfg.out_degree(s) == 0][0]
         for name, final_loc in final_locations.items():
             if final_loc == "CPU" or name in const_arrays or final_loc == "Unknown" or final_loc == "CONST":
