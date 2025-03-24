@@ -284,7 +284,6 @@ def test_create_tasklet_waw():
 
 
 def test_create_for_loop():
-    # Manually create a schedule tree
     # yapf: disable
     loop=tn.ForScope(
         children=[
@@ -296,19 +295,16 @@ def test_create_for_loop():
             dispatch_state=None, parent=None, last_block=True, guard=None, body=None, init_edges=[]
         )
     )
-    stree=tn.ScheduleTreeRoot(
-        name='tester',
-        containers={'A': dace.data.Array(dace.float64, [20])},
-        children=[loop]
-    )
     # yapf: enable
+
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': dace.data.Array(dace.float64, [20])}, children=[loop])
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
 
 
 def test_create_while_loop():
-    # Manually create a schedule tree
     # yapf: disable
     loop=tn.WhileScope(
         children=[
@@ -324,12 +320,46 @@ def test_create_while_loop():
             body=None
         )
     )
-    stree=tn.ScheduleTreeRoot(
-        name='tester',
-        containers={'A': dace.data.Array(dace.float64, [20])},
-        children=[loop]
-    )
     # yapf: enable
+
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': dace.data.Array(dace.float64, [20])}, children=[loop])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_create_if_else():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(name="tester",
+                                containers={'A': dace.data.Array(dace.float64, [20])},
+                                children=[
+                                    tn.IfScope(condition=CodeBlock("A[0] > 0"),
+                                               children=[
+                                                   tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {},
+                                                                  {"out": dace.Memlet("A[1]")}),
+                                               ]),
+                                    tn.ElseScope([
+                                        tn.TaskletNode(nodes.Tasklet("blub", {}, {"out"}, "out=2"), {},
+                                                       {"out": dace.Memlet("A[1]")})
+                                    ])
+                                ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_create_if_without_else():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(name="tester",
+                                containers={'A': dace.data.Array(dace.float64, [20])},
+                                children=[
+                                    tn.IfScope(condition=CodeBlock("A[0] > 0"),
+                                               children=[
+                                                   tn.TaskletNode(nodes.Tasklet("bla", {}, {"out"}, "out=1"), {},
+                                                                  {"out": dace.Memlet("A[1]")}),
+                                               ]),
+                                ])
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -354,3 +384,5 @@ if __name__ == '__main__':
     test_create_tasklet_waw()
     test_create_for_loop()
     test_create_while_loop()
+    test_create_if_else()
+    test_create_if_without_else()

@@ -42,35 +42,31 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state: Optional[SDFGState] = None
             self.access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
 
-        def _push_state(self, state: SDFGState) -> None:
-            """Push a state on the stack of states. Set it as self._current_state and setup an access_cache dictionary."""
-            self._state_stack.append(state)
-            self._current_state = state
-            self.access_cache[state] = {}
-
         def _pop_state(self, label: Optional[str] = None) -> SDFGState:
-            """Pops the last state from the stack. Replaces `self._current_state` and cleans up the access_cache."""
+            """Pops the last state from the stack.
+
+            :param label: ensures the popped state's label starts with the given string
+
+            :return: The popped state.
+            """
             if not self._state_stack:
                 raise ValueError("Can't pop state from empty stack.")
 
             popped = self._state_stack.pop()
-            if label:
+            if label is not None:
                 assert popped.label.startswith(label)
-
-            self._current_state = None if not self._state_stack else self._state_stack[-1]
-
-            del self.access_cache[popped]
 
             return popped
 
         def visit_ScheduleTreeRoot(self, node: tn.ScheduleTreeRoot, sdfg: SDFG) -> None:
-            self._push_state(sdfg.add_state(label="tree_root", is_start_block=True))
+            self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
             self.visit(node.children, sdfg=sdfg)
 
         def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
             # TODO: When creating a state boundary, include all inter-state assignments that precede it.
-            self._push_state(
-                create_state_boundary(node, sdfg, self._current_state, StateBoundaryBehavior.STATE_TRANSITION))
+
+            self._current_state = create_state_boundary(node, sdfg, self._current_state,
+                                                        StateBoundaryBehavior.STATE_TRANSITION)
 
         def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
             # Let's see if we need this for the first prototype ...
@@ -90,36 +86,40 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
         def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
             before_state = self._current_state
-            self._push_state(sdfg.add_state(label="loop_guard"))
-            guard_state = self._current_state
+            guard_state = sdfg.add_state(label="loop_guard")
+            self._current_state = guard_state
             sdfg.add_edge(before_state, self._current_state,
                           InterstateEdge(assignments=dict({node.header.itervar: node.header.init})))
 
-            self._push_state(sdfg.add_state(label="loop_body"))
-            body_state = self._current_state
+            body_state = sdfg.add_state(label="loop_body")
+            self._current_state = body_state
             sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.condition))
+
+            # visit children inside the loop
             self.visit(node.children, sdfg=sdfg)
             sdfg.add_edge(self._current_state, guard_state,
                           InterstateEdge(assignments=dict({node.header.itervar: node.header.update})))
 
-            self._push_state(sdfg.add_state(label="loop_after"))
-            after_state = self._current_state
+            after_state = sdfg.add_state(label="loop_after")
+            self._current_state = after_state
             sdfg.add_edge(guard_state, after_state, InterstateEdge(condition=f"not {node.header.condition.as_string}"))
 
         def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
             before_state = self._current_state
-            self._push_state(sdfg.add_state(label="guard_state"))
-            guard_state = self._current_state
+            guard_state = sdfg.add_state(label="guard_state")
+            self._current_state = guard_state
             sdfg.add_edge(before_state, guard_state, InterstateEdge())
 
-            self._push_state(sdfg.add_state(label="loop_body"))
-            body_state = self._current_state
+            body_state = sdfg.add_state(label="loop_body")
+            self._current_state = body_state
             sdfg.add_edge(guard_state, body_state, InterstateEdge(condition=node.header.test))
+
+            # visit children inside the loop
             self.visit(node.children, sdfg=sdfg)
             sdfg.add_edge(self._current_state, guard_state, InterstateEdge())
 
-            self._push_state(sdfg.add_state(label="loop_after"))
-            after_state = self._current_state
+            after_state = sdfg.add_state(label="loop_after")
+            self._current_state = after_state
             sdfg.add_edge(guard_state, after_state, InterstateEdge(f"not {node.header.test.as_string}"))
 
         def visit_DoWhileScope(self, node: tn.DoWhileScope, sdfg: SDFG) -> None:
@@ -131,17 +131,41 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             raise NotImplementedError(f"{type(node)} not implemented")
 
         def visit_IfScope(self, node: tn.IfScope, sdfg: SDFG) -> None:
-            # TODO
-            # add guard state
-            # add true_state
-            # visit children
+            before_state = self._current_state
 
-            # only add merge state and close it if there's no `ElseScope` following
-            # 1. find this node in node.parent.children
-            # 2. check if there's an `ElseScope` following this block
-            # The above two-step process works even if we have nested if statements because
-            # the nested if statement would be in the children of this node.
-            raise NotImplementedError("TODO: IfScope not yet implemented")
+            # add guard state
+            guard_state = sdfg.add_state(label="guard_state")
+            sdfg.add_edge(before_state, guard_state, InterstateEdge())
+
+            # add true_state
+            true_state = sdfg.add_state(label="true_state")
+            sdfg.add_edge(guard_state, true_state, InterstateEdge(condition=node.condition))
+            self._current_state = true_state
+
+            # visit children in the true branch
+            self.visit(node.children, sdfg=sdfg)
+
+            # add merge_state
+            merge_state = sdfg.add_state_after(self._current_state, label="merge_state")
+
+            # Check if there's an `ElseScope` following this node (in the parent's children).
+            # Filter StateBoundaryNodes, which we inserted earlier, for this analysis.
+            filtered = [n for n in node.parent.children if not isinstance(n, tn.StateBoundaryNode)]
+            if_index = filtered.index(node)
+            has_else_branch = len(filtered) > if_index + 1 and isinstance(filtered[if_index + 1], tn.ElseScope)
+
+            if has_else_branch:
+                # push merge_state on the stack for later usage in `visit_ElseScope`
+                self._state_stack.append(merge_state)
+                false_state = sdfg.add_state(label="false_state")
+
+                sdfg.add_edge(guard_state, false_state, InterstateEdge(condition=f"not {node.condition.as_string}"))
+
+                # push false_state on the stack for later usage in `visit_ElseScope`
+                self._state_stack.append(false_state)
+            else:
+                sdfg.add_edge(guard_state, merge_state, InterstateEdge(condition=f"not {node.condition.as_string}"))
+                self._current_state = merge_state
 
         def visit_StateIfScope(self, node: tn.StateIfScope, sdfg: SDFG) -> None:
             # Let's see if we need this for the first prototype ...
@@ -160,25 +184,29 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             raise NotImplementedError(f"{type(node)} not implemented")
 
         def visit_ElseScope(self, node: tn.ElseScope, sdfg: SDFG) -> None:
-            # TODO
-            # last_state = self._current_state  # the last block of the if-(elif-)branch
-            # add merge_state
-            # connect last_state -> merge_state
+            # get false_state form stack
+            false_state = self._pop_state("false_state")
+            self._current_state = false_state
 
-            # ??? How to get the guard-state? (leverage the currently unused state_stack)
-            # add false_state
             # visit children
+            self.visit(node.children, sdfg=sdfg)
 
-            # connect self._current_state to merge_state
-            raise NotImplementedError("TODO: ElseScope not yet implemented")
+            # merge false-branch into merge_state
+            merge_state = self._pop_state("merge_state")
+            sdfg.add_edge(self._current_state, merge_state, InterstateEdge())
+            self._current_state = merge_state
 
         def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
             # Add Tasklet to current state
             tasklet = node.node
             self._current_state.add_node(tasklet)
 
-            # Connect inputs and outputs
+            # Manage access cache
+            if not self._current_state in self.access_cache:
+                self.access_cache[self._current_state] = {}
             cache = self.access_cache[self._current_state]
+
+            # Connect inputs and outputs
             for name, memlet in node.in_memlets.items():
                 # cache read access
                 if memlet.data not in cache:
@@ -195,7 +223,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 # cache write access node (or update an existing one) for read after write cases
                 cache[memlet.data] = access_node
 
-    # TODO: create_conditional_block
     # TODO: create_dataflow_scope
     StreeToSDFG().visit(stree, sdfg=result)
 
