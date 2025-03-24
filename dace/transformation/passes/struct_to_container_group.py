@@ -563,6 +563,7 @@ class Flattener(CodeLibraryNode):
 
     def generate_code(self, inputs, outputs):
         all_code = f"""
+// Start {self.name}
 #pragma omp parallel
 {{
 #pragma omp single
@@ -573,6 +574,7 @@ class Flattener(CodeLibraryNode):
 #pragma omp taskwait
 }}
 }}
+// End {self.name}
 """
         return all_code
 
