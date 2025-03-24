@@ -68,16 +68,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
             self.visit(node.children, sdfg=sdfg)
 
-        def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
-            # When creating a state boundary, include all inter-state assignments that precede it.
-            assignments = {}
-            for symbol in self._interstate_symbols:
-                assignments[symbol.name] = symbol.value
-            self._interstate_symbols.clear()
-
-            self._current_state = create_state_boundary(node, sdfg, self._current_state,
-                                                        StateBoundaryBehavior.STATE_TRANSITION, assignments)
-
         def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
             # Let's see if we need this for the first prototype ...
             raise NotImplementedError(f"{type(node)} not implemented")
@@ -207,6 +197,18 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             sdfg.add_edge(self._current_state, merge_state, InterstateEdge())
             self._current_state = merge_state
 
+        def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
+            # TODO add this
+            raise NotImplementedError
+
+        def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
+            # AFAIK we don't support consume scopes in the gt4py/dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_PipelineScope(self, node: tn.PipelineScope, sdfg: SDFG) -> None:
+            # AFAIK we don't support pipeline scopes in the gt4py/dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
         def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
             # Add Tasklet to current state
             tasklet = node.node
@@ -233,6 +235,40 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
                 # cache write access node (or update an existing one) for read after write cases
                 cache[memlet.data] = access_node
+
+        def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
+            # AFAIK we expand all library calls in the gt4py/dace bridge before coming here.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
+            # AFAIK we don't support copy nodes in the gt4py/dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:
+            # AFAIK we don't support dyn scope copy nodes in the gt4py/dace bridge.
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_ViewNode(self, node: tn.ViewNode, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_NView(self, node: tn.NView, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_RefSetNode(self, node: tn.RefSetNode, sdfg: SDFG) -> None:
+            # Let's see if we need this for the first prototype ...
+            raise NotImplementedError(f"{type(node)} not implemented")
+
+        def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
+            # When creating a state boundary, include all inter-state assignments that precede it.
+            assignments = {}
+            for symbol in self._interstate_symbols:
+                assignments[symbol.name] = symbol.value
+            self._interstate_symbols.clear()
+
+            self._current_state = create_state_boundary(node, sdfg, self._current_state,
+                                                        StateBoundaryBehavior.STATE_TRANSITION, assignments)
 
     # TODO: create_dataflow_scope
     StreeToSDFG().visit(stree, sdfg=result)
