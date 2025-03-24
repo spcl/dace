@@ -2701,7 +2701,8 @@ class ParseConfig:
                  do_not_rename: Union[None, SPEC, List[SPEC]] = None,
                  make_noop: Union[None, SPEC, List[SPEC]] = None,
                  ast_checkpoint_dir: Union[None, str, Path] = None,
-                 consolidate_global_data: bool = True):
+                 consolidate_global_data: bool = True,
+                 rename_uniquely: bool = True):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2739,6 +2740,7 @@ class ParseConfig:
         self.make_noop: List[SPEC] = make_noop
         self.ast_checkpoint_dir = ast_checkpoint_dir
         self.consolidate_global_data = consolidate_global_data
+        self.rename_uniquely = rename_uniquely
 
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
@@ -2899,11 +2901,12 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
         ast = prune_coarsely(ast, cfg.do_not_prune)
         _checkpoint_ast(cfg, 'ast_v4.f90', ast)
 
-    print("FParser Op: Rename uniquely...")
-    ast = assign_globally_unique_subprogram_names(ast, set(cfg.do_not_rename))
-    ast = assign_globally_unique_variable_names(ast, set(cfg.do_not_rename))
-    ast = consolidate_uses(ast)
-    _checkpoint_ast(cfg, 'ast_v5.f90', ast)
+    if cfg.rename_uniquely:
+        print("FParser Op: Rename uniquely...")
+        ast = assign_globally_unique_subprogram_names(ast, set(cfg.do_not_rename))
+        ast = assign_globally_unique_variable_names(ast, set(cfg.do_not_rename))
+        ast = consolidate_uses(ast)
+        _checkpoint_ast(cfg, 'ast_v5.f90', ast)
 
     return ast
 
