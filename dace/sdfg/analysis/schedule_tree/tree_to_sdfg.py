@@ -38,8 +38,14 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         def __init__(self) -> None:
+            # state management
             self._state_stack: List[SDFGState] = []
             self._current_state: Optional[SDFGState] = None
+
+            # inter-state symbol assignments
+            self._interstate_symbols: List[tn.AssignNode] = []
+
+            # caches
             self.access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
 
         def _pop_state(self, label: Optional[str] = None) -> SDFGState:
@@ -63,10 +69,14 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self.visit(node.children, sdfg=sdfg)
 
         def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
-            # TODO: When creating a state boundary, include all inter-state assignments that precede it.
+            # When creating a state boundary, include all inter-state assignments that precede it.
+            assignments = {}
+            for symbol in self._interstate_symbols:
+                assignments[symbol.name] = symbol.value
+            self._interstate_symbols.clear()
 
             self._current_state = create_state_boundary(node, sdfg, self._current_state,
-                                                        StateBoundaryBehavior.STATE_TRANSITION)
+                                                        StateBoundaryBehavior.STATE_TRANSITION, assignments)
 
         def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
             # Let's see if we need this for the first prototype ...
@@ -81,8 +91,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             raise NotImplementedError(f"{type(node)} not implemented")
 
         def visit_AssignNode(self, node: tn.AssignNode, sdfg: SDFG) -> None:
-            # TODO: We'll need these symbol assignments
-            raise NotImplementedError(f"{type(node)} not implemented")
+            # We just collect them here. They'll be added when state boundaries are added,
+            # see `visit_StateBoundaryNode()` above.
+            self._interstate_symbols.append(node)
 
         def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
             before_state = self._current_state
@@ -342,8 +353,11 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 # SDFG content creation functions
 
 
-def create_state_boundary(bnode: tn.StateBoundaryNode, sdfg_region: ControlFlowRegion, state: SDFGState,
-                          behavior: StateBoundaryBehavior) -> SDFGState:
+def create_state_boundary(bnode: tn.StateBoundaryNode,
+                          sdfg_region: ControlFlowRegion,
+                          state: SDFGState,
+                          behavior: StateBoundaryBehavior,
+                          assignments: Optional[Dict] = None) -> SDFGState:
     """
     Creates a boundary between two states
 
@@ -361,4 +375,4 @@ def create_state_boundary(bnode: tn.StateBoundaryNode, sdfg_region: ControlFlowR
     #       behavior. Fall back to state transition in that case.
 
     label = "cf_state_boundary" if bnode.due_to_control_flow else "state_boundary"
-    return sdfg_region.add_state_after(state, label=label)
+    return sdfg_region.add_state_after(state, label=label, assignments=assignments)
