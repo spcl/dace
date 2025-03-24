@@ -1293,9 +1293,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         streams_to_sync = set()
 
                 for stream in streams_to_sync:
-                    callsite_stream.write(
-                        'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
-                        (self.backend, stream), cfg, state.block_id)
+                    if isinstance(stream, str):
+                        pass
+                        # The stream index is loop iterator dependant
+                        # There is no need to sync these streams since the sync will be added to the end of the loop
+                        # TODO: This should be generalized 
+                        # likely by creating a new map schedule to specify if synchronization is needed
+                    else:
+                        callsite_stream.write(
+                            'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
+                            (self.backend, stream), cfg, state.block_id)
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
@@ -1655,7 +1662,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
-            cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
+            if isinstance(scope_entry._cuda_stream, str):
+                cudastream = f'__state->gpu_context->streams[{scope_entry._cuda_stream}]'
+            else:
+                cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
         else:
             cudastream = 'nullptr'
 
