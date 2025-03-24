@@ -982,6 +982,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # In 1D there is no difference between FORTRAN or C order, thus we will set them
             #  to the same value. The value indicates if the stride is `1`
+            # TODO: Figuring out if this is enough for views.
             is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
             is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
 
