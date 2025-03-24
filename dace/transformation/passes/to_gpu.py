@@ -621,7 +621,6 @@ class ToGPU(ppl.Pass):
                     # if src_loc is BOTH
                     assert False, f"{src_loc} -> {dst_loc} not supported"
 
-        sdfg.save("tmp1.sdfgz", compress=True)
         sdfg.validate()
 
         # 6. Decrease number of copy-in and copy-outs
