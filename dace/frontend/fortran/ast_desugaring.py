@@ -1421,6 +1421,9 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     iface_map = interface_specs(ast, alias_map)
     unused_ifaces = set(iface_map.keys())
     for k, v in alias_map.items():
+        if k == ident_spec(v):
+            # The definition itself doesn't count as usage.
+            continue
         if isinstance(v, Interface_Stmt) or isinstance(v.parent.parent, Interface_Block):
             unused_ifaces.difference_update({ident_spec(v)})
 
@@ -3515,7 +3518,7 @@ def inject_const_evals(ast: Program,
 
         for nm in names:
             # We can also directly inject variables' values with `ConstInstanceInjection`.
-            if isinstance(nm.parent, (Entity_Decl, Only_List)):
+            if isinstance(nm.parent, (Entity_Decl, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List)):
                 # We don't want to replace the values in their declarations or imports, but only where their
                 # values are being used.
                 continue

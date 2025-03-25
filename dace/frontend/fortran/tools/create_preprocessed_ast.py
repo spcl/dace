@@ -82,7 +82,9 @@ def main():
                       help='(Optional) If specified, the AST in various stages of preprocessing will be written as'
                            'Fortran code in there.')
     argp.add_argument('--consolidate_global_data', type=bool, required=False, default=False,
-                      help='Whther to consolidate the global data into one structure.')
+                      help='Whether to consolidate the global data into one structure.')
+    argp.add_argument('--rename_uniquely', type=bool, required=False, default=False,
+                      help='Whether to rename the variables and the functions to have globally unique names.')
     args = argp.parse_args()
 
     input_dirs = [Path(p) for p in args.in_src]
@@ -105,11 +107,18 @@ def main():
     else:
         print(f"Will leave the global data in their own modules")
 
+    rename_uniquely = args.rename_uniquely
+    if rename_uniquely:
+        print(f"Will be renaming the variables and the functions to have globally unique names")
+    else:
+        print(f"Will leave the variable names as they are")
+
     cfg = ParseConfig(sources=input_f90s,
                       entry_points=entry_points,
                       make_noop=noops,
                       ast_checkpoint_dir=checkpoint_dir,
-                      consolidate_global_data=consolidate_global_data)
+                      consolidate_global_data=consolidate_global_data,
+                      rename_uniquely=rename_uniquely)
     cfg.sources['_stubs.f90'] = STUBS
     cfg.sources['_builtins.f90'] = BUILTINS
 

@@ -1302,7 +1302,10 @@ class IndexExtractor(NodeTransformer):
             if isinstance(i, ast_internal_classes.ParDecl_Node):
                 newer_indices.append(i)
             else:
-
+                if isinstance(i, ast_internal_classes.Name_Node):
+                    if i.name.startswith("tmp_index_"):
+                        newer_indices.append(i)
+                        continue
                 newer_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 self.replacements["tmp_index_" + str(tmp)] = (i, node.name.name)
                 tmp = tmp + 1
@@ -1310,6 +1313,9 @@ class IndexExtractor(NodeTransformer):
 
         return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=newer_indices,
                                                          line_number=node.line_number)
+
+    
+        
 
     def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
         newspec = []
@@ -1323,9 +1329,12 @@ class IndexExtractor(NodeTransformer):
                 for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
 
-                        if isinstance(i, ast_internal_classes.ParDecl_Node):
-                            continue
-                        else:
+                            if isinstance(i, ast_internal_classes.ParDecl_Node):
+                                continue
+                            elif isinstance(i, ast_internal_classes.Name_Node):
+                                if i.name.startswith("tmp_index_"):
+                                    continue
+                            
                             tmp_name = "tmp_index_" + str(temp)
                             temp = temp + 1
                             if self.normalize_offsets:
@@ -1396,9 +1405,12 @@ class IndexExtractor(NodeTransformer):
                 for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
 
-                        if isinstance(i, ast_internal_classes.ParDecl_Node):
-                            continue
-                        else:
+                            if isinstance(i, ast_internal_classes.ParDecl_Node):
+                                continue
+                            elif isinstance(i, ast_internal_classes.Name_Node):
+                                if i.name.startswith("tmp_index_"):
+                                    continue
+                            
                             tmp_name = "tmp_index_" + str(temp)
                             temp = temp + 1
                             newbody.append(
