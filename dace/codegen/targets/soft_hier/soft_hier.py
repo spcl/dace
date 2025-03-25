@@ -2985,7 +2985,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 s = re.sub(r'\bdace::[A-Za-z0-9_]+(?:\s*\*+)?', 'uint64_t', s)
                 output_definition_stream = s
                 
-                inner_stream.write(output_definition_stream, cfg, state_id, node)
+                # inner_stream.write(output_definition_stream, cfg, state_id, node)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1, node.out_connectors[edge.src_conn].ctype)
