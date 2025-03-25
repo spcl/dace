@@ -29,8 +29,11 @@ class InterleaveHandler:
     def split_vertical(self):
         self.split_scheme = (1, self.array.shape[1] // self.block_shape[1])
         
-    def split_to_blocks(self):
-        self.split_scheme = (self.array.shape[0] // self.block_shape[0], self.array.shape[1] // self.block_shape[1])
+    def split_to_blocks(self, tile_dims=None):
+        if tile_dims is None:
+            self.split_scheme = (self.array.shape[0] // self.block_shape[0], self.array.shape[1] // self.block_shape[1])
+        else:
+            self.split_scheme = (self.array.shape[0] // tile_dims[0], self.array.shape[1] // tile_dims[1])
     
     def place_to_range(self, place_range:tuple):
         if self.split_scheme is None:
@@ -42,7 +45,7 @@ class InterleaveHandler:
         total_channels = int(sqrt(self.cluster_dims[0] * self.cluster_dims[1])) * 4
         num_tiles = self.split_scheme[0] * self.split_scheme[1]
         if num_tiles % num_channels != 0:
-            raise ValueError("Number of chunks must be a multiple of number of tiles")
+            raise ValueError(f"Number of channels must be a multiple of number of tiles, tiles={num_tiles}, num_channels={num_channels}")
         self.placement_scheme = ()
         for i in range(num_tiles):
             channel_id = (start + (i * step) % num_channels + total_channels) % total_channels
@@ -108,9 +111,9 @@ class InterleaveHandler:
         split_y = self.split_scheme[1]
         # print(split_x, split_y)
         (dim_x_dace, dim_y_dace) = self.cluster_dims_dace
-        if split_x % dim_x_dace != 0 or split_y % dim_y_dace != 0:
-            print(split_x, split_y, dim_x_dace, dim_y_dace)
-            raise ValueError("Split scheme must be multiples of cluster dimensions")
+        if split_x % dim_x != 0 or split_y % dim_y!= 0:
+            print(split_x, split_y, dim_x, dim_y)
+            raise ValueError(f"Split scheme must be multiples of cluster dimensions")
         place_base = [
             [0, 1, 1, 0],
             [1, 0, 0, 1],
@@ -127,10 +130,10 @@ class InterleaveHandler:
                 else:
                     real_place_base[i][j] = place_base[i % 4][j % 4]
         for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
-            pi_dace = i % dim_x_dace
-            pj_dace = j % dim_y_dace
+            pi_dace = i % dim_x
+            pj_dace = j % dim_y
 
-            p_real = pi_dace * dim_y_dace + pj_dace
+            p_real = pi_dace * dim_y + pj_dace
             pi_real = p_real // dim_y
             pj_real = p_real % dim_y
 
