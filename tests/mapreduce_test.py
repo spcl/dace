@@ -112,6 +112,7 @@ def mapreduce_twomaps(A, B, C):
 
     @dace.mapscope
     def summation_outer(i: _[0:M], j: _[0:N]):
+
         @dace.map
         def summation_inner(k: _[0:K]):
             ti << tmp[i, j, k]

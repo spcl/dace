@@ -5,6 +5,7 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_frontend_call_extract():
     test_string = """
                     PROGRAM intrinsic_call_extract

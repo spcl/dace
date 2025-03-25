@@ -20,6 +20,7 @@ class ExtensibleEnumeration(Enum):
 
 
 class RegistryTests(unittest.TestCase):
+
     def test_class_registry(self):
         ExtensibleClass.register(Extension)
         self.assertTrue(Extension in ExtensibleClass.extensions())
@@ -27,6 +28,7 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(Extension not in ExtensibleClass.extensions())
 
     def test_autoregister(self):
+
         @registry.autoregister
         class Extension2(ExtensibleClass):
             pass
@@ -41,6 +43,7 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(Extension not in ExtensibleClass.extensions())
 
     def test_autoregister_args(self):
+
         @registry.autoregister_params(a=False, b=0)
         class Extension3(ExtensibleClass):
             pass

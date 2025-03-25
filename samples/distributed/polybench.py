@@ -1271,11 +1271,7 @@ def run_jacobi_2d(validate=False):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v",
-                        "--validate",
-                        type=str2bool,
-                        nargs="?",
-                        default=False)
+    parser.add_argument("-v", "--validate", type=str2bool, nargs="?", default=False)
     args = vars(parser.parse_args())
 
     validate = args["validate"]

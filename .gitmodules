@@ -10,4 +10,4 @@
 	url = https://github.com/definelicht/hlslib.git
 [submodule "dace/external/rtllib"]
 	path = dace/external/rtllib
-	url = https://github.com/carljohnsen/rtllib.git 
+	url = https://github.com/carljohnsen/rtllib.git

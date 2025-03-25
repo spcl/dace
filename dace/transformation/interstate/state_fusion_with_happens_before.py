@@ -15,6 +15,7 @@ from dace.transformation import transformation
 
 # Helper class for finding connected component correspondences
 class CCDesc:
+
     def __init__(self, first_input_nodes: Set[nodes.AccessNode], first_output_nodes: Set[nodes.AccessNode],
                  second_input_nodes: Set[nodes.AccessNode], second_output_nodes: Set[nodes.AccessNode]) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
@@ -35,7 +36,7 @@ def top_level_nodes(state: SDFGState):
 class StateFusionExtended(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
         An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.
-        The merge is made by identifying the source in the first state and the sink in the second state, 
+        The merge is made by identifying the source in the first state and the sink in the second state,
         and linking the bottom of the appropriate source subgraph in the first state with the top of the
         appropriate sink subgraph in the second state.
 
@@ -91,7 +92,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         Performs an all-pairs check for subset intersection on two
         groups of nodes. If group intersects or result is indeterminate,
         returns True as a precaution.
-        
+
         :param graph_a: The graph in which the first set of nodes reside.
         :param group_a: The first set of nodes to check.
         :param inputs_a: If True, checks inputs of the first group.
@@ -323,8 +324,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 ]
                 # Those nodes will be the connection points upon fusion
                 match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order
-                         if n.data == match): next(n for n in fused_cc.second_input_nodes if n.data == match)
+                    next(n for n in order if n.data == match):
+                    next(n for n in fused_cc.second_input_nodes if n.data == match)
                     for match in (fused_cc.first_outputs
                                   & fused_cc.second_inputs)
                 }

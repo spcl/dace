@@ -129,15 +129,21 @@ class DetectLoop(transformation.PatternTransformation):
         elif expr_index == 4:
             return self.detect_self_loop(graph, accept_missing_itvar=permissive) is not None
         elif expr_index in (5, 7):
-            return self.detect_rotated_loop(graph, multistate_loop=True, accept_missing_itvar=permissive,
+            return self.detect_rotated_loop(graph,
+                                            multistate_loop=True,
+                                            accept_missing_itvar=permissive,
                                             separate_latch=True) is not None
         elif expr_index == 6:
-            return self.detect_rotated_loop(graph, multistate_loop=False, accept_missing_itvar=permissive,
+            return self.detect_rotated_loop(graph,
+                                            multistate_loop=False,
+                                            accept_missing_itvar=permissive,
                                             separate_latch=True) is not None
 
         raise ValueError(f'Invalid expression index {expr_index}')
 
-    def detect_loop(self, graph: ControlFlowRegion, multistate_loop: bool,
+    def detect_loop(self,
+                    graph: ControlFlowRegion,
+                    multistate_loop: bool,
                     accept_missing_itvar: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
@@ -219,8 +225,11 @@ class DetectLoop(transformation.PatternTransformation):
 
         return next(iter(itvar))
 
-    def detect_rotated_loop(self, graph: ControlFlowRegion, multistate_loop: bool,
-                            accept_missing_itvar: bool = False, separate_latch: bool = False) -> Optional[str]:
+    def detect_rotated_loop(self,
+                            graph: ControlFlowRegion,
+                            multistate_loop: bool,
+                            accept_missing_itvar: bool = False,
+                            separate_latch: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -373,7 +382,10 @@ class DetectLoop(transformation.PatternTransformation):
             return find_for_loop(guard.parent_graph, guard, entry, itervar)
         elif self.expr_index in (2, 3, 5, 6, 7):
             latch = self.loop_latch
-            return find_rotated_for_loop(latch.parent_graph, latch, entry, itervar,
+            return find_rotated_for_loop(latch.parent_graph,
+                                         latch,
+                                         entry,
+                                         itervar,
                                          separate_latch=(self.expr_index in (5, 6, 7)))
         elif self.expr_index == 4:
             return find_rotated_for_loop(entry.parent_graph, entry, entry, itervar)
@@ -500,11 +512,12 @@ class DetectLoop(transformation.PatternTransformation):
         raise ValueError(f'Invalid expression index {self.expr_index}')
 
 
-def rotated_loop_find_itvar(begin_inedges: List[gr.Edge[InterstateEdge]],
-                            latch_inedges: List[gr.Edge[InterstateEdge]],
-                            backedge: gr.Edge[InterstateEdge], latch: ControlFlowBlock,
-                            accept_missing_itvar: bool = False) -> Tuple[Optional[str],
-                                                                         Optional[gr.Edge[InterstateEdge]]]:
+def rotated_loop_find_itvar(
+        begin_inedges: List[gr.Edge[InterstateEdge]],
+        latch_inedges: List[gr.Edge[InterstateEdge]],
+        backedge: gr.Edge[InterstateEdge],
+        latch: ControlFlowBlock,
+        accept_missing_itvar: bool = False) -> Tuple[Optional[str], Optional[gr.Edge[InterstateEdge]]]:
     # The iteration variable must be assigned (initialized) on all edges leading into the beginning block, which
     # are not the backedge. Gather all variabes for which that holds - they are all candidates for the iteration
     # variable (Phase 1). Said iteration variable must then be incremented:
@@ -586,7 +599,7 @@ def find_for_loop(
         List[sd.SDFGState], sd.SDFGState]]]:
     """
     Finds loop range from state machine.
-    
+
     :param guard: State from which the outgoing edges detect whether to exit
                   the loop or not.
     :param entry: First state in the loop body.
@@ -698,7 +711,7 @@ def find_rotated_for_loop(
         List[sd.SDFGState], sd.SDFGState]]]:
     """
     Finds rotated loop range from state machine.
-    
+
     :param latch: State from which the outgoing edges detect whether to reenter the loop or not.
     :param entry: First state in the loop body.
     :param itervar: An optional field that overrides the analyzed iteration variable.

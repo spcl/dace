@@ -8,7 +8,7 @@ from ..pass_pipeline import Pass
 
 def available_passes(all_passes: bool = False) -> Set[Type['Pass']]:
     """
-    Returns all available passes and pass pipelines as a set by recursing over Pass subclasses. 
+    Returns all available passes and pass pipelines as a set by recursing over Pass subclasses.
     :param all_passes: Include all passes, e.g., including PatternTransformation and other base passes.
     """
     full_pass_set = Pass.subclasses_recursive()

@@ -14,6 +14,7 @@ except (ImportError, ModuleNotFoundError):
 
 @pytest.mark.gpu
 def test_storage():
+
     @dace.program
     def add(X: dace.float32[32, 32] @ StorageType.GPU_Global):
         return X + 1
@@ -49,6 +50,7 @@ def test_schedule():
 
 @pytest.mark.gpu
 def test_pythonmode():
+
     def runs_on_gpu(a: dace.float64[20] @ StorageType.GPU_Global, b: dace.float64[20] @ StorageType.GPU_Global):
         # This map will become a GPU kernel
         for i in dace.map[0:20] @ ScheduleType.GPU_Device:

@@ -73,4 +73,3 @@ class TensorflowRedundantArray(pm.SingleStateTransformation):
 
         # Finally, remove out_array node
         graph.remove_node(out_array)
-
