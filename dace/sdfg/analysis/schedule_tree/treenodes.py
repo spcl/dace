@@ -377,10 +377,8 @@ class GeneralLoopScope(ControlFlowScope):
                     footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
                 return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
             else:
-                result = (indent * INDENTATION +
-                          f'for {loop.init_statement.as_string}; ' +
-                          f'{loop.loop_condition.as_string}; ' +
-                          f'{loop.update_statement.as_string}:\n')
+                result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
+                          f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
                 return result + super().as_string(indent)
         else:
             if loop.inverted:
@@ -497,14 +495,18 @@ class MapScope(DataflowScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
         return super().input_memlets(root,
-                                     propagate={k: v
-                                                for k, v in zip(self.node.map.params, self.node.map.range)},
+                                     propagate={
+                                         k: v
+                                         for k, v in zip(self.node.map.params, self.node.map.range)
+                                     },
                                      **kwargs)
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
         return super().output_memlets(root,
-                                      propagate={k: v
-                                                 for k, v in zip(self.node.map.params, self.node.map.range)},
+                                      propagate={
+                                          k: v
+                                          for k, v in zip(self.node.map.params, self.node.map.range)
+                                      },
                                       **kwargs)
 
 
