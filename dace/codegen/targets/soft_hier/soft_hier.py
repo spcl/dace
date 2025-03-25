@@ -433,6 +433,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #include "flex_cluster_arch.h"
 #include "flex_dma_pattern.h"
 #define floor(x) ((x))
+#define Mod(x, y) ((x) % (y))
 {file_header}
 
 int __dace_init_cuda(struct {sdfg_state_name} *__state{params});
@@ -1109,6 +1110,8 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # if is_sync:
                     #     callsite_stream.write("flex_intra_cluster_sync();")
                 else:
+                    if src_name == dst_name:
+                        return
                     raise NotImplementedError(
                         f"Unimplemented copy type: {src_storage} -> {dst_storage}"
                     )
@@ -1347,7 +1350,7 @@ int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
                     # callsite_stream.write("if (flex_is_dm_core())")
                     callsite_stream.write("{")
                     if is_broadcast:
-                        callsite_stream.write(f"flex_dma_async_1d_broadcast(dace_remote_xy({pos_x_end},{pos_y_end},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
+                        callsite_stream.write(f"flex_dma_async_1d_broadcast(dace_remote_xy({pos_x_end-pos_x_step+1},{pos_y_end-pos_y_step+1},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
                     else:
                         callsite_stream.write(f"bare_dma_start_1d(dace_remote_xy({pos_x},{pos_y},{dst_expr},{self._soft_hier_dims[0]}), local({src_expr}), {dst_size});")
                     # if is_sync:
@@ -2846,21 +2849,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
-        # codegen.generate_tasklet_postamble(sdfg, cfg, dfg, state_id, node, function_stream, inner_stream,
-        #                                 after_memlets_stream)
 
-        # Process outgoing memlets
-        # codegen.process_out_memlets(
-        #     sdfg,
-        #     cfg,
-        #     state_id,
-        #     node,
-        #     dfg,
-        #     self._dispatcher,
-        #     inner_stream,
-        #     True,
-        #     function_stream,
-        # )
 
         # Instrumentation: Post-tasklet
         if instr is not None:
@@ -2882,6 +2871,215 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
 
     
+    
+    def _generate_SoftHier_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                        node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream,
+                        codegen=None):
+
+ # Allow other code generators to call this with a callback
+        codegen = codegen or self
+        write_type = 'uint64_t'
+        outer_stream_begin = CodeIOStream()
+        outer_stream_end = CodeIOStream()
+        inner_stream = CodeIOStream()
+
+        # Add code to init and exit functions
+        self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
+        self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
+
+        state_dfg: SDFGState = cfg.nodes()[state_id]
+
+        # Free tasklets need to be presynchronized (e.g., CPU tasklet after
+        # GPU->CPU copy)
+        if state_dfg.entry_node(node) is None:
+            cpp.presynchronize_streams(sdfg, cfg, state_dfg, state_id, node, callsite_stream)
+
+        self._dispatcher.defined_vars.enter_scope(node)
+
+        arrays = set()
+        for edge in state_dfg.in_edges(node):
+            u = edge.src
+            memlet = edge.data
+            src_node = state_dfg.memlet_path(edge)[0].src
+
+            if edge.dst_conn:  # Not (None or "")
+                if edge.dst_conn in arrays:  # Disallow duplicates
+                    raise SyntaxError("Duplicates found in memlets")
+                ctype = node.in_connectors[edge.dst_conn].ctype
+                # Special case: code->code
+                if isinstance(src_node, nodes.CodeNode):
+                    shared_data_name = edge.data.data
+                    if not shared_data_name:
+                        # Very unique name. TODO: Make more intuitive
+                        shared_data_name = '__dace_%d_%d_%d_%d_%s' % (cfg.cfg_id, state_id, dfg.node_id(src_node),
+                                                                      dfg.node_id(node), edge.src_conn)
+
+                    # Read variable from shared storage
+                    defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
+                    if defined_type in (DefinedType.Scalar, DefinedType.Pointer):
+                        assign_str = (f"const {ctype} {edge.dst_conn} = {shared_data_name};")
+                    else:
+                        assign_str = (f"const {ctype} &{edge.dst_conn} = {shared_data_name};")
+                    inner_stream.write(assign_str, cfg, state_id, [edge.src, edge.dst])
+                    self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
+
+                else:
+                    u, uconn, v, vconn, memlet = edge
+                    desc = sdfg.arrays[memlet.data]
+                    # print(f"u: {u}, uconn: {uconn}, v: {v}, vconn: {vconn}, memlet: {memlet}")
+                    # Obtain copy information
+                    if isinstance(edge.src, nodes.AccessNode):
+                        src_expr = cpp.copy_expr(self._dispatcher, sdfg, src_node.data, memlet, False)
+                        if src_expr != edge.src.data:
+                            src_expr = f'{src_expr} * {desc.dtype.bytes}'
+                        assign_str = (f"{write_type} {edge.dst_conn} = {src_expr};")
+                        inner_stream.write(assign_str, cfg, state_id, [edge.src, edge.dst])
+                        self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
+                    else:
+                        # Find the source Access Node
+                        desc = sdfg.arrays[memlet.data]  
+                        src_subset = memlet.get_src_subset(edge, state_dfg)
+                        is_src_write = not memlet._is_data_src
+                        src_expr = cpp.copy_expr(self._dispatcher,
+                             sdfg,
+                             src_node.data,
+                             memlet,
+                             is_write=is_src_write,
+                             offset=src_subset,
+                             relative_offset=False,
+                             packed_types=self._cpu_codegen._packed_types)
+                        assign_str = (f"{write_type} {edge.dst_conn} = {src_expr};")
+                        inner_stream.write(
+                            assign_str,
+                            cfg,
+                            state_id,
+                            [src_node, dst_node],
+                        )
+                        self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
+
+                # Also define variables in the C++ unparser scope
+                self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
+                arrays.add(edge.dst_conn)
+
+        # Use outgoing edges to preallocate output local vars
+        # in two stages: first we preallocate for data<->code cases,
+        # followed by code<->code
+        tasklet_out_connectors = set()
+        for edge in state_dfg.out_edges(node):
+            dst_node = state_dfg.memlet_path(edge)[-1].dst
+            if isinstance(dst_node, nodes.CodeNode):
+                # Handling this in a separate pass just below
+                continue
+
+            if edge.src_conn:
+                if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
+                    continue
+                
+                output_definition_stream = CodeIOStream()
+                self._dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, cfg, dfg, state_id,
+                                                            function_stream, output_definition_stream)
+                # Replace strings in output_definition_stream start with dace:: with uint64_t
+                import re
+
+                s = output_definition_stream.getvalue()
+                s = re.sub(r'\bdace::[A-Za-z0-9_]+(?:\s*\*+)?', 'uint64_t', s)
+                output_definition_stream = s
+                
+                inner_stream.write(output_definition_stream, cfg, state_id, node)
+
+                # Also define variables in the C++ unparser scope
+                self._locals.define(edge.src_conn, -1, self._ldepth + 1, node.out_connectors[edge.src_conn].ctype)
+                tasklet_out_connectors.add(edge.src_conn)
+
+        for edge in state_dfg.out_edges(node):
+            # Special case: code->code
+            dst_node = state_dfg.memlet_path(edge)[-1].dst
+            if edge.src_conn is None:
+                continue
+            cdtype = node.out_connectors[edge.src_conn]
+            ctype = cdtype.ctype
+            # Convert dtype to data descriptor
+            if isinstance(cdtype, dtypes.pointer):
+                arg_type = dt.Array(cdtype._typeclass, [1])
+            else:
+                arg_type = dt.Scalar(cdtype)
+
+            if (isinstance(dst_node, nodes.CodeNode) and edge.src_conn not in tasklet_out_connectors):
+                memlet = edge.data
+
+                # Generate register definitions for inter-tasklet memlets
+                local_name = edge.data.data
+                if not local_name:
+                    # Very unique name. TODO: Make more intuitive
+                    local_name = '__dace_%d_%d_%d_%d_%s' % (cfg.cfg_id, state_id, dfg.node_id(node),
+                                                            dfg.node_id(dst_node), edge.src_conn)
+
+                # Allocate variable type
+                code = "%s %s;" % (ctype, local_name)
+                outer_stream_begin.write(code, cfg, state_id, [edge.src, dst_node])
+                if (isinstance(arg_type, dt.Scalar) or isinstance(arg_type, dtypes.typeclass)):
+                    self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar, ctype, ancestor=1)
+                elif isinstance(arg_type, dt.Array):
+                    self._dispatcher.defined_vars.add(local_name, DefinedType.Pointer, ctype, ancestor=1)
+                elif isinstance(arg_type, dt.Stream):
+                    if arg_type.is_stream_array():
+                        self._dispatcher.defined_vars.add(local_name, DefinedType.StreamArray, ctype, ancestor=1)
+                    else:
+                        self._dispatcher.defined_vars.add(local_name, DefinedType.Stream, ctype, ancestor=1)
+                else:
+                    raise TypeError("Unrecognized argument type: {}".format(type(arg_type).__name__))
+
+                inner_stream.write("%s %s;" % ("uint64_t", edge.src_conn), cfg, state_id, [edge.src, edge.dst])
+                tasklet_out_connectors.add(edge.src_conn)
+                self._dispatcher.defined_vars.add(edge.src_conn, DefinedType.Scalar, ctype)
+                self._locals.define(edge.src_conn, -1, self._ldepth + 1, ctype)
+                locals_defined = True
+
+        # Instrumentation: Pre-tasklet
+        instr = self._dispatcher.instrumentation[node.instrument]
+        if instr is not None:
+            instr.on_node_begin(sdfg, cfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
+
+        inner_stream.write("\n    ///////////////////\n", cfg, state_id, node)
+
+        self._cpu_codegen.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, self._locals,
+                                self._ldepth, self._toplevel_schedule)
+
+        inner_stream.write("    ///////////////////\n\n", cfg, state_id, node)
+
+        # Generate pre-memlet tasklet postamble
+        after_memlets_stream = CodeIOStream()
+        self._cpu_codegen.generate_tasklet_postamble(sdfg, cfg, dfg, state_id, node, function_stream, inner_stream,
+                                           after_memlets_stream)
+
+        # Process outgoing memlets
+        self.process_out_memlets(
+            sdfg,
+            cfg,
+            state_id,
+            node,
+            dfg,
+            self._dispatcher,
+            inner_stream,
+            True,
+            function_stream,
+        )
+
+        # Instrumentation: Post-tasklet
+        if instr is not None:
+            instr.on_node_end(sdfg, cfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
+
+        callsite_stream.write(outer_stream_begin.getvalue(), cfg, state_id, node)
+        callsite_stream.write('{', cfg, state_id, node)
+        callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
+        callsite_stream.write(after_memlets_stream.getvalue())
+        callsite_stream.write('}', cfg, state_id, node)
+        callsite_stream.write(outer_stream_end.getvalue(), cfg, state_id, node)
+
+        self._locals.clear_scope(self._ldepth + 1)
+        self._dispatcher.defined_vars.exit_scope(node)
+
+    
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         generated_preamble_scopes = 0
@@ -2900,6 +3098,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             old_codegen = self._cpu_codegen.calling_codegen
             self._cpu_codegen.calling_codegen = self
             self._generate_RedMule_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._cpu_codegen.calling_codegen = old_codegen
+        elif node.name == "split_K_reduction":
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+            self._generate_SoftHier_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
             self._cpu_codegen.calling_codegen = old_codegen
         else:
             old_codegen = self._cpu_codegen.calling_codegen

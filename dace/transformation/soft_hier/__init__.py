@@ -7,3 +7,4 @@ from .systolic_split_hbm_store import SystolicSplitStore
 from .summa import SummaTransformer
 from .bsp_transformation import BSPTransformer
 from .bsp_transformation_copy import TESTBSPTransformer
+from .split_K_reduction import SplitKReduction
