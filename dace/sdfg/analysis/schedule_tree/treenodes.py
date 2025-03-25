@@ -487,6 +487,7 @@ class MapScope(DataflowScope):
     """
     Map scope.
     """
+    node: nodes.MapEntry
 
     def as_string(self, indent: int = 0):
         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
@@ -515,6 +516,7 @@ class ConsumeScope(DataflowScope):
     """
     Consume scope.
     """
+    node: nodes.ConsumeEntry
 
     def as_string(self, indent: int = 0):
         node: nodes.ConsumeEntry = self.node
@@ -528,6 +530,7 @@ class PipelineScope(MapScope):
     """
     Pipeline scope.
     """
+    node: nodes.PipelineEntry
 
     def as_string(self, indent: int = 0):
         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)

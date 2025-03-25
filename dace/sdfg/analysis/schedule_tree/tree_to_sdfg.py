@@ -1,17 +1,22 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections import defaultdict
+from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu, utils as sdfg_utils
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from enum import Enum, auto
-from typing import Dict, List, Optional, Set
+from typing import Dict, Final, List, Optional, Set, Tuple
 
 
 class StateBoundaryBehavior(Enum):
     STATE_TRANSITION = auto()  #: Creates multiple states with a state transition
     EMPTY_MEMLET = auto()  #: Happens-before empty memlet edges in the same state
+
+
+PREFIX_PASSTHROUGH_IN: Final[str] = "IN_"
+PREFIX_PASSTHROUGH_OUT: Final[str] = "OUT_"
 
 
 def from_schedule_tree(stree: tn.ScheduleTreeRoot,
@@ -45,13 +50,16 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             # inter-state symbol assignments
             self._interstate_symbols: List[tn.AssignNode] = []
 
+            # dataflow scopes
+            self._dataflow_stack: List[Tuple[nodes.EntryNode, nodes.ExitNode]] = []
+
             # caches
-            self.access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
+            self._access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
 
         def _pop_state(self, label: Optional[str] = None) -> SDFGState:
-            """Pops the last state from the stack.
+            """Pops the last state from the state stack.
 
-            :param label: ensures the popped state's label starts with the given string
+            :param str, optional label: Ensures the popped state's label starts with the given string.
 
             :return: The popped state.
             """
@@ -64,9 +72,32 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             return popped
 
+        def _ensure_access_cache(self, state: SDFGState) -> Dict[str, nodes.AccessNode]:
+            """Ensure an access_cache entry for the given state.
+
+            Checks if there exists an access_cache for `state`. Creates an empty one if it doesn't exist yet.
+
+            :param SDFGState state: The state to check.
+
+            :return: The state's access_cache.
+            """
+            if state not in self._access_cache:
+                self._access_cache[state] = {}
+
+            return self._access_cache[state]
+
         def visit_ScheduleTreeRoot(self, node: tn.ScheduleTreeRoot, sdfg: SDFG) -> None:
+            assert self._current_state is None, "Expected no 'current_state' at root."
+            assert not self._state_stack, "Expected empty state stack at root."
+            assert not self._dataflow_stack, "Expected empty dataflow stack at root."
+            assert not self._interstate_symbols, "Expected empty list of symbols at root."
+
             self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
             self.visit(node.children, sdfg=sdfg)
+
+            assert not self._state_stack, "Expected empty state stack."
+            assert not self._dataflow_stack, "Expected empty dataflow stack."
+            assert not self._interstate_symbols, "Expected empty list of symbols to add."
 
         def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
             # Let's see if we need this for the first prototype ...
@@ -189,7 +220,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             false_state = self._pop_state("false_state")
             self._current_state = false_state
 
-            # visit children
+            # visit children inside the else branch
             self.visit(node.children, sdfg=sdfg)
 
             # merge false-branch into merge_state
@@ -198,8 +229,71 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state = merge_state
 
         def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
-            # TODO add this
-            raise NotImplementedError
+            dataflow_stack_size = len(self._dataflow_stack)
+            outer_map_entry, outer_map_exit = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
+
+            cache = self._ensure_access_cache(self._current_state)
+
+            # map entry
+            map_entry = nodes.MapEntry(node.node.map)
+            self._current_state.add_node(map_entry)
+
+            for memlet in node.input_memlets():
+                map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+
+                if outer_map_entry is not None:
+                    # passthrough if we are inside another map
+                    self._current_state.add_edge(outer_map_entry, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", map_entry,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                else:
+                    # add access node "outside the map" and connect to it
+                    if memlet.data not in cache:
+                        # cache read access
+                        cache[memlet.data] = self._current_state.add_read(memlet.data)
+
+                    self._current_state.add_edge(cache[memlet.data], None, map_entry,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+
+            # Add empty memlet if outer_map_entry has no out_connectors to connect to
+            if outer_map_entry is not None and not outer_map_entry.out_connectors and self._current_state.out_degree(
+                    outer_map_entry) < 1:
+                self._current_state.add_edge(outer_map_entry, None, map_entry, None, memlet=Memlet())
+
+            # map exit
+            map_exit = nodes.MapExit(node.node.map)
+            self._current_state.add_node(map_exit)
+
+            for memlet in node.output_memlets():
+                map_exit.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                map_exit.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+
+                if outer_map_exit:
+                    # passthrough if we are inside another map
+                    self._current_state.add_edge(map_exit, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", outer_map_exit,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                else:
+                    # add access nodes "outside the map" and connect to it
+                    # we always write to a new access_node
+                    access_node = self._current_state.add_write(memlet.data)
+                    self._current_state.add_edge(map_exit, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", access_node, None,
+                                                 memlet)
+
+                    # cache write access node (or update an existing one) for read after write cases
+                    cache[memlet.data] = access_node
+
+            # Add empty memlet if outer_map_exit has no in_connectors to connect to
+            if outer_map_exit is not None and not outer_map_exit.in_connectors and self._current_state.in_degree(
+                    outer_map_exit) < 1:
+                self._current_state.add_edge(map_exit, None, outer_map_exit, None, memlet=Memlet())
+
+            self._dataflow_stack.append((map_entry, map_exit))
+
+            # visit children inside the map
+            self.visit(node.children, sdfg=sdfg)
+
+            self._dataflow_stack.pop()
+            assert len(self._dataflow_stack) == dataflow_stack_size  # sanity check
 
         def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
             # AFAIK we don't support consume scopes in the gt4py/dace bridge.
@@ -214,13 +308,17 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             tasklet = node.node
             self._current_state.add_node(tasklet)
 
-            # Manage access cache
-            if not self._current_state in self.access_cache:
-                self.access_cache[self._current_state] = {}
-            cache = self.access_cache[self._current_state]
+            cache = self._ensure_access_cache(self._current_state)
+            map_entry, map_exit = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
 
-            # Connect inputs and outputs
+            # Connect input memlets
             for name, memlet in node.in_memlets.items():
+                # connect to dataflow_stack (if applicable)
+                connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}"
+                if map_entry is not None and connector_name in map_entry.out_connectors:
+                    self._current_state.add_edge(map_entry, connector_name, tasklet, name, memlet)
+                    continue
+
                 # cache read access
                 if memlet.data not in cache:
                     cache[memlet.data] = self._current_state.add_read(memlet.data)
@@ -228,13 +326,28 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 access_node = cache[memlet.data]
                 self._current_state.add_memlet_path(access_node, tasklet, dst_conn=name, memlet=memlet)
 
+            # Add empty memlet if map_entry has no out_connectors to connect to
+            if map_entry is not None and not map_entry.out_connectors and self._current_state.out_degree(map_entry) < 1:
+                self._current_state.add_edge(map_entry, None, tasklet, None, memlet=Memlet())
+
+            # Connect output memlets
             for name, memlet in node.out_memlets.items():
+                # connect to dataflow_stack (if applicable)
+                connector_name = f"{PREFIX_PASSTHROUGH_IN}{memlet.data}"
+                if map_exit is not None and connector_name in map_exit.in_connectors:
+                    self._current_state.add_edge(tasklet, name, map_exit, connector_name, memlet)
+                    continue
+
                 # we always write to a new access_node
                 access_node = self._current_state.add_write(memlet.data)
                 self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
 
                 # cache write access node (or update an existing one) for read after write cases
                 cache[memlet.data] = access_node
+
+            # Add empty memlet if map_exit has no in_connectors to connect to
+            if map_exit is not None and not map_exit.in_connectors and self._current_state.in_degree(map_exit) < 1:
+                self._current_state.add_edge(tasklet, None, map_exit, None, memlet=Memlet())
 
         def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
             # AFAIK we expand all library calls in the gt4py/dace bridge before coming here.
@@ -270,7 +383,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state = create_state_boundary(node, sdfg, self._current_state,
                                                         StateBoundaryBehavior.STATE_TRANSITION, assignments)
 
-    # TODO: create_dataflow_scope
     StreeToSDFG().visit(stree, sdfg=result)
 
     return result

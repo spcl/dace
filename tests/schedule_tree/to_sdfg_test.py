@@ -3,6 +3,7 @@
 Tests components in conversion of schedule trees to SDFGs.
 """
 import dace
+from dace import subsets as sbs
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -365,6 +366,64 @@ def test_create_if_without_else():
     sdfg.validate()
 
 
+def test_create_map_scope_write():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(name="tester",
+                                containers={'A': dace.data.Array(dace.float64, [20])},
+                                children=[
+                                    tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
+                                                                              sbs.Range.from_string("0:20"))),
+                                                children=[
+                                                    tn.TaskletNode(nodes.Tasklet("asdf", {}, {"out"}, "out = i"), {},
+                                                                   {"out": dace.Memlet("A[i]")})
+                                                ])
+                                ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_create_map_scope_copy():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(name="tester",
+                                containers={
+                                    'A': dace.data.Array(dace.float64, [20]),
+                                    'B': dace.data.Array(dace.float64, [20]),
+                                },
+                                children=[
+                                    tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
+                                                                              sbs.Range.from_string("0:20"))),
+                                                children=[
+                                                    tn.TaskletNode(nodes.Tasklet("copy", {"inp"}, {"out"}, "out = inp"),
+                                                                   {"inp": dace.Memlet("A[i]")},
+                                                                   {"out": dace.Memlet("B[i]")})
+                                                ])
+                                ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_create_nested_map_scope():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={'A': dace.data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
+                        children=[
+                            tn.MapScope(node=nodes.MapEntry(nodes.Map("blub", "j", sbs.Range.from_string("0:10"))),
+                                        children=[
+                                            tn.TaskletNode(nodes.Tasklet("asdf", {}, {"out"}, "out = i*10+j"), {},
+                                                           {"out": dace.Memlet("A[i*10+j]")})
+                                        ])
+                        ])
+        ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -386,3 +445,6 @@ if __name__ == '__main__':
     test_create_while_loop()
     test_create_if_else()
     test_create_if_without_else()
+    test_create_map_scope_write()
+    test_create_map_scope_copy()
+    test_create_nested_map_scope()
