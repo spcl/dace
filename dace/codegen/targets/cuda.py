@@ -986,36 +986,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
             is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
 
-            # Test if it is possible to transform a 2D copy into a 1D copy, this is possible if
-            #  the allocation happens to be contiguous.
-            # NOTE: It seems that the `memlet_copy_to_absolute_strides()` function already does
-            #   this, the code below is kept if it is still needed, but somebody, who knows the
-            #   code generator should look at it. There are even tests for that, see
-            #   `cuda_memcopy_test.py::test_gpu_pseudo_1d_copy_f_order`, but they most likely
-            #   do not test the code below but the `memlet_copy_to_absolute_strides()` function.
-            # TODO: Figuring out if this can be removed.
-            if dims == 2 and (is_fortran_order or is_c_order):
-                try:
-                    if is_c_order:
-                        is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
-                        is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
-                    elif is_fortran_order:
-                        is_src_cont = src_strides[1] / src_strides[0] == copy_shape[0]
-                        is_dst_cont = dst_strides[1] / dst_strides[0] == copy_shape[0]
-                    else:
-                        is_src_cont = False
-                        is_dst_cont = False
-                except (TypeError, ValueError):
-                    is_src_cont = False
-                    is_dst_cont = False
-                if is_src_cont and is_dst_cont:
-                    copy_shape = [copy_shape[0] * copy_shape[1]]
-                    src_strides = [src_strides[1 if is_c_order else 0]]
-                    dst_strides = [dst_strides[1 if is_c_order else 0]]
-                    is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
-                    is_c_order = is_fortran_order
-                    dims = 1
-
             if dims > 2:
                 # Currently we only support ND copies when they can be represented
                 #  as a 1D copy or as a 2D strided copy
