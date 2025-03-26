@@ -22,7 +22,10 @@ class ConditionFusion(xf.MultiStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.cblck1, cls.cblck2)]
+        return [
+            sdutil.node_path_graph(cls.cblck1, cls.cblck2),
+            sdutil.node_path_graph(cls.cblck1),
+        ]
 
     def annotates_memlets(self) -> bool:
         return True
@@ -52,13 +55,27 @@ class ConditionFusion(xf.MultiStateTransformation):
             return True
 
         # Case 2: Nested conditional blocks
-        # TODO: Implement this case
+        if expr_index == 1:
+            if len(graph.predecessors(self.cblck1)) != 0:
+                return False
+            if len(graph.successors(self.cblck1)) != 0:
+                return False
+
+            parent_cfg = self.cblck1.parent_graph
+            if not hasattr(parent_cfg, "parent_graph"):
+                return False
+            parent_cfg = parent_cfg.parent_graph
+            if not isinstance(parent_cfg, ConditionalBlock):
+                return False
+            return True
 
         return False
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         if self.expr_index == 0:
             self.fuse_consecutive_conditions(self.cblck1, self.cblck2)
+        elif self.expr_index == 1:
+            self.fuse_nested_conditions(self.cblck1)
 
     def fuse_consecutive_conditions(
         self, cblck1: ConditionalBlock, cblck2: ConditionalBlock
@@ -191,6 +208,88 @@ class ConditionFusion(xf.MultiStateTransformation):
             for st in cfg.all_states():
                 for node in st.nodes():
                     if isinstance(node, sd.nodes.NestedSDFG):
-                        node.sdfg.parent_sdfg = cfg.sdfg
-                st.sdfg = cfg.sdfg
+                        node.sdfg.parent_sdfg = cblck1.sdfg
+                st.sdfg = cblck1.sdfg
+            cfg.sdfg = cblck1.sdfg
+            cfg.reset_cfg_list()
+
+
+    def fuse_nested_conditions(self, cblck1: ConditionalBlock):
+        nbranch = cblck1.parent_graph
+
+        # Check if cblck1 has no predecessors and no successors
+        assert len(nbranch.predecessors(cblck1)) == 0
+        assert len(nbranch.successors(cblck1)) == 0
+
+        # Check if cblck1 is nested in another conditional block
+        assert hasattr(nbranch, "parent_graph")
+        assert isinstance(nbranch.parent_graph, ConditionalBlock)
+        cblckp = nbranch.parent_graph
+
+        # There should be exactly one or no else branches in the parent conditional block
+        cblck1_elses = len([True for cnd, cfg in cblck1.branches if cnd is None])
+        cblckp_elses = len([True for cnd, cfg in cblckp.branches if cnd is None])
+        assert cblck1_elses <= 1, "Multiple else branches in cblck1"
+        assert cblckp_elses <= 1, "Multiple else branches in cblckp"
+
+        # Add an else branch if there is none
+        if cblck1_elses == 0:
+            cfg = ControlFlowRegion()
+            cfg.add_state(is_start_block=True)
+            cblck1.add_branch(None, cfg)
+        if cblckp_elses == 0:
+            cfg = ControlFlowRegion()
+            cfg.add_state(is_start_block=True)
+            cblckp.add_branch(None, cfg)
+
+        # First any else branch conditons with not(cond_blck condition)
+        for cblck in [cblck1, cblckp]:
+            cond_string = ""
+            for cnd, cfg in cblck.branches:
+                if cnd is not None:
+                    assert cnd.as_string != "1", "Branch condition is always true"
+                    if cond_string == "":
+                        cond_string = f"not({cnd.as_string})"
+                    else:
+                        cond_string = f"{cond_string} and not({cnd.as_string})"
+
+            for i, (cnd, cfg) in enumerate(cblck.branches):
+                if cnd is None:
+                    cblck.branches[i][0] = CodeBlock(cond_string)
+
+        # Find condition of cblck1 in cblckp
+        cond = None
+        for cnd, cfg in cblckp.branches:
+            if cfg == nbranch:
+                cond = cnd
+                break
+        assert cond is not None
+
+        # For each branch of cblck1, add a branch to cblckp
+        for cnd1, cfg1 in cblck1.branches:
+            cnd2 = copy.deepcopy(cnd1)
+            cnd2.as_string = f"({cond.as_string}) and ({cnd2.as_string})"
+            cfg2 = copy.deepcopy(cfg1)
+            cfg2.sdfg = cblckp.sdfg
+            cfg2.parent_graph = cblckp
+            cblckp.add_branch(cnd2, cfg2)
+
+        # Remove original branch from cblckp
+        nbranch.remove_node(cblck1)
+        cblckp.remove_branch(nbranch)
+
+        # Give each branch a unique label and nested nodes unique names
+        for i, (cnd, cfg) in enumerate(cblckp.branches):
+            cfg.label = f"{cblckp.label}_{i}"
+            for j, node in enumerate(cfg.nodes()):
+                node.label = f"{node.label}_{j}"
+
+        # Fix sdfg parents
+        for _, cfg in cblckp.branches:
+            for st in cfg.all_states():
+                for node in st.nodes():
+                    if isinstance(node, sd.nodes.NestedSDFG):
+                        node.sdfg.parent_sdfg = cblckp.sdfg
+                st.sdfg = cblckp.sdfg
+            cfg.sdfg = cblckp.sdfg
             cfg.reset_cfg_list()
