@@ -192,7 +192,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)) and not permissive:
                                 return False
                         # End of check
 
@@ -213,7 +213,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         # it read and written at locations that will not create data races
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
-                                                     e.data, src_subset):
+                                                     e.data, src_subset) and not permissive:
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -253,8 +253,9 @@ class LoopToMap(xf.MultiStateTransformation):
                 break
 
             # Check state contents
-            if symbols_that_may_be_used & block.free_symbols:
-                return False
+            if not permissive:
+              if symbols_that_may_be_used & block.free_symbols:
+                  return False
 
             # Check inter-state edges
             reassigned_symbols = None
