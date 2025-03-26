@@ -105,6 +105,9 @@ class MemletSet(Set[Memlet]):
         for subset in self.internal_set.values():
             yield from subset
 
+    def __len__(self):
+        return len(self.internal_set)
+
     def update(self, *iterable: Iterable[Memlet]):
         """
         Updates set of memlets via union of existing ranges.

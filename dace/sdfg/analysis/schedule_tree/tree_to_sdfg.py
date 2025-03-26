@@ -37,15 +37,15 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     result.constants_prop = copy.deepcopy(stree.constants)
     result.symbols = copy.deepcopy(stree.symbols)
 
-    # TODO: Fill SDFG contents
-    stree = insert_state_boundaries_to_tree(stree)  # after WAW, before label, etc.
+    # after WAW, before label, etc.
+    stree = insert_state_boundaries_to_tree(stree)
 
     class StreeToSDFG(tn.ScheduleNodeVisitor):
 
-        def __init__(self) -> None:
+        def __init__(self, start_state: Optional[SDFGState] = None) -> None:
             # state management
             self._state_stack: List[SDFGState] = []
-            self._current_state: Optional[SDFGState] = None
+            self._current_state = start_state
 
             # inter-state symbol assignments
             self._interstate_symbols: List[tn.AssignNode] = []
@@ -228,10 +228,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             sdfg.add_edge(self._current_state, merge_state, InterstateEdge())
             self._current_state = merge_state
 
-        def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
+        def _generate_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
             dataflow_stack_size = len(self._dataflow_stack)
             outer_map_entry, outer_map_exit = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
-
             cache = self._ensure_access_cache(self._current_state)
 
             # map entry
@@ -294,6 +293,112 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             self._dataflow_stack.pop()
             assert len(self._dataflow_stack) == dataflow_stack_size  # sanity check
+
+        def _generate_MapScope_with_nested_SDFG(self, node: tn.MapScope, sdfg: SDFG) -> None:
+            inputs = node.input_memlets()
+            outputs = node.output_memlets()
+
+            # setup nested SDFG
+            nsdfg = SDFG("nested_sdfg", parent=self._current_state)
+            start_state = nsdfg.add_state("nested_root", is_start_block=True)
+            for memlet in inputs:
+                nsdfg.add_datadesc(memlet.data, sdfg.arrays[memlet.data].clone())
+            for memlet in outputs:
+                nsdfg.add_datadesc(memlet.data, sdfg.arrays[memlet.data].clone())
+
+            # visit children inside nested SDFG
+            inner_visitor = StreeToSDFG(start_state)
+            for child in node.children:
+                inner_visitor.visit(child, sdfg=nsdfg)
+
+            nested_SDFG = self._current_state.add_nested_sdfg(nsdfg,
+                                                              sdfg,
+                                                              inputs={memlet.data
+                                                                      for memlet in node.input_memlets()},
+                                                              outputs={memlet.data
+                                                                       for memlet in node.output_memlets()})
+
+            dataflow_stack_size = len(self._dataflow_stack)
+            outer_map_entry, outer_map_exit = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
+            cache = self._ensure_access_cache(self._current_state)
+
+            # map entry
+            map_entry = nodes.MapEntry(node.node.map)
+            self._current_state.add_node(map_entry)
+
+            for memlet in inputs:
+                map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+
+                # connect nested SDFG to map scope
+                self._current_state.add_edge(map_entry, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", nested_SDFG,
+                                             memlet.data, Memlet.from_memlet(memlet))
+
+                # connect map scope to "outer world"
+                if outer_map_entry is not None:
+                    # passthrough if we are inside another map
+                    self._current_state.add_edge(outer_map_entry, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", map_entry,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                else:
+                    # add access node "outside the map" and connect to it
+                    if memlet.data not in cache:
+                        # cache read access
+                        cache[memlet.data] = self._current_state.add_read(memlet.data)
+
+                    self._current_state.add_edge(cache[memlet.data], None, map_entry,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+
+            # Add empty memlet if no explicit connection from map_entry to nested_SDFG has been done so far
+            if not inputs:
+                self._current_state.add_edge(map_entry, None, nested_SDFG, None, memlet=Memlet())
+
+            # Add empty memlet if outer_map_entry has no out_connectors to connect to
+            if outer_map_entry is not None and not outer_map_entry.out_connectors and self._current_state.out_degree(
+                    outer_map_entry) < 1:
+                self._current_state.add_edge(outer_map_entry, None, map_entry, None, memlet=Memlet())
+
+            # map exit
+            map_exit = nodes.MapExit(node.node.map)
+            self._current_state.add_node(map_exit)
+
+            for memlet in outputs:
+                map_exit.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                map_exit.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+
+                # connect nested SDFG to map scope
+                self._current_state.add_edge(nested_SDFG, memlet.data, map_exit,
+                                             f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", Memlet.from_memlet(memlet))
+
+                # connect map scope to "outer world"
+                if outer_map_exit:
+                    # passthrough if we are inside another map
+                    self._current_state.add_edge(map_exit, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", outer_map_exit,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                else:
+                    # add access nodes "outside the map" and connect to it
+                    # we always write to a new access_node
+                    access_node = self._current_state.add_write(memlet.data)
+                    self._current_state.add_edge(map_exit, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", access_node, None,
+                                                 memlet)
+
+                    # cache write access node (or update an existing one) for read after write cases
+                    cache[memlet.data] = access_node
+
+            # Add empty memlet if no explicit connection from map_entry to nested_SDFG has been done so far
+            if not outputs:
+                self._current_state.add_edge(nested_SDFG, None, map_exit, None, memlet=Memlet())
+
+            # Add empty memlet if outer_map_exit has no in_connectors to connect to
+            if outer_map_exit is not None and not outer_map_exit.in_connectors and self._current_state.in_degree(
+                    outer_map_exit) < 1:
+                self._current_state.add_edge(map_exit, None, outer_map_exit, None, memlet=Memlet())
+
+        def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
+            if any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
+                # support multiple states within this map by inserting a nested SDFG
+                return self._generate_MapScope_with_nested_SDFG(node, sdfg)
+
+            self._generate_MapScope(node, sdfg)
 
         def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
             # AFAIK we don't support consume scopes in the gt4py/dace bridge.
