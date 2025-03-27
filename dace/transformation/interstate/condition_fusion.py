@@ -73,13 +73,12 @@ class ConditionFusion(xf.MultiStateTransformation):
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         if self.expr_index == 0:
-            self.fuse_consecutive_conditions(self.cblck1, self.cblck2)
+            self.fuse_consecutive_conditions(sdfg, self.cblck1, self.cblck2)
         elif self.expr_index == 1:
-            self.fuse_nested_conditions(self.cblck1)
-        sdutil.set_nested_sdfg_parent_references(sdfg)
+            self.fuse_nested_conditions(sdfg, self.cblck1)
 
     def fuse_consecutive_conditions(
-        self, cblck1: ConditionalBlock, cblck2: ConditionalBlock
+        self, sdfg: sd.SDFG, cblck1: ConditionalBlock, cblck2: ConditionalBlock
     ):
         # Check if cblck1 has a single sink node for each branch
         assert all([len(cfg.sink_nodes()) == 1 for _, cfg in cblck1.branches])
@@ -199,7 +198,10 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-    def fuse_nested_conditions(self, cblck1: ConditionalBlock):
+        # Fix SDFG parents
+        sdutil.set_nested_sdfg_parent_references(sdfg)
+
+    def fuse_nested_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock):
         nbranch = cblck1.parent_graph
 
         # Check if cblck1 has no predecessors and no successors
@@ -265,3 +267,6 @@ class ConditionFusion(xf.MultiStateTransformation):
             cfg.label = f"{cblckp.label}_{i}"
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
+        
+        # Fix SDFG parents
+        sdutil.set_nested_sdfg_parent_references(sdfg)
