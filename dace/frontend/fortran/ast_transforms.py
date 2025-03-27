@@ -2081,12 +2081,13 @@ class IfConditionExtractor(NodeTransformer):
                     op="==",
                     rval=ast_internal_classes.Int_Literal_Node(value="1"),
                     line_number=child.line_number, parent=old_cond.parent)
+                self.count += 1
                 newifbody = self.visit(child.body)
                 newelsebody = self.visit(child.body_else)
 
                 newif = ast_internal_classes.If_Stmt_Node(cond=newcond, body=newifbody, body_else=newelsebody,
                                                           line_number=child.line_number, parent=child.parent)
-                self.count += 1
+                
 
                 newbody.append(newif)
 
@@ -2126,9 +2127,12 @@ class WhileConditionExtractor(NodeTransformer):
                     op="==",
                     rval=ast_internal_classes.Int_Literal_Node(value="1"),
                     line_number=child.line_number, parent=old_cond.parent)
+                
+                old_count=self.count
+                self.count += 1
                 newwhilebody = self.visit(child.body)
                 newwhilebody.execution.append(ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(self.count)),
+                    lval=ast_internal_classes.Name_Node(name="_while_cond_" + str(old_count)),
                     op="=",
                     rval=copy.deepcopy(old_cond),
                     line_number=child.line_number,
@@ -2136,7 +2140,7 @@ class WhileConditionExtractor(NodeTransformer):
 
                 newwhile = ast_internal_classes.While_Stmt_Node(cond=newcond, body=newwhilebody,
                                                                 line_number=child.line_number, parent=child.parent)
-                self.count += 1
+                
 
                 newbody.append(newwhile)
 
