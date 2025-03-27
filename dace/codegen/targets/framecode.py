@@ -283,11 +283,11 @@ DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__s
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_init_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n',
+                    f'DACE_EXPORTED int __dace_init_{target.target_name}{sdfg.function_suffix if target.target_name == "cuda" else ""}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n',
                     sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_exit_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state);\n',
+                    f'DACE_EXPORTED int __dace_exit_{target.target_name}{sdfg.function_suffix if target.target_name == "cuda" else ""}({mangle_dace_state_struct_name(sdfg)} *__state);\n',
                     sdfg)
 
         callsite_stream.write(
@@ -301,8 +301,12 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
-                callsite_stream.write(
-                    '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
+                if target.target_name == 'cuda':
+                    callsite_stream.write(
+                        '__result |= __dace_init_%s%s(__state%s);' % (target.target_name, sdfg.function_suffix, initparamnames_comma), sdfg)
+                else:
+                    callsite_stream.write(
+                        '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
@@ -350,7 +354,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             if target.has_finalizer:
                 callsite_stream.write(
                     f'''
-    int __err_{target.target_name} = __dace_exit_{target.target_name}(__state);
+    int __err_{target.target_name} = __dace_exit_{target.target_name}{sdfg.function_suffix if target.target_name == "cuda" else ""}(__state);
     if (__err_{target.target_name}) {{
         __err = __err_{target.target_name};
     }}
@@ -829,7 +833,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     self.to_allocate[curscope].append(
                         (sdfg, first_state_instance, first_node_instance, False, True, False))
                     curscope = last_state_instance
-                    
+
                     # if different_cfgs and isinstance(last_state_instance, ControlFlowRegion):
                     #     last_state_instance = last_state_instance.nodes()[-1]
                     #     self.to_allocate[sdfg].append(
