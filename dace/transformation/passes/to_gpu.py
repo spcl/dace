@@ -746,7 +746,15 @@ class ToGPU(ppl.Pass):
                         if isinstance(inner_node, dace.nodes.NestedSDFG):
                             move_to_gpu(inner_node, sdfg, state)
 
+        for n in sdfg.start_state.nodes():
+            if sdfg.start_state.in_degree(n) == 0 and sdfg.start_state.out_degree(n) == 0:
+                sdfg.start_state.remove_node(n)
 
+        end_node = [n for n in sdfg.nodes() if sdfg.out_degree(n) == 0][0]
+        assert isinstance(end_node, dace.SDFGState)
+        for n in end_node.nodes():
+            if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
+                end_node.remove_node(n)
 
         sdfg.validate()
 
