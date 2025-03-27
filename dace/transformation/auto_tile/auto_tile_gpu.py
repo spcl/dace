@@ -50,18 +50,20 @@ def _tile_gpu(
     loglines,
     timeout,
     random_iter,
-    static_sram_limit = 48 * 1024
+    static_sram_limit = 48 * 1024,
+    bound_dims = [-1, -1, -1]
 ):
 
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
         _kernel_sdfg = copy_sub_scope(state, entry)
-        IndirectAccessFromNestedSDFGToMap().apply_pass(sdfg=_kernel_sdfg, _={})
+        #IndirectAccessFromNestedSDFGToMap().apply_pass(sdfg=_kernel_sdfg, _={})
 
         for arr_name, arr in sdfg.arrays.items():
             if arr_name not in inputs:
-                assert(arr.transient)
+                assert arr.transient, f"{arr_name} not in {inputs.keys()} and not transient"
                 if isinstance(arr, dace.data.Array):
+                    raise Exception(f"Pass all inputs {arr_name}: {inputs.keys()}")
                     shape = arr.shape
                     newshape = []
                     strides = []
@@ -206,6 +208,10 @@ def _tile_gpu(
                 continue
         if verbose:
             print("Current config:", current_config)
+
+        for i, (tc, tb) in enumerate(zip(thread_coarsening_param, thread_block_param)):
+            if i < len(bound_dims) and bound_dims[i] != -1 and tc * tb > bound_dims[i]:
+                print(f"Skipping {current_config} as it exceeds bound dims")
 
         if work_on_copy:
             kernel_sdfg = copy.deepcopy(_kernel_sdfg)
@@ -816,6 +822,7 @@ def auto_tile_gpu(
     timeout=None,
     random_iter: bool=True,
     static_sram_limit: int = 48*1024,
+    bound_dims: List[int] = None,
 ):
     sdfg_name = sdfg.name
     sym_dict = sdfg.symbols
@@ -884,6 +891,7 @@ def auto_tile_gpu(
                 timeout=timeout,
                 random_iter=random_iter,
                 static_sram_limit=static_sram_limit,
+                bound_dims=bound_dims,
             )
             found_tilings[(state.guid, kernel_entry.guid)] = best_config
         else:
@@ -899,6 +907,7 @@ def auto_tile_gpu(
                 logfile=f,
                 loglines=logged_lines,
                 static_sram_limit=static_sram_limit,
+                bound_dims=bound_dims
             )
             found_tilings[(state.guid, kernel_entry.guid)] = tuple(list(best_config) + [(True, False), True])
 
@@ -942,6 +951,7 @@ def auto_tile_gpu(
                 timeout=None,
                 random_iter=False,
                 static_sram_limit=static_sram_limit,
+                bound_dims=bound_dims
             )
         else:
             raise Exception("TODO")
