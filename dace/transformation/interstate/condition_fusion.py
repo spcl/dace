@@ -76,6 +76,7 @@ class ConditionFusion(xf.MultiStateTransformation):
             self.fuse_consecutive_conditions(self.cblck1, self.cblck2)
         elif self.expr_index == 1:
             self.fuse_nested_conditions(self.cblck1)
+        sdutil.set_nested_sdfg_parent_references(sdfg)
 
     def fuse_consecutive_conditions(
         self, cblck1: ConditionalBlock, cblck2: ConditionalBlock
@@ -153,11 +154,6 @@ class ConditionFusion(xf.MultiStateTransformation):
             for cnd, cfg in list(cblck1.branches):
                 cnd2 = copy.deepcopy(cnd)
                 cfg2 = copy.deepcopy(cfg)
-                cfg2.sdfg = cfg.sdfg
-                cfg2.parent_graph = cfg.parent_graph
-                for n in cfg2.all_control_flow_blocks():
-                    n.sdfg = cfg2.sdfg
-                    n.parent_graph = cfg2
                 cblck1.add_branch(cnd2, cfg2)
 
         # Add the conditons of cblck2 to cblck1 and copy the cfgs
@@ -202,17 +198,6 @@ class ConditionFusion(xf.MultiStateTransformation):
             cfg.label = f"{cblck1.label}_{i}"
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
-
-        # Fix sdfg parents
-        for _, cfg in cblck1.branches:
-            for st in cfg.all_states():
-                for node in st.nodes():
-                    if isinstance(node, sd.nodes.NestedSDFG):
-                        node.sdfg.parent_sdfg = cblck1.sdfg
-                st.sdfg = cblck1.sdfg
-            cfg.sdfg = cblck1.sdfg
-            cfg.reset_cfg_list()
-
 
     def fuse_nested_conditions(self, cblck1: ConditionalBlock):
         nbranch = cblck1.parent_graph
@@ -270,12 +255,9 @@ class ConditionFusion(xf.MultiStateTransformation):
             cnd2 = copy.deepcopy(cnd1)
             cnd2.as_string = f"({cond.as_string}) and ({cnd2.as_string})"
             cfg2 = copy.deepcopy(cfg1)
-            cfg2.sdfg = cblckp.sdfg
-            cfg2.parent_graph = cblckp
             cblckp.add_branch(cnd2, cfg2)
 
         # Remove original branch from cblckp
-        nbranch.remove_node(cblck1)
         cblckp.remove_branch(nbranch)
 
         # Give each branch a unique label and nested nodes unique names
@@ -283,13 +265,3 @@ class ConditionFusion(xf.MultiStateTransformation):
             cfg.label = f"{cblckp.label}_{i}"
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
-
-        # Fix sdfg parents
-        for _, cfg in cblckp.branches:
-            for st in cfg.all_states():
-                for node in st.nodes():
-                    if isinstance(node, sd.nodes.NestedSDFG):
-                        node.sdfg.parent_sdfg = cblckp.sdfg
-                st.sdfg = cblckp.sdfg
-            cfg.sdfg = cblckp.sdfg
-            cfg.reset_cfg_list()

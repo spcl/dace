@@ -2832,6 +2832,10 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             self.start_block = len(self.nodes()) - 1
             self._cached_start_block = node
 
+    def remove_node(self, node):
+        super().remove_node(node)
+        self.reset_cfg_list()
+
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
         state = SDFGState(label)
@@ -3479,11 +3483,11 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
         self._branches.append([condition, branch])
-        branch.parent_graph = self
-        branch.sdfg = self.sdfg
+        self.add_node(branch)
 
     def remove_branch(self, branch: ControlFlowRegion):
         self._branches = [(c, b) for c, b in self._branches if b is not branch]
+        self.remove_node(branch)
 
     def get_meta_codeblocks(self):
         codes = []

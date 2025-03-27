@@ -2216,3 +2216,15 @@ def add_cfg_dominator_states(sdfg: SDFG):
             sdfg.add_state_before(node, 'idom_' + node.label)
             if sdfg.out_degree(node) == 0:
                 sdfg.add_state_after(node, 'ipostdom_' + node.label)
+
+
+def set_nested_sdfg_parent_references(sdfg: SDFG):
+    """
+    Sets the parent_sdfg attribute for all NestedSDFGs recursively.
+    """
+    sdfg.reset_cfg_list()
+    for state in sdfg.all_states():
+      for node in state.nodes():
+        if isinstance(node, NestedSDFG):
+          node.sdfg.parent_sdfg = sdfg
+          set_nested_sdfg_parent_references(node.sdfg)
