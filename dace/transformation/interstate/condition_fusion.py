@@ -143,7 +143,7 @@ class ConditionFusion(xf.MultiStateTransformation):
 
             for i, (cnd, cfg) in enumerate(cblck.branches):
                 if cnd is None:
-                    cblck.branches[i][0] = CodeBlock(cond_string)
+                    cblck.branches[i] = (CodeBlock(cond_string), cfg)
 
         # Clone each branch of cblck1
         orig_blck1_branches = len(cblck1.branches)
@@ -189,6 +189,9 @@ class ConditionFusion(xf.MultiStateTransformation):
         for e in outer_cfg.out_edges(cblck2):
             outer_cfg.add_edge(cblck1, e.dst, copy.deepcopy(e.data))
         outer_cfg.remove_node(cblck2)
+
+        # Make the last branch of cblck1 an else branch
+        cblck1.branches[-1] = (None, cblck1.branches[-1][1])
 
         # Give each branch a unique label and nested nodes unique names
         for i, (cnd, cfg) in enumerate(cblck1.branches):
@@ -240,7 +243,7 @@ class ConditionFusion(xf.MultiStateTransformation):
 
             for i, (cnd, cfg) in enumerate(cblck.branches):
                 if cnd is None:
-                    cblck.branches[i][0] = CodeBlock(cond_string)
+                    cblck.branches[i] = (CodeBlock(cond_string), cfg)
 
         # Find condition of cblck1 in cblckp
         cond = None
@@ -259,6 +262,9 @@ class ConditionFusion(xf.MultiStateTransformation):
 
         # Remove original branch from cblckp
         cblckp.remove_branch(nbranch)
+
+        # Make the last branch of cblckp an else branch
+        cblckp.branches[-1] = (None, cblckp.branches[-1][1])
 
         # Give each branch a unique label and nested nodes unique names
         for i, (cnd, cfg) in enumerate(cblckp.branches):
