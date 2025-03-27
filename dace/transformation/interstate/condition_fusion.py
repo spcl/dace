@@ -1,8 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-"""Condition normalization transformation"""
 
 import copy
-
 from dace import sdfg as sd, properties
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
@@ -267,6 +265,6 @@ class ConditionFusion(xf.MultiStateTransformation):
             cfg.label = f"{cblckp.label}_{i}"
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
-        
+
         # Fix SDFG parents
         sdutil.set_nested_sdfg_parent_references(sdfg)
