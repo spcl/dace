@@ -453,6 +453,7 @@ class SDFG(ControlFlowRegion):
         the `Memlet` class documentation.
     """
 
+    function_suffix = Property(dtype=str, default="")
     name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
     constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(

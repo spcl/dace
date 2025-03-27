@@ -208,7 +208,7 @@ class CUDACodeGen(TargetCodeGenerator):
             if (isinstance(node, nodes.MapEntry)
                     and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
                 if state.parent not in shared_transients:
-                    shared_transients[state.parent] = state.parent.shared_transients()   
+                    shared_transients[state.parent] = state.parent.shared_transients()
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
@@ -342,18 +342,22 @@ class CUDACodeGen(TargetCodeGenerator):
     cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);            
 '''
 
+        function_suffix = ""
+        if hasattr(self._global_sdfg, "function_suffix"):
+            function_suffix = self._global_sdfg.function_suffix
+
         self._codeobject.code = """
 #include <{backend_header}>
 #include <dace/dace.h>
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_init_cuda{function_suffix}({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_cuda{function_suffix}({sdfg_state_name} *__state);
 
 {other_globalcode}
 
-int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
+DACE_EXPORTED int __dace_init_cuda{function_suffix}({sdfg_state_name} *__state{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -392,7 +396,7 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_cuda({sdfg_state_name} *__state) {{
+DACE_EXPORTED int __dace_exit_cuda{function_suffix}({sdfg_state_name} *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
@@ -412,7 +416,7 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
+DACE_EXPORTED bool __dace_gpu_set_stream{function_suffix}({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
 {{
     if (streamid < 0 || streamid >= {nstreams})
         return false;
@@ -422,7 +426,7 @@ DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streami
     return true;
 }}
 
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
+DACE_EXPORTED void __dace_gpu_set_all_streams{function_suffix}({sdfg_state_name} *__state, gpuStream_t stream)
 {{
     for (int i = 0; i < {nstreams}; ++i)
         __state->gpu_context->streams[i] = stream;
@@ -430,6 +434,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
 
 {localcode}
 """.format(params=params_comma,
+           function_suffix=function_suffix,
            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
            initcode=initcode.getvalue(),
            exitcode=exitcode.getvalue(),
@@ -1297,7 +1302,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         pass
                         # The stream index is loop iterator dependant
                         # There is no need to sync these streams since the sync will be added to the end of the loop
-                        # TODO: This should be generalized 
+                        # TODO: This should be generalized
                         # likely by creating a new map schedule to specify if synchronization is needed
                     else:
                         callsite_stream.write(
