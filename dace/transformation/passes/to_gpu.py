@@ -631,6 +631,23 @@ class ToGPU(ppl.Pass):
                     # if src_loc is BOTH
                     assert False, f"{src_loc} -> {dst_loc} not supported"
 
+        for s in sdfg.all_states():
+            for e in s.edges():
+                if isinstance(e.src, dace.nodes.MapEntry):
+                    if e.src.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                        if e.data.data == "__CG_p_prog__m_vn":
+                            e.data.data = "gpu___CG_p_prog__m_vn"
+
+        for n in sdfg.start_state.nodes():
+            if sdfg.start_state.in_degree(n) == 0 and sdfg.start_state.out_degree(n) == 0:
+                sdfg.start_state.remove_node(n)
+
+        end_node = [n for n in sdfg.nodes() if sdfg.out_degree(n) == 0][0]
+        assert isinstance(end_node, dace.SDFGState)
+        for n in end_node.nodes():
+            if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
+                end_node.remove_node(n)
+
         sdfg.validate()
 
         # 6. Decrease number of copy-in and copy-outs
@@ -728,6 +745,8 @@ class ToGPU(ppl.Pass):
                     ):
                         if isinstance(inner_node, dace.nodes.NestedSDFG):
                             move_to_gpu(inner_node, sdfg, state)
+
+
 
         sdfg.validate()
 
