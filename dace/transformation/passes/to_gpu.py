@@ -150,30 +150,17 @@ class ToGPU(ppl.Pass):
                     )
                     _graph.remove_data(arr_name, False)
                     _graph.add_datadesc(arr_name, scalar)
-            if isinstance(arr, dace.data.Scalar):
-                if arr_name == "maxvcfl":
-                    scalar = dace.data.Array(
-                        dtype=arr.dtype,
-                        shape=(1,),
-                        transient=arr.transient,
-                        storage=dace.dtypes.StorageType.Register,
-                        allow_conflicts=arr.allow_conflicts,
-                        location=arr.location,
-                        lifetime=arr.lifetime,
-                        debuginfo=arr.debuginfo,
-                    )
-                    _graph.remove_data(arr_name, False)
-                    _graph.add_datadesc(arr_name, scalar)
 
         # Fix it for maxvcfl use
         # Ensure no kernel writes to a scalar in output
-        for node, _graph in sdfg.all_nodes_recursive():
-            if isinstance(node, dace.nodes.MapExit):
-                oes = _graph.out_edges(node)
-                for oe in oes:
-                    if isinstance(oe.dst, dace.nodes.AccessNode):
-                        if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                            raise Exception(f"GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
+        for s in sdfg.all_states():
+            for node in s.nodes():
+                if isinstance(node, dace.nodes.MapExit):
+                    oes = s.out_edges(node)
+                    for oe in oes:
+                        if isinstance(oe.dst, dace.nodes.AccessNode):
+                            if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
+                                raise Exception(f"GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
 
         replace_names = dict()
         descs = set()
