@@ -132,16 +132,31 @@ class ToGPU(ppl.Pass):
         # 5.5 If the data is read from a constant array, do not copy it but replace the access
         # 6. Update the copies on the last and first state to the flattener / deflattener library nodes according to the initial
         # and final locations
-
         # 1. and 2. partially done in the flattening pass
         # Add GPU clones for all arays, copy all non-transients to GPU if already not on GPU
-        for _graph, arr_name, arr in sdfg.arrays_recursive():
+
+        # Ups dictionary changed in iteration
+        for _graph, arr_name, arr in list(sdfg.arrays_recursive()):
             if isinstance(arr, dace.data.Array):
                 if arr.shape == (1,) or arr.shape == [1,]:
                     scalar = dace.data.Scalar(
                         dtype=arr.dtype,
                         transient=arr.transient,
-                        storage=dace.dtyoes.StorageType.Register,
+                        storage=dace.dtypes.StorageType.Register,
+                        allow_conflicts=arr.allow_conflicts,
+                        location=arr.location,
+                        lifetime=arr.lifetime,
+                        debuginfo=arr.debuginfo,
+                    )
+                    _graph.remove_data(arr_name, False)
+                    _graph.add_datadesc(arr_name, scalar)
+            if isinstance(arr, dace.data.Scalar):
+                if arr_name == "maxvcfl":
+                    scalar = dace.data.Array(
+                        dtype=arr.dtype,
+                        shape=(1,),
+                        transient=arr.transient,
+                        storage=dace.dtypes.StorageType.Register,
                         allow_conflicts=arr.allow_conflicts,
                         location=arr.location,
                         lifetime=arr.lifetime,
@@ -150,6 +165,7 @@ class ToGPU(ppl.Pass):
                     _graph.remove_data(arr_name, False)
                     _graph.add_datadesc(arr_name, scalar)
 
+        # Fix it for maxvcfl use
         # Ensure no kernel writes to a scalar in output
         for node, _graph in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.MapExit):
@@ -157,7 +173,7 @@ class ToGPU(ppl.Pass):
                 for oe in oes:
                     if isinstance(oe.dst, dace.nodes.AccessNode):
                         if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                            raise Exception("GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)!")
+                            raise Exception(f"GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
 
         replace_names = dict()
         descs = set()
