@@ -33,6 +33,10 @@ class ConditionNesting(xf.MultiStateTransformation):
         return True
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # Skip ConditinalBlocks
+        if isinstance(self.cfb, ConditionalBlock):
+            return False
+
         # Case 1: Nest successor
         if expr_index == 0:
             if len(graph.successors(self.cblck)) != 1:

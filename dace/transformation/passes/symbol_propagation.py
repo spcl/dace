@@ -45,7 +45,7 @@ class SymbolPropagation(ppl.Pass):
         in_syms = {cfgb: {} for cfgb in all_cfgb.keys()}
         out_syms = {cfgb: {} for cfgb in all_cfgb.keys()}
 
-        # Perform a fixed-point iteration to propagate symbols
+        # Perform a forward fixed-point iteration to propagate symbols
         changed = True
         while changed:
             changed = False
