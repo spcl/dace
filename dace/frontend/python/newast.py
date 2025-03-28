@@ -2601,14 +2601,16 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(node, ast.With):
             expr = node.items[0].context_expr
             if isinstance(expr, ast.Call):
-                args = astutils.parse_function_arguments(expr, ['language', 'side_effects'])
+                args = astutils.parse_function_arguments(expr, ['language', 'side_effects', 'name'])
                 langArg = args.get('language', None)
                 side_effects = args.get('side_effects', None)
+                name = args.get('name', name)
                 langInf = astutils.evalnode(langArg, {**self.globals, **self.defined})
                 if isinstance(langInf, str):
                     langInf = dtypes.Language[langInf]
 
                 side_effects = astutils.evalnode(side_effects, {**self.globals, **self.defined})
+                name = astutils.evalnode(name, {**self.globals, **self.defined})
 
         ttrans = TaskletTransformer(self,
                                     self.defined,

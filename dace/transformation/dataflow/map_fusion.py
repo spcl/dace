@@ -700,7 +700,8 @@ class MapFusion(transformation.SingleStateTransformation):
                 )
 
             else:
-                assert (pre_exit_edge.data.subset.num_elements() > 1) or all(x == 1 for x in new_inter_shape)
+                n_elems = pre_exit_edge.data.subset.num_elements()
+                assert (n_elems != 1 and n_elems != 0) or all(x == 1 for x in new_inter_shape)
                 is_scalar = False
                 new_inter_name, new_inter_desc = sdfg.add_transient(
                     new_inter_name,
