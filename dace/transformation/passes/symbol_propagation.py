@@ -155,6 +155,7 @@ class SymbolPropagation(ppl.Pass):
             return new_out_syms
 
         elif isinstance(cfgb, ConditionalBlock):
+            # XXX: What if there is no else branch?
             # Combine all outgoing symbols of the branches
             new_out_syms = copy.deepcopy(out_syms[cfgb.sub_regions()[0]])
             for b in cfgb.sub_regions():
