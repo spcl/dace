@@ -358,7 +358,7 @@ while {loop_param} <= {s_i}+{s_j}+ {BSP_stride}/{tK}:
 
     BSP_compute_code_block = CodeBlock(
         code=f"""
-if (({loop_param} > {s_i}+{s_j}) and ({loop_param} <= {s_i}+{s_j} + {K}/{tK})):
+if (({loop_param} > {s_i}+{s_j}) and ({loop_param} <= {s_i}+{s_j} + {BSP_stride}/{tK})):
     pass
 """,
         language=dace.dtypes.Language.Python
@@ -366,7 +366,7 @@ if (({loop_param} > {s_i}+{s_j}) and ({loop_param} <= {s_i}+{s_j} + {K}/{tK})):
 
     BSP_communication_code_block = CodeBlock(
         code=f"""
-if (({loop_param} >= {s_i}+{s_j}) and ({loop_param} < {s_i}+{s_j} + {K}/{tK})):
+if (({loop_param} >= {s_i}+{s_j}) and ({loop_param} < {s_i}+{s_j} + {BSP_stride}/{tK})):
     if {s_i} == 0 and {o_i} == 0:
         local_B[({loop_param+1})%2][:][:] = B[{tK}*{loop_param}-{tK}*({s_i}+{s_j}):{tK}*({loop_param+1})-{tK}*({s_i}+{s_j})][:]
         s_local_B[{gi}:{gi}+{sr_m*kg_m}:{kg_m}][{gj}][({loop_param+1})%2][:][:] = local_B[({loop_param+1})%2][:][:]
@@ -401,7 +401,6 @@ if (({i} == 0) && ({j} == 0))
         flex_dma_async_wait_all();
     }}
     flex_intra_cluster_sync();
-    flex_global_barrier_xy();
 }}                         
         ''',
         language=dace.dtypes.Language.CPP
@@ -410,16 +409,15 @@ if (({i} == 0) && ({j} == 0))
 
     post_shift_code_block = CodeBlock(
         code=f'''
-if (({i} >= {M} - {gM}*{tM}) && ({j} >= {N} - {gN}*{tN}))
+if (({i} >= {M} - {gM//kg_m}*{tM}) && ({j} >= {N} - {gN//kg_n}*{tN}))
 {{
-    for (int sync_iter = 0; sync_iter < {gM//sr_m+gN//sr_n} - 1 - ({s_i}+{s_j}) - 1; sync_iter++){{
+    for (int sync_iter = 0; sync_iter < {gM//(sr_m * kg_m)+gN//(sr_n * kg_n)} - 1 - ({s_i}+{s_j}) - 1; sync_iter++){{
         flex_global_barrier_xy();
     }}
     if (flex_is_dm_core()) {{
         flex_dma_async_wait_all();
     }}
     flex_intra_cluster_sync();
-    flex_global_barrier_xy();
 }}                         
         ''',
         language=dace.dtypes.Language.CPP

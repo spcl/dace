@@ -64,7 +64,7 @@ class InterleaveHandler:
         split_y = self.split_scheme[1]
         # print(split_x, split_y)
         (dim_x_dace, dim_y_dace) = self.cluster_dims_dace
-        if split_x % dim_x_dace != 0 or split_y % dim_y_dace != 0:
+        if split_x % dim_x != 0 or split_y % dim_y != 0:
             print(split_x, split_y, dim_x_dace, dim_y_dace)
             raise ValueError("Split scheme must be multiples of cluster dimensions")
         place_base = [
@@ -83,10 +83,10 @@ class InterleaveHandler:
                 else:
                     real_place_base[i][j] = place_base[i % 4][j % 4]
         for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
-            pi_dace = i % dim_x_dace
-            pj_dace = j % dim_y_dace
+            pi_dace = i % dim_x
+            pj_dace = j % dim_y
 
-            p_real = pi_dace * dim_y_dace + pj_dace
+            p_real = pi_dace * dim_y + pj_dace
             pi_real = p_real // dim_y
             pj_real = p_real % dim_y
 

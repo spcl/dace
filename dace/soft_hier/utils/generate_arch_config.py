@@ -171,7 +171,7 @@ def _check_combo(combo, tcdm_usage_func=None):
         tcdm_usage_func = lambda m, n, k: 2 * (2 * m * k + 2 * k * n + m * n)
     
     tcdm_usage = tcdm_usage_func(hwM, hwN, hwK)
-    if tcdm_usage > tcdm_size:
+    if tcdm_usage >= tcdm_size:
         return False
     # if tcdm_usage < (tcdm_size // 2):
     #     if (hwM * dim_x >= M_val // 2) and (hwN * dim_y >= N_val // 2):
@@ -182,7 +182,8 @@ def _check_combo(combo, tcdm_usage_func=None):
 
 
 def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, 
-                    elem_size=1,
+                    input_elem_size,
+                    output_elem_size,
                     tcdm_usage_func=None, 
                     OI_func_type=1, 
                     min_tiling_size=64, 
@@ -217,17 +218,23 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size,
     for (dim_x, dim_y) in zip(dim_x_list, dim_y_list):
         # Default TCDM usage calculation if none provided
         if tcdm_usage_func is None:
-            tcdm_usage_func = lambda m, n, k: elem_size * (2 * m * k + 2 * k * n + m * n)
+            tcdm_usage_func = lambda m, n, k: (2 * m * k * input_elem_size + 
+                                               2 * k * n * input_elem_size + 
+                                               m * n * output_elem_size)
         
-        if OI_func_type is 0:
-            OI_func = lambda m, n, k: 2 * m * n * k / (elem_size * (m * n + m * k + n * k))
-        elif OI_func_type is 1:
-            OI_func = lambda m, n, k: 2 * dim_x * dim_y * m * n * k / (elem_size * 
-                                                                (dim_x * dim_y * m * n + 
-                                                                dim_x * m * k + 
-                                                                dim_y * n * k))
+        if OI_func_type == 0:
+            OI_func = lambda m, n, k: 2 * m * n * k / ((m * n * output_elem_size + 
+                                                        m * k * input_elem_size + 
+                                                        n * k * input_elem_size))
+        elif OI_func_type == 1:
+            OI_func = lambda m, n, k: 2 * dim_x * dim_y * m * n * k / (
+                                                                (dim_x * dim_y * m * n * output_elem_size + 
+                                                                dim_x * m * k * input_elem_size + 
+                                                                dim_y * n * k * input_elem_size ))
 
-        max_OI_func = lambda m, n, k: 2 * m * n * k / (elem_size * (m * n + m * k + n * k))
+        max_OI_func = lambda m, n, k: 2 * m * n * k / ((m * n * output_elem_size + 
+                                                        m * k * input_elem_size + 
+                                                        n * k * input_elem_size))
         # Unpack thread group dimensions
         
         combos = []
