@@ -50,6 +50,7 @@ def _tile_cpu(
     loglines,
     timeout=300,
     random_iter=True,
+    bound_dims=[-1, -1, -1]
 ):
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
@@ -175,6 +176,10 @@ def _tile_cpu(
             thread_block_param,
             apply_remainder_loop_param,
         ) = current_config
+
+        for i, (tc, tb) in enumerate(zip(thread_coarsening_param, thread_block_param)):
+            if i < len(bound_dims) and bound_dims[i] != -1 and tc * tb > bound_dims[i]:
+                print(f"Skipping {current_config} as it exceeds bound dims")
 
         curi += 1
         if timeout is not None and curi > timeout:
@@ -464,6 +469,7 @@ def auto_tile_cpu(
     num_cores: int = 32,
     timeout=300,
     random_iter=True,
+    bound_dims = [-1, -1, -1],
 ):
     device_schedule: dace.dtypes.ScheduleType = dace.dtypes.ScheduleType.Default
     sdfg_name = sdfg.name
@@ -529,7 +535,8 @@ def auto_tile_cpu(
                 call_id=ii,
                 num_cores=num_cores,
                 logfile=f,
-                loglines=logged_lines
+                loglines=logged_lines,
+                bound_dims=bound_dims
             )
             found_tilings[(state.guid, kernel_entry.guid)] = tuple([(state.label, kernel_entry.label), best_config, best_time])
         else:
@@ -582,6 +589,7 @@ def auto_tile_cpu(
                 loglines=logged_lines,
                 timeout=timeout,
                 random_iter=random_iter,
+                bound_dims=bound_dims
             )
         else:
             raise Exception("TODO")
