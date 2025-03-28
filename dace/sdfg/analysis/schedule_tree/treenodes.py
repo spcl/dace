@@ -192,9 +192,27 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     callback_mapping: Dict[str, str] = field(default_factory=dict)
     arg_names: List[str] = field(default_factory=list)
 
-    def as_sdfg(self) -> SDFG:
+    def as_sdfg(self, validate: bool = True, simplify: bool = True) -> SDFG:
+        """
+        Convert this schedule tree representation (back) into an SDFG.
+
+        :param validate: If true, validate generated SDFG.
+        :param simplify: If true, simplify generated SDFG. The conversion might insert things like extra
+                         empty states that can be cleaned up automatically. The value of `validate` is
+                         passed on to `simplify()`.
+
+        :return: SDFG version of this schedule tree.
+        """
         from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s  # Avoid import loop
-        return t2s.from_schedule_tree(self)
+        sdfg = t2s.from_schedule_tree(self)
+
+        if validate:
+            sdfg.validate()
+
+        if simplify:
+            sdfg.simplify(validate=validate)
+
+        return sdfg
 
     def get_root(self) -> 'ScheduleTreeRoot':
         return self
