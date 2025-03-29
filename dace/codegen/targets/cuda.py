@@ -1469,6 +1469,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         visited = set()
 
         # For kernel launch round-robin we need to pass for_it symbols too, a hack for ICON GB, remove later
+        """
         if hasattr(sdfg, "parent_nsdfg_node") and sdfg.parent_nsdfg_node is not None:
             for sym in sdfg.parent_nsdfg_node.symbol_mapping.keys():
                 dtype = sdfg.symbols[sym]
@@ -1486,6 +1487,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         extra_call_args_typed.append(outer_name)
                         extra_kernel_args.append(f'(void *)&{inner_name}')
                         extra_kernel_args_typed.append(outer_name)
+        """
         for node, parent in dfg_scope.all_nodes_recursive():
             if isinstance(node, nodes.AccessNode):
                 nsdfg: SDFG = parent.parent
