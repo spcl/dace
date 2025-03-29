@@ -354,10 +354,10 @@ class BSPTransformer(transformation.SingleStateTransformation):
                                 inputs=None, 
                                 outputs=None, 
                                 code=f'''
-                                if (flex_is_dm_core()) {{
-                                    flex_dma_async_wait_all();
-                                }}
-                                flex_intra_cluster_sync();
+                                // if (flex_is_dm_core()) {{
+                                //     flex_dma_async_wait_all();
+                                // }}
+                                // flex_intra_cluster_sync();
                                 flex_global_barrier_xy();
                                 ''',
                                 language=dtypes.Language.CPP)

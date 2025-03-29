@@ -57,9 +57,9 @@ class SplitKReduction(transformation.SingleStateTransformation):
         desc_hbm = sdfg.arrays[global_hbm.data]
         is_interleaved = desc_hbm.is_hbm_interleaved
 
-        NPE = self.npe_x
         npe_x = self.npe_x
         npe_y = self.npe_y
+        NPE = self.npe_x * self.npe_y
         tM = self.tM
         tN = self.tN
         tK = self.tK
@@ -92,14 +92,16 @@ class SplitKReduction(transformation.SingleStateTransformation):
         length_1 = (end + 1) - beg
         src_strides = acc_desc.strides[-2:]
         dst_strides = desc_hbm.strides[-2:]
-    
+
+        from math import sqrt
+
         edge_to_replace.data.wcr = None
         graph.remove_edge(edge_to_replace)
         reduction_tasklet_str = ""
-        reduction_tasklet_str += f"if ({kg_off} == 0 && flex_is_dm_core()) {{\n"
+        reduction_tasklet_str += f"if ({kg_off} == {((gi+gj*npe_x)//(int(sqrt(NPE))))%kg_num} && flex_is_dm_core()) {{\n"
         reduction_tasklet_str += (
             f"    bare_dma_start_1d_reduction(local(_in_accumulator), "
-            f"dace_remote_xy(gi+{kg_m-1},gj+{kg_n-1},_in_accumulator,{npe_x}), "
+            f"dace_remote_xy(gi+{kg_m-1-kg_oi},gj+{kg_n-1-kg_oj},_in_accumulator,{npe_x}), "
             f"{accumulator_size}, COLLECTIVE_REDADD_FP_16);\n"
         )
         
@@ -161,7 +163,7 @@ class SplitKReduction(transformation.SingleStateTransformation):
         )
 
         store_cfg_cond = CodeBlock(
-            code=f"{kg_off} == 0",
+            code=f"{kg_off} == {((gi+gj*npe_x)//(int(sqrt(NPE))))%kg_num}",
             language=dtypes.Language.Python
         )
 
@@ -195,80 +197,3 @@ class SplitKReduction(transformation.SingleStateTransformation):
             edge_to_replace.dst, edge_to_replace.dst_conn,
             copy.deepcopy(edge_to_replace.data)
         )
-          
-    def _emit_hbm_interleaved_code(self, nodedesc, src_name, s, block_height, block_width, data_size, is_load):
-        """
-        Generates code for HBM interleaved memory access.
-
-        Parameters:
-            nodedesc: Descriptor of the HBM array (contains shape and split scheme).
-            src_name: Name of the source array.
-            s: Subset ranges (list of tuples), where s[0][0] is row start and s[1][0] is column start.
-            block_height: Height of the block (number of elements in dimension 0).
-            block_width: Width of the block (number of elements in dimension 1).
-            data_size: Size of each data element in bytes.
-            is_load: Boolean flag, True if loading from HBM, False if storing to HBM.
-            
-        Returns:
-            A string containing the generated code.
-        """
-        lines = []
-        hbm_width = nodedesc.shape[1]
-        hbm_height = nodedesc.shape[0]
-        row_start = sym2cpp(s[0][0])
-        col_start = sym2cpp(s[1][0])
-        height_split = nodedesc.hbm_split_scheme[0]
-        width_split = nodedesc.hbm_split_scheme[1]
-        lines.append(f"    const uint32_t tile_width = {src_name}_tile_width;")
-        lines.append(f"    const uint32_t tile_height = {src_name}_tile_height;")
-        lines.append(f"    const uint32_t row_start_offset = (({src_name} - {src_name}_base) / {data_size}) / {src_name}_width;")
-        lines.append(f"    const uint32_t col_start_offset = (({src_name} - {src_name}_base) / {data_size}) % {src_name}_width;")
-        lines.append(f"    const uint32_t col_start_temp = {col_start} + col_start_offset;")
-        lines.append(f"    const uint32_t col_start = col_start_temp % {src_name}_width;")
-        lines.append(f"    const uint32_t row_start = {row_start} + row_start_offset + col_start_temp / {src_name}_width;")
-        lines.append(f"    const uint32_t tile_row_index = row_start / tile_height;")
-        lines.append(f"    const uint32_t tile_col_index = col_start / tile_width;")
-        lines.append(f"    const uint32_t tile_row_offset = row_start % tile_height;")
-        lines.append(f"    const uint32_t tile_col_offset = col_start % tile_width;")
-        lines.append(f"    const uint32_t tile_index = tile_row_index * {width_split} + tile_col_index;")
-        lines.append(f"    const uint32_t channel_id = {src_name}_placement_info[tile_index].channel_id;")
-        lines.append(f"    const uint32_t num_blocks_per_tile = (tile_height / {block_height}) * (tile_width / {block_width});")
-        lines.append(f"    const uint32_t num_blocks_in_previous_tiles_in_channel = {src_name}_placement_info[tile_index].tile_offset * num_blocks_per_tile;")
-        lines.append(f"    const uint32_t block_row_index = tile_row_offset / {block_height};")
-        lines.append(f"    const uint32_t block_col_index = tile_col_offset / {block_width};")
-        lines.append(f"    const uint32_t block_index = block_row_index * (tile_width / {block_width}) + block_col_index;")
-        lines.append(f"    const uint32_t total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
-        lines.append(f"    const uint64_t block_addr = {src_name}_base + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
-        funcname = "flex_dma_async_1d"
-        if is_load:
-            # For load operation: HBM -> local
-            lines.append(f"    {funcname}(local(_in_accumulator), hbm_addr(block_addr), {block_height}*{block_width}*{data_size});")
-        else:
-            # For store operation: local -> HBM
-            lines.append(f"    {funcname}(hbm_addr(block_addr), local(_in_accumulator), {block_height}*{block_width}*{data_size});")
-        return "\n".join(lines)
-            # if is_interleaved:
-        #     # Use the adapted _emit_hbm_interleaved_code for interleaved HBM
-        #     reduction_tasklet_str += "    bare_dma_wait_all(); \n"
-        #     interleaved_code = self._emit_hbm_interleaved_code(
-        #         desc_hbm,            # nodedesc
-        #         global_hbm.data,     # src_name
-        #         subset.ranges,       # s: list of ranges (s[0][0] and s[1][0] used for row and col start)
-        #         length_0,            # block_height
-        #         length_1,            # block_width
-        #         data_size,           # data_size
-        #         is_load=False        # store from local -> HBM in reduction
-        #     )
-        #     reduction_tasklet_str += interleaved_code + "\n"
-        # else:
-        #     reduction_tasklet_str += "    bare_dma_wait_all(); \n"
-        #     funcname = "flex_dma_sync_2d"
-        #     reduction_tasklet_str += (
-        #         f"    {funcname}("
-        #         f"hbm_addr(_out_C), "
-        #         f"local(_in_accumulator), "
-        #         f"{length_1}*{data_size}, "
-        #         f"{dst_strides[0]}*{data_size}, "
-        #         f"{src_strides[0]}*{data_size}, "
-        #         f"{length_0});\n"
-        #     )

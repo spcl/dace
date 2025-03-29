@@ -1926,6 +1926,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             {kname}({kargs});
             flex_global_barrier_xy();
             flex_timer_end();
+            flex_intra_cluster_sync();
+            flex_global_barrier_xy();
             flex_eoc(eoc_val);
             return;'''
             .format(kname=kernel_name,
@@ -2249,8 +2251,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # generator)
         kernel_stream.write('{', cfg, state_id, node)
         kernel_stream.write("// TEST KERNEL SCOPE\n", cfg, state_id, node)
-        kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
-        kernel_stream.write(f"uint32_t cluster_id = flex_get_cluster_id();\n", cfg, state_id, node)
+        # kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
+        kernel_stream.write(f"const uint32_t cluster_id = flex_get_cluster_id();\n", cfg, state_id, node)
         # kernel_stream.write(f"uint32_t core_id = flex_get_core_id();\n", cfg, state_id, node)
         
         # for i in range(len(kernel_map.range)):
@@ -2385,7 +2387,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     varname = scope_map.params[-i - 1]
                     block_expr = 'cluster_id'
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                    callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
+                    callsite_stream.write('const int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
                 for i in range(min(len(brange), 3)):
                     varname = scope_map.params[-i - 1]

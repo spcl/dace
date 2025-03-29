@@ -397,10 +397,6 @@ if (({i} == 0) && ({j} == 0))
     for (int sync_iter = 0; sync_iter < {s_i}+{s_j}; sync_iter++){{
         flex_global_barrier_xy();
     }}
-    if (flex_is_dm_core()) {{
-        flex_dma_async_wait_all();
-    }}
-    flex_intra_cluster_sync();
 }}                         
         ''',
         language=dace.dtypes.Language.CPP
@@ -414,10 +410,6 @@ if (({i} >= {M} - {gM//kg_m}*{tM}) && ({j} >= {N} - {gN//kg_n}*{tN}))
     for (int sync_iter = 0; sync_iter < {gM//(sr_m * kg_m)+gN//(sr_n * kg_n)} - 1 - ({s_i}+{s_j}) - 1; sync_iter++){{
         flex_global_barrier_xy();
     }}
-    if (flex_is_dm_core()) {{
-        flex_dma_async_wait_all();
-    }}
-    flex_intra_cluster_sync();
 }}                         
         ''',
         language=dace.dtypes.Language.CPP

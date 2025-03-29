@@ -16,11 +16,20 @@ class InterleaveHandler:
         num_clusters = dim_x * dim_y
         self.cluster_dims = (int(sqrt(num_clusters)), int(sqrt(num_clusters)))
         
+    def get_tile_num(self):
+        if self.split_scheme is None:
+            raise ValueError("Split scheme is not set")
+        num_tiles = self.split_scheme[0] * self.split_scheme[1]
+        return num_tiles
+
     def print_info(self):
         print("Array shape: ", self.array.shape)
         print("Block shape: ", self.block_shape)
         print("Cluster dimensions: ", self.cluster_dims)
+        print("Cluster dimensions (DACE): ", self.cluster_dims_dace)
         print("Split scheme: ", self.split_scheme)
+        if self.split_scheme is not None:
+            print("Tiling shape: ", (self.array.shape[0] // self.split_scheme[0], self.array.shape[1] // self.split_scheme[1]))
         print("Placement scheme: ", self.placement_scheme)
         
     def split_horizental(self):
@@ -143,11 +152,94 @@ class InterleaveHandler:
             else:
                 channel_id = 2 * dim_y + dim_x + pi_real % dim_x
             self.placement_scheme += (channel_id,)
-# [1, 1, 1, 0][1, 1, 1, 0],
-# [0, 0, 0, 0][0, 0, 0, 0],
-# [1, 1, 1, 1][1, 1, 1, 1],
-# [1, 0, 0, 0][1, 0, 0, 0]
-# [1, 1, 1, 0][1, 1, 1, 0],
-# [0, 0, 0, 0][0, 0, 0, 0],
-# [1, 1, 1, 1][1, 1, 1, 1],
-# [1, 0, 0, 0][1, 0, 0, 0]
+
+    def rhs_split_K_place_to_left_and_bottom(self, k_group_dims:tuple):
+        if self.split_scheme is None:
+            raise ValueError("Split scheme is not set")
+        split_x = self.split_scheme[0]
+        split_y = self.split_scheme[1]
+        dim_x = self.cluster_dims[0]
+        dim_y = self.cluster_dims[1]
+        dim_x_dace = self.cluster_dims_dace[0]
+        dim_y_dace = self.cluster_dims_dace[1]
+        if len(k_group_dims) != 2:
+            raise ValueError("K group dimensions must be a tuple of 2 elements")
+        (k_dim_x, k_dim_y) = k_group_dims
+        # self.print_info()
+        place_base = [
+            [0, 1, 1, 0],
+            [1, 0, 0, 1],
+            [1, 0, 0, 1],
+            [0, 1, 1, 0]
+        ]
+
+        # From the dim_x and dim_y, get the real place base
+        real_place_base = [[0 for _ in range(dim_y)] for _ in range(dim_x)]
+        for i in range(dim_x):
+            for j in range(dim_y):
+                if (i+j) % 2 == 0:
+                    real_place_base[i][j] = place_base[i % 4][j % 4]
+                else:
+                    real_place_base[i][j] = place_base[i % 4][j % 4]
+
+        self.placement_scheme = ()
+        for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
+            k_group_index = j 
+            k_group_offset = i
+            kg_i = k_group_index % (dim_x_dace// k_dim_x)
+            kg_j = k_group_index // (dim_x_dace// k_dim_x)
+            kg_oi = k_group_offset % k_dim_x
+            kg_oj = k_group_offset // k_dim_x
+            pi_dace = kg_oi + kg_i * k_dim_x
+            pj_dace = kg_oj + kg_j * k_dim_y
+            pi_index = pi_dace * dim_x_dace + pj_dace
+            pi_real = pi_index % dim_x
+            pj_real = pi_index // dim_x
+            place = real_place_base[pi_real][pj_real]
+            if place == 1:
+                channel_id = pj_real % dim_y
+            else:
+                channel_id = 2 * dim_y + dim_x + pi_real % dim_x
+            # print(f"i: {i}, j: {j}, k_group_index: {k_group_index}, k_group_offset: {k_group_offset}, kg_i: {kg_i}, kg_j: {kg_j}, kg_oi: {kg_oi}, kg_oj: {kg_oj}, pi_dace: {pi_dace}, pj_dace: {pj_dace}, pi_index: {pi_index}, pi_real: {pi_real}, pj_real: {pj_real}, place: {place}")
+            self.placement_scheme += (channel_id,)
+        
+    def result_split_K_place_to_left_and_bottom(self, k_group_dims:tuple):
+        print(f"k_group_dims: {k_group_dims}")
+        (kg_m, kg_n) = k_group_dims
+        kg_num = kg_m * kg_n
+        
+        split_x = self.split_scheme[0]
+        split_y = self.split_scheme[1]
+        dim_x = self.cluster_dims[0]
+        dim_y = self.cluster_dims[1]
+        dim_x_dace = self.cluster_dims_dace[0]
+        dim_y_dace = self.cluster_dims_dace[1]
+        index_diff_list = []
+        self.placement_scheme = ()
+        for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
+            kg_i = i % (dim_x_dace//kg_m)
+            kg_j = j % (dim_y_dace//kg_n)
+            gi = kg_i * kg_m
+            gj = kg_j * kg_n
+            cid_store = ((gi+gj*dim_x_dace)//dim_x)%kg_num
+            kg_oi = cid_store % kg_m
+            kg_oj = cid_store // kg_m
+            pi_dace = kg_oi + kg_i * kg_m
+            pj_dace = kg_oj + kg_j * kg_n
+            pi_index = pi_dace * dim_x_dace + pj_dace
+            pi_real = pi_index % dim_x
+            pj_real = pi_index // dim_x
+
+            index_diff = (pi_real - pj_real + dim_y) % dim_y
+            if index_diff not in index_diff_list:
+                index_diff_list.append(index_diff)
+            
+            if index_diff >= dim_x//2:
+                channel_id = pj_real % dim_y
+            else:
+                channel_id = 2 * dim_y + dim_x + pi_real % dim_x
+            self.placement_scheme += (channel_id,)
+
+            # print(f"kg_i: {kg_i}, kg_j: {kg_j}, gi: {gi}, gj: {gj}, cid_store: {cid_store}, kg_oi: {kg_oi}, kg_oj: {kg_oj}, pi_dace: {pi_dace}, pj_dace: {pj_dace}, pi_index: {pi_index}, pi_real: {pi_real}, pj_real: {pj_real}, index_diff: {index_diff}")    
+        # self.print_info()
+        # raise NotImplementedError("Not implemented yet")
