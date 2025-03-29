@@ -14,7 +14,7 @@ from dace.sdfg.state import GlobalDepDataRecord, LoopRegion
 from dace.subsets import Range, SubsetUnion, intersects
 
 
-def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+def get_loop_end(loop: LoopRegion, inclusive: bool = False) -> Optional[symbolic.SymbolicType]:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
     """
@@ -26,19 +26,31 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
     match = condition.match(itersym < a)
     if match:
-        end = match[a] - 1
+        if inclusive:
+            end = match[a]
+        else:
+            end = match[a] - 1
     if end is None:
         match = condition.match(itersym <= a)
         if match:
-            end = match[a]
+            if inclusive:
+                end = match[a] + 1
+            else:
+                end = match[a]
     if end is None:
         match = condition.match(itersym > a)
         if match:
-            end = match[a] + 1
+            if inclusive:
+                end = match[a]
+            else:
+                end = match[a] + 1
     if end is None:
         match = condition.match(itersym >= a)
         if match:
-            end = match[a]
+            if inclusive:
+                end = match[a] - 1
+            else:
+                end = match[a]
     return end
 
 
