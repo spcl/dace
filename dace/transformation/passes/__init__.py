@@ -1,5 +1,6 @@
 from .analysis import StateReachability, AccessSets, FindAccessStates
 from .array_elimination import ArrayElimination
+from .array_ssa import StrictArraySSA
 from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
 from .dead_dataflow_elimination import DeadDataflowElimination
@@ -15,5 +16,6 @@ from .symbol_propagation import SymbolPropagation
 from .kernel_launch_restructuring import GPUKernelLaunchRestructure
 from .transient_reuse import TransientReuse
 from .struct_to_container_group import StructToContainerGroups
+from .to_gpu import ToGPU
 
 from .util import available_passes
