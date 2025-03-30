@@ -71,15 +71,19 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                 # Pattern detected!
                 # First, Change the schedule of the outer map to sequential
                 node.map.schedule = schedules.Sequential
+                assert len(node.params) == 1
 
-                # And change the schedule of the innermost maps to GPU
-                #for map, map_state in seq_map_list:
-                #    map.map.schedule = schedules.GPU_Device
-                #    # Get the index of the sequential map
-                #    # This will be used to launch kernels in different streams
-                #    assert len(node.params) == 1
-                #
+                # And change the schedule of the inner maps to GPU (but go only 1 level)
+                for _map, map_state in seq_map_list:
+                    if (map_state.entry_node(_map) is None or
+                        (isinstance(map_state.entry_node(_map), nodes.MapEntry) and
+                         map_state.entry_node(_map).map.schedule != schedules.GPU_Device)):
+                        _map.map.schedule = schedules.GPU_Device
+                    # Get the index of the sequential map
+                    # This will be used to launch kernels in different streams
+
                 #    # We add modulo to make sure that the stream index is always smaller than the number of streams
+                # Default to 0 to manual changes for now
                 #    map._cuda_stream = 0 #f"{node.params[0]} % {nb_streams}"
                 #    map._cs_childpath = False
 
