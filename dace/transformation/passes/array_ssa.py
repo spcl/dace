@@ -13,9 +13,10 @@ from dace import SDFG, properties, SDFGState
 from typing import Dict, Set, Optional
 from dace import data as dt
 from dace.sdfg.nodes import AccessNode
-from dace.sdfg import InterstateEdge
-from dace.memlet import Memlet
 from dace.subsets import Range
+from dace.sdfg import utils as sdutils
+import re
+from functools import lru_cache
 
 
 @dataclass(unsafe_hash=True)
@@ -23,7 +24,7 @@ from dace.subsets import Range
 @transformation.explicit_cf_compatible
 class StrictArraySSA(ppl.Pass):
     """
-    Performs SSA on arrays in a strict manner, i.e. only considers full writes to arrays.
+    Performs SSA on arrays in a strict manner, i.e. only considers full writes to arrays and does not introduce phi nodes.
     Patterns such as:
     write A -> read A -> write A -> read A
     are split up to:
@@ -53,23 +54,14 @@ class StrictArraySSA(ppl.Pass):
         in_table = {cfgb: {} for cfgb in all_cfgb.keys()}
         out_table = {cfgb: {} for cfgb in all_cfgb.keys()}
 
-        # Also maintain a table of required phi nodes
-        phi_table = {cfgb: set() for cfgb in all_cfgb.keys()}
-
-        # Global counter for the new names
-        self._counter = 0
-        self._cnt_to_name = {}
-
-        # Perform a backwards fixed-point iteration to build tables
+        # Perform a forward fixed-point iteration to build tables
         changed = True
         while changed:
             changed = False
 
             # Update incoming table
             for cfgb, parent in all_cfgb.items():
-                new_in_table = self._get_in_table(
-                    cfgb, parent, in_table, out_table, phi_table
-                )
+                new_in_table = self._get_in_table(cfgb, parent, in_table, out_table)
 
                 # Check if the incoming table have changed
                 if new_in_table != in_table[cfgb]:
@@ -87,27 +79,25 @@ class StrictArraySSA(ppl.Pass):
                     changed = True
                     out_table[cfgb] = new_out_table
 
-        # Create a mapping from the counter to the new name
-        cnt_to_new_name = {}
-        for c, n in self._cnt_to_name.items():
-            cnt_to_new_name[c] = self._copy_array(sdfg, n, str(c))
-
         # Create replacement mappings
         in_array_names = {cfgb: {} for cfgb in all_cfgb.keys()}
         out_array_names = {cfgb: {} for cfgb in all_cfgb.keys()}
+        id_to_new_name = {}
+
         for cfgb, parent in all_cfgb.items():
             for orig, cnt in in_table[cfgb].items():
-                in_array_names[cfgb][orig] = cnt_to_new_name[cnt]
+                assert cnt is not None
+                self._copy_array(sdfg, orig, cnt, id_to_new_name)
+                in_array_names[cfgb][orig] = id_to_new_name[orig][cnt]
 
             for orig, cnt in out_table[cfgb].items():
-                if cnt is not None:
-                    out_array_names[cfgb][orig] = cnt_to_new_name[cnt]
+                assert cnt is not None
+                self._copy_array(sdfg, orig, cnt, id_to_new_name)
+                out_array_names[cfgb][orig] = id_to_new_name[orig][cnt]
 
         # Perform replacement of the arrays
         for cfgb, parent in all_cfgb.items():
-            self._replace(
-                sdfg, cfgb, parent, in_array_names, out_array_names, phi_table
-            )
+            self._replace(sdfg, cfgb, parent, in_array_names, out_array_names)
         return set()
 
     # Given a CFGB, builds the incoming table
@@ -117,7 +107,6 @@ class StrictArraySSA(ppl.Pass):
         parent: ControlFlowRegion,
         in_table: Dict[ControlFlowBlock, Dict[str, int]],
         out_table: Dict[ControlFlowBlock, Dict[str, int]],
-        phi_table: Dict[ControlFlowBlock, Set[str]],
     ) -> Dict[str, int]:
         new_in_table = {}
 
@@ -135,33 +124,11 @@ class StrictArraySSA(ppl.Pass):
             isinstance(parent, ConditionalBlock) and cfgb in parent.sub_regions()
         ):
             assert new_in_table == {}
-            new_in_table = in_table[parent]
+            new_in_table = copy.deepcopy(in_table[parent])
 
-            # For LoopRegions, combine with sink nodes
-            if isinstance(parent, LoopRegion):
-                for n in parent.sink_nodes():
-                    assert isinstance(n, ControlFlowBlock)
-                    new_in_table = self._combine_entries(new_in_table, out_table[n])
-
-        # If we have disagreeing entries, we need to add a phi node
+        # If we have disagreeing entries, we would need to add a phi node
         for orig, cnt in new_in_table.items():
-            if cnt is not None:
-                continue
-
-            # Already added a phi node?
-            if orig in phi_table[cfgb]:
-                new_in_table[orig] = in_table[cfgb][orig]
-                continue
-
-            # Add a phi node
-            phi_table[cfgb].add(orig)
-            new_in_table[orig] = self._counter
-            self._cnt_to_name[self._counter] = orig
-            self._counter += 1
-
-        # There should be no None entries in the table
-        for orig, cnt in new_in_table.items():
-            assert cnt is not None, f"Entry {orig} in {cfgb} is None"
+            assert cnt is not None
         return new_in_table
 
     # Given a CFGB, builds the outgoing table
@@ -195,13 +162,27 @@ class StrictArraySSA(ppl.Pass):
             return new_out_table
 
         elif isinstance(cfgb, SDFGState):
+            # If we are in a loop or conditional block, only rename if not already renamed
+            in_loop_or_cond = False
+            parent_cpy = parent
+            while parent_cpy is not None and not isinstance(parent_cpy, SDFG):
+                if isinstance(parent_cpy, LoopRegion) or isinstance(
+                    parent_cpy, ConditionalBlock
+                ):
+                    in_loop_or_cond = True
+                    break
+                parent_cpy = parent_cpy.parent_graph
+
             # Any array that is completely written can be renamed
             new_out_table = copy.deepcopy(in_table[cfgb])
-            for arr in self._get_overwritten_arrays(sdfg, cfgb):
+            for arr in StrictArraySSA._get_overwritten_arrays(sdfg, cfgb):
+                if in_loop_or_cond and arr in in_table[cfgb]:
+                    continue
+
                 if arr not in out_table[cfgb]:  # not already renamed
-                    new_out_table[arr] = self._counter
-                    self._cnt_to_name[self._counter] = arr
-                    self._counter += 1
+                    in_count = 0 if arr not in in_table[cfgb] else in_table[cfgb][arr]
+                    new_out_table[arr] = in_count + 1
+
                 else:
                     new_out_table[arr] = out_table[cfgb][arr]
             return new_out_table
@@ -236,16 +217,13 @@ class StrictArraySSA(ppl.Pass):
         return out
 
     # Checks if an access node is completely written
-    def _overwritten(self, sdfg: SDFG, state: SDFGState, node: AccessNode) -> bool:
-        # Only consider end-of-chain writes (simplifies replacement)
-        if state.out_degree(node) != 0:
-            return False
-
-        # Only consider scalars
-        if not isinstance(sdfg.arrays[node.data], dt.Scalar):
-            return False
-
-        if not node.data == "maxvcfl":
+    @staticmethod  # To make it cacheable
+    @lru_cache(maxsize=None)
+    def _is_overwritten(sdfg: SDFG, state: SDFGState, node: AccessNode) -> bool:
+        # NOTE: Only consider scalars and views to avoid increasing the memory footprint too much
+        if not isinstance(sdfg.arrays[node.data], dt.Scalar) and not isinstance(
+            sdfg.arrays[node.data], dt.View
+        ):
             return False
 
         # Turn array into a range
@@ -253,20 +231,18 @@ class StrictArraySSA(ppl.Pass):
 
         # Check coverage
         for edge in state.in_edges(node):
-            if edge.data.dst_subset.covers_precise(node_range):
+            if (
+                edge.data
+                and edge.data.dst_subset
+                and edge.data.dst_subset.covers_precise(node_range)
+            ):
                 return True
         return False
 
     # Given a state, returns all arrays that are completely written
-    def _get_overwritten_arrays(self, sdfg: SDFG, state: SDFGState) -> Set[str]:
-        # Cache
-        if not hasattr(self, "_goa_cache"):
-            self._goa_cache = {}
-        if state in self._goa_cache:
-            return self._goa_cache[state]
-        self._goa_cache[state] = set()
-
-        # Compute result
+    @staticmethod  # To make it cacheable
+    @lru_cache(maxsize=None)
+    def _get_overwritten_arrays(sdfg: SDFG, state: SDFGState) -> Set[str]:
         overwritten = set()
         for node in state.data_nodes():
             assert isinstance(node, AccessNode)
@@ -274,11 +250,8 @@ class StrictArraySSA(ppl.Pass):
             if sdfg.arrays[node.data].transient != True:
                 continue
 
-            if self._overwritten(sdfg, state, node):
+            if StrictArraySSA._is_overwritten(sdfg, state, node):
                 overwritten.add(node.data)
-
-        # Cache the result
-        self._goa_cache[state] = overwritten
         return overwritten
 
     # Given a CFGB, replaces the arrays with the new names
@@ -289,7 +262,6 @@ class StrictArraySSA(ppl.Pass):
         parent: ControlFlowRegion,
         in_array_names: Dict[ControlFlowBlock, Dict[str, str]],
         out_array_names: Dict[ControlFlowBlock, Dict[str, str]],
-        phi_table: Dict[ControlFlowBlock, Set[str]],
     ) -> None:
         # Replace depending on type
         if isinstance(cfgb, LoopRegion):
@@ -303,10 +275,26 @@ class StrictArraySSA(ppl.Pass):
             for node in cfgb.data_nodes():
                 assert isinstance(node, AccessNode)
                 if (
-                    self._overwritten(sdfg, cfgb, node)
+                    StrictArraySSA._is_overwritten(sdfg, cfgb, node)
                     and node.data in out_array_names[cfgb]
                 ):
-                    node.data = out_array_names[cfgb][node.data]
+                    old_data = node.data
+                    new_data = out_array_names[cfgb][node.data]
+                    repl_pattern = r"\b" + re.escape(old_data) + r"\b"
+
+                    for dfs_node in sdutils.dfs_topological_sort(cfgb, node):
+                        if isinstance(dfs_node, AccessNode):
+                            dfs_node.data = re.sub(
+                                repl_pattern, new_data, dfs_node.data
+                            )
+
+                        for i_edge in cfgb.in_edges(dfs_node) + cfgb.out_edges(
+                            dfs_node
+                        ):
+                            i_edge.data.replace({old_data: new_data})
+                            i_edge.data.data = re.sub(
+                                repl_pattern, new_data, i_edge.data.data
+                            )
 
             # Replace any other access nodes with the in_table
             cfgb.replace_dict(in_array_names[cfgb])
@@ -318,91 +306,23 @@ class StrictArraySSA(ppl.Pass):
         for edge in parent.out_edges(cfgb):
             edge.data.replace_dict(out_array_names[cfgb], replace_keys=False)
 
-        # Insert any necessary phi nodes
-        for orig in phi_table[cfgb]:
-            # For each predecessor, add a state in between
-            for pred in parent.predecessors(cfgb):
-                if isinstance(pred, ConditionalBlock):
-                    # We need to add a phi node for each branch
-                    for b in pred.sub_regions():
-                        self._add_phi_node(
-                            cfgb,
-                            b,
-                            orig,
-                            in_array_names,
-                            out_array_names,
-                        )
-
-                else:
-                    self._add_phi_node(
-                        cfgb,
-                        pred,
-                        orig,
-                        in_array_names,
-                        out_array_names,
-                    )
-
-    # Creates a copy of an array with a new name
-    def _copy_array(self, sdfg: SDFG, array_name: str, cnt: str) -> str:
-        array = sdfg.arrays[array_name]
-        if isinstance(array, dt.Scalar):
-            new_name, _ = sdfg.add_scalar(
-                f"{array_name}_SSA{cnt}",
-                dtype=array.dtype,
-                storage=array.storage,
-                transient=array.transient,
-                lifetime=array.lifetime,
-                debuginfo=array.debuginfo,
-                find_new_name=True,
-            )
-        else:
-            new_name, _ = sdfg.add_array(
-                f"{array_name}_SSA{cnt}",
-                shape=array.shape,
-                dtype=array.dtype,
-                storage=array.storage,
-                location=array.location,
-                transient=array.transient,
-                strides=array.strides,
-                offset=array.offset,
-                lifetime=array.lifetime,
-                debuginfo=array.debuginfo,
-                allow_conflicts=array.allow_conflicts,
-                total_size=array.total_size,
-                find_new_name=True,
-                alignment=array.alignment,
-                may_alias=array.may_alias,
-            )
-        return new_name
-
-    # Given two CFGBs, adds a phi node between them
-    def _add_phi_node(
+    # Creates a copy of an array with a new name if not already present
+    def _copy_array(
         self,
-        cfgb: ControlFlowBlock,
-        pred: ControlFlowBlock,
-        orig: str,
-        in_array_names: Dict[ControlFlowBlock, Dict[str, str]],
-        out_array_names: Dict[ControlFlowBlock, Dict[str, str]],
-    ):
-        outer_cfg = cfgb.parent_graph
-        assert len(outer_cfg.edges_between(pred, cfgb)) == 1
+        sdfg: SDFG,
+        array_name: str,
+        cnt: str,
+        id_to_new_name: Dict[str, Dict[str, str]],
+    ) -> None:
+        # Check if the array is already present
+        if array_name in id_to_new_name:
+            if cnt in id_to_new_name[array_name]:
+                return
+        else:
+            id_to_new_name[array_name] = {}
 
-        # Add inbetween state
-        old_edge = outer_cfg.edges_between(pred, cfgb)[0]
-        between_state = outer_cfg.add_state("PHI State")
-        outer_cfg.add_edge(pred, between_state, copy.deepcopy(old_edge.data))
-        outer_cfg.add_edge(between_state, cfgb, InterstateEdge())
-        outer_cfg.remove_edge(old_edge)
-
-        # Add new state to the tables
-        in_array_names[between_state] = copy.deepcopy(out_array_names[pred])
-        out_array_names[between_state] = copy.deepcopy(in_array_names[cfgb])
-
-        # Find the names of the arrays
-        in_name = in_array_names[between_state][orig]
-        out_name = out_array_names[between_state][orig]
-
-        # Add copy nodes
-        in_node = between_state.add_read(in_name)
-        out_node = between_state.add_write(out_name)
-        between_state.add_edge(in_node, out_node, Memlet(out_name))
+        array_desc = copy.deepcopy(sdfg.arrays[array_name])
+        new_name = sdfg.add_datadesc(
+            f"{array_name}_SSA{cnt}", array_desc, find_new_name=True
+        )
+        id_to_new_name[array_name][cnt] = new_name
