@@ -188,7 +188,7 @@ class ToGPU(ppl.Pass):
                         arr.storage == dace.dtypes.StorageType.GPU_Global
                         and not name.startswith("gpu_")
                     ):
-                        replace_names(name, "gpu_" + name)
+                        replace_names[name] = "gpu_" + name
                     if (
                         arr.storage == dace.dtypes.StorageType.Default
                         or arr.storage == dace.dtypes.StorageType.CPU_Heap
@@ -264,6 +264,7 @@ class ToGPU(ppl.Pass):
                     elif isinstance(node, dace.nodes.EntryNode):
                         node.schedule = dace.dtypes.ScheduleType.GPU_Device
                         gpu_nodes.add((state, node))
+                        # Move memlets to GPU
                 else:
                     if isinstance(node, (dace.nodes.EntryNode, dace.nodes.LibraryNode)):
                         node.schedule = dace.dtypes.ScheduleType.Sequential
@@ -277,7 +278,10 @@ class ToGPU(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.AccessNode):
-                    is_gpu = is_devicelevel_gpu(sdfg, state, node)
+                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
+                            state.label == "_state_l412_c412"):
+                            print("XXXXX", arr, node.data)
+                    is_gpu = False #is_devicelevel_gpu(sdfg, state, node)
                     for e in state.in_edges(node):
                         if isinstance(e.src, dace.nodes.MapExit):
                             if (
@@ -292,103 +296,59 @@ class ToGPU(ppl.Pass):
                                 == dace.dtypes.ScheduleType.GPU_Device
                             ):
                                 is_gpu = True
+                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
+                            state.label == "_state_l412_c412"):
+                        print(is_gpu)
                     oldname = node.data
 
-                    if node.data.startswith("gpu_") and not is_gpu:
-                        arr = sdfg.arrays[node.data]
-                        if isinstance(arr, dace.data.Array):
-                            if isinstance(e.dst, dace.nodes.MapEntry):
-                                node.data = node.data[4:]
 
-                                for _e in state.all_edges(
-                                    *state.all_nodes_between(
-                                        node, state.exit_node(e.dst)
-                                    )
-                                ):
-                                    if _e.data.data == oldname:
-                                        _e.data.data = oldname[4:]
-                                e.data.data = oldname[4:]
-                            if isinstance(e.src, dace.nodes.MapExit):
-                                node.data = node.data[4:]
+                    def _replace_memlets(start_node, state, oldname, newname):
+                        stack = set([e for e in state.out_edges(start_node)])
+                        while stack:
+                            nextedge = stack.pop()
+                            nextnode = nextedge.dst
+                            if not isinstance(nextnode, dace.nodes.AccessNode):
+                                for e in state.out_edges(nextnode):
+                                    stack.add(e)
+                                if nextedge.data is not None and nextedge.data.data == oldname:
+                                    nextedge.data.data = newname
+                        stack = set([e for e in state.in_edges(start_node)])
+                        while stack:
+                            nextedge = stack.pop()
+                            nextnode = nextedge.src
+                            if not isinstance(nextnode, dace.nodes.AccessNode):
+                                for e in state.in_edges(nextnode):
+                                    stack.add(e)
+                                if nextedge.data is not None and nextedge.data.data == oldname:
+                                    nextedge.data.data = newname
 
-                                entry_node = [
-                                    n
-                                    for n in state.nodes()
-                                    if isinstance(n, dace.nodes.MapEntry)
-                                    and n.map == e.src.map
-                                ][0]
-                                for _e in state.all_edges(
-                                    *state.all_nodes_between(entry_node, node)
-                                ):
-                                    if _e.data.data == oldname:
-                                        _e.data.data = oldname[4:]
-                                e.data.data = oldname[4:]
-                    if not node.data.startswith("gpu_") and is_gpu:
-                        arr = sdfg.arrays[node.data]
+                    is_copy = any([isinstance(e.src, dace.nodes.AccessNode) for e in state.in_edges(node)]) or any([isinstance(e.dst, dace.nodes.AccessNode) for e in state.out_edges(node)])
 
-                        if isinstance(arr, dace.data.Array):
-                            if isinstance(e.dst, dace.nodes.MapEntry):
-                                node.data = "gpu_" + node.data
+                    # if used in copy dont touch
+                    if is_copy:
+                        continue
 
-                                for _e in state.all_edges(
-                                    *state.all_nodes_between(
-                                        node, state.exit_node(e.dst)
-                                    )
-                                ):
-                                    if _e.data.data == oldname:
-                                        _e.data.data = "gpu_" + oldname
-                                e.data.data = "gpu_" + oldname
-                            if isinstance(e.src, dace.nodes.MapExit):
-                                node.data = "gpu_" + node.data
-
-                                entry_node = [
-                                    n
-                                    for n in state.nodes()
-                                    if isinstance(n, dace.nodes.MapEntry)
-                                    and n.map == e.src.map
-                                ][0]
-                                for _e in state.all_edges(
-                                    *state.all_nodes_between(entry_node, node)
-                                ):
-                                    if _e.data.data == oldname:
-                                        _e.data.data = "gpu_" + oldname
-                                e.data.data = "gpu_" + oldname
-
-        # Map input and outputs are on GPU but access nodes have not been changed, change
-        for state in sdfg.all_states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.AccessNode):
+                    gpu_data = node.data.startswith("gpu_")
+                    gpu_code = is_gpu
                     arr = sdfg.arrays[node.data]
                     if isinstance(arr, dace.data.Array):
-                        if (
-                            arr.storage == dace.dtypes.StorageType.GPU_Global
-                            and node.data.startswith("gpu_")
-                        ):
-                            for e in state.in_edges(node):
-                                if isinstance(e.src, dace.nodes.MapExit):
-                                    entry_node = [
-                                        n
-                                        for n in state.nodes()
-                                        if isinstance(n, dace.nodes.MapEntry)
-                                        and n.map == e.src.map
-                                    ][0]
-                                    for _e in state.all_edges(
-                                        *state.all_nodes_between(entry_node, e.src)
-                                    ):
-                                        if _e.data.data == node.data[4:]:
-                                            _e.data.data = node.data
-                                e.data.data = node.data
-
-                            for e in state.out_edges(node):
-                                if isinstance(e.dst, dace.nodes.MapEntry):
-                                    for _e in state.all_edges(
-                                        *state.all_nodes_between(
-                                            node, state.exit_node(e.dst)
-                                        )
-                                    ):
-                                        if _e.data.data == node.data[4:]:
-                                            _e.data.data = node.data
-                                e.data.data = node.data
+                        if gpu_data and gpu_code:
+                            # Ensure all memlets have been changed
+                            oldname = node.data
+                            assert node.data.startswith("gpu_")
+                            _replace_memlets(node, state, oldname[4:], node.data)
+                        elif gpu_data and not gpu_code:
+                            oldname = node.data
+                            node.data = node.data[4:]
+                            _replace_memlets(node, state, oldname, node.data)
+                        elif not gpu_data and gpu_code:
+                            oldname = node.data
+                            node.data = "gpu_" + node.data
+                            _replace_memlets(node, state, oldname, node.data)
+                        else:
+                            oldname = node.data
+                            node.data = node.data
+                            _replace_memlets(node, state, "gpu_" + oldname, node.data)
 
         arrays_and_locations = dict()
         for name, arr in sdfg.arrays.items():

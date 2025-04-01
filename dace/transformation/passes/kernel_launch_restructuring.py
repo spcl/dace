@@ -46,7 +46,7 @@ class GPUKernelLaunchRestructure(ppl.Pass):
         # Iterate over all the nodes in the SDFG and pattern match
         for state in sdfg.all_states():
             for node in state.nodes():
-                if not (isinstance(node, nodes.MapEntry)  and node.map.schedule == schedules.GPU_Device):
+                if not (isinstance(node, nodes.MapEntry) and node.map.schedule == schedules.GPU_Device):
                     continue
 
                 # Get the NestedSDFG
@@ -89,7 +89,7 @@ class GPUKernelLaunchRestructure(ppl.Pass):
 
                 # Second, get the set of arrays that will be used in the (to be) GPU maps
                 # These will stay on GPU
-                willbe_used_in_gpu_maps = ["vcflmax"]
+                willbe_used_in_gpu_maps = ["vcflmax", "z_v_grad_w", "z_kin_hor_e", "z_ekinh", "z_w_con_c_full"]
                 for map, map_state in seq_map_list:
                     for e in map_state.in_edges(map):
                         assert isinstance(e.src, nodes.AccessNode)
@@ -104,8 +104,24 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                 # Finally, Iterate over the inputs to the outermost map
                 for edge in state.in_edges(node):
                     an = edge.src
-                    assert isinstance(an, nodes.AccessNode)
                     # If this is a GPU array that is not used in any of the GPU maps
+                    # If the same access not has been changed before, then just update
+                    if (not an.data.startswith("gpu_")) and an.data in sdfg.arrays and an.data not in willbe_used_in_gpu_maps:
+                        nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
+                        if edge.data is not None:
+                            edge.data.data = an.data
+                        for oe in state.out_edges(an):
+                            if oe.data.data == "gpu_" + an.data:
+                                oe.data.data = an.data
+                        edge.data.data = an.data
+                        in_connector = edge.dst_conn
+                        out_connector = in_connector.replace("IN", "OUT")
+
+                        # Get the second edge to the nsdfg
+                        map_to_nsdfg_edge = next(state.out_edges_by_connector(node, out_connector))
+                        map_to_nsdfg_edge.data.data = an.data
+                        nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
+
                     if an.data.startswith("gpu_") and an.data[4:] in sdfg.arrays and an.data[4:] not in willbe_used_in_gpu_maps:
 
                         # Change the access node and to CPU heap
@@ -124,11 +140,27 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                         map_to_nsdfg_edge.data.data = an.data
                         nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
 
-                # Get the exist map
+                # Get the exit map
                 map_exit = state.exit_node(node)
                 for edge in state.out_edges(map_exit):
                     an = edge.dst
                     assert isinstance(an, nodes.AccessNode)
+                    if (not an.data.startswith("gpu_")) and an.data in sdfg.arrays and an.data not in willbe_used_in_gpu_maps:
+                        nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
+                        if edge.data is not None:
+                            edge.data.data = an.data
+                        # We should already have the array in the SDFG
+                        assert an.data in sdfg.arrays
+
+                        # Change the data on the edge
+                        edge.data.data = an.data
+                        out_connector = edge.src_conn
+                        in_connector = out_connector.replace("OUT", "IN")
+
+                        # Get the second edge to the nsdfg
+                        nsdfg_to_map_edge = next(state.in_edges_by_connector(map_exit, in_connector))
+                        nsdfg_to_map_edge.data.data = an.data
+                        nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
                     # If this is a GPU array that is not used in any of the GPU maps
                     if an.data.startswith("gpu_") and an.data[4:] in sdfg.arrays and an.data[4:] not in willbe_used_in_gpu_maps:
 
