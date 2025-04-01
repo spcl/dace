@@ -425,3 +425,97 @@ if (({i} >= {M} - {gM//kg_m}*{tM}) && ({j} >= {N} - {gN//kg_n}*{tN}))
             BSP_communication_code_block, 
             BSP_sync, 
             post_shift_code_block)
+
+
+def generate_systolic_summa_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K, systolic_range=(2,2)):
+    (sr_m, sr_n) = systolic_range
+    if (gM % sr_m != 0) or (gN % sr_n != 0):
+        raise ValueError("gM and gN should be divisible by systolic_range")
+
+    s_i = gi//sr_m
+    s_j = gj//sr_n
+    o_i = gi % sr_m
+    o_j = gj % sr_n
+
+    loop_param = dace.symbol("_c")
+
+    BSP_stride = K
+
+    BSP_init_code_block =  None
+
+    BSP_loop_code_block = CodeBlock(
+        code=f"""
+{loop_param} = {o_i}+{o_j}
+while {loop_param} <= {o_i}+{o_j}+ {K}/{tK}:
+    {loop_param} = {loop_param} + 1
+            """,
+        language=dace.dtypes.Language.Python
+    )
+
+    BSP_compute_code_block = CodeBlock(
+        code=f"""
+if (({loop_param} > {o_i}+{o_j}) and ({loop_param} <= {o_i}+{o_j} + {K}/{tK})):
+    pass
+""",
+        language=dace.dtypes.Language.Python
+    )
+
+    BSP_communication_code_block = CodeBlock(
+        code=f"""
+if (({loop_param} >= {o_i}+{o_j}) and ({loop_param} < {o_i}+{o_j} + {K}/{tK})):
+    if {s_i} == 0 and {o_i} == 0:
+        local_B[({loop_param+1})%2][:][:] = B[{tK}*{loop_param}-{tK}*({o_i}+{o_j}):{tK}*({loop_param+1})-{tK}*({o_i}+{o_j})][:]
+        s_local_B[{gi}:{gi}+{gM}:{sr_m}][{gj}][({loop_param+1})%2][:][:] = local_B[({loop_param+1})%2][:][:]
+    elif {s_i} > 0 and {o_i} == 0:
+        local_B [({loop_param+1})%2][:][:] = s_local_B[{gi}][{gj}][({loop_param+1})%2][:][:]
+    elif {o_i} > 0:
+        local_B[({loop_param+1})%2][:][:] = s_local_B[({gi+gM-1})%{gM}][{gj}][{loop_param}%2][:][:]
+
+    if {s_j} == 0 and {o_j} == 0:
+        local_A[({loop_param+1})%2][:][:] = A[:][{tK}*{loop_param}-{tK}*({o_i}+{o_j}):{tK}*({loop_param+1})-{tK}*({o_i}+{o_j})]
+        s_local_A[{gi}][{gj}:{gj}+{gN}:{sr_n}][({loop_param+1})%2][:][:] = local_A[({loop_param+1})%2][:][:]
+    elif {s_j} > 0 and {o_j} == 0:
+        local_A [({loop_param+1})%2][:][:] = s_local_A [{gi}][({gj}][({loop_param+1})%2][:][:]
+    elif {o_j} > 0:
+        local_A[({loop_param+1})%2][:][:] = s_local_A[{gi}][({gj+gN-1})%{gN}][{loop_param}%2][:][:]
+""",
+        language=dace.dtypes.Language.Python
+    )
+
+    BSP_sync = True
+
+    pre_shift_code_block = CodeBlock(
+        code=f'''
+if (({i} == 0) && ({j} == 0))
+{{
+    for (int sync_iter = 0; sync_iter < {o_i}+{o_j}; sync_iter++){{
+        flex_global_barrier_xy();
+    }}
+}}                         
+        ''',
+        language=dace.dtypes.Language.CPP
+    )
+
+
+    post_shift_code_block = CodeBlock(
+        code=f'''
+if (({i} >= {M} - {gM}*{tM}) && ({j} >= {N} - {gN}*{tN}))
+{{
+    for (int sync_iter = 0; sync_iter < {gM//sr_m+gN//sr_n} - 1 - ({o_i}+{o_j}) - 1; sync_iter++){{
+        flex_global_barrier_xy();
+    }}
+}}                         
+        ''',
+        language=dace.dtypes.Language.CPP
+    )
+
+
+
+    return (pre_shift_code_block, 
+            BSP_stride,
+            BSP_init_code_block, 
+            BSP_loop_code_block, 
+            BSP_compute_code_block, 
+            BSP_communication_code_block, 
+            BSP_sync, 
+            post_shift_code_block)
