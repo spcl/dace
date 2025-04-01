@@ -475,7 +475,7 @@ if (({loop_param} >= {o_i}+{o_j}) and ({loop_param} < {o_i}+{o_j} + {K}/{tK})):
         local_A[({loop_param+1})%2][:][:] = A[:][{tK}*{loop_param}-{tK}*({o_i}+{o_j}):{tK}*({loop_param+1})-{tK}*({o_i}+{o_j})]
         s_local_A[{gi}][{gj}:{gj}+{gN}:{sr_n}][({loop_param+1})%2][:][:] = local_A[({loop_param+1})%2][:][:]
     elif {s_j} > 0 and {o_j} == 0:
-        local_A [({loop_param+1})%2][:][:] = s_local_A [{gi}][({gj}][({loop_param+1})%2][:][:]
+        local_A [({loop_param+1})%2][:][:] = s_local_A [{gi}][{gj}][({loop_param+1})%2][:][:]
     elif {o_j} > 0:
         local_A[({loop_param+1})%2][:][:] = s_local_A[{gi}][({gj+gN-1})%{gN}][{loop_param}%2][:][:]
 """,
