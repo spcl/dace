@@ -276,6 +276,8 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
             src = mpath[0].src
             dst = mpath[-1].dst
             memlet = e.data
+            if memlet.data is None:
+                continue
             if isinstance(src, dace.nodes.AccessNode) and src.data in input_mapping:
                 src_data = src.data
                 src_memlet = unsqueeze_memlet(memlet, input_mapping[src.data], use_src_subset=True)
@@ -306,7 +308,7 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                 elif memlet.data == dst_data:
                     memlet.data = dst_memlet.data
 
-    for e in sdfg.edges():
+    for e in sdfg.all_interstate_edges():
         repl_dict = dict()
         syms = e.data.read_symbols()
         for memlet in e.data.get_read_memlets(sdfg.arrays):
@@ -881,7 +883,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
             for i, (cond, _) in enumerate(node.conditional.branches[1:]):
                 if cond is not None:
                     elif_node = tn.ElifScope(condition=cond, children=totree(node.branch_bodies[i][1]))
-                    elif_node = node.conditional.sdfg
+                    elif_node.sdfg = node.conditional.sdfg
                     result.append(elif_node)
                 else:
                     else_node = tn.ElseScope(children=totree(node.branch_bodies[i][1]))
@@ -908,6 +910,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
 
     # Recursive traversal of the control flow tree
     result = tn.ScheduleTreeScope(children=totree(cfg))
+    tn.validate_has_no_other_node_types(result)
     result.sdfg = sdfg
 
     # Clean up tree

@@ -452,3 +452,11 @@ class ScheduleNodeTransformer(ScheduleNodeVisitor):
                 val.parent = node
             node.children[:] = new_values
         return node
+
+
+def validate_has_no_other_node_types(stree: ScheduleTreeScope):
+    for child in stree.children:
+        if not isinstance(child, ScheduleTreeNode):
+            raise RuntimeError()
+        if isinstance(child, ScheduleTreeScope):
+            validate_has_no_other_node_types(child)

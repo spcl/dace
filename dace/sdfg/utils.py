@@ -2097,3 +2097,150 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         if all_postdom is not None:
             all_postdom.update(cfg_analysis.all_dominators(sdfg, ipostdom))
+
+
+def get_control_flow_block_dominators_f2dace(sdfg: SDFG,
+                                             idom: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+                                             all_dom: Optional[Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = None,
+                                             ipostdom: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+                                             all_postdom: Optional[Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = None):
+    """
+    Find the dominator and postdominator relationship between control flow blocks of an SDFG.
+    This transitively computes the domination relationship across control flow regions, as if the SDFG were to be
+    inlined entirely.
+
+    :param idom: A dictionary in which to store immediate dominator relationships. Not computed if None.
+    :param all_dom: A dictionary in which to store all dominator relationships. Not computed if None.
+    :param ipostdom: A dictionary in which to store immediate postdominator relationships. Not computed if None.
+    :param all_postdom: A dictionary in which to all postdominator relationships. Not computed if None.
+    """
+    # Avoid cyclic import
+    from dace.sdfg.analysis import cfg as cfg_analysis
+
+    if idom is not None or all_dom is not None:
+        added_sinks: Dict[AbstractControlFlowRegion, SDFGState] = {}
+        if idom is None:
+            idom = {}
+        for cfg in sdfg.all_control_flow_regions(parent_first=True):
+            if isinstance(cfg, ConditionalBlock):
+                continue
+            sinks = cfg.sink_nodes()
+            if len(sinks) > 1:
+                added_sinks[cfg] = cfg.add_state()
+                for s in sinks:
+                    cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
+            idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
+        # Compute the transitive relationship of immediate dominators:
+        # - For every start state in a control flow region, the immediate dominator is the immediate dominator of the
+        #   parent control flow region.
+        # - If the immediate dominator is a conditional or a loop, change the immediate dominator to be the immediate
+        #   dominator of that loop or conditional.
+        # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
+        #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
+        
+        def _get_parent_dom(n):
+            if n.parent_graph not in idom and n.parent_graph.parent_graph is not sdfg:
+                if isinstance(n.parent_graph.parent_graph, ConditionalBlock):
+                    p = n.parent_graph.parent_graph
+                    c = True
+                    return p, c
+                warnings.warn(f"Could not find immediate dominator for {n}")
+            p = n.parent_graph
+            c = p is not sdfg and n is p.start_block
+            return p, c
+        
+        for k, _ in idom.items():
+            k_parent, cond = _get_parent_dom(k)
+            if cond:
+                next_dom = idom[k_parent]
+                next_dom_parent, cond = _get_parent_dom(next_dom)
+                while cond:
+                    next_dom = idom[next_dom_parent]
+                    next_dom_parent, cond = _get_parent_dom(next_dom)
+                idom[k] = next_dom
+        changed = True
+        while changed:
+            changed = False
+            for k, v in idom.items():
+                if isinstance(v, AbstractControlFlowRegion):
+                    if isinstance(v, (LoopRegion, ConditionalBlock)):
+                        idom[k] = idom[v]
+                    else:
+                        if v in added_sinks:
+                            idom[k] = idom[added_sinks[v]]
+                        else:
+                            idom[k] = v.sink_nodes()[0]
+                    if idom[k] is not v:
+                        changed = True
+
+        for cf, v in added_sinks.items():
+            cf.remove_node(v)
+
+        if all_dom is not None:
+            all_dom.update(cfg_analysis.all_dominators(sdfg, idom))
+
+    if ipostdom is not None or all_postdom is not None:
+        added_sinks: Dict[AbstractControlFlowRegion, SDFGState] = {}
+        sinks_per_cfg: Dict[AbstractControlFlowRegion, ControlFlowBlock] = {}
+        if ipostdom is None:
+            ipostdom = {}
+
+        for cfg in sdfg.all_control_flow_regions(parent_first=True):
+            if isinstance(cfg, ConditionalBlock):
+                sinks_per_cfg[cfg] = cfg
+                continue
+            # Get immediate post-dominators
+            sink_nodes = cfg.sink_nodes()
+            if len(sink_nodes) > 1:
+                sink = cfg.add_state()
+                added_sinks[cfg] = sink
+                sinks_per_cfg[cfg] = sink
+                for snode in sink_nodes:
+                    cfg.add_edge(snode, sink, dace.InterstateEdge())
+            elif len(sink_nodes) == 0:
+                return None
+            else:
+                sink = sink_nodes[0]
+                sinks_per_cfg[cfg] = sink
+            ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
+
+        # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
+        # dominators, but inverse.
+
+        def _get_parent_postdom(n):
+            if n.parent_graph not in idom and n.parent_graph.parent_graph is not sdfg:
+                if isinstance(n.parent_graph.parent_graph, ConditionalBlock):
+                    p = n.parent_graph.parent_graph
+                    c = True
+                    return p, c
+                warnings.warn(f"Could not find immediate dominator for {n}")
+            p = n.parent_graph
+            c = p is not sdfg and n is sinks_per_cfg[p]
+            return p, c
+        
+        for k, _ in ipostdom.items():
+            k_parent, cond = _get_parent_postdom(k)
+            if cond:
+                next_pdom = ipostdom[k_parent]
+                next_pdom_parent, cond = _get_parent_postdom(next_pdom)
+                while cond:
+                    next_pdom = ipostdom[next_pdom_parent]
+                    next_pdom_parent, cond = _get_parent_postdom(next_pdom)
+                ipostdom[k] = next_pdom
+        changed = True
+        while changed:
+            changed = False
+            for k, v in ipostdom.items():
+                if isinstance(v, AbstractControlFlowRegion):
+                    if isinstance(v, (LoopRegion, ConditionalBlock)):
+                        ipostdom[k] = ipostdom[v]
+                    else:
+                        ipostdom[k] = v.start_block
+                    if ipostdom[k] is not v:
+                        changed = True
+
+        for cf, v in added_sinks.items():
+            cf.remove_node(v)
+
+        if all_postdom is not None:
+            all_postdom.update(cfg_analysis.all_dominators(sdfg, ipostdom))

@@ -140,6 +140,8 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+            if isinstance(subnode.value, ast.Name):
+                ignore.add(subnode.value)
         elif isinstance(subnode, ast.Name):
             data = astutils.rname(subnode)
             if data in arrays:

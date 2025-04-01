@@ -304,6 +304,8 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     inner_entry = possible_reads[iedge.dst_conn]
                     if isinstance(inner_entry.subset, subsets.SubsetUnion):
                         inner_subset = inner_entry.subset.to_bounding_box_subset()
+                        if inner_subset is None:
+                            inner_subset = subsets.Range.from_array(sdfg.arrays[iedge.dst_conn])
                     else:
                         inner_subset = inner_entry.subset
                     inner_memlet = Memlet()
@@ -313,7 +315,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     inner_memlet.dynamic = inner_entry.dynamic
                     iedge.data = unsqueeze_memlet(inner_memlet, iedge.data, True)
                     if isinstance(iedge.data.subset, subsets.SubsetUnion):
-                        iedge.data.subset = iedge.data.subset.to_bounding_box_subset()
+                        iedge_subset = iedge.data.subset.to_bounding_box_subset()
+                        if iedge_subset is None:
+                            iedge_subset = subsets.Range.from_array(parent_state.sdfg.arrays[iedge.data])
+                        iedge.data.subset = iedge_subset
                     # If no appropriate memlet found, use array dimension
                     for i, (rng, s) in enumerate(zip(iedge.data.subset, parent_sdfg.arrays[iedge.data.data].shape)):
                         if rng[1] + 1 == s:
@@ -332,6 +337,8 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     inner_entry = possible_writes[oedge.src_conn]
                     if isinstance(inner_entry.subset, subsets.SubsetUnion):
                         inner_subset = inner_entry.subset.to_bounding_box_subset()
+                        if inner_subset is None:
+                            inner_subset = subsets.Range.from_array(sdfg.arrays[oedge.src_conn])
                     else:
                         inner_subset = inner_entry.subset
                     inner_memlet = Memlet()
@@ -341,7 +348,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     inner_memlet.dynamic = inner_entry.dynamic
                     oedge.data = unsqueeze_memlet(inner_memlet, oedge.data, True)
                     if isinstance(oedge.data.subset, subsets.SubsetUnion):
-                        oedge.data.subset = oedge.data.subset.to_bounding_box_subset()
+                        oedge_subset = oedge.data.subset.to_bounding_box_subset()
+                        if oedge_subset is None:
+                            oedge_subset = subsets.Range.from_array(parent_state.sdfg.arrays[oedge.data])
+                        oedge.data.subset = oedge_subset
                     # If no appropriate memlet found, use array dimension
                     for i, (rng, s) in enumerate(zip(oedge.data.subset, parent_sdfg.arrays[oedge.data.data].shape)):
                         if rng[1] + 1 == s:

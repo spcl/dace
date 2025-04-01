@@ -29,6 +29,8 @@ def bounding_box_cover_exact(subset_a, subset_b) -> bool:
         p_subset_a = subset_a.to_bounding_box_subset()
     if isinstance(subset_b, SubsetUnion):
         p_subset_b = subset_b.to_bounding_box_subset()
+    if p_subset_a is None or p_subset_b is None:
+        raise TypeError()
     min_elements_a = p_subset_a.min_element()
     max_elements_a = p_subset_a.max_element()
     min_elements_b = p_subset_b.min_element()
@@ -833,7 +835,7 @@ class Range(Subset):
         for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
             if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1 or other.tile_sizes[i] != 1):
                 # TODO: This function does not consider strides or tiles
-                raise NotImplementedError('^This function does not yet consider strides or tiles')
+                raise NotImplementedError('This function does not yet consider strides or tiles')
 
             # Special case: ranges match
             if rng[0] == orng[0] and rng[1] == orng[1]:
@@ -874,8 +876,12 @@ class Range(Subset):
 
         return Range(intersected_ranges)
 
-    def intersects(self, other: 'Range'):
-        return self.intersection(other) is not None
+    def intersects(self, other: 'Range') -> Union[bool, None]:
+        try:
+            intersection = self.intersection(other)
+            return intersection is not None
+        except TypeError:
+            return None
 
     def difference(self, other: 'Range') -> Subset:
         isect = self.intersection(other)
@@ -1307,31 +1313,31 @@ class SubsetUnion(Subset):
             return None
 
     def intersection(self, other: Subset) -> 'SubsetUnion':
-        try:
-            if isinstance(other, SubsetUnion):
-                intersections = []
-                for subs in self.subset_list:
-                    for osubs in other.subset_list:
-                        isect = intersection(subs, osubs)
-                        if isect is not None:
-                            intersections.append(isect)
-                if intersections:
-                    return SubsetUnion(intersections)
-            elif isinstance(other, (Indices, Range)):
-                intersections = []
-                for subs in self.subset_list:
-                    isect = intersection(subs, other)
+        if isinstance(other, SubsetUnion):
+            intersections = []
+            for subs in self.subset_list:
+                for osubs in other.subset_list:
+                    isect = intersection(subs, osubs)
                     if isect is not None:
                         intersections.append(isect)
-                if intersections:
-                    return SubsetUnion(intersections)
-            else:
-                raise TypeError
+            if intersections:
+                return SubsetUnion(intersections)
+        elif isinstance(other, (Indices, Range)):
+            intersections = []
+            for subs in self.subset_list:
+                isect = intersection(subs, other)
+                if isect is not None:
+                    intersections.append(isect)
+            if intersections:
+                return SubsetUnion(intersections)
+        else:
+            raise TypeError
+
+    def intersects(self, other: Subset) -> Union[bool, None]:
+        try:
+            return self.intersection(other) is not None
         except TypeError:
             return None
-
-    def intersects(self, other: Subset):
-        return self.intersection(other) is not None
 
     def difference(self, other: Subset) -> 'SubsetUnion':
         try:
@@ -1565,37 +1571,31 @@ def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
         return None
 
 def intersection(subset_a: Subset, subset_b: Subset) -> Optional[Subset]:
-    try:
-        if subset_a is None or subset_b is None:
-            return None
-        if isinstance(subset_a, Indices):
-            subset_a = Range.from_indices(subset_a)
-        if isinstance(subset_b, Indices):
-            subset_b = Range.from_indices(subset_b)
-        if type(subset_a) is type(subset_b):
-            return subset_a.intersection(subset_b)
-        elif isinstance(subset_a, SubsetUnion):
-            return subset_a.intersection(subset_b)
-        elif isinstance(subset_b, SubsetUnion):
-            return subset_b.intersection(subset_a)
+    if subset_a is None or subset_b is None:
         return None
-    except TypeError:
-        return None
+    if isinstance(subset_a, Indices):
+        subset_a = Range.from_indices(subset_a)
+    if isinstance(subset_b, Indices):
+        subset_b = Range.from_indices(subset_b)
+    if type(subset_a) is type(subset_b):
+        return subset_a.intersection(subset_b)
+    elif isinstance(subset_a, SubsetUnion):
+        return subset_a.intersection(subset_b)
+    elif isinstance(subset_b, SubsetUnion):
+        return subset_b.intersection(subset_a)
+    return None
 
 def difference(subset_a: Subset, subset_b: Subset) -> Optional[Subset]:
-    try:
-        if subset_a is None or subset_b is None:
-            return None
-        if isinstance(subset_a, Indices):
-            subset_a = Range.from_indices(subset_a)
-        if isinstance(subset_b, Indices):
-            subset_b = Range.from_indices(subset_b)
-        if type(subset_a) is type(subset_b):
-            return subset_a.difference(subset_b)
-        elif isinstance(subset_a, SubsetUnion):
-            return subset_a.difference(subset_b)
-        elif isinstance(subset_b, SubsetUnion):
-            return subset_b.difference(subset_a)
+    if subset_a is None or subset_b is None:
         return None
-    except TypeError:
-        return None
+    if isinstance(subset_a, Indices):
+        subset_a = Range.from_indices(subset_a)
+    if isinstance(subset_b, Indices):
+        subset_b = Range.from_indices(subset_b)
+    if type(subset_a) is type(subset_b):
+        return subset_a.difference(subset_b)
+    elif isinstance(subset_a, SubsetUnion):
+        return subset_a.difference(subset_b)
+    elif isinstance(subset_b, SubsetUnion):
+        return subset_b.difference(subset_a)
+    return None

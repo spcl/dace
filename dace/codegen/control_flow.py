@@ -1047,8 +1047,8 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
     start = start if start is not None else cfg.start_block
 
     def make_empty_block(region):
-        return GeneralBlock(dispatch_state,
-                            parent_block,
+        return GeneralBlock(dispatch_state=dispatch_state,
+                            parent=parent_block,
                             last_block=False,
                             region=region,
                             elements=[],
