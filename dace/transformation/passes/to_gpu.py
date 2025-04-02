@@ -138,6 +138,8 @@ class ToGPU(ppl.Pass):
         # Ups dictionary changed in iteration
         for _graph, arr_name, arr in list(sdfg.arrays_recursive()):
             if isinstance(arr, dace.data.Array):
+                # Do not do this vcflmax-0
+                """
                 if arr.shape == (1,) or arr.shape == [1,]:
                     scalar = dace.data.Scalar(
                         dtype=arr.dtype,
@@ -150,17 +152,24 @@ class ToGPU(ppl.Pass):
                     )
                     _graph.remove_data(arr_name, False)
                     _graph.add_datadesc(arr_name, scalar)
+                """
+                pass
+
+        for _graph, arr_name, arr in list(sdfg.arrays_recursive()):
+            if isinstance(arr, dace.data.Scalar):
+                arr.storage = dace.dtypes.StorageType.Register
 
         # Fix it for maxvcfl use
         # Ensure no kernel writes to a scalar in output
         for s in sdfg.all_states():
             for node in s.nodes():
-                if isinstance(node, dace.nodes.MapExit):
+                if isinstance(node, dace.nodes.MapExit) or isinstance(node, dace.nodes.LibraryNode):
                     oes = s.out_edges(node)
                     for oe in oes:
                         if isinstance(oe.dst, dace.nodes.AccessNode):
                             if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                                raise Exception(f"GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
+                                print(f"WARNING: GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
+                                print(f"WARNING will make it into a length 1 array")
 
         replace_names = dict()
         descs = set()
@@ -385,6 +394,27 @@ class ToGPU(ppl.Pass):
                                     new_name = ie.src.data
                                 _replace_memlets(ie.src, s, old_name, new_name)
                         for oe in s.out_edges(s.exit_node(n)):
+                            if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
+                                if "gpu_" + oe.dst.data not in sdfg.arrays:
+                                    scalararr = dace.data.Array(
+                                        dtype=arr.dtype,
+                                        transient=arr.transient,
+                                        shape=(1,),
+                                        strides=(1,),
+                                        storage=dace.dtypes.StorageType.GPU_Global,
+                                        allow_conflicts=arr.allow_conflicts,
+                                        location=arr.location,
+                                        lifetime=arr.lifetime,
+                                        debuginfo=arr.debuginfo,
+                                    )
+                                    sdfg.add_datadesc("gpu_" + oe.dst.data, scalararr)
+                                an2 = s.add_access("gpu_" + oe.dst.data)
+                                m = copy.deepcopy(oe.data)
+                                m.data = "gpu_" + oe.dst.data
+                                s.add_edge(oe.src, oe.src_conn, an2, None, m)
+                                s.add_edge(an2, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
+                                s.remove_edge(oe)
+                                #_replace_memlets(oe.dst, s, old_name, new_name)
                             if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
                                 if not oe.dst.data.startswith("gpu_"):
                                     old_name = oe.dst.data
@@ -407,6 +437,27 @@ class ToGPU(ppl.Pass):
                                     new_name = ie.src.data
                                 _replace_memlets(ie.src, s, old_name, new_name)
                         for oe in s.out_edges(n):
+                            if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
+                                if "gpu_" + oe.dst.data not in sdfg.arrays:
+                                    scalararr = dace.data.Array(
+                                        dtype=arr.dtype,
+                                        transient=arr.transient,
+                                        shape=(1,),
+                                        strides=(1,),
+                                        storage=dace.dtypes.StorageType.GPU_Global,
+                                        allow_conflicts=arr.allow_conflicts,
+                                        location=arr.location,
+                                        lifetime=arr.lifetime,
+                                        debuginfo=arr.debuginfo,
+                                    )
+                                    sdfg.add_datadesc("gpu_" + oe.dst.data, scalararr)
+                                an2 = s.add_access("gpu_" + oe.dst.data)
+                                m = copy.deepcopy(oe.data)
+                                m.data = "gpu_" + oe.dst.data
+                                s.add_edge(oe.src, oe.src_conn, an2, None, m)
+                                s.add_edge(an2, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
+                                s.remove_edge(oe)
+                                #_replace_memlets(oe.dst, s, old_name, new_name)
                             if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
                                 if not oe.dst.data.startswith("gpu_"):
                                     old_name = oe.dst.data
