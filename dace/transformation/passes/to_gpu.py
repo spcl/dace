@@ -355,6 +355,12 @@ class ToGPU(ppl.Pass):
                         nextedge.data.data = newname
 
         # Move all map inputs and outputs to GPU make schedule to GPU
+        # Make everything sequential, and make all top level maps GPU
+        for n, graph in sdfg.all_nodes_recursive():
+            if isinstance(n, dace.nodes.MapEntry):
+                n.map.schedule = dace.dtypes.ScheduleType.Sequential
+            elif isinstance(n, dace.nodes.LibraryNode):
+                n.schedule = dace.dtypes.ScheduleType.Sequential
         for s in sdfg.all_states():
             for n in s.nodes():
                 if isinstance(n, dace.nodes.MapEntry):
@@ -362,6 +368,7 @@ class ToGPU(ppl.Pass):
                 elif isinstance(n, dace.nodes.LibraryNode):
                     if "flatten" not in n.label and "deflatten" not in n.label:
                         n.schedule = dace.dtypes.ScheduleType.GPU_Device
+
         for s in sdfg.all_states():
             for n in s.nodes():
                 if isinstance(n, dace.nodes.MapEntry):
