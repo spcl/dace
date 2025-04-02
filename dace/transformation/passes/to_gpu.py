@@ -768,4 +768,6 @@ def get_used_data(sdfg: dace.SDFG, cfg: Union[ControlFlowBlock, dace.SDFGState])
     if isinstance(cfg, ControlFlowBlock) and not isinstance(cfg, dace.SDFGState):
         return set().union(*[get_used_data(sdfg, node) for node in cfg.nodes()])
 
-    raise Exception("Should not reach here")
+    print(f"WARNING; {type(cfg)} could not be analyzed!")
+    return set()
+    #raise Exception("Should not reach here")
