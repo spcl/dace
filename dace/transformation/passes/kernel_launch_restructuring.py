@@ -89,7 +89,7 @@ class GPUKernelLaunchRestructure(ppl.Pass):
 
                 # Second, get the set of arrays that will be used in the (to be) GPU maps
                 # These will stay on GPU
-                willbe_used_in_gpu_maps = ["vcflmax", "z_v_grad_w", "z_kin_hor_e", "z_ekinh", "z_w_con_c_full"]
+                willbe_used_in_gpu_maps = ["vcflmax", "z_v_grad_w", "z_kin_hor_e", "z_ekinh", "z_w_con_c_full", "z_w_concorr_me"]
                 for map, map_state in seq_map_list:
                     for e in map_state.in_edges(map):
                         assert isinstance(e.src, nodes.AccessNode)
