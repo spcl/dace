@@ -81,7 +81,8 @@ class ToGPU(ppl.Pass):
                                         if node.data.startswith("gpu_"):
                                             arrays_written_to[node.data[4:]] += 1
                                         else:
-                                            arrays_written_to[node.data] += 1
+                                            if node.data in arrays_written_to:
+                                                arrays_written_to[node.data] += 1
                     # No need to be recursive, data needs to be passed and retaken from NestedSDFG
                     if isinstance(node, dace.nodes.NestedSDFG):
                         _collect_writes(sdfg, node.sdfg, arrays_written_to, dtype)
@@ -376,7 +377,7 @@ class ToGPU(ppl.Pass):
                     n.map.schedule = dace.dtypes.ScheduleType.GPU_Device
                 elif isinstance(n, dace.nodes.LibraryNode):
                     if "flatten" not in n.label and "deflatten" not in n.label:
-                        n.schedule = dace.dtypes.ScheduleType.GPU_Device
+                        n.schedule = dace.dtypes.ScheduleType.GPU_Default
 
         for s in sdfg.all_states():
             for n in s.nodes():
