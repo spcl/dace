@@ -17,5 +17,6 @@ from .kernel_launch_restructuring import GPUKernelLaunchRestructure
 from .transient_reuse import TransientReuse
 from .struct_to_container_group import StructToContainerGroups
 from .to_gpu import ToGPU
+from .view_conflict_sanitization import ViewConflictSanitization
 
 from .util import available_passes
