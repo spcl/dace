@@ -278,9 +278,6 @@ class ToGPU(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.AccessNode):
-                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
-                            state.label == "_state_l412_c412"):
-                            print("XXXXX", arr, node.data)
                     is_gpu = False #is_devicelevel_gpu(sdfg, state, node)
                     for e in state.in_edges(node):
                         if isinstance(e.src, dace.nodes.MapExit):
@@ -296,9 +293,6 @@ class ToGPU(ppl.Pass):
                                 == dace.dtypes.ScheduleType.GPU_Device
                             ):
                                 is_gpu = True
-                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
-                            state.label == "_state_l412_c412"):
-                        print(is_gpu)
                     oldname = node.data
 
 
