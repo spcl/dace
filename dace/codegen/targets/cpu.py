@@ -229,12 +229,25 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check if array is already declared
         declared = self._dispatcher.declared_arrays.has(ptrname)
 
-        # Check directionality of view (referencing dst or src)
-        edge = sdutils.get_view_edge(dfg, node)
 
-        # When emitting ArrayInterface, we need to know if this is a read or
-        # write variation
-        is_write = edge.src is node
+        if node not in dfg.nodes():
+            # TODO: Make this an actual solution, not a fuggly fix
+            is_write = False
+            target_state = dfg.parent_graph.in_edges(dfg)[0].src
+            actual_view_node = None
+            for n in target_state.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data == node.data:
+                    actual_view_node = n
+                    break
+            assert actual_view_node is not None
+            node = actual_view_node
+            edge = sdutils.get_view_edge(target_state, node)
+        else:
+            # Check directionality of view (referencing dst or src)
+            edge = sdutils.get_view_edge(dfg, node)
+            # When emitting ArrayInterface, we need to know if this is a read or
+            # write variation
+            is_write = edge.src is node
 
         # Allocate the viewed data before the view, if necessary
         mpath = dfg.memlet_path(edge)

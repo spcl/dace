@@ -38,6 +38,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     def can_be_applied(self, state: SDFGState, expr_index: int, sdfg: SDFG, permissive=False):
         nested_sdfg = self.nested_sdfg
+        if nested_sdfg.sdfg.name.startswith("velocity_"):
+            return False
         if nested_sdfg.no_inline:
             return False
         if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:

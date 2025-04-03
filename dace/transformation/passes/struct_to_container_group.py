@@ -23,6 +23,7 @@ from typing import Set, Union
 import typing
 from dace import InterstateEdge, data
 from dace.data import Data
+from dace.memlet import Memlet
 from dace import serialize, symbolic
 from dace.properties import OrderedDictProperty, Property, make_properties
 from enum import Enum
@@ -269,21 +270,25 @@ def _register_container_group_members(
     acc_strides: tuple,
     register_as_transient: bool,
 ):
+    
     assert len(acc_shape) == len(acc_strides)
     added_descriptors = []
     if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
         if isinstance(container_group_or_array, ContainerGroup):
             container_group = container_group_or_array
             for name, member in container_group.members.items():
+                
                 if isinstance(member, ContainerGroup):
                     if member.is_cg:
                         dg_prefix = prefix_name + f"__CG_{member.name}"
+                        acc_shape2 = acc_shape
+                        acc_strides2 = acc_strides
                     else:
                         dg_prefix = prefix_name + f"__CA_{member.name}"
-                        acc_shape = acc_shape + copy.deepcopy(member.shape)
+                        acc_shape2 =tuple( list(acc_shape) + list(copy.deepcopy(member.shape)))
                         # lets say strides is [A, 1] and new shape is [B, 1] (shape MxN)
                         # then acc strides will be [A*B*N, B*M, B, 1]
-                        acc_strides = tuple(
+                        acc_strides2 = tuple(
                             [
                                 v * (member.strides[0] * member.shape[0])
                                 for v in acc_strides
@@ -294,8 +299,8 @@ def _register_container_group_members(
                         flattening_mode=flattening_mode,
                         container_group_or_array=member,
                         prefix_name=dg_prefix,
-                        acc_shape=acc_shape,
-                        acc_strides=acc_strides,
+                        acc_shape=acc_shape2,
+                        acc_strides=acc_strides2,
                         register_as_transient=register_as_transient,
                     )
                 elif isinstance(member, dace.data.ContainerArray):
@@ -342,7 +347,7 @@ def _register_container_group_members(
                                 start_offset=member.start_offset,
                             )
                     elif isinstance(member, dace.data.Array):
-                        _acc_shape = acc_shape + member.shape
+                        _acc_shape =tuple( list(acc_shape) + list(member.shape))
                         _acc_strides = (
                             tuple(
                                 [
@@ -666,6 +671,8 @@ class StructToContainerGroups(ppl.Pass):
                     for letter, dim, stride in zip(used_letters, arr.shape, arr.strides)
                 ]
             )
+            current_member = struct
+            current_stride = 1    
             src_access = f"{name_hierarchy[0]}"
             remaining_letters = copy.deepcopy(used_letters)
             for i, (name, _type) in enumerate(
@@ -673,7 +680,7 @@ class StructToContainerGroups(ppl.Pass):
             ):
                 prev_name = name_hierarchy[i]
                 prev_type = name_hierarchy_types[i]  # i is alread 0 while we are at 1
-
+                
                 if prev_type == "CG":
                     if _type == "CA":
                         src_access += f"->{name}"
@@ -681,11 +688,28 @@ class StructToContainerGroups(ppl.Pass):
                         assert _type == "m" or _type == "CG"
                         src_access += f"->{name}"
                 elif prev_type == "CA":
-                    src_access += f"[{remaining_letters.pop(0)}]"
+                    if isinstance(current_member, ContainerArray):
+                        src_access += "["
+                        first= True
+                        for i in range(len(current_member.shape)):
+                            if first:
+                                first = False
+                            else:
+                                src_access += " + "
+                            src_access += f"{remaining_letters.pop(0)} * {current_stride}"
+                            current_stride *= current_member.strides[i]
+                        src_access += "]"    
+                    else:
+                        raise Exception("Should not happen")
                 elif prev_type == "m":
                     raise Exception("Should not happen")
                 else:
                     raise Exception("Unsupported type")
+                
+                if isinstance(current_member, ContainerArray):
+                    current_member = current_member.stype
+                else:
+                    current_member= current_member.members[name]
 
             # assert len(remaining_letters) == len(arr.shape)
             member_arr = struct
@@ -811,10 +835,19 @@ class StructToContainerGroups(ppl.Pass):
         # Preprocess chains as needed
 
         for state in sdfg.states():
+            
             nodes_to_rm = set()
             edges_to_add = set()
             nodes = state.nodes()
+            skip=False
             for node in nodes:
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    skip=True
+                    break
+            if skip:
+                continue
+            for node in nodes:
+                
                 if isinstance(node, dace.nodes.AccessNode) and not isinstance(
                     sdfg.arrays[node.data], dace.data.View
                 ):
@@ -860,7 +893,15 @@ class StructToContainerGroups(ppl.Pass):
         i = 0
         name_replacements = dict()
         for state in sdfg.states():
+            
             nodes = state.nodes()
+            skip=False
+            for node in nodes:
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    skip=True
+                    break
+            if skip:
+                continue
             removed_nodes = set()
             for node in nodes:
                 if node in removed_nodes:
@@ -915,7 +956,7 @@ class StructToContainerGroups(ppl.Pass):
 
         # Do not simplify until flattener is generated it will remove things
         replace_length_one_arrays_with_scalars(sdfg)
-        clean_trivial_views(sdfg)
+        #clean_trivial_views(sdfg)
 
         # Generate the flattener functions
         for name, desc in sdfg.arrays.items():
@@ -972,7 +1013,7 @@ class StructToContainerGroups(ppl.Pass):
                 an = dace.nodes.AccessNode(inname)
                 entry_interface.add_node(an)
                 entry_interface.add_edge(
-                    an, None, flatten_lib_node, None, dace.Memlet(expr=inname)
+                    an, None, flatten_lib_node, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
                 )
                 sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
 
@@ -987,7 +1028,7 @@ class StructToContainerGroups(ppl.Pass):
                         outname.lower(),
                         an,
                         None,
-                        dace.Memlet(expr=outname),
+                         dace.Memlet.from_array(outname, sdfg.arrays[outname]),
                     )
 
                     if outname.lower() not in flatten_lib_node.out_connectors:
@@ -1012,10 +1053,10 @@ class StructToContainerGroups(ppl.Pass):
                             outname.lower(),
                             an0,
                             None,
-                            dace.Memlet(expr=outname),
+                            dace.Memlet.from_array(outname, sdfg.arrays[outname]),
                         )
                         entry_interface.add_edge(
-                            an0, None, an1, None, dace.Memlet(expr=outname)
+                            an0, None, an1, None, dace.Memlet.from_array(outname, sdfg.arrays[outname])
                         )
                     else:
                         an0 = entry_interface.add_access(outname)
@@ -1024,7 +1065,7 @@ class StructToContainerGroups(ppl.Pass):
                             outname.lower(),
                             an0,
                             None,
-                            dace.Memlet(expr=outname),
+                            dace.Memlet.from_array(outname, sdfg.arrays[outname]),
                         )
 
                     if outname.lower() not in flatten_lib_node.out_connectors:
@@ -1048,20 +1089,20 @@ class StructToContainerGroups(ppl.Pass):
                         an1 = exit_interface.add_access("gpu_" + inname)
 
                         exit_interface.add_edge(
-                            an1, None, an0, None, dace.Memlet(expr=inname)
+                            an1, None, an0, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
                         )
                         exit_interface.add_edge(
-                            an0, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr=inname)
+                            an0, None, deflatten_lib_node, inname.lower(), dace.Memlet.from_array(inname, sdfg.arrays[inname])
                         )
                     else:
                         an = exit_interface.add_access(inname)
                         exit_interface.add_edge(
-                            an, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr=inname)
+                            an, None, deflatten_lib_node, inname.lower(), dace.Memlet.from_array(inname, sdfg.arrays[inname])
                         )
                 else:
                     an = exit_interface.add_access(inname)
                     exit_interface.add_edge(
-                        an, None, deflatten_lib_node, inname.lower(), dace.Memlet(expr=inname)
+                        an, None, deflatten_lib_node, inname.lower(),dace.Memlet.from_array(inname, sdfg.arrays[inname])
                     )
 
                 if inname.lower() not in deflatten_lib_node.in_connectors:
