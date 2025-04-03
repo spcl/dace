@@ -2,6 +2,7 @@
 
 import copy
 from dataclasses import dataclass
+import dace
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, SDFGState, properties, nodes, ScheduleType as schedules, dtypes
 from typing import Set, Optional
@@ -119,14 +120,14 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                     an = edge.src
                     assert isinstance(an, nodes.AccessNode)
                     host_data = any([_p in an.data for _p in p])
-                    if state.out_degree(an) > 1:
-                        an2 = state.add_access(an.data)
-                        state.remove_edge(edge)
-                        e2 = state.add_edge(an2, edge.src_conn, node, edge.dst_conn, copy.deepcopy(edge.data))
-                        edge = e2
-                        an = an2
                     if host_data:
                         if an.data.startswith("gpu_"):
+                            if state.out_degree(an) > 1:
+                                an2 = state.add_access(an.data)
+                                state.remove_edge(edge)
+                                e2 = state.add_edge(an2, edge.src_conn, node, edge.dst_conn, copy.deepcopy(edge.data))
+                                edge = e2
+                                an = an2
                             # Change the access node and to CPU heap
                             an.data = an.data[4:]
                             edge.data.data = an.data
@@ -144,13 +145,13 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                     an = edge.dst
                     assert isinstance(an, nodes.AccessNode)
                     host_data = any([_p in an.data for _p in p])
-                    if state.in_degree(an) > 1:
-                        an2 = state.add_access(an.data)
-                        state.remove_edge(edge)
-                        e2 = state.add_edge(map_exit, edge.src_conn, an2, edge.dst_conn, copy.deepcopy(edge.data))
-                        edge = e2
-                        an = an2
                     if  host_data:
+                        if state.in_degree(an) > 1:
+                            an2 = state.add_access(an.data)
+                            state.remove_edge(edge)
+                            e2 = state.add_edge(map_exit, edge.src_conn, an2, edge.dst_conn, copy.deepcopy(edge.data))
+                            edge = e2
+                            an = an2
                         if an.data.startswith("gpu_"):
                             # Change the access node and to CPU heap
                             an.data = an.data[4:]
@@ -253,5 +254,10 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                         nsdfg_to_map_edge.data.data = an.data
                         nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap"
                 """
+
+        #for s in sdfg.all_states():
+        #    for n in s.nodes():
+        #        if (isinstance(n, dace.nodes.LibraryNode)):
+        #            print(n, type(n), n.schedule)
         # Return the modified maps
         return [map for map, _ in all_modified_maps]
