@@ -469,7 +469,7 @@ class ToGPU(ppl.Pass):
                                     new_name = oe.dst.data
                                 _replace_memlets(oe.dst, s, old_name, new_name)
 
-        sdfg.save("tmp1.sdfg")
+        # sdfg.save("tmp1.sdfg")
         # 5.
 
         # Do first touch
