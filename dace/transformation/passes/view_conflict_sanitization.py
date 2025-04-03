@@ -32,7 +32,7 @@ class ViewConflictSanitization(ppl.Pass):
         # Can only occur within a single state
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(parent, SDFGState):
-                self._apply_to_state(sdfg, parent)
+                self._apply_to_state(parent.sdfg, parent)
 
     # Applies to a single state
     def _apply_to_state(self, sdfg: SDFG, state: SDFGState) -> None:
