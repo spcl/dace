@@ -30,7 +30,7 @@ SIMPLIFY_PASSES = [
     FuseStates,
     OptionalArrayInference,
     ConstantPropagation,
-    DeadDataflowElimination,
+    #DeadDataflowElimination,
     DeadStateElimination,
     PruneEmptyConditionalBranches,
     PruneEmptyLoops,
