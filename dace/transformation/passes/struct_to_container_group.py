@@ -270,14 +270,14 @@ def _register_container_group_members(
     acc_strides: tuple,
     register_as_transient: bool,
 ):
-    
+
     assert len(acc_shape) == len(acc_strides)
     added_descriptors = []
     if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
         if isinstance(container_group_or_array, ContainerGroup):
             container_group = container_group_or_array
             for name, member in container_group.members.items():
-                
+
                 if isinstance(member, ContainerGroup):
                     if member.is_cg:
                         dg_prefix = prefix_name + f"__CG_{member.name}"
@@ -586,6 +586,12 @@ class Flattener(CodeLibraryNode):
 
 @make_properties
 class StructToContainerGroups(ppl.Pass):
+    clean_trivial_views = Property(
+        dtype=bool,
+        default=False,
+        desc="Clean Trivial Views",
+        allow_none=False,
+    )
     def __init__(
         self,
         flattening_mode: ContainerGroupFlatteningMode = ContainerGroupFlatteningMode.StructOfArrays,
@@ -597,6 +603,7 @@ class StructToContainerGroups(ppl.Pass):
         interface_with_struct_copy: bool = True,
         interface_to_gpu: bool = False,
         verbose: bool = False,
+        clean_trivial_views: bool = False,
     ):
         if flattening_mode != ContainerGroupFlatteningMode.StructOfArrays:
             raise Exception("Only StructOfArrays is supported")
@@ -616,6 +623,7 @@ class StructToContainerGroups(ppl.Pass):
         self._flattener_codestr = ""
         self._deflattener_codestr = ""
         self._interface_to_gpu = interface_to_gpu
+        self.clean_trivial_views = clean_trivial_views
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -672,7 +680,7 @@ class StructToContainerGroups(ppl.Pass):
                 ]
             )
             current_member = struct
-            current_stride = 1    
+            current_stride = 1
             src_access = f"{name_hierarchy[0]}"
             remaining_letters = copy.deepcopy(used_letters)
             for i, (name, _type) in enumerate(
@@ -680,7 +688,7 @@ class StructToContainerGroups(ppl.Pass):
             ):
                 prev_name = name_hierarchy[i]
                 prev_type = name_hierarchy_types[i]  # i is alread 0 while we are at 1
-                
+
                 if prev_type == "CG":
                     if _type == "CA":
                         src_access += f"->{name}"
@@ -698,14 +706,14 @@ class StructToContainerGroups(ppl.Pass):
                                 src_access += " + "
                             src_access += f"{remaining_letters.pop(0)} * {current_stride}"
                             current_stride *= current_member.strides[i]
-                        src_access += "]"    
+                        src_access += "]"
                     else:
                         raise Exception("Should not happen")
                 elif prev_type == "m":
                     raise Exception("Should not happen")
                 else:
                     raise Exception("Unsupported type")
-                
+
                 if isinstance(current_member, ContainerArray):
                     current_member = current_member.stype
                 else:
@@ -835,7 +843,7 @@ class StructToContainerGroups(ppl.Pass):
         # Preprocess chains as needed
 
         for state in sdfg.states():
-            
+
             nodes_to_rm = set()
             edges_to_add = set()
             nodes = state.nodes()
@@ -847,7 +855,7 @@ class StructToContainerGroups(ppl.Pass):
             if skip:
                 continue
             for node in nodes:
-                
+
                 if isinstance(node, dace.nodes.AccessNode) and not isinstance(
                     sdfg.arrays[node.data], dace.data.View
                 ):
@@ -893,7 +901,7 @@ class StructToContainerGroups(ppl.Pass):
         i = 0
         name_replacements = dict()
         for state in sdfg.states():
-            
+
             nodes = state.nodes()
             skip=False
             for node in nodes:
@@ -956,7 +964,9 @@ class StructToContainerGroups(ppl.Pass):
 
         # Do not simplify until flattener is generated it will remove things
         replace_length_one_arrays_with_scalars(sdfg)
-        #clean_trivial_views(sdfg)
+
+        if self.clean_trivial_views:
+            clean_trivial_views(sdfg)
 
         # Generate the flattener functions
         for name, desc in sdfg.arrays.items():
@@ -1177,6 +1187,12 @@ class StructToContainerGroups(ppl.Pass):
             sdfg.validate()
         if self._simplify:
             sdfg.simplify(validate=self._validate, validate_all=self._validate_all)
+
+        # After removing views we might have in and out degree 0
+        for node in state.nodes():
+            if (isinstance(node, dace.nodes.AccessNode) and
+                state.in_degree(node) == 0 and state.out_degree(node) == 0):
+                state.remove_node(node)
 
     def _can_be_applied(
         self,
