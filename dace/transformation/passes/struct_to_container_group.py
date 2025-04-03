@@ -1156,7 +1156,13 @@ class StructToContainerGroups(ppl.Pass):
                         nd_to_rm.insert(0, (s, n))
             for s, n in nd_to_rm:
                 s.remove_node(n)
-
+        
+        # After removing views we might have in and out degree 0
+        for node,state in sdfg.all_nodes_recursive():
+            if (isinstance(node, dace.nodes.AccessNode) and
+                state.in_degree(node) == 0 and state.out_degree(node) == 0):
+                state.remove_node(node)
+                
         if self._save_steps:
             sdfg.save("nodes_cleand.sdfgz", compress=True)
 
@@ -1188,11 +1194,7 @@ class StructToContainerGroups(ppl.Pass):
         if self._simplify:
             sdfg.simplify(validate=self._validate, validate_all=self._validate_all)
 
-        # After removing views we might have in and out degree 0
-        for node in state.nodes():
-            if (isinstance(node, dace.nodes.AccessNode) and
-                state.in_degree(node) == 0 and state.out_degree(node) == 0):
-                state.remove_node(node)
+
 
     def _can_be_applied(
         self,
