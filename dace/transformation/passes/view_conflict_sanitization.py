@@ -119,5 +119,26 @@ class ViewConflictSanitization(ppl.Pass):
         view.data = new_name
 
         # XXX: Strong assumption: The view is only directly used in the incoming or outgoing edges
+        repl_pattern = r"\b" + re.escape(old_name) + r"\b"
         for edge in state.in_edges(view) + state.out_edges(view):
-            edge.data.replace({old_name: new_name})
+            assert edge.data.data is not None
+            edge.data.data = re.sub(repl_pattern, new_name, edge.data.data)
+
+        # If the views connector is in the in_connectors, any view descendants also need to be renamed
+        if "views" in view.in_connectors:
+            for succ in state.successors(view):
+                if not isinstance(succ, AccessNode):
+                    continue
+                if not isinstance(succ.desc(sdfg), View):
+                    continue
+                self._rename_view(sdfg, state, succ)
+
+        # If the views connector is in the out_connectors, any view predecessors also need to be renamed
+        else:
+            assert "views" in view.out_connectors
+            for pred in state.predecessors(view):
+                if not isinstance(pred, AccessNode):
+                    continue
+                if not isinstance(pred.desc(sdfg), View):
+                    continue
+                self._rename_view(sdfg, state, pred)
