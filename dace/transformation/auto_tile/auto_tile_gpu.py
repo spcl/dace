@@ -7,7 +7,6 @@ from pathlib import Path
 import random
 from typing import Dict, List, Tuple, Type, Any
 
-import torch
 
 import numpy as np
 import dace
@@ -407,6 +406,8 @@ def _tile_gpu(
                 output_from_transformed = copy_inputs_2[output_name]
 
                 if verify:
+                    import torch
+
                     are_close = torch.allclose(
                         output_from_transformed,
                         output_from_non_transformed,
