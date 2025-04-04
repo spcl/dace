@@ -663,7 +663,7 @@ class ToGPU(ppl.Pass):
         nodes_to_rm = set()
         edges_to_rm = set()
 
-
+        """
         current_locs = dict()
         for loc_hist in location_history:
             for k, v in loc_hist.items():
@@ -733,7 +733,7 @@ class ToGPU(ppl.Pass):
         for n in end_node.nodes():
             if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
                 end_node.remove_node(n)
-
+        """
         sdfg.validate()
 
 def all_states(cfg: ControlFlowRegion):
