@@ -182,8 +182,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
                             return False
-                        # Ignore write views
-                        if e.src_conn == "views" or e.dst_conn == "views":
+                        if e.data is None:
                             continue
 
                         # To be sure that the value is only written at unique
@@ -206,7 +205,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 data = dn.data
                 if data in write_memlets:
                     for e in state.out_edges(dn):
-                        if e.src_conn == "views" or e.dst_conn == "views":
+                        if e.data is None:
                             continue
 
                         # If the same container is both read and written, only match if
