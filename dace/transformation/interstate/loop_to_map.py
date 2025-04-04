@@ -12,7 +12,7 @@ from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ConditionalBlock
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -125,6 +125,11 @@ class LoopToMap(xf.MultiStateTransformation):
         loop_states = set(self.loop.all_states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
+        # Cannot have StructView in loop body
+        for loop_state in loop_states:
+            if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
+                return False
+        
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
                                                                              ignore_nonstate_blocks=False))
@@ -177,8 +182,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
                             return False
-                        # Ignore write views
-                        if e.src_conn == "views" or e.dst_conn == "views":
+                        if e.data is None:
                             continue
 
                         # To be sure that the value is only written at unique
@@ -187,7 +191,7 @@ class LoopToMap(xf.MultiStateTransformation):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)) and not permissive:
                                 return False
                         # End of check
 
@@ -201,14 +205,14 @@ class LoopToMap(xf.MultiStateTransformation):
                 data = dn.data
                 if data in write_memlets:
                     for e in state.out_edges(dn):
-                        if e.src_conn == "views" or e.dst_conn == "views":
+                        if e.data is None:
                             continue
 
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
-                                                     e.data, src_subset):
+                                                     e.data, src_subset) and not permissive:
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -248,8 +252,9 @@ class LoopToMap(xf.MultiStateTransformation):
                 break
 
             # Check state contents
-            if symbols_that_may_be_used & block.free_symbols:
-                return False
+            if not permissive:
+              if symbols_that_may_be_used & block.free_symbols:
+                  return False
 
             # Check inter-state edges
             reassigned_symbols = None
@@ -394,11 +399,35 @@ class LoopToMap(xf.MultiStateTransformation):
                     for e in state.edges_between(src_node, dst_node):
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
+
+        # Add headers of any nested loops and conditional blocks
+        nodelist = list(self.loop.nodes())
+        while nodelist:
+            node = nodelist.pop()
+            if isinstance(node, (LoopRegion, ConditionalBlock)):
+                code_blocks = node.get_meta_codeblocks()
+                free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
+                free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
+                read_set |= set(free_syms)
+                nodelist.extend(node.nodes())
+
         # Add data from edges
         for edge in self.loop.all_interstate_edges():
             for s in edge.data.free_symbols:
                 if s in sdfg.arrays:
                     read_set.add(s)
+
+        # Build mapping of view data to their root data
+        view_to_data = {}
+        for state in states:
+            for node in state.data_nodes():
+                if isinstance(sdfg.arrays[node.data], dt.View):
+                    root_node = sdutil.get_last_view_node(state, node)
+                    assert root_node is not None
+                    if node.data in view_to_data:
+                        assert view_to_data[node.data] == root_node.data
+
+                    view_to_data[node.data] = root_node.data
 
         # Find NestedSDFG's / Loop's unique data
         rw_set = read_set | write_set
@@ -414,12 +443,22 @@ class LoopToMap(xf.MultiStateTransformation):
                     if (isinstance(node, nodes.AccessNode) and node.data == name):
                         found = True
                         break
-            if not found and self._is_array_thread_local(name, itervar, sdfg, states):
+
+            iatl_name = name
+            if name in view_to_data:
+                iatl_name = view_to_data[name]
+
+            if not found and self._is_array_thread_local(iatl_name, itervar, sdfg, states):
                 unique_set.add(name)
 
         # Find NestedSDFG's connectors
         read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
         write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+
+        # Do not route views through the NestedSDFG
+        view_set = set(view_to_data.keys())
+        read_set -= view_set
+        write_set -= view_set
 
         # Create NestedSDFG and add the loop contents to it. Gaher symbols defined in the NestedSDFG.
         fsymbols = set(sdfg.free_symbols)
@@ -442,12 +481,11 @@ class LoopToMap(xf.MultiStateTransformation):
                 name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
-        for name in unique_set:
+        for name in unique_set | view_set:
             if '.' in name:
                 root_data_name = name.split('.')[0]
                 name = root_data_name
-            nsdfg.arrays[name] = sdfg.arrays[name]
-            del sdfg.arrays[name]
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
 
         # Add NestedSDFG node
         cnode = body.add_nested_sdfg(nsdfg, body, read_set, write_set)
@@ -469,6 +507,26 @@ class LoopToMap(xf.MultiStateTransformation):
                 del sdfg.symbols[sym]
         for sym, dtype in nsymbols.items():
             nsdfg.symbols[sym] = dtype
+
+        # Add casts to preserve types of non-mapped symbols
+        for e in self.loop.all_interstate_edges():
+          for k, v in e.data.assignments.items():
+              if k not in sdfg.symbols or k in nsdfg.symbols:
+                  continue
+              ktype: dtypes.typeclass = sdfg.symbols[k]
+              vtype = infer_expr_type(v, sdfg.symbols)
+              if ktype == vtype:
+                  continue
+              
+              if ktype.dtype == dtypes.int32 or ktype.dtype == dtypes.int64:
+                  ktype = "int"
+              elif ktype.dtype == dtypes.float32 or ktype.dtype == dtypes.float64:
+                  ktype = "float"
+              else:
+                  raise ValueError(f"Unsupported type {ktype}")
+
+              # Add cast
+              e.data.assignments[k] = f'{ktype}({v})'
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
@@ -503,12 +561,36 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
+        # Filter out views
+        containers_to_read = {c for c in containers_to_read if not isinstance(sdfg.arrays[c], dt.View)}
         for rd in containers_to_read:
             # We are guaranteed that this is always a scalar, because
             # can_be_applied makes sure there are no sympy functions in each of
             # the loop expresions
             access_node = body.add_read(rd)
             body.add_memlet_path(access_node, entry, dst_conn=rd, memlet=memlet.Memlet(rd))
+
+        # Add views as symbols
+        # A better way would be to pass them with a connector, similar to the containers above.
+        # But since we do not have a view node to analyze the chain of view, we cannot (easily) create a chain of views routing to an input connector.
+        views_to_read = (entry.free_symbols & sdfg.arrays.keys()) - containers_to_read
+        view_assignments = {}
+        for rd in views_to_read:
+            rd_name = f"{rd}_map"
+            view_assignments[rd_name] = rd
+
+            rd_sym = symbolic.pystr_to_symbolic(rd)
+            rd_name_sym = symbolic.pystr_to_symbolic(rd_name)
+            
+            for i in range(len(map_node.range)):
+              lb, up, st = map_node.range[i]
+              lb = lb.replace(rd_sym, rd_name_sym)
+              up = up.replace(rd_sym, rd_name_sym)
+              st = st.replace(rd_sym, rd_name_sym)
+              map_node.range[i] = (lb, up, st)
+        
+        if view_assignments:
+          graph.add_state_before(body, "map_views", assignments=view_assignments)
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
