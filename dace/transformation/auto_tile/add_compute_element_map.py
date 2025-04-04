@@ -134,9 +134,9 @@ class AddComputeElementBlockMap(transformation.SingleStateTransformation):
                 if r % is_ == 0:
                     new_ranges.append((tb, te, ts))
                 else:
-                    new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te},{e}-1)+1"), ts))
+                    new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
             except Exception:
-                new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te},{e}-1)+1"), ts))
+                new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
         map_entry.map.range = dace.subsets.Range(new_ranges)
 
         if self.bind_var is not None:
