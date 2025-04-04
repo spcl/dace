@@ -81,8 +81,7 @@ class ToGPU(ppl.Pass):
                                         if node.data.startswith("gpu_"):
                                             arrays_written_to[node.data[4:]] += 1
                                         else:
-                                            if node.data in arrays_written_to:
-                                                arrays_written_to[node.data] += 1
+                                            arrays_written_to[node.data] += 1
                     # No need to be recursive, data needs to be passed and retaken from NestedSDFG
                     if isinstance(node, dace.nodes.NestedSDFG):
                         _collect_writes(sdfg, node.sdfg, arrays_written_to, dtype)
@@ -139,7 +138,6 @@ class ToGPU(ppl.Pass):
         # Ups dictionary changed in iteration
         for _graph, arr_name, arr in list(sdfg.arrays_recursive()):
             if isinstance(arr, dace.data.Array):
-                # Do not do this vcflmax-0
                 """
                 if arr.shape == (1,) or arr.shape == [1,]:
                     scalar = dace.data.Scalar(
@@ -155,22 +153,28 @@ class ToGPU(ppl.Pass):
                     _graph.add_datadesc(arr_name, scalar)
                 """
                 pass
-
-        for _graph, arr_name, arr in list(sdfg.arrays_recursive()):
-            if isinstance(arr, dace.data.Scalar):
-                arr.storage = dace.dtypes.StorageType.Register
-
         # Fix it for maxvcfl use
         # Ensure no kernel writes to a scalar in output
         for s in sdfg.all_states():
             for node in s.nodes():
-                if isinstance(node, dace.nodes.MapExit) or isinstance(node, dace.nodes.LibraryNode):
+                if isinstance(node, dace.nodes.MapExit):
                     oes = s.out_edges(node)
                     for oe in oes:
                         if isinstance(oe.dst, dace.nodes.AccessNode):
                             if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                                print(f"WARNING: GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
-                                print(f"WARNING will make it into a length 1 array")
+                                #raise Exception(f"GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
+                                scalar = dace.data.Array(
+                                    dtype=arr.dtype,
+                                    transient=arr.transient,
+                                    shape=(1,),
+                                    storage=dace.dtypes.StorageType.Register,
+                                    allow_conflicts=arr.allow_conflicts,
+                                    location=arr.location,
+                                    lifetime=arr.lifetime,
+                                    debuginfo=arr.debuginfo,
+                                )
+                                _graph.remove_data(arr_name, False)
+                                _graph.add_datadesc(arr_name, scalar)
 
         replace_names = dict()
         descs = set()
@@ -260,7 +264,6 @@ class ToGPU(ppl.Pass):
 
         # 4. Change all top-level maps to GPU schedule
         # Library nodes should know what they are doing
-        """
         gpu_nodes: Set[typing.Tuple[dace.SDFGState, dace.nodes.Node]] = set()
         for state in sdfg.all_states():
             sdict = state.scope_dict()
@@ -289,6 +292,9 @@ class ToGPU(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.AccessNode):
+                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
+                            state.label == "_state_l412_c412"):
+                            print("XXXXX", arr, node.data)
                     is_gpu = False #is_devicelevel_gpu(sdfg, state, node)
                     for e in state.in_edges(node):
                         if isinstance(e.src, dace.nodes.MapExit):
@@ -304,9 +310,31 @@ class ToGPU(ppl.Pass):
                                 == dace.dtypes.ScheduleType.GPU_Device
                             ):
                                 is_gpu = True
+                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
+                            state.label == "_state_l412_c412"):
+                        print(is_gpu)
                     oldname = node.data
 
 
+                    def _replace_memlets(start_node, state, oldname, newname):
+                        stack = set([e for e in state.out_edges(start_node)])
+                        while stack:
+                            nextedge = stack.pop()
+                            nextnode = nextedge.dst
+                            if not isinstance(nextnode, dace.nodes.AccessNode):
+                                for e in state.out_edges(nextnode):
+                                    stack.add(e)
+                                if nextedge.data is not None and nextedge.data.data == oldname:
+                                    nextedge.data.data = newname
+                        stack = set([e for e in state.in_edges(start_node)])
+                        while stack:
+                            nextedge = stack.pop()
+                            nextnode = nextedge.src
+                            if not isinstance(nextnode, dace.nodes.AccessNode):
+                                for e in state.in_edges(nextnode):
+                                    stack.add(e)
+                                if nextedge.data is not None and nextedge.data.data == oldname:
+                                    nextedge.data.data = newname
 
                     is_copy = any([isinstance(e.src, dace.nodes.AccessNode) for e in state.in_edges(node)]) or any([isinstance(e.dst, dace.nodes.AccessNode) for e in state.out_edges(node)])
 
@@ -341,139 +369,11 @@ class ToGPU(ppl.Pass):
             if isinstance(arr, dace.data.Array):
                 if not name.startswith("gpu_"):
                     arrays_and_locations[name] = "Unknown"
-        """
 
-
-        def _replace_memlets(start_node, state, oldname, newname):
-            stack = set([e for e in state.out_edges(start_node)])
-            while stack:
-                nextedge = stack.pop()
-                nextnode = nextedge.dst
-                if not isinstance(nextnode, dace.nodes.AccessNode):
-                    for e in state.out_edges(nextnode):
-                        stack.add(e)
-                    if nextedge.data is not None and nextedge.data.data == oldname:
-                        nextedge.data.data = newname
-            stack = set([e for e in state.in_edges(start_node)])
-            while stack:
-                nextedge = stack.pop()
-                nextnode = nextedge.src
-                if not isinstance(nextnode, dace.nodes.AccessNode):
-                    for e in state.in_edges(nextnode):
-                        stack.add(e)
-                    if nextedge.data is not None and nextedge.data.data == oldname:
-                        nextedge.data.data = newname
-
-        # Move all map inputs and outputs to GPU make schedule to GPU
-        # Make everything sequential, and make all top level maps GPU
-        for n, graph in sdfg.all_nodes_recursive():
-            if isinstance(n, dace.nodes.MapEntry):
-                n.map.schedule = dace.dtypes.ScheduleType.Sequential
-            elif isinstance(n, dace.nodes.LibraryNode):
-                n.schedule = dace.dtypes.ScheduleType.Sequential
-        for s in sdfg.all_states():
-            for n in s.nodes():
-                if isinstance(n, dace.nodes.MapEntry):
-                    n.map.schedule = dace.dtypes.ScheduleType.GPU_Device
-                elif isinstance(n, dace.nodes.LibraryNode):
-                    if "flatten" not in n.label and "deflatten" not in n.label:
-                        n.schedule = dace.dtypes.ScheduleType.GPU_Default
-
-        for s in sdfg.all_states():
-            for n in s.nodes():
-                if isinstance(n, dace.nodes.MapEntry):
-                    if n.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                        #map_exit = s.exit_node(n)
-                        for ie in s.in_edges(n):
-                            if isinstance(ie.src, dace.nodes.AccessNode) and isinstance(sdfg.arrays[ie.src.data], dace.data.Array):
-                                if not ie.src.data.startswith("gpu_"):
-                                    old_name = ie.src.data
-                                    new_name = "gpu_" + ie.src.data
-                                    ie.src.data = new_name
-                                else:
-                                    old_name = ie.src.data[4:]
-                                    new_name = ie.src.data
-                                _replace_memlets(ie.src, s, old_name, new_name)
-                        for oe in s.out_edges(s.exit_node(n)):
-                            if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                                if "gpu_" + oe.dst.data not in sdfg.arrays:
-                                    scalararr = dace.data.Array(
-                                        dtype=arr.dtype,
-                                        transient=arr.transient,
-                                        shape=(1,),
-                                        strides=(1,),
-                                        storage=dace.dtypes.StorageType.GPU_Global,
-                                        allow_conflicts=arr.allow_conflicts,
-                                        location=arr.location,
-                                        lifetime=arr.lifetime,
-                                        debuginfo=arr.debuginfo,
-                                    )
-                                    sdfg.add_datadesc("gpu_" + oe.dst.data, scalararr)
-                                an2 = s.add_access("gpu_" + oe.dst.data)
-                                m = copy.deepcopy(oe.data)
-                                m.data = "gpu_" + oe.dst.data
-                                s.add_edge(oe.src, oe.src_conn, an2, None, m)
-                                s.add_edge(an2, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
-                                s.remove_edge(oe)
-                                #_replace_memlets(oe.dst, s, old_name, new_name)
-                            if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
-                                if not oe.dst.data.startswith("gpu_"):
-                                    old_name = oe.dst.data
-                                    new_name = "gpu_" + oe.dst.data
-                                    oe.dst.data = new_name
-                                else:
-                                    old_name = oe.dst.data[4:]
-                                    new_name = oe.dst.data
-                                _replace_memlets(oe.dst, s, old_name, new_name)
-                elif isinstance(n, dace.nodes.LibraryNode):
-                    if n.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                        for ie in s.in_edges(n):
-                            if isinstance(ie.src, dace.nodes.AccessNode) and isinstance(sdfg.arrays[ie.src.data], dace.data.Array):
-                                if not ie.src.data.startswith("gpu_"):
-                                    old_name = ie.src.data
-                                    new_name = "gpu_" + ie.src.data
-                                    ie.src.data = new_name
-                                else:
-                                    old_name = ie.src.data[4:]
-                                    new_name = ie.src.data
-                                _replace_memlets(ie.src, s, old_name, new_name)
-                        for oe in s.out_edges(n):
-                            if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                                if "gpu_" + oe.dst.data not in sdfg.arrays:
-                                    scalararr = dace.data.Array(
-                                        dtype=arr.dtype,
-                                        transient=arr.transient,
-                                        shape=(1,),
-                                        strides=(1,),
-                                        storage=dace.dtypes.StorageType.GPU_Global,
-                                        allow_conflicts=arr.allow_conflicts,
-                                        location=arr.location,
-                                        lifetime=arr.lifetime,
-                                        debuginfo=arr.debuginfo,
-                                    )
-                                    sdfg.add_datadesc("gpu_" + oe.dst.data, scalararr)
-                                an2 = s.add_access("gpu_" + oe.dst.data)
-                                m = copy.deepcopy(oe.data)
-                                m.data = "gpu_" + oe.dst.data
-                                s.add_edge(oe.src, oe.src_conn, an2, None, m)
-                                s.add_edge(an2, None, oe.dst, oe.dst_conn, copy.deepcopy(oe.data))
-                                s.remove_edge(oe)
-                                #_replace_memlets(oe.dst, s, old_name, new_name)
-                            if isinstance(oe.dst, dace.nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
-                                if not oe.dst.data.startswith("gpu_"):
-                                    old_name = oe.dst.data
-                                    new_name = "gpu_" + oe.dst.data
-                                    oe.dst.data = new_name
-                                else:
-                                    old_name = oe.dst.data[4:]
-                                    new_name = oe.dst.data
-                                _replace_memlets(oe.dst, s, old_name, new_name)
-
-        # sdfg.save("tmp1.sdfg")
         # 5.
 
         # Do first touch
-        #location_history = [{k: "Unknown" for k in arrays_and_locations.keys()}]
+        location_history = [{k: "Unknown" for k in arrays_and_locations.keys()}]
 
         # Thanks to CFG, right now all top level nodes should have out degree 1, except last block
         # We can now track what data is needed where for each node
@@ -715,7 +615,7 @@ class ToGPU(ppl.Pass):
                     if e.src.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                         if e.data.data == "__CG_p_prog__m_vn":
                             e.data.data = "gpu___CG_p_prog__m_vn"
-
+        """
         for n in sdfg.start_state.nodes():
             if sdfg.start_state.in_degree(n) == 0 and sdfg.start_state.out_degree(n) == 0:
                 sdfg.start_state.remove_node(n)
@@ -725,13 +625,11 @@ class ToGPU(ppl.Pass):
         for n in end_node.nodes():
             if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
                 end_node.remove_node(n)
-        """
 
-        #sdfg.validate()
+        sdfg.validate()
 
         # 6. Decrease number of copy-in and copy-outs
         # If first location is CPU then do not copy to GPU in the first state
-        """
         initial_locations = dict()
         for locations in location_history:
             for d, loc in locations.items():
@@ -745,6 +643,7 @@ class ToGPU(ppl.Pass):
         nodes_to_rm = set()
         edges_to_rm = set()
         # Do not rm any initial node for now
+        """
         for name, initial_loc in initial_locations.items():
             if initial_loc == "CPU":
                 for edge in start_state.edges():
@@ -760,7 +659,6 @@ class ToGPU(ppl.Pass):
             start_state.remove_edge(e)
         for n in nodes_to_rm:
             start_state.remove_node(n)"
-        """
         """
         nodes_to_rm = set()
         edges_to_rm = set()
@@ -789,11 +687,11 @@ class ToGPU(ppl.Pass):
             end_state.remove_edge(e)
         for n in nodes_to_rm:
             end_state.remove_node(n)
-        """
+
         # GO through all nodes, if NestedSDFG within GPU Device scope
         # Move all transients to GPU Global
         # Allocate all transients on GPU Global
-        """
+
         def move_to_gpu(
             node: dace.nodes.NestedSDFG, sdfg: dace.SDFG, state: dace.SDFGState
         ):
@@ -826,7 +724,6 @@ class ToGPU(ppl.Pass):
                         if isinstance(inner_node, dace.nodes.NestedSDFG):
                             move_to_gpu(inner_node, sdfg, state)
 
-
         for n in sdfg.start_state.nodes():
             if sdfg.start_state.in_degree(n) == 0 and sdfg.start_state.out_degree(n) == 0:
                 sdfg.start_state.remove_node(n)
@@ -836,7 +733,7 @@ class ToGPU(ppl.Pass):
         for n in end_node.nodes():
             if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
                 end_node.remove_node(n)
-        """
+
         sdfg.validate()
 
 def all_states(cfg: ControlFlowRegion):
@@ -886,6 +783,4 @@ def get_used_data(sdfg: dace.SDFG, cfg: Union[ControlFlowBlock, dace.SDFGState])
     if isinstance(cfg, ControlFlowBlock) and not isinstance(cfg, dace.SDFGState):
         return set().union(*[get_used_data(sdfg, node) for node in cfg.nodes()])
 
-    print(f"WARNING; {type(cfg)} could not be analyzed!")
-    return set()
-    #raise Exception("Should not reach here")
+    raise Exception(f"Should not reach here {cfg}, {type(cfg)}")

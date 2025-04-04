@@ -112,7 +112,7 @@ class GPUKernelLaunchRestructure(ppl.Pass):
 
                 # patterns not used in GPU maps, remove them from "will be used on GPU"
                 # Start index / start idx / end index / end idx arrays aer now accessed in the CPU
-                p = ["index", "idx"]
+                p = ["index"]
                 willbe_used_in_gpu_maps = [v for v in willbe_used_in_gpu_maps if all([_p not in v for _p in p]) ]
                 #print(willbe_used_in_gpu_maps)
 
@@ -140,6 +140,13 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                             nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
                         else:
                             nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
+                    else:
+                        if isinstance(sdfg.arrays[an.data], dace.data.Array):
+                            assert an.data.startswith("gpu_")
+                            nsdfg.sdfg.arrays[an.data[4:]].storage = dtypes.StorageType.GPU_Global
+                        else:
+                            pass
+                            #assert sdfg.arrays[an.data].storage == dtypes.StorageType.Register, f"{an.data}, {sdfg.arrays[an.data].storage}"
                 map_exit = state.exit_node(node)
                 for edge in state.out_edges(map_exit):
                     an = edge.dst
@@ -147,7 +154,7 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                     host_data = any([_p in an.data for _p in p])
                     if  host_data:
                         if state.in_degree(an) > 1:
-                            an2 = state.add_access(an.data)
+                            an2 = state.add_access(an.data if an.data.startswith("gpu_") else "gpu_" + an.data)
                             state.remove_edge(edge)
                             e2 = state.add_edge(map_exit, edge.src_conn, an2, edge.dst_conn, copy.deepcopy(edge.data))
                             edge = e2
@@ -156,15 +163,33 @@ class GPUKernelLaunchRestructure(ppl.Pass):
                             # Change the access node and to CPU heap
                             an.data = an.data[4:]
                             edge.data.data = an.data
-                            in_connector = edge.dst_conn
-                            out_connector = in_connector.replace("IN", "OUT")
+                            out_connector = edge.src_conn
+                            in_connector =out_connector.replace("OUT", "IN")
 
                             # Get the second edge to the nsdfg
-                            map_to_nsdfg_edge = next(state.out_edges_by_connector(node, out_connector))
+                            map_to_nsdfg_edge = next(state.in_edges_by_connector(node, in_connector))
                             map_to_nsdfg_edge.data.data = an.data
                             nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
                         else:
                             nsdfg.sdfg.arrays[an.data].storage = dtypes.StorageType.CPU_Heap
+                    else:
+                        if not an.data.startswith("gpu_"):
+                            # Change the access node and to CPU heap
+                            an.data = "gpu_" + an.data
+                            edge.data.data = an.data
+                            out_connector = edge.src_conn
+                            in_connector =out_connector.replace("OUT", "IN")
+
+                            # Get the second edge to the nsdfg
+                            map_to_nsdfg_edge = next(state.in_edges_by_connector(node, in_connector))
+                            map_to_nsdfg_edge.data.data = an.data
+                            nsdfg.sdfg.arrays[an.data[4:]].storage = dtypes.StorageType.GPU_Global
+                        if isinstance(sdfg.arrays[an.data], dace.data.Array):
+                            assert an.data.startswith("gpu_")
+                            nsdfg.sdfg.arrays[an.data[4:]].storage = dtypes.StorageType.GPU_Global
+                        else:
+                            pass
+                            #assert sdfg.arrays[an.data].storage == dtypes.StorageType.Register
                 """
                 # Finally, Iterate over the inputs to the outermost map
                 for edge in state.in_edges(node):
