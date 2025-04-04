@@ -292,9 +292,6 @@ class ToGPU(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.AccessNode):
-                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
-                            state.label == "_state_l412_c412"):
-                            print("XXXXX", arr, node.data)
                     is_gpu = False #is_devicelevel_gpu(sdfg, state, node)
                     for e in state.in_edges(node):
                         if isinstance(e.src, dace.nodes.MapExit):
@@ -310,9 +307,6 @@ class ToGPU(ppl.Pass):
                                 == dace.dtypes.ScheduleType.GPU_Device
                             ):
                                 is_gpu = True
-                    if (node.data == "__CG_p_patch__CG_edges__m_end_index" and
-                            state.label == "_state_l412_c412"):
-                        print(is_gpu)
                     oldname = node.data
 
 
@@ -363,7 +357,23 @@ class ToGPU(ppl.Pass):
                             oldname = node.data
                             node.data = node.data
                             _replace_memlets(node, state, "gpu_" + oldname, node.data)
-
+                # All GPU map inputs and outputs should be GPU storage
+                if isinstance(node, dace.nodes.MapEntry):
+                    if node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                        for ie in state.in_edges(node):
+                            if isinstance(ie.src, dace.nodes.AccessNode):
+                                if isinstance(sdfg.arrays[ie.src.data], dace.data.Array):
+                                    if not ie.src.data.startswith("gpu_"):
+                                        oldname = ie.src.data
+                                        ie.src.data = "gpu_" + ie.src.data
+                                        _replace_memlets(ie.src, state, oldname, ie.src.data)
+                        for oe in state.out_edges(state.exit_node(node)):
+                            if isinstance(oe.dst, dace.nodes.AccessNode):
+                                if isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
+                                    if not oe.dst.data.startswith("gpu_"):
+                                        oldname = oe.dst.data
+                                        oe.dst.data = "gpu_" + oe.dst.data
+                                        _replace_memlets(oe.dst, state, oldname, oe.dst.data)
         arrays_and_locations = dict()
         for name, arr in sdfg.arrays.items():
             if isinstance(arr, dace.data.Array):
@@ -687,7 +697,7 @@ class ToGPU(ppl.Pass):
             end_state.remove_edge(e)
         for n in nodes_to_rm:
             end_state.remove_node(n)
-
+        """
         # GO through all nodes, if NestedSDFG within GPU Device scope
         # Move all transients to GPU Global
         # Allocate all transients on GPU Global
@@ -733,7 +743,7 @@ class ToGPU(ppl.Pass):
         for n in end_node.nodes():
             if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
                 end_node.remove_node(n)
-        """
+
         sdfg.validate()
 
 def all_states(cfg: ControlFlowRegion):
