@@ -311,20 +311,23 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
 
         # Map Tiling does not update the range as we need them
         # Update the threadblock and device ranges
-        """
+
+        # tblock map -> tb=beg:end:step -> only step is updated new end is tb=beg:(step*(end+1-beg))+beg:step (the step was 1, and now is the coarsening)
+        # dev map -> dev=beg:end:step -> new end is dev=beg:end:steap*coarsening
+
         dev_updated_range_list = [
-            (beg, end, step * tstep)
-            for (beg, end, step), (_, _, tstep) in zip(
-                dev_entry.map.range, thread_group_entry.map.range
+            (beg, end, step * coarsening)
+            for (beg, end, step), coarsening in zip(
+                dev_entry.map.range, tile_sizes
             )
         ]
         dev_entry.map.range = subsets.Range(dev_updated_range_list)
         thread_block_updated_range_list = [
-            (beg, (end + 1) * step - 1, step)
+            (beg, beg + ((end + 1 - beg) * step) - 1, step)
             for (beg, end, step) in thread_group_entry.map.range
         ]
         thread_group_entry.map.range = subsets.Range(thread_block_updated_range_list)
-        """
+
         for m in [dev_entry.map, thread_group_entry.map, sequential_map_entry.map]:
             d = dict()
             for param in m.params:
