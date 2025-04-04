@@ -655,8 +655,8 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         if intr.string == 'EPSILON':
             a, = args
             a = _const_eval_basic_type(a, alias_map)
-            assert isinstance(a, (np.float32, np.float64))
-            return type(a)(sys.float_info.epsilon)
+            if isinstance(a, (np.float32, np.float64)):
+                return type(a)(sys.float_info.epsilon)
         elif intr.string in TRIG_FNS:
             avals = tuple(_const_eval_basic_type(a, alias_map) for a in args)
             if all(isinstance(a, (np.float32, np.float64)) for a in avals):
@@ -2089,7 +2089,7 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
         kwargs = tuple(a.children for a in args if isinstance(a, Actual_Arg_Spec))
         kwargs = {k.string: v for k, v in kwargs}
         fnspec = search_real_local_alias_spec(fn, alias_map)
-        assert fnspec
+        assert fnspec, fn
         fnstmt = alias_map[fnspec]
         fnspec = ident_spec(fnstmt)
         if fnspec in keepers:
