@@ -357,8 +357,23 @@ class ToGPU(ppl.Pass):
                             oldname = node.data
                             node.data = node.data
                             _replace_memlets(node, state, "gpu_" + oldname, node.data)
+
+        arrays_and_locations = dict()
+        for name, arr in sdfg.arrays.items():
+            if isinstance(arr, dace.data.Array):
+                if not name.startswith("gpu_"):
+                    arrays_and_locations[name] = "Unknown"
+
+
+        for state in sdfg.all_states():
+            for node in state.nodes():
                 # All GPU map inputs and outputs should be GPU storage
                 if isinstance(node, dace.nodes.MapEntry):
+                    nsdfgs = list(set([e.dst for e in state.out_edges(node) if isinstance(e.dst, dace.nodes.NestedSDFG)]))
+                    if len(nsdfgs) > 0:
+                        nsdfg = nsdfgs[0]
+                    else:
+                        nsdfg = None
                     if node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                         for ie in state.in_edges(node):
                             if isinstance(ie.src, dace.nodes.AccessNode):
@@ -367,6 +382,8 @@ class ToGPU(ppl.Pass):
                                         oldname = ie.src.data
                                         ie.src.data = "gpu_" + ie.src.data
                                         _replace_memlets(ie.src, state, oldname, ie.src.data)
+                                        if oldname in nsdfg.sdfg.arrays:
+                                            nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
                         for oe in state.out_edges(state.exit_node(node)):
                             if isinstance(oe.dst, dace.nodes.AccessNode):
                                 if isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
@@ -374,12 +391,8 @@ class ToGPU(ppl.Pass):
                                         oldname = oe.dst.data
                                         oe.dst.data = "gpu_" + oe.dst.data
                                         _replace_memlets(oe.dst, state, oldname, oe.dst.data)
-        arrays_and_locations = dict()
-        for name, arr in sdfg.arrays.items():
-            if isinstance(arr, dace.data.Array):
-                if not name.startswith("gpu_"):
-                    arrays_and_locations[name] = "Unknown"
-
+                                        if oldname in nsdfg.sdfg.arrays:
+                                            nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
         # 5.
 
         # Do first touch
