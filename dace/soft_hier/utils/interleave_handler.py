@@ -192,7 +192,7 @@ class InterleaveHandler:
             kg_oj = k_group_offset // k_dim_x
             pi_dace = kg_oi + kg_i * k_dim_x
             pj_dace = kg_oj + kg_j * k_dim_y
-            pi_index = pi_dace * dim_x_dace + pj_dace
+            pi_index = pj_dace * dim_x_dace + pi_dace
             pi_real = pi_index % dim_x
             pj_real = pi_index // dim_x
             place = real_place_base[pi_real][pj_real]
@@ -226,7 +226,7 @@ class InterleaveHandler:
             kg_oj = cid_store // kg_m
             pi_dace = kg_oi + kg_i * kg_m
             pj_dace = kg_oj + kg_j * kg_n
-            pi_index = pi_dace * dim_x_dace + pj_dace
+            pi_index = pj_dace * dim_x_dace + pi_dace
             pi_real = pi_index % dim_x
             pj_real = pi_index // dim_x
 
@@ -243,3 +243,116 @@ class InterleaveHandler:
             # print(f"kg_i: {kg_i}, kg_j: {kg_j}, gi: {gi}, gj: {gj}, cid_store: {cid_store}, kg_oi: {kg_oi}, kg_oj: {kg_oj}, pi_dace: {pi_dace}, pj_dace: {pj_dace}, pi_index: {pi_index}, pi_real: {pi_real}, pj_real: {pj_real}, index_diff: {index_diff}")    
         # self.print_info()
         # raise NotImplementedError("Not implemented yet")
+        
+    def my_sys_stream_place_to_left_and_bottom(self, systolic_range=None):
+        if self.split_scheme is None:
+            raise ValueError("Split scheme is not set")
+        num_tiles = self.split_scheme[0] * self.split_scheme[1]
+        self.placement_scheme = ()
+        dim_x = self.cluster_dims[0]
+        dim_y = self.cluster_dims[1]
+        if dim_x % 4 != 0 or dim_y % 4 != 0:
+            raise ValueError("Cluster dimensions must be multiples of 4")
+        split_x = self.split_scheme[0]
+        split_y = self.split_scheme[1]
+        # print(split_x, split_y)
+        (dim_x_dace, dim_y_dace) = self.cluster_dims_dace
+        if split_x % dim_x != 0 or split_y % dim_y!= 0:
+            print(split_x, split_y, dim_x, dim_y)
+            raise ValueError(f"Split scheme must be multiples of cluster dimensions")
+        
+        sr_m, sr_n = systolic_range # sr_m = 1, y-axis stream; sr_n = 1, x-axis stream
+        if sr_m > 1 and sr_n > 1:
+            raise ValueError("stream can only be 1 in one dimension")
+
+        # From the dim_x and dim_y, get the real place base
+        real_place_base = [[0 for _ in range(dim_y)] for _ in range(dim_x)]
+        for i in range(dim_x):
+            for j in range(dim_y):
+                if ((i // (dim_x//2)) + (j // (dim_y//2))) % 2 == 0:
+                    real_place_base[i][j] = 1
+                else:
+                    real_place_base[i][j] = 0
+
+        for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
+                pi_dace = i % dim_x
+                pj_dace = j % dim_y
+
+                p_real = pj_dace * dim_x_dace + pi_dace
+                pi_real = p_real % dim_x
+                pj_real = p_real // dim_x
+
+                place = real_place_base[pi_real][pj_real]
+                if sr_m == 1:
+                    if place == 1:
+                        oi = (pi_real % (dim_x//2)) // ((dim_x//2)//sr_n)
+                        channel_id = (pj_real // sr_n) * sr_n + oi
+                    else:
+                        channel_id = 2 * dim_y + dim_x + pi_real % dim_x
+                    self.placement_scheme += (channel_id,)
+                elif sr_n == 1:
+                    if place == 1:
+                        channel_id = pj_real % dim_y
+                    else:
+                        oj = (pj_real % (dim_y//2)) // ((dim_y//2)//sr_m)
+                        channel_id = 2 * dim_y + dim_x + (pi_real // sr_m) * sr_m + oj
+                    self.placement_scheme += (channel_id,)
+                    
+    def multistream_place_to_left_and_bottom(self, n_streams:int, direction='x'):
+        if self.split_scheme is None:
+            raise ValueError("Split scheme is not set")
+        num_tiles = self.split_scheme[0] * self.split_scheme[1]
+        self.placement_scheme = ()
+        dim_x = self.cluster_dims[0]
+        dim_y = self.cluster_dims[1]
+        split_x = self.split_scheme[0]
+        split_y = self.split_scheme[1]
+        (dim_x_dace, dim_y_dace) = self.cluster_dims_dace
+        if split_x % dim_x != 0 or split_y % dim_y!= 0:
+            print(split_x, split_y, dim_x, dim_y)
+            raise ValueError(f"Split scheme must be multiples of cluster dimensions")
+        
+        if direction == 'x':
+            summa_range = (dim_x // n_streams, dim_y)
+        elif direction == 'y':
+            summa_range = (dim_x, dim_y // n_streams)
+        
+        sr_m, sr_n = summa_range 
+
+        # From the dim_x and dim_y, get the real place base
+        real_place_base = [[0 for _ in range(dim_y)] for _ in range(dim_x)]
+        for i in range(dim_x):
+            for j in range(dim_y):
+                if direction == 'x':
+                    if (i % sr_m) // (sr_m // 2) == 0:
+                        real_place_base[i][j] = 1
+                    else:
+                        real_place_base[i][j] = 0
+                elif direction == 'y':
+                    if (j % sr_n) // (sr_n // 2) == 0:
+                        real_place_base[i][j] = 0
+                    else:
+                        real_place_base[i][j] = 1
+        for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
+            pi_dace = i % dim_x
+            pj_dace = j % dim_y
+
+            p_real = pj_dace * dim_x_dace + pi_dace
+            pi_real = p_real % dim_x
+            pj_real = p_real // dim_x
+
+            place = real_place_base[pi_real][pj_real]
+            if direction == 'x':
+                if place == 1:
+                    channel_id = pj_real % dim_y
+                else:
+                    oj = pi_real % (sr_m // 2) + (pj_real // (sr_m // 2)) * (sr_m // 2)
+                    channel_id = 2 * dim_y + dim_x + oj
+                self.placement_scheme += (channel_id,)
+            elif direction == 'y':
+                if place == 1:
+                    oi = (pj_real % (sr_n // 2)) + (pi_real // (sr_n // 2)) * (sr_n // 2)
+                    channel_id = oi
+                else:
+                    channel_id = 2 * dim_y + dim_x + pi_real % dim_x
+                self.placement_scheme += (channel_id,)

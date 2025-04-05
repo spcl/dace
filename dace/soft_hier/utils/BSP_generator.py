@@ -501,10 +501,10 @@ if (({i} == 0) && ({j} == 0))
         code=f'''
 if (({i} >= {M} - {gM}*{tM}) && ({j} >= {N} - {gN}*{tN}))
 {{
-    for (int sync_iter = 0; sync_iter < {gM//sr_m+gN//sr_n} - 1 - ({o_i}+{o_j}) - 1; sync_iter++){{
+    for (int sync_iter = 0; sync_iter < {sr_m+sr_n} - 1 - ({o_i}+{o_j}) - 1; sync_iter++){{
         flex_global_barrier_xy();
     }}
-}}                         
+}}                      
         ''',
         language=dace.dtypes.Language.CPP
     )
@@ -519,3 +519,13 @@ if (({i} >= {M} - {gM}*{tM}) && ({j} >= {N} - {gN}*{tN}))
             BSP_communication_code_block, 
             BSP_sync, 
             post_shift_code_block)
+ 
+    
+def generate_multistream_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K, n_streams=2, direction='x'):
+    if direction == 'y':
+        summa_range = (gM, gN // n_streams)
+    elif direction == 'x':
+        summa_range = (gM // n_streams, gN)
+    else:
+        raise ValueError("Invalid direction. Choose 'x' or 'y'.")    
+    return generate_summa_systolic_BSP(i, j, gi, gj, gM, gN, tM, tN, tK, M, N, K, summa_range=summa_range)
