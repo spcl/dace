@@ -289,10 +289,30 @@ class ToGPU(ppl.Pass):
                             ):
                                 nnode.schedule = dace.dtypes.ScheduleType.Sequential
 
+        def _replace_memlets(start_node, state, oldname, newname):
+            stack = set([e for e in state.out_edges(start_node)])
+            while stack:
+                nextedge = stack.pop()
+                nextnode = nextedge.dst
+                if not isinstance(nextnode, dace.nodes.AccessNode):
+                    for e in state.out_edges(nextnode):
+                        stack.add(e)
+                    if nextedge.data is not None and nextedge.data.data == oldname:
+                        nextedge.data.data = newname
+            stack = set([e for e in state.in_edges(start_node)])
+            while stack:
+                nextedge = stack.pop()
+                nextnode = nextedge.src
+                if not isinstance(nextnode, dace.nodes.AccessNode):
+                    for e in state.in_edges(nextnode):
+                        stack.add(e)
+                    if nextedge.data is not None and nextedge.data.data == oldname:
+                        nextedge.data.data = newname
+
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.AccessNode):
-                    is_gpu = False #is_devicelevel_gpu(sdfg, state, node)
+                    is_gpu = is_devicelevel_gpu(sdfg, state, node)
                     for e in state.in_edges(node):
                         if isinstance(e.src, dace.nodes.MapExit):
                             if (
@@ -308,27 +328,6 @@ class ToGPU(ppl.Pass):
                             ):
                                 is_gpu = True
                     oldname = node.data
-
-
-                    def _replace_memlets(start_node, state, oldname, newname):
-                        stack = set([e for e in state.out_edges(start_node)])
-                        while stack:
-                            nextedge = stack.pop()
-                            nextnode = nextedge.dst
-                            if not isinstance(nextnode, dace.nodes.AccessNode):
-                                for e in state.out_edges(nextnode):
-                                    stack.add(e)
-                                if nextedge.data is not None and nextedge.data.data == oldname:
-                                    nextedge.data.data = newname
-                        stack = set([e for e in state.in_edges(start_node)])
-                        while stack:
-                            nextedge = stack.pop()
-                            nextnode = nextedge.src
-                            if not isinstance(nextnode, dace.nodes.AccessNode):
-                                for e in state.in_edges(nextnode):
-                                    stack.add(e)
-                                if nextedge.data is not None and nextedge.data.data == oldname:
-                                    nextedge.data.data = newname
 
                     is_copy = any([isinstance(e.src, dace.nodes.AccessNode) for e in state.in_edges(node)]) or any([isinstance(e.dst, dace.nodes.AccessNode) for e in state.out_edges(node)])
 
@@ -393,6 +392,54 @@ class ToGPU(ppl.Pass):
                                         _replace_memlets(oe.dst, state, oldname, oe.dst.data)
                                         if oldname in nsdfg.sdfg.arrays:
                                             nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
+
+        def set_gpu_names_in_nested(sdfg):
+            for state in sdfg.all_states():
+                for n in state.nodes():
+                    if isinstance(n, dace.nodes.NestedSDFG):
+                        nsdfg = n
+                        repldict = set()
+                        for ie in state.in_edges(nsdfg):
+                            if ie.data is not None and ie.data.data == "gpu_" + ie.dst_conn:
+                                assert isinstance(sdfg.arrays[ie.data.data], dace.data.Array)
+                                repldict.add((ie.dst_conn, ie.data.data))
+                        for oe in state.out_edges(nsdfg):
+                            if oe.data is not None and oe.data.data == "gpu_" + oe.src_conn:
+                                assert isinstance(sdfg.arrays[oe.data.data], dace.data.Array)
+                                repldict.add((oe.src_conn, oe.data.data))
+
+                        for oldname, newname in repldict:
+                            if oldname in nsdfg.in_connectors:
+                                p = nsdfg.in_connectors.pop(oldname)
+                                nsdfg.in_connectors[newname] = p
+                            if oldname in nsdfg.out_connectors:
+                                p = nsdfg.out_connectors.pop(oldname)
+                                nsdfg.out_connectors[newname] = p
+                            for ie in state.in_edges(nsdfg):
+                                if ie.dst_conn == oldname:
+                                    ie.dst_conn = newname
+                            for oe in state.out_edges(nsdfg):
+                                if oe.src_conn == oldname:
+                                    oe.src_conn = newname
+
+                            nsdfg.sdfg.replace(oldname, newname)
+
+                            if oldname in nsdfg.sdfg.arrays and newname not in nsdfg.sdfg.arrays:
+                                olddesc = nsdfg.sdfg.arrays.pop(oldname)
+                                nsdfg.sdfg.add_datadesc(newname, olddesc)
+                            else:
+                                assert oldname not in nsdfg.sdfg.arrays
+                                assert newname in nsdfg.sdfg.arrays
+
+
+            sdfg.validate()
+            for state in sdfg.all_states():
+                for n in state.nodes():
+                    if isinstance(n, dace.nodes.NestedSDFG):
+                        set_gpu_names_in_nested(n.sdfg)
+
+        set_gpu_names_in_nested(sdfg)
+
         # 5.
 
         # Do first touch
