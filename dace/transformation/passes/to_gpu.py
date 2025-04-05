@@ -197,6 +197,7 @@ class ToGPU(ppl.Pass):
                     if (
                         arr.storage == dace.dtypes.StorageType.Default
                         or arr.storage == dace.dtypes.StorageType.CPU_Heap
+                        or arr.storage == dace.dtypes.StorageType.Register
                     ):
                         if "gpu_" + name not in sdfg.arrays:
                             gpu_arr = copy.deepcopy(arr)
@@ -214,6 +215,7 @@ class ToGPU(ppl.Pass):
                     if (
                         arr.storage == dace.dtypes.StorageType.Default
                         or arr.storage == dace.dtypes.StorageType.CPU_Heap
+                        or arr.storage == dace.dtypes.StorageType.Register
                     ):
                         if "gpu_" + name not in sdfg.arrays:
                             gpu_arr = copy.deepcopy(arr)
@@ -229,6 +231,7 @@ class ToGPU(ppl.Pass):
                                 None,
                                 dace.memlet.Memlet.from_array(name, arr),
                             )
+
                             # Do the reverse at the end
                             # last_states = [node for node in sdfg.nodes() if sdfg.out_degree(node) == 0]
                             # assert len(last_states) == 1
@@ -263,9 +266,9 @@ class ToGPU(ppl.Pass):
         # 3. Analyze which arrays are constant - Other then gpu arrays generated there should be not GPU arrays used
         # Do not check the last and initial state
 
-        const_arrays = [
-            v for v in self.get_const_arrays(sdfg, True) if not v.startswith("gpu_")
-        ]
+        #const_arrays = [
+        #    v for v in self.get_const_arrays(sdfg, True) if not v.startswith("gpu_")
+        #]
         const_arrays = []
         if self.verbose:
             print(f"Constant arrays: {const_arrays}")
@@ -387,13 +390,13 @@ class ToGPU(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 # All GPU map inputs and outputs should be GPU storage
-                if isinstance(node, (dace.nodes.MapEntry, dace.nodes.LibraryNode)) and (node not in self.cpu_library_nodes):   
+                if isinstance(node, (dace.nodes.MapEntry, dace.nodes.LibraryNode)) and (node not in self.cpu_library_nodes):
                     nsdfgs = list(set([e.dst for e in state.out_edges(node) if isinstance(e.dst, dace.nodes.NestedSDFG)]))
                     if len(nsdfgs) > 0:
                         nsdfg = nsdfgs[0]
                     else:
                         nsdfg = None
-                    if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device) or (isinstance(node, dace.nodes.LibraryNode) and node.schedule == dace.dtypes.ScheduleType.GPU_Device): 
+                    if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device) or (isinstance(node, dace.nodes.LibraryNode) and node.schedule == dace.dtypes.ScheduleType.GPU_Device):
                         for ie in state.in_edges(node):
                             if isinstance(ie.src, dace.nodes.AccessNode):
                                 if isinstance(sdfg.arrays[ie.src.data], dace.data.Array):
