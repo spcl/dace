@@ -5,6 +5,7 @@ from collections import defaultdict
 import copy
 import sympy as sp
 from typing import Dict, List, Set
+import warnings
 
 from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
 from dace.codegen.tools.type_inference import infer_expr_type
@@ -508,25 +509,31 @@ class LoopToMap(xf.MultiStateTransformation):
         for sym, dtype in nsymbols.items():
             nsdfg.symbols[sym] = dtype
 
-        # Add casts to preserve types of non-mapped symbols
+        # Propagate symbols, where types cannot be inferred
+        alltypes = copy.deepcopy(nsdfg.symbols)
+        alltypes.update({k: v.dtype for k, v in nsdfg.arrays.items()})
         for e in self.loop.all_interstate_edges():
           for k, v in e.data.assignments.items():
-              if k not in sdfg.symbols or k in nsdfg.symbols:
+              # Skip if the symbol is already in the SDFG
+              if k in nsdfg.symbols:
                   continue
+              
+              # Should not happen: Cannot infer type and paretn SDFG also does not have an explicit type
+              vtype = infer_expr_type(v, alltypes)
+              if k not in sdfg.symbols:
+                if vtype is None:
+                  warnings.warn(f"Symbol {k} not found in parent SDFG symbols.")
+                continue
+
+              # If the inferred type and the symbol type are the same, skip
               ktype: dtypes.typeclass = sdfg.symbols[k]
-              vtype = infer_expr_type(v, sdfg.symbols)
               if ktype == vtype:
                   continue
               
-              if ktype.dtype == dtypes.int32 or ktype.dtype == dtypes.int64:
-                  ktype = "int"
-              elif ktype.dtype == dtypes.float32 or ktype.dtype == dtypes.float64:
-                  ktype = "float"
-              else:
-                  raise ValueError(f"Unsupported type {ktype}")
-
-              # Add cast
-              e.data.assignments[k] = f'{ktype}({v})'
+              # Only add explicit type, if it cannot be inferred
+              if vtype is None:
+                nsdfg.symbols[k] = ktype
+                
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
