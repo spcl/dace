@@ -27,12 +27,20 @@ class ToGPU(ppl.Pass):
     #    desc="Dictionary of duplicated constant arrays (key: old name, value: new name)"
     # )
 
+    cpu_library_nodes: typing.List[dace.nodes.LibraryNode] = Property(
+        dtype=list,
+        default=[],
+        desc="List of library nodes that should not be converted to GPU.",
+    )
+
     def __init__(
         self,
         verbose: bool = False,
         # duplicated_const_arrays: typing.Dict[str, str] = None,
+        cpu_library_nodes: typing.List[dace.nodes.LibraryNode] = [],
     ):
         self.verbose = verbose
+        self.cpu_library_nodes = cpu_library_nodes
         super().__init__()
 
     def modifies(self) -> ppl.Modifies:
@@ -270,12 +278,12 @@ class ToGPU(ppl.Pass):
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(
-                        node, (dace.nodes.LibraryNode, dace.nodes.NestedSDFG)
+                        node, dace.nodes.NestedSDFG
                     ):
                         if node.guid:
                             node.schedule = dace.dtypes.ScheduleType.GPU_Default
                             gpu_nodes.add((state, node))
-                    elif isinstance(node, dace.nodes.EntryNode):
+                    elif isinstance(node, (dace.nodes.EntryNode, dace.nodes.LibraryNode)) and (node not in self.cpu_library_nodes):
                         node.schedule = dace.dtypes.ScheduleType.GPU_Device
                         gpu_nodes.add((state, node))
                         # Move memlets to GPU
@@ -320,6 +328,12 @@ class ToGPU(ppl.Pass):
                                 == dace.dtypes.ScheduleType.GPU_Device
                             ):
                                 is_gpu = True
+                        if isinstance(e.src, dace.nodes.LibraryNode) and (e.src not in self.cpu_library_nodes):
+                            if (
+                                e.src.schedule
+                                == dace.dtypes.ScheduleType.GPU_Device
+                            ):
+                                is_gpu = True
                     for e in state.out_edges(node):
                         if isinstance(e.dst, dace.nodes.MapEntry):
                             if (
@@ -327,6 +341,12 @@ class ToGPU(ppl.Pass):
                                 == dace.dtypes.ScheduleType.GPU_Device
                             ):
                                 is_gpu = True
+                            if isinstance(e.dst, dace.nodes.LibraryNode) and (e.dst not in self.cpu_library_nodes):
+                              if (
+                                  e.dst.schedule
+                                  == dace.dtypes.ScheduleType.GPU_Device
+                              ):
+                                  is_gpu = True
                     oldname = node.data
 
                     is_copy = any([isinstance(e.src, dace.nodes.AccessNode) for e in state.in_edges(node)]) or any([isinstance(e.dst, dace.nodes.AccessNode) for e in state.out_edges(node)])
@@ -367,13 +387,13 @@ class ToGPU(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 # All GPU map inputs and outputs should be GPU storage
-                if isinstance(node, dace.nodes.MapEntry):
+                if isinstance(node, (dace.nodes.MapEntry, dace.nodes.LibraryNode)) and (node not in self.cpu_library_nodes):   
                     nsdfgs = list(set([e.dst for e in state.out_edges(node) if isinstance(e.dst, dace.nodes.NestedSDFG)]))
                     if len(nsdfgs) > 0:
                         nsdfg = nsdfgs[0]
                     else:
                         nsdfg = None
-                    if node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                    if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device) or (isinstance(node, dace.nodes.LibraryNode) and node.schedule == dace.dtypes.ScheduleType.GPU_Device): 
                         for ie in state.in_edges(node):
                             if isinstance(ie.src, dace.nodes.AccessNode):
                                 if isinstance(sdfg.arrays[ie.src.data], dace.data.Array):
@@ -381,16 +401,17 @@ class ToGPU(ppl.Pass):
                                         oldname = ie.src.data
                                         ie.src.data = "gpu_" + ie.src.data
                                         _replace_memlets(ie.src, state, oldname, ie.src.data)
-                                        if oldname in nsdfg.sdfg.arrays:
+                                        if nsdfg and oldname in nsdfg.sdfg.arrays:
                                             nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
-                        for oe in state.out_edges(state.exit_node(node)):
+                        exit_node = node if isinstance(node, dace.nodes.LibraryNode) else state.exit_node(node)
+                        for oe in state.out_edges(exit_node):
                             if isinstance(oe.dst, dace.nodes.AccessNode):
                                 if isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
                                     if not oe.dst.data.startswith("gpu_"):
                                         oldname = oe.dst.data
                                         oe.dst.data = "gpu_" + oe.dst.data
                                         _replace_memlets(oe.dst, state, oldname, oe.dst.data)
-                                        if oldname in nsdfg.sdfg.arrays:
+                                        if nsdfg and oldname in nsdfg.sdfg.arrays:
                                             nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
 
         def set_gpu_names_in_nested(sdfg):
@@ -453,7 +474,7 @@ class ToGPU(ppl.Pass):
             assert location_history != [{}]
             states_to_add = []
             for node in sdutil.dfs_topological_sort(cfg):
-                used_data = get_used_data(sdfg, node)
+                used_data = self.get_used_data(sdfg, node)
                 if self.verbose:
                     print(f"Data Used By: {node}, are: {used_data}")
                 _arrays_and_locations = dict()
@@ -554,7 +575,7 @@ class ToGPU(ppl.Pass):
 
                 if self.verbose:
                     print(current, type(current))
-                used_data = get_used_data(sdfg, current)
+                used_data = self.get_used_data(sdfg, current)
                 if self.verbose:
                     print(f"Data Used By: {current}, are: {used_data}")
 
@@ -784,12 +805,15 @@ class ToGPU(ppl.Pass):
         for state in sdfg.states():
             for node in sdutil.dfs_topological_sort(state):
                 if (
-                    isinstance(node, dace.nodes.MapEntry)
-                    and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+                    (isinstance(node, dace.nodes.MapEntry)
+                    and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device)
+                    or (isinstance(node, dace.nodes.LibraryNode)
+                    and node.schedule == dace.dtypes.ScheduleType.GPU_Device)
+                    and (node not in self.cpu_library_nodes)
                 ):
-
+                    exit_node = node if isinstance(node, dace.nodes.LibraryNode) else state.exit_node(node)
                     for inner_node in state.all_nodes_between(
-                        node, state.exit_node(node)
+                        node, exit_node
                     ):
                         if isinstance(inner_node, dace.nodes.NestedSDFG):
                             move_to_gpu(inner_node, sdfg, state)
@@ -805,6 +829,40 @@ class ToGPU(ppl.Pass):
                 end_node.remove_node(n)
 
         sdfg.validate()
+
+    def get_used_data(self, sdfg: dace.SDFG, cfg: Union[ControlFlowBlock, dace.SDFGState]):
+      if isinstance(cfg, dace.SDFGState):
+          data_used = set()
+          if isinstance(cfg, dace.SDFGState):
+              slist = [cfg]
+          else:
+              slist = cfg.all_states()
+          for s in slist:
+              for node in s.nodes():
+                  if isinstance(node, dace.nodes.AccessNode):
+                      is_gpu = is_devicelevel_gpu(sdfg, cfg, node)
+                      for e in s.in_edges(node):
+                          if isinstance(e.src, dace.nodes.MapExit):
+                              if e.src.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                                  is_gpu = True
+                          if isinstance(e.src, dace.nodes.LibraryNode) and (e.src not in self.cpu_library_nodes):
+                              if e.src.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                                  is_gpu = True
+                      for e in s.out_edges(node):
+                          if isinstance(e.dst, dace.nodes.MapEntry):
+                              if e.dst.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                                  is_gpu = True
+                          if isinstance(e.dst, dace.nodes.LibraryNode) and (e.dst not in self.cpu_library_nodes):
+                              if e.dst.schedule == dace.dtypes.ScheduleType.GPU_Device:
+                                  is_gpu = True
+                      data_used.add((node.data, "GPU" if is_gpu else "CPU"))
+
+          return data_used
+
+      if isinstance(cfg, ControlFlowBlock) and not isinstance(cfg, dace.SDFGState):
+          return set().union(*[self.get_used_data(sdfg, node) for node in cfg.nodes()])
+
+      raise Exception(f"Should not reach here {cfg}, {type(cfg)}")
 
 def all_states(cfg: ControlFlowRegion):
     states = set()
@@ -826,31 +884,3 @@ def all_states(sdfg: dace.SDFGState, cfg: ControlFlowBlock):
             states.add(node)
     return states
 
-
-def get_used_data(sdfg: dace.SDFG, cfg: Union[ControlFlowBlock, dace.SDFGState]):
-    if isinstance(cfg, dace.SDFGState):
-        data_used = set()
-        if isinstance(cfg, dace.SDFGState):
-            slist = [cfg]
-        else:
-            slist = cfg.all_states()
-        for s in slist:
-            for node in s.nodes():
-                if isinstance(node, dace.nodes.AccessNode):
-                    is_gpu = is_devicelevel_gpu(sdfg, cfg, node)
-                    for e in s.in_edges(node):
-                        if isinstance(e.src, dace.nodes.MapExit):
-                            if e.src.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                                is_gpu = True
-                    for e in s.out_edges(node):
-                        if isinstance(e.dst, dace.nodes.MapEntry):
-                            if e.dst.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
-                                is_gpu = True
-                    data_used.add((node.data, "GPU" if is_gpu else "CPU"))
-
-        return data_used
-
-    if isinstance(cfg, ControlFlowBlock) and not isinstance(cfg, dace.SDFGState):
-        return set().union(*[get_used_data(sdfg, node) for node in cfg.nodes()])
-
-    raise Exception(f"Should not reach here {cfg}, {type(cfg)}")
