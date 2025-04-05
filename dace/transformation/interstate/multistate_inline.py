@@ -42,7 +42,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             return False
         if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
             return False
-        if nested_sdfg.sdfg.name.startswith("velocity_tendencies"):
+        if nested_sdfg.sdfg.name.startswith("velocity_tendencies") or nested_sdfg.sdfg.name.startswith("mycloudsc"):
             return False
 
         if state.entry_node(nested_sdfg) is not None:

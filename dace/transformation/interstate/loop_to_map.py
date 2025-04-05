@@ -99,6 +99,9 @@ class LoopToMap(xf.MultiStateTransformation):
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
         itervar = self.loop.loop_variable
+
+        #if itervar!="_for_it_129":
+        #    return False
         if start is None or end is None or step is None or itervar is None:
             return False
 
