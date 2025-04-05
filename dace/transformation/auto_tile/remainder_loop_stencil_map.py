@@ -102,8 +102,8 @@ class RemainderLoopStencilMap(transformation.SingleStateTransformation):
 
         # Collect symbols and data we need in the inner SDFG
         symbols_defined_at_entry = state.symbols_defined_at(map_entry)
-        inputs  = [ie.data.data for ie in state.in_edges(map_entry) if ie.data is not None]
-        outputs = [oe.data.data for oe in state.in_edges(state.exit_node(map_entry)) if oe.data is not None]
+        inputs  = [ie.data.data for ie in state.in_edges(map_entry) if ie.data is not None and ie.data.data is not None]
+        outputs = [oe.data.data for oe in state.in_edges(state.exit_node(map_entry)) if oe.data is not None and oe.data.data is not None]
         used_arrs = set(inputs).union(set(outputs))
         sym_map = dict()
         sym_and_type_map = dict()
@@ -115,7 +115,6 @@ class RemainderLoopStencilMap(transformation.SingleStateTransformation):
         sym_and_types = dict()
         for (db, _de, ds) in dev_entry.map.range:
             for de in [db, _de, ds]:
-                print(de, type(de), isinstance(de, symbolic.symbol),  hasattr(de, 'free_symbols'), hasattr(de, 'expr'), hasattr(de.expr, 'symbols') if hasattr(de, 'expr') else False)
                 if isinstance(de, dace.symbolic.symbol):
                     sym_map[str(de)] = str(de)
                     sym_and_types[str(de)] = de.dtype
@@ -170,11 +169,13 @@ class RemainderLoopStencilMap(transformation.SingleStateTransformation):
         # Add nSDFG and connections in and out
         state.add_node(nsdfg)
         for ie in state.in_edges(map_entry):
-            state.add_edge(ie.src, ie.src_conn, nsdfg, ie.data.data,
-                           dace.memlet.Memlet.from_array(ie.data.data, sdfg.arrays[ie.data.data]))
+            if ie.data.data is not None:
+                state.add_edge(ie.src, ie.src_conn, nsdfg, ie.data.data,
+                            dace.memlet.Memlet.from_array(ie.data.data, sdfg.arrays[ie.data.data]) if ie.data.data is not None else dace.memlet.Memlet(None))
         for oe in state.out_edges(state.exit_node(map_entry)):
-            state.add_edge(nsdfg, oe.data.data, oe.dst, oe.dst_conn,
-                           dace.memlet.Memlet.from_array(oe.data.data, sdfg.arrays[oe.data.data]))
+            if oe.data.data is not None:
+                state.add_edge(nsdfg, oe.data.data, oe.dst, oe.dst_conn,
+                            dace.memlet.Memlet.from_array(oe.data.data, sdfg.arrays[oe.data.data]) if oe.data.data is not None else dace.memlet.Memlet(None))
 
         # Copy over all nodes and edges to inner SDFGs
         for node in inner_body_nodes:
@@ -193,22 +194,26 @@ class RemainderLoopStencilMap(transformation.SingleStateTransformation):
             remainder_state.add_edge(*edge)
         for ie in inedges:
             if ie.dst == map_entry1[0]:
-                an = inner_state.add_access(ie.data.data)
-                inner_state.add_edge(an, None, map_entry1[1], ie.dst_conn,
-                                     copy.deepcopy(ie.data))
+                if ie.data.data is not None:
+                    an = inner_state.add_access(ie.data.data)
+                    inner_state.add_edge(an, None, map_entry1[1], ie.dst_conn,
+                                        copy.deepcopy(ie.data))
             if ie.dst == map_entry2[0]:
-                an = remainder_state.add_access(ie.data.data)
-                remainder_state.add_edge(an, None, map_entry2[1], ie.dst_conn,
-                                     copy.deepcopy(ie.data))
+                if ie.data.data is not None:
+                    an = remainder_state.add_access(ie.data.data)
+                    remainder_state.add_edge(an, None, map_entry2[1], ie.dst_conn,
+                                        copy.deepcopy(ie.data))
         for oe in outedges:
             if oe.src == map_exit1[0]:
-                an = inner_state.add_access(oe.data.data)
-                inner_state.add_edge(map_exit1[1], oe.src_conn, an, None,
-                                     copy.deepcopy(oe.data))
+                if oe.data.data is not None:
+                    an = inner_state.add_access(oe.data.data)
+                    inner_state.add_edge(map_exit1[1], oe.src_conn, an, None,
+                                        copy.deepcopy(oe.data))
             if oe.src == map_exit2[0]:
-                an = remainder_state.add_access(oe.data.data)
-                remainder_state.add_edge(map_exit2[1], oe.src_conn, an, None,
-                                     copy.deepcopy(oe.data))
+                if oe.data.data is not None:
+                    an = remainder_state.add_access(oe.data.data)
+                    remainder_state.add_edge(map_exit2[1], oe.src_conn, an, None,
+                                        copy.deepcopy(oe.data))
         # Add missing datadaesc
         def add_missing_desc(sdfg, inner_sdfg, inner_state):
             for n in inner_state.nodes():
@@ -240,7 +245,7 @@ class RemainderLoopStencilMap(transformation.SingleStateTransformation):
             state.remove_node(node)
 
         sdfg.reset_cfg_list()
-
+        sdfg.save("after_remainder_loop_stencil_map.sdfg")
         sdfg.validate()
 
 
