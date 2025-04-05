@@ -805,9 +805,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                     # A view gets "allocated" everywhere it appears
                     if isinstance(desc, data.View):
+                        self.to_allocate[cursdfg].append((sdfg, first_state_instance, first_node_instance, True, False, False))
+                        self.to_allocate[cursdfg].append((sdfg, last_state_instance, last_node_instance, False, False, True))
                         for s, n in instances:
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
-                            self.to_allocate[s].append((sdfg, s, n, False, False, True))
+                        #     self.to_allocate[s].append((sdfg, s, n, False, False, True))
                         self.where_allocated[(sdfg, name)] = cursdfg
                         continue
 
