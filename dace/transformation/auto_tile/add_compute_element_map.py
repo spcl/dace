@@ -56,6 +56,7 @@ class AddComputeElementBlockMap(transformation.SingleStateTransformation):
         desc="num thread variable for OpenMP",
     )
     skew = Property(dtype=bool, default=False, desc="Whether to apply skewing to the map")
+    tiles_evenly = Property(dtype=bool, default=True, desc="Tiles evenly aka. do not do bound checks")
 
     @classmethod
     def expressions(cls):
@@ -122,22 +123,26 @@ class AddComputeElementBlockMap(transformation.SingleStateTransformation):
         # t2=t1:t+128
         # if B - A is not int -> then Min(B-1,t1+128)+1
         # else t1+128
-        new_ranges = []
-        for i in range(len(prev_entry.map.params)):
-            b, e, s = prev_entry.map.range[i]
-            tb, te, ts = map_entry.map.range[i]
-            try:
-                #ib = int(b)
-                ib = b
-                r = int(e+1-b)
-                is_ = int(s)
-                if r % is_ == 0:
-                    new_ranges.append((tb, te, ts))
-                else:
+        if not self.tiles_evenly:
+            new_ranges = []
+
+            for i in range(len(prev_entry.map.params)):
+                b, e, s = prev_entry.map.range[i]
+                tb, te, ts = map_entry.map.range[i]
+                try:
+                    #ib = int(b)
+                    ib = b
+                    r = int(e+1-b)
+                    is_ = int(s)
+                    if r % is_ == 0:
+                        new_ranges.append((tb, te, ts))
+                    else:
+                        if self.tiles_evenly:
+                            new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
+                except Exception:
                     new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
-            except Exception:
-                new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
-        map_entry.map.range = dace.subsets.Range(new_ranges)
+
+            map_entry.map.range = dace.subsets.Range(new_ranges)
 
         if self.bind_var is not None:
             map_entry.map.omp_bind = self.bind_var

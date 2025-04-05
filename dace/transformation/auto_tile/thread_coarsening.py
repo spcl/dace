@@ -33,6 +33,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
 
     unroll = Property(dtype=bool, default=True, desc="Unroll the thread group map")
     unroll_mask = ListProperty(element_type=bool, default=None, desc="Which dimensions to unroll")
+    tiles_evenly = Property(dtype=bool, default=False, desc="Tiles evenly")
 
     @classmethod
     def expressions(cls):
@@ -322,6 +323,8 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
             )
         ]
         dev_entry.map.range = subsets.Range(dev_updated_range_list)
+
+
         thread_block_updated_range_list = [
             (beg, beg + ((end + 1 - beg) * step) - 1, step)
             for (beg, end, step) in thread_group_entry.map.range
