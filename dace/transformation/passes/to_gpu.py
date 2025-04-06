@@ -10,7 +10,7 @@ from sympy import Set
 import dace
 import typing
 from dace.codegen.control_flow import ConditionalBlock, ControlFlowBlock
-from dace.data import Property, make_properties
+from dace.data import ListProperty, Property, make_properties
 from dace.sdfg import is_devicelevel_gpu
 from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
@@ -32,15 +32,22 @@ class ToGPU(ppl.Pass):
         default=[],
         desc="List of library nodes that should not be converted to GPU.",
     )
+    exclude = ListProperty(
+        element_type=str,
+        default=[],
+        desc="List of nodes to exclude from GPU conversion.",
+    )
 
     def __init__(
         self,
         verbose: bool = False,
         # duplicated_const_arrays: typing.Dict[str, str] = None,
         cpu_library_nodes: typing.List[dace.nodes.LibraryNode] = [],
+        exclude: typing.List[str] = [],
     ):
         self.verbose = verbose
         self.cpu_library_nodes = cpu_library_nodes
+        self.exclude = exclude
         super().__init__()
 
     def modifies(self) -> ppl.Modifies:
@@ -170,7 +177,8 @@ class ToGPU(ppl.Pass):
                     for oe in oes:
                         if isinstance(oe.dst, dace.nodes.AccessNode):
                             if isinstance(sdfg.arrays[oe.dst.data], dace.data.Scalar):
-                                #raise Exception(f"GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
+                                raise Exception(f"GPU Kernel writing to scalar is not supported (please ensure the kernel writes to a length one array and then copy the output to the scalar)! {oe.dst.data}, {node}")
+                                """
                                 scalar = dace.data.Array(
                                     dtype=arr.dtype,
                                     transient=arr.transient,
@@ -183,6 +191,10 @@ class ToGPU(ppl.Pass):
                                 )
                                 _graph.remove_data(arr_name, False)
                                 _graph.add_datadesc(arr_name, scalar)
+                                """
+
+
+        #sdfg.validate()
 
         replace_names = dict()
         descs = set()
@@ -199,7 +211,7 @@ class ToGPU(ppl.Pass):
                         or arr.storage == dace.dtypes.StorageType.CPU_Heap
                         or arr.storage == dace.dtypes.StorageType.Register
                     ):
-                        if "gpu_" + name not in sdfg.arrays:
+                        if "gpu_" + name not in sdfg.arrays and name not in self.exclude:
                             gpu_arr = copy.deepcopy(arr)
                             gpu_arr.storage = dace.dtypes.StorageType.GPU_Global
                             gpu_arr.transient = True
@@ -217,7 +229,7 @@ class ToGPU(ppl.Pass):
                         or arr.storage == dace.dtypes.StorageType.CPU_Heap
                         or arr.storage == dace.dtypes.StorageType.Register
                     ):
-                        if "gpu_" + name not in sdfg.arrays:
+                        if "gpu_" + name not in sdfg.arrays and name not in self.exclude:
                             gpu_arr = copy.deepcopy(arr)
                             gpu_arr.storage = dace.dtypes.StorageType.GPU_Global
                             gpu_arr.transient = True
@@ -261,7 +273,8 @@ class ToGPU(ppl.Pass):
                         "gpu_" + name, sdfg.arrays["gpu_" + name]
                     ),
                 )
-
+        # DO not until offloading all libraries later
+        #sdfg.validate()
 
         # 3. Analyze which arrays are constant - Other then gpu arrays generated there should be not GPU arrays used
         # Do not check the last and initial state
@@ -425,11 +438,11 @@ class ToGPU(ppl.Pass):
                         repldict = set()
                         for ie in state.in_edges(nsdfg):
                             if ie.data is not None and ie.data.data == "gpu_" + ie.dst_conn:
-                                assert isinstance(sdfg.arrays[ie.data.data], dace.data.Array)
+                                assert isinstance(sdfg.arrays[ie.data.data], dace.data.Array), f"Datadesc {ie.data.data} not Array, {sdfg.arrays[ie.data.data]}, type: {type(sdfg.arrays[ie.data.data])}"
                                 repldict.add((ie.dst_conn, ie.data.data))
                         for oe in state.out_edges(nsdfg):
                             if oe.data is not None and oe.data.data == "gpu_" + oe.src_conn:
-                                assert isinstance(sdfg.arrays[oe.data.data], dace.data.Array)
+                                assert isinstance(sdfg.arrays[oe.data.data], dace.data.Array), f"Datadesc {oe.data.data} not Array, {sdfg.arrays[oe.data.data]}, type: {type(sdfg.arrays[oe.data.data])}"
                                 repldict.add((oe.src_conn, oe.data.data))
 
                         for oldname, newname in repldict:
@@ -456,7 +469,7 @@ class ToGPU(ppl.Pass):
                                 assert newname in nsdfg.sdfg.arrays
 
 
-            sdfg.validate()
+            #sdfg.validate()
             for state in sdfg.all_states():
                 for n in state.nodes():
                     if isinstance(n, dace.nodes.NestedSDFG):
@@ -720,7 +733,7 @@ class ToGPU(ppl.Pass):
             if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
                 end_node.remove_node(n)
 
-        sdfg.validate()
+        #sdfg.validate()
 
         # 6. Decrease number of copy-in and copy-outs
         # If first location is CPU then do not copy to GPU in the first state
@@ -831,7 +844,7 @@ class ToGPU(ppl.Pass):
             if end_node.in_degree(n) == 0 and end_node.out_degree(n) == 0:
                 end_node.remove_node(n)
 
-        sdfg.validate()
+        #sdfg.validate()
 
     def get_used_data(self, sdfg: dace.SDFG, cfg: Union[ControlFlowBlock, dace.SDFGState]):
       if isinstance(cfg, dace.SDFGState):
