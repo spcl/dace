@@ -177,7 +177,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                 if offset.name.startswith('__f2dace_SOA'):
                     newoffset = offset.name + "_" + name_ + "_" + str(local_counter)
                     sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
-                    if sdfg.name.startswith("solve_nh") and name.endswith("prog"):
+                    if name.endswith("prog"):
                         sdfg.append_init_code(f"{newoffset} = {name}[0]->{offset.name};\n")
                     else:
                         sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
@@ -211,7 +211,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                         names_to_replace[size.name] = newsize
                         # var_type.sizes[var_type.sizes.index(size)]=newsize
                         sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n")
-                        if sdfg.name.startswith("solve_nh") and name.endswith("prog"):
+                        if name.endswith("prog"):
                             sdfg.append_init_code(f"{newsize} = {name}[0]->{size.name};\n")
                         else:
                             sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
@@ -516,7 +516,7 @@ class AST_translator:
 
                 if arr.transient and arr_name in arg_names:
                     print(f"Changing the transient status to false of {arr_name} because it's a function argument")
-                    arr.transient = False
+                    #arr.transient = False
 
         # for i in sdfg.arrays:
         #     if i in sdfg.symbols:
@@ -3394,7 +3394,7 @@ def create_sdfg_from_fortran_file_with_options(
     for j in candidates:
         print(f"Building SDFG {j.name.name}")
         ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=j, sdfg_path=sdfgs_dir,
-                                  normalize_offsets=normalize_offsets, do_not_make_internal_variables_argument=True)
+                                  normalize_offsets=normalize_offsets, do_not_make_internal_variables_argument=False)
         sdfg = SDFG(j.name.name)
         ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
         ast2sdfg.structures = program.structures
@@ -3420,13 +3420,14 @@ def create_sdfg_from_fortran_file_with_options(
             continue
 
         sdfg.validate()
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_v.sdfgz"), compress=True)
-        sdfg.simplify(verbose=True)
-        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz"), compress=True)
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfg"), compress=False)
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg22.sdfgz"), compress=True)
         sdfg.validate()
-        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
+        sdfg.simplify(verbose=True)
+        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22.sdfgz"), compress=True)
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22full.sdfg"), compress=False)
+        sdfg.validate()
+        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
         sdfg.compile()
 
     # return sdfg
