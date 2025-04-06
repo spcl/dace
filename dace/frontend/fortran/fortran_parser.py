@@ -177,7 +177,10 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                 if offset.name.startswith('__f2dace_SOA'):
                     newoffset = offset.name + "_" + name_ + "_" + str(local_counter)
                     sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
-                    sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
+                    if sdfg.name.startswith("solve_nh") and name.endswith("prog"):
+                        sdfg.append_init_code(f"{newoffset} = {name}[0]->{offset.name};\n")
+                    else:
+                        sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
 
                     sdfg.add_symbol(newoffset, dtypes.int32)
                     offsets_to_replace.append(newoffset)
@@ -208,7 +211,10 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                         names_to_replace[size.name] = newsize
                         # var_type.sizes[var_type.sizes.index(size)]=newsize
                         sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n")
-                        sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
+                        if sdfg.name.startswith("solve_nh") and name.endswith("prog"):
+                            sdfg.append_init_code(f"{newsize} = {name}[0]->{size.name};\n")
+                        else:
+                            sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
                         sdfg.add_symbol(newsize, dtypes.int32)
                         if isinstance(object, dat.Structure):
                             shape2 = dpcp(object.members[ast_struct_type.name].shape)
@@ -3414,14 +3420,13 @@ def create_sdfg_from_fortran_file_with_options(
             continue
 
         sdfg.validate()
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg22.sdfgz"), compress=True)
-        sdfg.validate()
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_v.sdfgz"), compress=True)
         sdfg.simplify(verbose=True)
-        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22.sdfgz"), compress=True)
-        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22full.sdfg"), compress=False)
+        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz"), compress=True)
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfg"), compress=False)
         sdfg.validate()
-        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
+        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
         sdfg.compile()
 
     # return sdfg

@@ -130,7 +130,7 @@ class LoopToMap(xf.MultiStateTransformation):
         for loop_state in loop_states:
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
                 return False
-        
+
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
                                                                              ignore_nonstate_blocks=False))
@@ -517,7 +517,7 @@ class LoopToMap(xf.MultiStateTransformation):
               # Skip if the symbol is already in the SDFG
               if k in nsdfg.symbols:
                   continue
-              
+
               # Should not happen: Cannot infer type and paretn SDFG also does not have an explicit type
               vtype = infer_expr_type(v, alltypes)
               if k not in sdfg.symbols:
@@ -529,11 +529,11 @@ class LoopToMap(xf.MultiStateTransformation):
               ktype: dtypes.typeclass = sdfg.symbols[k]
               if ktype == vtype:
                   continue
-              
+
               # Only add explicit type, if it cannot be inferred
               if vtype is None:
                 nsdfg.symbols[k] = ktype
-                
+
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a correct map with a positive increment.
@@ -588,14 +588,14 @@ class LoopToMap(xf.MultiStateTransformation):
 
             rd_sym = symbolic.pystr_to_symbolic(rd)
             rd_name_sym = symbolic.pystr_to_symbolic(rd_name)
-            
+
             for i in range(len(map_node.range)):
               lb, up, st = map_node.range[i]
               lb = lb.replace(rd_sym, rd_name_sym)
               up = up.replace(rd_sym, rd_name_sym)
               st = st.replace(rd_sym, rd_name_sym)
               map_node.range[i] = (lb, up, st)
-        
+
         if view_assignments:
           graph.add_state_before(body, "map_views", assignments=view_assignments)
 
