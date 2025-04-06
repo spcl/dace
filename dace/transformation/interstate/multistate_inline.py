@@ -44,6 +44,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             return False
         if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
             return False
+        if nested_sdfg.sdfg.name.startswith("velocity_tendencies"):
+            return False
 
         if state.entry_node(nested_sdfg) is not None:
             return False
