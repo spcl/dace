@@ -374,6 +374,9 @@ class ToGPU(ppl.Pass):
                     gpu_data = node.data.startswith("gpu_")
                     gpu_code = is_gpu
                     arr = sdfg.arrays[node.data]
+                    # Do not replace host data
+                    if node.data in self.exclude:
+                        continue
                     if isinstance(arr, dace.data.Array):
                         if gpu_data and gpu_code:
                             # Ensure all memlets have been changed
@@ -409,26 +412,31 @@ class ToGPU(ppl.Pass):
                         nsdfg = nsdfgs[0]
                     else:
                         nsdfg = None
+                    # if map is not offloadable continue
+                    if isinstance(node, dace.nodes.LibraryNode) and hasattr(node, "_offloadable") and not node._offloadable:
+                        continue
                     if (isinstance(node, dace.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device) or (isinstance(node, dace.nodes.LibraryNode) and node.schedule == dace.dtypes.ScheduleType.GPU_Device):
                         for ie in state.in_edges(node):
                             if isinstance(ie.src, dace.nodes.AccessNode):
                                 if isinstance(sdfg.arrays[ie.src.data], dace.data.Array):
-                                    if not ie.src.data.startswith("gpu_"):
-                                        oldname = ie.src.data
-                                        ie.src.data = "gpu_" + ie.src.data
-                                        _replace_memlets(ie.src, state, oldname, ie.src.data)
-                                        if nsdfg and oldname in nsdfg.sdfg.arrays:
-                                            nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
+                                    if ie.src.data not in self.exclude:
+                                        if not ie.src.data.startswith("gpu_"):
+                                            oldname = ie.src.data
+                                            ie.src.data = "gpu_" + ie.src.data
+                                            _replace_memlets(ie.src, state, oldname, ie.src.data)
+                                            if nsdfg and oldname in nsdfg.sdfg.arrays:
+                                                nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
                         exit_node = node if isinstance(node, dace.nodes.LibraryNode) else state.exit_node(node)
                         for oe in state.out_edges(exit_node):
                             if isinstance(oe.dst, dace.nodes.AccessNode):
-                                if isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
-                                    if not oe.dst.data.startswith("gpu_"):
-                                        oldname = oe.dst.data
-                                        oe.dst.data = "gpu_" + oe.dst.data
-                                        _replace_memlets(oe.dst, state, oldname, oe.dst.data)
-                                        if nsdfg and oldname in nsdfg.sdfg.arrays:
-                                            nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
+                                if oe.dst.data not in self.exclude:
+                                    if isinstance(sdfg.arrays[oe.dst.data], dace.data.Array):
+                                        if not oe.dst.data.startswith("gpu_"):
+                                            oldname = oe.dst.data
+                                            oe.dst.data = "gpu_" + oe.dst.data
+                                            _replace_memlets(oe.dst, state, oldname, oe.dst.data)
+                                            if nsdfg and oldname in nsdfg.sdfg.arrays:
+                                                nsdfg.sdfg.arrays[oldname].storage = dace.dtypes.StorageType.GPU_Global
 
         def set_gpu_names_in_nested(sdfg):
             for state in sdfg.all_states():
@@ -806,7 +814,8 @@ class ToGPU(ppl.Pass):
             for name, arr in _sdfg.arrays.items():
                 if isinstance(arr, dace.data.Array):
                     if arr.transient is False:
-                        arr.storage = dace.dtypes.StorageType.GPU_Global
+                        if name not in self.exclude:
+                            arr.storage = dace.dtypes.StorageType.GPU_Global
                     if arr.transient is True:
                         if (
                             arr.storage == dace.dtypes.StorageType.Default
