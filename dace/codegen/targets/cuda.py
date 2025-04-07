@@ -1688,10 +1688,20 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
-            if isinstance(scope_entry._cuda_stream, str):
-                cudastream = f'__state->gpu_context->streams[{scope_entry._cuda_stream}]'
-            else:
-                cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
+            scope_stream = scope_entry._cuda_stream
+
+            if isinstance(scope_stream, str):
+                scope_stream = int(scope_stream)
+
+            if scope_stream >= max_streams:
+                warnings.warn(
+                    f'Kernel "{kernel_name}" is using stream {scope_stream} which exceeds the maximum number of '
+                    f'allowed streams ({max_streams}). This may lead to undefined behavior. Consider increasing '
+                    'the maximum number of streams in the configuration.'
+                )
+                scope_stream = scope_stream % max_streams
+
+            cudastream = '__state->gpu_context->streams[%d]' % scope_stream
         else:
             cudastream = 'nullptr'
 
