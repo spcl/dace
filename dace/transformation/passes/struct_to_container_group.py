@@ -740,15 +740,17 @@ class StructToContainerGroups(ppl.Pass):
 
             if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
                 access = f"{arrname} = {src_access};\n"
+                rev_access = f"{src_access} = {arrname};\n"
             else:
                 assert isinstance(sdfg.arrays[arrname], dace.data.Array)
                 if arrname in host_list:
                     access = f"{arrname} = {src_access};\n"
+                    rev_access = f"{src_access} = {arrname};\n"
                 else:
                     access = f"gpu_{arrname} = {src_access};\n"
+                    rev_access = f"{src_access} = gpu_{arrname};\n"
             _cstr += access
-            assert len(access.split("=")) == 2
-            _cstr_rev += " = ".join(list(reversed(access.split("="))))
+            _cstr_rev += rev_access
             return _cstr, _cstr_rev
 
         ll = [
