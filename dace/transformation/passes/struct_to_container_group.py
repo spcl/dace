@@ -750,7 +750,9 @@ class StructToContainerGroups(ppl.Pass):
                     access = f"gpu_{arrname} = {src_access};\n"
                     rev_access = f"{src_access} = gpu_{arrname};\n"
             _cstr += access
-            _cstr_rev += rev_access
+            # Shallow copy copies back only scalars
+            if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
+                _cstr_rev += rev_access
             return _cstr, _cstr_rev
 
         ll = [
