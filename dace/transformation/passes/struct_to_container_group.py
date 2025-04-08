@@ -561,13 +561,16 @@ def _get_name_hierarchy_from_name(demangled_name: str):
 @make_properties
 class Flattener(CodeLibraryNode):
     code = Property(dtype=str, default="", allow_none=False)
+    shallow = Property(dtype=bool, default=False, allow_none=False)
 
-    def __init__(self, name, input_names, output_names, code):
+    def __init__(self, name, input_names, output_names, code, shallow=False):
         super().__init__(name=name, input_names=input_names, output_names=output_names)
         self.code = code
+        self.shallow = shallow
 
     def generate_code(self, inputs, outputs):
-        all_code = f"""
+        if not self.shallow:
+            all_code = f"""
 // Start {self.name}
 #pragma omp parallel
 {{
@@ -578,6 +581,14 @@ class Flattener(CodeLibraryNode):
 }}
 #pragma omp taskwait
 }}
+}}
+// End {self.name}
+"""
+        else:
+            all_code = f"""
+// Start {self.name}
+{{
+{self.code}
 }}
 // End {self.name}
 """
@@ -604,7 +615,13 @@ class StructToContainerGroups(ppl.Pass):
         interface_to_gpu: bool = False,
         verbose: bool = False,
         clean_trivial_views: bool = False,
+        shallow_copy: bool = False,
+        shallow_copy_to_gpu: bool = False
     ):
+        if shallow_copy:
+            assert shallow_copy_to_gpu is False and interface_to_gpu is False and interface_with_struct_copy is True
+        if shallow_copy_to_gpu:
+            assert shallow_copy is False and interface_to_gpu is True and interface_with_struct_copy is True
         if flattening_mode != ContainerGroupFlatteningMode.StructOfArrays:
             raise Exception("Only StructOfArrays is supported")
         super().__init__()
@@ -624,6 +641,8 @@ class StructToContainerGroups(ppl.Pass):
         self._deflattener_codestr = ""
         self._interface_to_gpu = interface_to_gpu
         self.clean_trivial_views = clean_trivial_views
+        self._shallow_copy = shallow_copy
+        self._shallow_copy_to_gpu = shallow_copy_to_gpu
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -636,6 +655,131 @@ class StructToContainerGroups(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
+
+    def _generate_shallow_flattener(
+        self,
+        sdfg: SDFG,
+        name: str,
+        desc: dace.data.Structure,
+        registered_members: typing.List[typing.Tuple[str, dace.data.Data]],
+        verbose:bool=False,
+        gpu_prefix:bool=False,
+        host_list:List[str] = [
+            "__CG_global_data__m_nrdmax",
+            "__CG_global_data__m_nflatlev",
+            "__CG_p_patch__CG_verts__m_start_block",
+            "__CG_p_patch__CG_verts__m_end_block",
+            "__CG_p_patch__CG_verts__m_start_index",
+            "__CG_p_patch__CG_verts__m_end_index",
+            "__CG_p_patch__CG_cells__m_start_block",
+            "__CG_p_patch__CG_cells__m_end_block",
+            "__CG_p_patch__CG_cells__m_start_index",
+            "__CG_p_patch__CG_cells__m_end_index",
+            "__CG_p_patch__CG_edges__m_start_block",
+            "__CG_p_patch__CG_edges__m_end_block",
+            "__CG_p_patch__CG_edges__m_start_index",
+            "__CG_p_patch__CG_edges__m_end_index",
+        ],
+    ):
+        def _gen_loop(
+            sdfg: SDFG,
+            structname: str,
+            struct: dace.data.Structure,
+            arrname: str,
+            arr: dace.data.Data,
+            name_hierarchy: List[str],
+            name_hierarchy_types: List[str],
+        ):
+
+            _cstr = ""
+            current_member = struct
+            src_access = f"{name_hierarchy[0]}"
+
+            for i, (name, _type) in enumerate(
+                zip(name_hierarchy[1:], name_hierarchy_types[1:])
+            ):
+                prev_name = name_hierarchy[i]
+                prev_type = name_hierarchy_types[i]  # i is alread 0 while we are at 1
+
+                if prev_type == "CG":
+                    if _type == "CA":
+                        src_access += f"->{name}"
+                    else:
+                        assert _type == "m" or _type == "CG"
+                        src_access += f"->{name}"
+                elif prev_type == "CA":
+                    if isinstance(current_member, ContainerArray):
+                        raise Exception("Not implemented on shallow copy yet.")
+                    else:
+                        raise Exception("Should not happen")
+                elif prev_type == "m":
+                    raise Exception("Should not happen")
+                else:
+                    raise Exception("Unsupported type")
+
+                if isinstance(current_member, ContainerArray):
+                    current_member = current_member.stype
+                else:
+                    current_member= current_member.members[name]
+
+            member_arr = struct
+            for member_name, prev_type, member_type in zip(
+                name_hierarchy[1:], name_hierarchy_types[:-1], name_hierarchy_types[1:]
+            ):
+                if member_type == "m":
+                    if prev_type == "CG":
+                        member_arr = member_arr.members[member_name]
+                    elif prev_type == "CA":
+                        member_arr = member_arr.stype
+                else:
+                    if prev_type == "CG":
+                        member_arr = member_arr.members[member_name]
+                    elif prev_type == "CA":
+                        member_arr = member_arr.stype
+
+            if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
+                access = f"{arrname} = {src_access};\n"
+            else:
+                assert isinstance(sdfg.arrays[arrname], dace.data.Array)
+                if arrname in host_list:
+                    access = f"{arrname} = {src_access};\n"
+                else:
+                    access = f"gpu_{arrname} = {src_access};\n"
+            _cstr += access
+
+            return _cstr, ""
+
+        ll = [
+            _gen_loop(
+                sdfg,
+                name,
+                desc,
+                arr_name,
+                arr_desc,
+                *_get_name_hierarchy_from_name(arr_name),
+            )
+            for (arr_name, arr_desc) in registered_members
+            if _get_name_hierarchy_from_name(arr_name)[0][0] == name
+        ]
+
+        copy_strs_list, copy_strs_reverse_list = zip(*ll) if ll != [] else ([], [])
+        if verbose:
+           print("Shallow copy_str:", copy_strs_list, "=", copy_strs_reverse_list)
+        #raise Exception(copy_strs_list, copy_strs_reverse_list)
+        copy_strs = "\n".join(copy_strs_list)
+        copy_strs_reverse = "\n".join(copy_strs_reverse_list)
+
+        flattener_codestr = f"""
+{copy_strs}
+"""
+
+        deflattener_codestr = f"""
+{copy_strs_reverse}
+"""
+
+        self._flattener_codestr += flattener_codestr
+        self._deflattener_codestr += deflattener_codestr
+
 
     def _generate_flattener(
         self,
@@ -964,205 +1108,463 @@ class StructToContainerGroups(ppl.Pass):
 
         # Do not simplify until flattener is generated it will remove things
         replace_length_one_arrays_with_scalars(sdfg)
+        registered_array_names = set(v for v in registered_names if  isinstance(sdfg.arrays[v], dace.data.Array))
+        registered_scalar_names = set(v for v in registered_names if  isinstance(sdfg.arrays[v], dace.data.Scalar))
 
         if self.clean_trivial_views:
             clean_trivial_views(sdfg)
 
-        # Generate the flattener functions
+
+        self._flattener_codestr = ""
+        self._deflattener_codestr = ""
         for name, desc in sdfg.arrays.items():
             if isinstance(desc, dace.data.Structure) and not isinstance(
                 desc, dace.data.View
             ):
-                self._generate_flattener(sdfg, name, desc, registered_members)
+                self._generate_shallow_flattener(sdfg, name, desc, registered_members, self._verbose)
 
+        with open(f"{sdfg.name}_flattener_code.cpp", "w") as f:
+            self._generate_shallow_flattener(sdfg, name, desc, registered_members, self._verbose)
+            f.write(self._flattener_codestr)
+        with open(f"{sdfg.name}_deflattener_code.cpp", "w") as f:
+            f.write(self._deflattener_codestr)
 
-        if self._interface_with_struct_copy:
-            flatten_lib_node = Flattener(
-                name="flatten",
-                code=self._flattener_codestr,
-                input_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Structure) and not
-                # isinstance(v, dace.data.View)],
-                output_names=[n.lower() for n in registered_names],
-            )
-            deflatten_lib_node = Flattener(
-                name="deflatten",
-                code=self._deflattener_codestr,
-                input_names=[n.lower() for n in registered_names],
-                output_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
-                # or isinstance(v, dace.data.ContainerArray)) and not
-                # isinstance(v, dace.data.View)],
-            )
-            flatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
-            deflatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
-            # entry_interface = sdfg.add_state("entry_interface")
-            # exit_interface = sdfg.add_state("exit_interface")
-            start_state = sdfg.start_state
-            entry_interface = sdfg.add_state_before(
-                sdfg.start_state,
-                "entry_interface",
-                is_start_block=True,
-                is_start_state=True,
-            )
-            # sdfg.add_edge(entry_interface, start_state, dace.sdfg.InterstateEdge())
-
-            assert sdfg.start_state == entry_interface
-            assert sdfg.start_block == entry_interface
-
-            entry_interface.add_node(flatten_lib_node)
-            for inname in set(
-                [
-                    k
-                    for k, v in sdfg.arrays.items()
-                    if (
-                        isinstance(v, dace.data.Structure)
-                        or isinstance(v, dace.data.ContainerArray)
-                    )
-                    and not isinstance(v, dace.data.View)
-                ]
+        self._flattener_codestr = ""
+        self._deflattener_codestr = ""
+        # Generate the flattener functions (one per struct)
+        for name, desc in sdfg.arrays.items():
+            if isinstance(desc, dace.data.Structure) and not isinstance(
+                desc, dace.data.View
             ):
-                an = dace.nodes.AccessNode(inname)
-                entry_interface.add_node(an)
-                entry_interface.add_edge(
-                    an, None, flatten_lib_node, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
+                if self._shallow_copy:
+                    assert self._interface_with_struct_copy
+                    self._generate_shallow_flattener(sdfg, name, desc, registered_members, self._verbose)
+                elif self._shallow_copy_to_gpu:
+                    self._interface_with_struct_copy
+
+                elif self._interface_with_struct_copy:
+                    self._generate_flattener(sdfg, name, desc, registered_members)
+
+        if self._shallow_copy:
+            assert self._interface_with_struct_copy
+            assert not self._interface_to_gpu
+            if self._interface_with_struct_copy:
+                flatten_lib_node = Flattener(
+                    name="flatten",
+                    code=self._flattener_codestr,
+                    input_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Structure) and not
+                    # isinstance(v, dace.data.View)],
+                    output_names=[n.lower() for n in registered_names],
                 )
-                sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
+                deflatten_lib_node = Flattener(
+                    name="deflatten",
+                    code=self._deflattener_codestr,
+                    input_names=[n.lower() for n in registered_names],
+                    output_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
+                    # or isinstance(v, dace.data.ContainerArray)) and not
+                    # isinstance(v, dace.data.View)],
+                )
+                flatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
+                deflatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
+                # entry_interface = sdfg.add_state("entry_interface")
+                # exit_interface = sdfg.add_state("exit_interface")
+                start_state = sdfg.start_state
+                entry_interface = sdfg.add_state_before(
+                    sdfg.start_state,
+                    "entry_interface",
+                    is_start_block=True,
+                    is_start_state=True,
+                )
+                # sdfg.add_edge(entry_interface, start_state, dace.sdfg.InterstateEdge())
 
-            for outname in set(registered_names):
-                if not self._interface_to_gpu:
-                    an = dace.nodes.AccessNode(outname)
+                assert sdfg.start_state == entry_interface
+                assert sdfg.start_block == entry_interface
+
+                entry_interface.add_node(flatten_lib_node)
+                for inname in set(
+                    [
+                        k
+                        for k, v in sdfg.arrays.items()
+                        if (
+                            isinstance(v, dace.data.Structure)
+                            or isinstance(v, dace.data.ContainerArray)
+                        )
+                        and not isinstance(v, dace.data.View)
+                    ]
+                ):
+                    an = dace.nodes.AccessNode(inname)
                     entry_interface.add_node(an)
-                    arr = sdfg.arrays[outname]
-
                     entry_interface.add_edge(
-                        flatten_lib_node,
-                        outname.lower(),
-                        an,
-                        None,
-                         dace.Memlet.from_array(outname, sdfg.arrays[outname]),
+                        an, None, flatten_lib_node, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
                     )
+                    sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
 
-                    if outname.lower() not in flatten_lib_node.out_connectors:
-                        flatten_lib_node.add_out_connector(outname.lower())
-
-                    sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
-                else:
-                    #sdfg.replace(outname, "gpu_" + outname)
-                    assert outname in sdfg.arrays, f"{outname} not in {sdfg.arrays.keys()}"
-                    if not isinstance(sdfg.arrays[outname], dace.data.Scalar):
-                        an0 = entry_interface.add_access(outname)
-                        an1 = entry_interface.add_access("gpu_" + outname)
-
+                for outname in set(registered_names):
+                    if self._interface_to_gpu:
+                        an = dace.nodes.AccessNode(outname)
+                        entry_interface.add_node(an)
                         arr = sdfg.arrays[outname]
-                        arr.storage = dace.dtypes.StorageType.CPU_Heap
-                        arr2 = copy.deepcopy(arr)
-                        arr2.storage = dace.dtypes.StorageType.GPU_Global
-                        sdfg.add_datadesc("gpu_" + outname, arr2, find_new_name=False)
 
                         entry_interface.add_edge(
                             flatten_lib_node,
                             outname.lower(),
-                            an0,
-                            None,
-                            dace.Memlet.from_array(outname, sdfg.arrays[outname]),
-                        )
-                        entry_interface.add_edge(
-                            an0, None, an1, None, dace.Memlet.from_array(outname, sdfg.arrays[outname])
-                        )
-                    else:
-                        an0 = entry_interface.add_access(outname)
-                        entry_interface.add_edge(
-                            flatten_lib_node,
-                            outname.lower(),
-                            an0,
+                            an,
                             None,
                             dace.Memlet.from_array(outname, sdfg.arrays[outname]),
                         )
 
-                    if outname.lower() not in flatten_lib_node.out_connectors:
-                        flatten_lib_node.add_out_connector(outname.lower())
+                        if outname.lower() not in flatten_lib_node.out_connectors:
+                            flatten_lib_node.add_out_connector(outname.lower())
 
-            exit_interface = sdfg.add_state("exit_interface")
-            end_nodes = set()
-            for cfg in sdfg.nodes():
-                if sdfg.out_degree(cfg) == 0 and cfg != exit_interface:
-                    end_nodes.add(cfg)
-            assert len(end_nodes) == 1, f"End nodes: {end_nodes}"
-            for end_node in end_nodes:
-                sdfg.add_edge(end_node, exit_interface, dace.sdfg.InterstateEdge())
+                        sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
 
-            exit_interface.add_node(deflatten_lib_node)
-            for inname in set(registered_names):
-                if self._interface_to_gpu:
-                    # If scalar skip
-                    if not isinstance(sdfg.arrays[inname], dace.data.Scalar):
-                        an0 = exit_interface.add_access(inname)
-                        an1 = exit_interface.add_access("gpu_" + inname)
+                        if outname.lower() not in flatten_lib_node.out_connectors:
+                            flatten_lib_node.add_out_connector(outname.lower())
 
-                        exit_interface.add_edge(
-                            an1, None, an0, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
-                        )
-                        exit_interface.add_edge(
-                            an0, None, deflatten_lib_node, inname.lower(), dace.Memlet.from_array(inname, sdfg.arrays[inname])
-                        )
-                    else:
-                        an = exit_interface.add_access(inname)
-                        exit_interface.add_edge(
-                            an, None, deflatten_lib_node, inname.lower(), dace.Memlet.from_array(inname, sdfg.arrays[inname])
-                        )
-                else:
+                exit_interface = sdfg.add_state("exit_interface")
+                end_nodes = set()
+                for cfg in sdfg.nodes():
+                    if sdfg.out_degree(cfg) == 0 and cfg != exit_interface:
+                        end_nodes.add(cfg)
+                assert len(end_nodes) == 1, f"End nodes: {end_nodes}"
+                for end_node in end_nodes:
+                    sdfg.add_edge(end_node, exit_interface, dace.sdfg.InterstateEdge())
+
+                exit_interface.add_node(deflatten_lib_node)
+                for inname in set(registered_names):
                     an = exit_interface.add_access(inname)
                     exit_interface.add_edge(
                         an, None, deflatten_lib_node, inname.lower(),dace.Memlet.from_array(inname, sdfg.arrays[inname])
                     )
 
-                if inname.lower() not in deflatten_lib_node.in_connectors:
-                    deflatten_lib_node.add_in_connector(inname.lower())
+                    if inname.lower() not in deflatten_lib_node.in_connectors:
+                        deflatten_lib_node.add_in_connector(inname.lower())
 
-            for outname in set(
-                [
-                    k
-                    for k, v in sdfg.arrays.items()
-                    if (
-                        isinstance(v, dace.data.Structure)
-                        or isinstance(v, dace.data.ContainerArray)
+                for outname in set(
+                    [
+                        k
+                        for k, v in sdfg.arrays.items()
+                        if (
+                            isinstance(v, dace.data.Structure)
+                            or isinstance(v, dace.data.ContainerArray)
+                        )
+                        and not isinstance(v, dace.data.View)
+                    ]
+                ):
+                    an = dace.nodes.AccessNode(outname)
+                    exit_interface.add_node(an)
+                    exit_interface.add_edge(
+                        an, None, deflatten_lib_node, None, dace.Memlet()
                     )
-                    and not isinstance(v, dace.data.View)
-                ]
-            ):
-                an = dace.nodes.AccessNode(outname)
-                exit_interface.add_node(an)
-                exit_interface.add_edge(
-                    an, None, deflatten_lib_node, None, dace.Memlet()
+        elif self._shallow_copy_to_gpu:
+
+            assert self._interface_with_struct_copy
+            assert self._interface_to_gpu
+            if self._interface_with_struct_copy:
+                flatten_lib_node = Flattener(
+                    name="flatten",
+                    code=self._flattener_codestr,
+                    input_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Structure) and not
+                    # isinstance(v, dace.data.View)],
+                    output_names=["gpu_" + n.lower() for n in registered_array_names] +
+                        [n.lower() for n in registered_scalar_names],
                 )
+                deflatten_lib_node = Flattener(
+                    name="deflatten",
+                    code=self._deflattener_codestr,
+                    input_names=["gpu_" + n.lower() for n in registered_names] +
+                        [n.lower() for n in registered_scalar_names],
+                    output_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
+                    # or isinstance(v, dace.data.ContainerArray)) and not
+                    # isinstance(v, dace.data.View)],
+                )
+                flatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
+                deflatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
+                # entry_interface = sdfg.add_state("entry_interface")
+                # exit_interface = sdfg.add_state("exit_interface")
+                start_state = sdfg.start_state
+                entry_interface = sdfg.add_state_before(
+                    sdfg.start_state,
+                    "entry_interface",
+                    is_start_block=True,
+                    is_start_state=True,
+                )
+                # sdfg.add_edge(entry_interface, start_state, dace.sdfg.InterstateEdge())
 
-            # Add the end replace the host_name stuff
+                assert sdfg.start_state == entry_interface
+                assert sdfg.start_block == entry_interface
 
-        if not self._interface_with_struct_copy:
-            # Remove structs
-            to_rm = []
-            for name, desc in sdfg.arrays.items():
-                if isinstance(desc, dace.data.Structure):
-                    to_rm.insert(0, name)
-            for name in to_rm:
-                sdfg.remove_data(name=name, validate=True)
+                entry_interface.add_node(flatten_lib_node)
+                for inname in set(
+                    [
+                        k
+                        for k, v in sdfg.arrays.items()
+                        if (
+                            isinstance(v, dace.data.Structure)
+                            or isinstance(v, dace.data.ContainerArray)
+                        )
+                        and not isinstance(v, dace.data.View)
+                    ]
+                ):
+                    an = dace.nodes.AccessNode(inname)
+                    entry_interface.add_node(an)
+                    entry_interface.add_edge(
+                        an, None, flatten_lib_node, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
+                    )
+                    sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
 
-            if self._save_steps:
-                sdfg.save("data_removed.sdfgz", compress=True)
+                for outname in set(registered_names):
+                    if self._interface_to_gpu:
+                        oname = "gpu_" + outname if outname in registered_array_names else outname
+                        an = dace.nodes.AccessNode(oname)
+                        entry_interface.add_node(an)
+                        desc = copy.deepcopy(sdfg.arrays[outname])
+                        desc.storage = dace.StorageType.GPU_Global
+                        sdfg.remove_data(outname, validate=False)
+                        sdfg.add_datadesc(oname, desc)
+                        arr = desc
 
-            nd_to_rm = []
-            for s in sdfg.states():
-                for n in s.nodes():
-                    if s.in_degree(n) == 0 and s.out_degree(n) == 0:
-                        nd_to_rm.insert(0, (s, n))
-            for s, n in nd_to_rm:
-                s.remove_node(n)
-        
+                        entry_interface.add_edge(
+                            flatten_lib_node,
+                            oname.lower(),
+                            an,
+                            None,
+                            dace.Memlet.from_array(oname, sdfg.arrays[oname]),
+                        )
+
+                        if oname.lower() not in flatten_lib_node.out_connectors:
+                            flatten_lib_node.add_out_connector(oname.lower())
+
+                        sdfg.arrays[oname].storage = dace.StorageType.GPU_Global
+
+                        if oname.lower() not in flatten_lib_node.out_connectors:
+                            flatten_lib_node.add_out_connector(oname.lower())
+
+                exit_interface = sdfg.add_state("exit_interface")
+                end_nodes = set()
+                for cfg in sdfg.nodes():
+                    if sdfg.out_degree(cfg) == 0 and cfg != exit_interface:
+                        end_nodes.add(cfg)
+                assert len(end_nodes) == 1, f"End nodes: {end_nodes}"
+                for end_node in end_nodes:
+                    sdfg.add_edge(end_node, exit_interface, dace.sdfg.InterstateEdge())
+
+                exit_interface.add_node(deflatten_lib_node)
+                for inname in set(registered_names):
+                    iname = "gpu_" + inname if inname in registered_array_names else inname
+                    an = exit_interface.add_access(iname)
+                    exit_interface.add_edge(
+                        an, None, deflatten_lib_node, iname.lower(),dace.Memlet.from_array(iname, sdfg.arrays[iname])
+                    )
+
+                    if inname.lower() not in deflatten_lib_node.in_connectors:
+                        deflatten_lib_node.add_in_connector(iname.lower())
+
+                for outname in set(
+                    [
+                        k
+                        for k, v in sdfg.arrays.items()
+                        if (
+                            isinstance(v, dace.data.Structure)
+                            or isinstance(v, dace.data.ContainerArray)
+                        )
+                        and not isinstance(v, dace.data.View)
+                    ]
+                ):
+                    an = dace.nodes.AccessNode(outname)
+                    exit_interface.add_node(an)
+                    exit_interface.add_edge(
+                        an, None, deflatten_lib_node, None, dace.Memlet()
+                    )
+        else:
+            if self._interface_with_struct_copy:
+                flatten_lib_node = Flattener(
+                    name="flatten",
+                    code=self._flattener_codestr,
+                    input_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Structure) and not
+                    # isinstance(v, dace.data.View)],
+                    output_names=[n.lower() for n in registered_names],
+                )
+                deflatten_lib_node = Flattener(
+                    name="deflatten",
+                    code=self._deflattener_codestr,
+                    input_names=[n.lower() for n in registered_names],
+                    output_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
+                    # or isinstance(v, dace.data.ContainerArray)) and not
+                    # isinstance(v, dace.data.View)],
+                )
+                flatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
+                deflatten_lib_node.schedule = dace.dtypes.ScheduleType.CPU_Multicore
+                # entry_interface = sdfg.add_state("entry_interface")
+                # exit_interface = sdfg.add_state("exit_interface")
+                start_state = sdfg.start_state
+                entry_interface = sdfg.add_state_before(
+                    sdfg.start_state,
+                    "entry_interface",
+                    is_start_block=True,
+                    is_start_state=True,
+                )
+                # sdfg.add_edge(entry_interface, start_state, dace.sdfg.InterstateEdge())
+
+                assert sdfg.start_state == entry_interface
+                assert sdfg.start_block == entry_interface
+
+                entry_interface.add_node(flatten_lib_node)
+                for inname in set(
+                    [
+                        k
+                        for k, v in sdfg.arrays.items()
+                        if (
+                            isinstance(v, dace.data.Structure)
+                            or isinstance(v, dace.data.ContainerArray)
+                        )
+                        and not isinstance(v, dace.data.View)
+                    ]
+                ):
+                    an = dace.nodes.AccessNode(inname)
+                    entry_interface.add_node(an)
+                    entry_interface.add_edge(
+                        an, None, flatten_lib_node, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
+                    )
+                    sdfg.arrays[inname].storage = dace.StorageType.CPU_Heap
+
+                for outname in set(registered_names):
+                    if not self._interface_to_gpu:
+                        an = dace.nodes.AccessNode(outname)
+                        entry_interface.add_node(an)
+                        arr = sdfg.arrays[outname]
+
+                        entry_interface.add_edge(
+                            flatten_lib_node,
+                            outname.lower(),
+                            an,
+                            None,
+                            dace.Memlet.from_array(outname, sdfg.arrays[outname]),
+                        )
+
+                        if outname.lower() not in flatten_lib_node.out_connectors:
+                            flatten_lib_node.add_out_connector(outname.lower())
+
+                        sdfg.arrays[outname].storage = dace.StorageType.CPU_Heap
+                    else:
+                        #sdfg.replace(outname, "gpu_" + outname)
+                        assert outname in sdfg.arrays, f"{outname} not in {sdfg.arrays.keys()}"
+                        if not isinstance(sdfg.arrays[outname], dace.data.Scalar):
+                            an0 = entry_interface.add_access(outname)
+                            an1 = entry_interface.add_access("gpu_" + outname)
+
+                            arr = sdfg.arrays[outname]
+                            arr.storage = dace.dtypes.StorageType.CPU_Heap
+                            arr2 = copy.deepcopy(arr)
+                            arr2.storage = dace.dtypes.StorageType.GPU_Global
+                            sdfg.add_datadesc("gpu_" + outname, arr2, find_new_name=False)
+
+                            entry_interface.add_edge(
+                                flatten_lib_node,
+                                outname.lower(),
+                                an0,
+                                None,
+                                dace.Memlet.from_array(outname, sdfg.arrays[outname]),
+                            )
+                            entry_interface.add_edge(
+                                an0, None, an1, None, dace.Memlet.from_array(outname, sdfg.arrays[outname])
+                            )
+                        else:
+                            an0 = entry_interface.add_access(outname)
+                            entry_interface.add_edge(
+                                flatten_lib_node,
+                                outname.lower(),
+                                an0,
+                                None,
+                                dace.Memlet.from_array(outname, sdfg.arrays[outname]),
+                            )
+
+                        if outname.lower() not in flatten_lib_node.out_connectors:
+                            flatten_lib_node.add_out_connector(outname.lower())
+
+                exit_interface = sdfg.add_state("exit_interface")
+                end_nodes = set()
+                for cfg in sdfg.nodes():
+                    if sdfg.out_degree(cfg) == 0 and cfg != exit_interface:
+                        end_nodes.add(cfg)
+                assert len(end_nodes) == 1, f"End nodes: {end_nodes}"
+                for end_node in end_nodes:
+                    sdfg.add_edge(end_node, exit_interface, dace.sdfg.InterstateEdge())
+
+                exit_interface.add_node(deflatten_lib_node)
+                for inname in set(registered_names):
+                    if self._interface_to_gpu:
+                        # If scalar skip
+                        if not isinstance(sdfg.arrays[inname], dace.data.Scalar):
+                            an0 = exit_interface.add_access(inname)
+                            an1 = exit_interface.add_access("gpu_" + inname)
+
+                            exit_interface.add_edge(
+                                an1, None, an0, None, dace.Memlet.from_array(inname, sdfg.arrays[inname])
+                            )
+                            exit_interface.add_edge(
+                                an0, None, deflatten_lib_node, inname.lower(), dace.Memlet.from_array(inname, sdfg.arrays[inname])
+                            )
+                        else:
+                            an = exit_interface.add_access(inname)
+                            exit_interface.add_edge(
+                                an, None, deflatten_lib_node, inname.lower(), dace.Memlet.from_array(inname, sdfg.arrays[inname])
+                            )
+                    else:
+                        an = exit_interface.add_access(inname)
+                        exit_interface.add_edge(
+                            an, None, deflatten_lib_node, inname.lower(),dace.Memlet.from_array(inname, sdfg.arrays[inname])
+                        )
+
+                    if inname.lower() not in deflatten_lib_node.in_connectors:
+                        deflatten_lib_node.add_in_connector(inname.lower())
+
+                for outname in set(
+                    [
+                        k
+                        for k, v in sdfg.arrays.items()
+                        if (
+                            isinstance(v, dace.data.Structure)
+                            or isinstance(v, dace.data.ContainerArray)
+                        )
+                        and not isinstance(v, dace.data.View)
+                    ]
+                ):
+                    an = dace.nodes.AccessNode(outname)
+                    exit_interface.add_node(an)
+                    exit_interface.add_edge(
+                        an, None, deflatten_lib_node, None, dace.Memlet()
+                    )
+
+                # Add the end replace the host_name stuff
+
+            if not self._interface_with_struct_copy:
+                # Remove structs
+                to_rm = []
+                for name, desc in sdfg.arrays.items():
+                    if isinstance(desc, dace.data.Structure):
+                        to_rm.insert(0, name)
+                for name in to_rm:
+                    sdfg.remove_data(name=name, validate=True)
+
+                if self._save_steps:
+                    sdfg.save("data_removed.sdfgz", compress=True)
+
+                nd_to_rm = []
+                for s in sdfg.states():
+                    for n in s.nodes():
+                        if s.in_degree(n) == 0 and s.out_degree(n) == 0:
+                            nd_to_rm.insert(0, (s, n))
+                for s, n in nd_to_rm:
+                    s.remove_node(n)
+
+
         # After removing views we might have in and out degree 0
         for node,state in sdfg.all_nodes_recursive():
             if (isinstance(node, dace.nodes.AccessNode) and
                 state.in_degree(node) == 0 and state.out_degree(node) == 0):
                 state.remove_node(node)
-                
+
         if self._save_steps:
             sdfg.save("nodes_cleand.sdfgz", compress=True)
 
@@ -1194,7 +1596,7 @@ class StructToContainerGroups(ppl.Pass):
         if self._simplify:
             sdfg.simplify(validate=self._validate, validate_all=self._validate_all)
 
-
+        sdfg.save("done.sdfgz", compress=True)
 
     def _can_be_applied(
         self,
