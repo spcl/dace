@@ -692,6 +692,7 @@ class StructToContainerGroups(ppl.Pass):
         ):
 
             _cstr = ""
+            _cstr_rev = ""
             current_member = struct
             src_access = f"{name_hierarchy[0]}"
 
