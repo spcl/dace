@@ -288,7 +288,7 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size,
         if combos:
             max_OI = max([OI_func(combo[3], combo[4], combo[2]) for combo in combos
                         if _check_combo(combo, tcdm_usage_func)])
-            filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/8]
+            filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/2]
             all_combos.extend(filtered_combos)
 
     return all_combos
