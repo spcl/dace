@@ -746,8 +746,9 @@ class StructToContainerGroups(ppl.Pass):
                 else:
                     access = f"gpu_{arrname} = {src_access};\n"
             _cstr += access
-
-            return _cstr, ""
+            assert len(access.split("=")) == 2
+            _cstr_rev += " = ".join(list(reversed(access.split("="))))
+            return _cstr, _cstr_rev
 
         ll = [
             _gen_loop(
