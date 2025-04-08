@@ -963,22 +963,24 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
                                                               or connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
-                if isinstance(node._cuda_stream, str):
-                    callsite_stream.write(
-                        'int __dace_current_stream_id = %s;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                        % (node._cuda_stream, common.get_gpu_backend()),
-                        cfg,
-                        state_id,
-                        node,
-                    )
-                else:
-                    callsite_stream.write(
-                        'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                        % (node._cuda_stream, common.get_gpu_backend()),
-                        cfg,
-                        state_id,
-                        node,
-                    )
+                node_stream = node._cuda_stream
+
+                if isinstance(node_stream, str):
+                  node_stream = int(node_stream)
+                
+                if node_stream >= max_streams and max_streams > 0:
+                  warnings.warn(
+                      f"Node {node.label} is using CUDA stream {node_stream}, which exceeds the maximum number of allowed streams ({max_streams})."
+                  )
+                  node_stream = node_stream % max_streams
+
+                callsite_stream.write(
+                    'int __dace_current_stream_id = %s;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
+                    % (node_stream, common.get_gpu_backend()),
+                    cfg,
+                    state_id,
+                    node,
+                )
             else:
                 callsite_stream.write(
                     '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
@@ -1490,12 +1492,26 @@ class StructInitializer(ExtNodeTransformer):
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                            callsite_stream: CodeIOStream):
+    max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     state_dfg: SDFGState = cfg.nodes()[state_id]
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
-            cudastream = f"__state->gpu_context->streams[{e.src._cuda_stream}]" 
+            edge_stream = e.src._cuda_stream
+            if isinstance(edge_stream, str):
+                edge_stream = int(edge_stream)
+            if max_streams >= 0:
+                if edge_stream >= max_streams and max_streams > 0:
+                    warnings.warn(
+                        f"Node {node.label} is using CUDA stream {edge_stream} in an in-edge, which exceeds the maximum number of allowed streams ({max_streams})."
+                    )
+                    edge_stream = edge_stream % max_streams
+
+                cudastream = f"__state->gpu_context->streams[{edge_stream}]"
+            else:
+                cudastream = 'nullptr'
+
             callsite_stream.write(
                 "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (common.get_gpu_backend(), cudastream),
                 sdfg,
@@ -1509,7 +1525,17 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
-        cudastream = f"__state->gpu_context->streams[{node._cuda_stream}]"
+        node_stream = node._cuda_stream
+        if isinstance(node_stream, str):
+            node_stream = int(node_stream)
+        
+        if node_stream >= max_streams and max_streams > 0:
+            warnings.warn(
+                f"Node {node.label} is using CUDA stream {node_stream}, which exceeds the maximum number of allowed streams ({max_streams})."
+            )
+            node_stream = node_stream % max_streams
+
+        cudastream = f"__state->gpu_context->streams[{node_stream}]"
     else:  # Only default stream is used
         cudastream = 'nullptr'
 
@@ -1558,13 +1584,23 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
 
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
                     and edge.dst._cuda_stream != node._cuda_stream):
+                
+                edge_stream = edge.dst._cuda_stream
+                if isinstance(edge_stream, str):
+                    edge_stream = int(edge_stream)
+                if edge_stream >= max_streams and max_streams > 0:
+                    warnings.warn(
+                        f"Node {node.label} is using CUDA stream {edge_stream} in an out-edge, which exceeds the maximum number of allowed streams ({max_streams})."
+                    )
+                    edge_stream = edge_stream % max_streams
+
                 callsite_stream.write(
                     """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
 DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0));"""
                     .format(
                         ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
-                        dst_stream=edge.dst._cuda_stream,
+                        dst_stream=edge_stream,
                         backend=backend,
                     ),
                     cfg,
@@ -1590,13 +1626,22 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                 # If different stream at destination: record event and wait
                 # for it in target stream.
                 elif e.dst._cuda_stream != node._cuda_stream:
+                    edge_stream = e.dst._cuda_stream
+                    if isinstance(edge_stream, str):
+                        edge_stream = int(edge_stream)
+                    if edge_stream >= max_streams and max_streams > 0:
+                        warnings.warn(
+                            f"Node {node.label} is using CUDA stream {edge_stream} in an out-edge, which exceeds the maximum number of allowed streams ({max_streams})."
+                        )
+                        edge_stream = edge_stream % max_streams
+                      
                     callsite_stream.write(
                         """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
     {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".
                         format(
                             ev=e._cuda_event if hasattr(e, "_cuda_event") else 0,
                             src_stream=cudastream,
-                            dst_stream=e.dst._cuda_stream,
+                            dst_stream=edge_stream,
                             backend=backend,
                         ),
                         cfg,

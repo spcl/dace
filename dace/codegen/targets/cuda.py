@@ -601,6 +601,14 @@ DACE_EXPORTED void __dace_gpu_set_all_streams{function_suffix}({sdfg_state_name}
             if nodedesc.pool:
                 cudastream = getattr(node, '_cuda_stream', 'nullptr')
                 if cudastream != 'nullptr':
+                    
+                    max_streams = Config.get_int('compiler', 'cuda', 'max_streams')
+                    if cudastream >= max_streams and max_streams > 0:
+                        warnings.warn(
+                            f'CUDA stream {cudastream} exceeds maximum number of streams ({max_streams}). '
+                            'Using default stream instead.')
+                        cudastream = cudastream % max_streams
+
                     cudastream = f'__state->gpu_context->streams[{cudastream}]'
                 result_alloc.write(
                     f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
@@ -943,7 +951,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     # Copy after which data is needed by the host
                     is_sync = True
                 elif dst_node._cuda_stream != src_node._cuda_stream:
-                    syncwith[dst_node._cuda_stream] = getattr(edge, '_cuda_event', None)
+                    
+                    dst_node_stream = dst_node._cuda_stream
+                    if max_streams > 0 and dst_node_stream >= max_streams:
+                        warnings.warn(
+                            f"CUDA: Stream ID {dst_node_stream} out of bounds ({max_streams}).")
+                        dst_node_stream = dst_node_stream % max_streams
+
+                    syncwith[dst_node_stream] = getattr(edge, '_cuda_event', None)
                 else:
                     pass  # Otherwise, no need to synchronize
             elif hasattr(dst_node, '_cuda_stream'):
@@ -955,6 +970,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     is_sync = True
                 cudastream = 'nullptr'
 
+            # Ensure cudastream is withing bounds
+            if not isinstance(cudastream, str):
+                if cudastream >= max_streams and max_streams > 0:
+                    warnings.warn(
+                        f"CUDA: Stream ID {cudastream} out of bounds ({max_streams}).")
+                    cudastream = cudastream % max_streams
+
+
             # Handle case of impending kernel/tasklet on another stream
             if max_streams >= 0:
                 for e in state_dfg.out_edges(dst_node):
@@ -964,8 +987,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         is_sync = True
                     elif not hasattr(e, '_cuda_event'):
                         is_sync = True
-                    elif e.dst._cuda_stream != cudastream:
-                        syncwith[e.dst._cuda_stream] = e._cuda_event
+                    else:
+                        e_dst_stream = e.dst._cuda_stream
+                        if e_dst_stream >= max_streams and max_streams > 0:
+                            warnings.warn(
+                                f"CUDA: Stream ID {e_dst_stream} out of bounds ({max_streams}).")
+                            e_dst_stream = e_dst_stream % max_streams
+                    
+                        if e_dst_stream != cudastream:
+                          syncwith[e_dst_stream] = e._cuda_event
 
                 if cudastream != 'nullptr':
                     cudastream = '__state->gpu_context->streams[%d]' % cudastream
@@ -1277,14 +1307,31 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             if state.nosync == False:
                 streams_to_sync = set()
+
+                max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
                 for node in state.sink_nodes():
                     if hasattr(node, '_cuda_stream') and node._cuda_stream != 'nullptr':
-                        streams_to_sync.add(node._cuda_stream)
+                        node_cuda_stream = node._cuda_stream
+
+                        if max_streams > 0 and node_cuda_stream >= max_streams:
+                            warnings.warn(
+                                f"CUDA: Stream ID {node_cuda_stream} out of bounds ({max_streams}).")
+                            node_cuda_stream = node_cuda_stream % max_streams
+
+                        streams_to_sync.add(node_cuda_stream)
                     else:
                         # Synchronize sink-node copies at the end of the state
                         for e in state.in_edges(node):
                             if hasattr(e.src, '_cuda_stream') and e.src._cuda_stream != 'nullptr':
-                                streams_to_sync.add(e.src._cuda_stream)
+                                
+                                e_src_stream = e.src._cuda_stream
+                                if max_streams > 0 and e.src._cuda_stream >= max_streams:
+                                    warnings.warn(
+                                        f"CUDA: Stream ID {e_src_stream} out of bounds ({max_streams}).")
+                                    e_src_stream = e_src_stream % max_streams
+
+                                streams_to_sync.add(e_src_stream)
+                
 
                 # Relaxed condition for skipping synchronization:
                 # if ALL the immediately reachable non-empty states (i.e.,
@@ -1688,10 +1735,18 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
-            if isinstance(scope_entry._cuda_stream, str):
-                cudastream = f'__state->gpu_context->streams[{scope_entry._cuda_stream}]'
-            else:
-                cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
+            scope_stream = scope_entry._cuda_stream
+
+            if isinstance(scope_stream, str):
+                scope_stream = int(scope_stream)
+
+            if scope_stream >= max_streams and max_streams > 0:
+                warnings.warn(
+                    f"Kernel {kernel_name} is using CUDA stream {scope_stream}, which exceeds the maximum number of allowed streams ({max_streams})."
+                )
+                scope_stream = scope_stream % max_streams
+
+            cudastream = '__state->gpu_context->streams[%d]' % scope_stream
         else:
             cudastream = 'nullptr'
 
