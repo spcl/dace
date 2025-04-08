@@ -129,18 +129,20 @@ class AddComputeElementBlockMap(transformation.SingleStateTransformation):
             for i in range(len(prev_entry.map.params)):
                 b, e, s = prev_entry.map.range[i]
                 tb, te, ts = map_entry.map.range[i]
-                try:
-                    #ib = int(b)
-                    ib = b
-                    r = int(e+1-b)
-                    is_ = int(s)
-                    if r % is_ == 0:
-                        new_ranges.append((tb, te, ts))
-                    else:
-                        if self.tiles_evenly:
+                if s == 1:
+                    new_ranges.append((tb, te, ts))
+                else:
+                    try:
+                        #ib = int(b)
+                        ib = b
+                        r = int(e+1-b)
+                        is_ = int(s)
+                        if r % is_ == 0:
+                            new_ranges.append((tb, te, ts))
+                        else:
                             new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
-                except Exception:
-                    new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
+                    except Exception:
+                        new_ranges.append((tb, dace.symbolic.SymExpr(f"Min({te}-1,{e}-1)+1"), ts))
 
             map_entry.map.range = dace.subsets.Range(new_ranges)
 
