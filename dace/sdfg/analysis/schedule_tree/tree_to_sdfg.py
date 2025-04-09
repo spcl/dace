@@ -251,8 +251,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                         # cache read access
                         cache[memlet.data] = self._current_state.add_read(memlet.data)
 
-                    self._current_state.add_edge(cache[memlet.data], None, map_entry,
-                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                    if not self._current_state.edges_between(cache[memlet.data], map_entry):
+                        self._current_state.add_edge(cache[memlet.data], None, map_entry,
+                                                     f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
 
             # Add empty memlet if outer_map_entry has no out_connectors to connect to
             if outer_map_entry is not None and not outer_map_entry.out_connectors and self._current_state.out_degree(
@@ -345,8 +346,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                         # cache read access
                         cache[memlet.data] = self._current_state.add_read(memlet.data)
 
-                    self._current_state.add_edge(cache[memlet.data], None, map_entry,
-                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                    if not self._current_state.edges_between(cache[memlet.data], map_entry):
+                        self._current_state.add_edge(cache[memlet.data], None, map_entry,
+                                                     f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
 
             # Add empty memlet if no explicit connection from map_entry to nested_SDFG has been done so far
             if not inputs:
