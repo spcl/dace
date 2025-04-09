@@ -483,7 +483,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             # When creating a state boundary, include all inter-state assignments that precede it.
             assignments = {}
             for symbol in self._interstate_symbols:
-                assignments[symbol.name] = symbol.value
+                assignments[symbol.name] = symbol.value.as_string
             self._interstate_symbols.clear()
 
             self._current_state = create_state_boundary(node, sdfg, self._current_state,
