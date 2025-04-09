@@ -302,10 +302,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             # setup nested SDFG
             nsdfg = SDFG("nested_sdfg", parent=self._current_state)
             start_state = nsdfg.add_state("nested_root", is_start_block=True)
-            for memlet in inputs:
-                nsdfg.add_datadesc(memlet.data, sdfg.arrays[memlet.data].clone())
-            for memlet in outputs:
-                nsdfg.add_datadesc(memlet.data, sdfg.arrays[memlet.data].clone())
+            for memlet in [*inputs, *outputs]:
+                if memlet.data not in nsdfg.arrays:
+                    nsdfg.add_datadesc(memlet.data, sdfg.arrays[memlet.data].clone())
 
             # visit children inside nested SDFG
             inner_visitor = StreeToSDFG(start_state)
