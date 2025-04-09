@@ -446,6 +446,32 @@ def test_create_nested_map_scope():
     sdfg.validate()
 
 
+def test_create_nested_map_scope_multi_read():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+            'B': dace.data.Array(dace.float64, [10])
+        },
+        children=[
+            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
+                        children=[
+                            tn.MapScope(node=nodes.MapEntry(nodes.Map("blub", "j", sbs.Range.from_string("0:5"))),
+                                        children=[
+                                            tn.TaskletNode(
+                                                nodes.Tasklet("asdf", {"a_1", "a_2"}, {"out"}, "out = a_1 + a_2"), {
+                                                    "a_1": dace.Memlet("A[i*5+j]"),
+                                                    "a_2": dace.Memlet("A[10+i*5+j]"),
+                                                }, {"out": dace.Memlet("B[i*5+j]")})
+                                        ])
+                        ])
+        ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
 def test_map_with_two_tasklets():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
@@ -490,4 +516,5 @@ if __name__ == '__main__':
     test_create_map_scope_copy()
     test_create_map_scope_double_memlet()
     test_create_nested_map_scope()
+    test_create_nested_map_scope_multi_read()
     test_map_with_two_tasklets()

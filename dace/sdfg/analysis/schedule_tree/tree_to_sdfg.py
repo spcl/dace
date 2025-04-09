@@ -238,8 +238,12 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state.add_node(map_entry)
 
             for memlet in node.input_memlets():
-                map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
-                map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                new_in_connector = map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                new_out_connector = map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                assert new_in_connector == new_out_connector
+
+                if not new_in_connector:
+                    continue
 
                 if outer_map_entry is not None:
                     # passthrough if we are inside another map
@@ -251,9 +255,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                         # cache read access
                         cache[memlet.data] = self._current_state.add_read(memlet.data)
 
-                    if not self._current_state.edges_between(cache[memlet.data], map_entry):
-                        self._current_state.add_edge(cache[memlet.data], None, map_entry,
-                                                     f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                    self._current_state.add_edge(cache[memlet.data], None, map_entry,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
 
             # Add empty memlet if outer_map_entry has no out_connectors to connect to
             if outer_map_entry is not None and not outer_map_entry.out_connectors and self._current_state.out_degree(
@@ -265,8 +268,12 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state.add_node(map_exit)
 
             for memlet in node.output_memlets():
-                map_exit.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
-                map_exit.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                new_in_connector = map_exit.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                new_out_connector = map_exit.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                assert new_in_connector == new_out_connector
+
+                if not new_in_connector:
+                    continue
 
                 if outer_map_exit:
                     # passthrough if we are inside another map
@@ -327,8 +334,12 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state.add_node(map_entry)
 
             for memlet in inputs:
-                map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
-                map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                new_in_connector = map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                new_out_connector = map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                assert new_in_connector == new_out_connector
+
+                if not new_in_connector:
+                    continue
 
                 # connect nested SDFG to map scope
                 self._current_state.add_edge(map_entry, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", nested_SDFG,
@@ -345,9 +356,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                         # cache read access
                         cache[memlet.data] = self._current_state.add_read(memlet.data)
 
-                    if not self._current_state.edges_between(cache[memlet.data], map_entry):
-                        self._current_state.add_edge(cache[memlet.data], None, map_entry,
-                                                     f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
+                    self._current_state.add_edge(cache[memlet.data], None, map_entry,
+                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
 
             # Add empty memlet if no explicit connection from map_entry to nested_SDFG has been done so far
             if not inputs:
@@ -363,8 +373,12 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state.add_node(map_exit)
 
             for memlet in outputs:
-                map_exit.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
-                map_exit.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                new_in_connector = map_exit.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                new_out_connector = map_exit.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
+                assert new_in_connector == new_out_connector
+
+                if not new_in_connector:
+                    continue
 
                 # connect nested SDFG to map scope
                 self._current_state.add_edge(nested_SDFG, memlet.data, map_exit,
