@@ -183,7 +183,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             # Check if there's an `ElseScope` following this node (in the parent's children).
             # Filter StateBoundaryNodes, which we inserted earlier, for this analysis.
             filtered = [n for n in node.parent.children if not isinstance(n, tn.StateBoundaryNode)]
-            if_index = filtered.index(node)
+            if_index = _list_index(filtered, node)
             has_else_branch = len(filtered) > if_index + 1 and isinstance(filtered[if_index + 1], tn.ElseScope)
 
             if has_else_branch:
@@ -630,3 +630,15 @@ def create_state_boundary(bnode: tn.StateBoundaryNode,
 
     label = "cf_state_boundary" if bnode.due_to_control_flow else "state_boundary"
     return sdfg_region.add_state_after(state, label=label, assignments=assignments)
+
+
+def _list_index(list: List[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode) -> int:
+    """Check if node is in list with "is" operator."""
+    index = 0
+    for element in list:
+        # compare with "is" to get memory comparison. ".index()" uses value comparison
+        if element is node:
+            return index
+        index += 1
+
+    raise StopIteration
