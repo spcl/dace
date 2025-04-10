@@ -134,10 +134,10 @@ class InterleaveHandler:
         real_place_base = [[0 for _ in range(dim_y)] for _ in range(dim_x)]
         for i in range(dim_x):
             for j in range(dim_y):
-                if (i+j) % 2 == 0:
+                if ((i//4)+(j//4)) % 2 == 0:
                     real_place_base[i][j] = place_base[i % 4][j % 4]
                 else:
-                    real_place_base[i][j] = place_base[i % 4][j % 4]
+                    real_place_base[i][j] = 1 - place_base[i % 4][j % 4]
         for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
             pi_dace = i % dim_x
             pj_dace = j % dim_y

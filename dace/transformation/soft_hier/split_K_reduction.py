@@ -36,6 +36,7 @@ class SplitKReduction(transformation.SingleStateTransformation):
     kg_m = Property(default=None, allow_none=True, desc="kg_m")
     kg_n = Property(default=None, allow_none=True, desc="kg_n")
 
+    reduce_cond = Property(default=None, allow_none=True, desc="decide which PE to reduce")
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.accumulator, cls.global_hbm)]
@@ -70,14 +71,20 @@ class SplitKReduction(transformation.SingleStateTransformation):
         gj = self.gj
         kg_m = self.kg_m
         kg_n = self.kg_n
+        reduce_cond = self.reduce_cond
         
+
+
         kg_i = gi // kg_m
         kg_j = gj // kg_n
         kg_oi = gi % kg_m
         kg_oj = gj % kg_n
         kg_num = kg_m * kg_n
         kg_off = kg_oi * kg_n + kg_oj
-        
+        from math import sqrt
+        if reduce_cond is None:
+            reduce_cond = f"({kg_off} == {((gi+gj*npe_x)//(int(sqrt(NPE))))%kg_num})"
+
         for edge in graph.out_edges(self.accumulator):
             if edge.data.wcr is not None:
                 edge_to_replace = edge
@@ -93,14 +100,14 @@ class SplitKReduction(transformation.SingleStateTransformation):
         src_strides = acc_desc.strides[-2:]
         dst_strides = desc_hbm.strides[-2:]
 
-        from math import sqrt
+        
 
         edge_to_replace.data.wcr = None
         graph.remove_edge(edge_to_replace)
         reduction_tasklet_str = ""
-        reduction_tasklet_str += f"if ({kg_off} == {((gi+gj*npe_x)//(int(sqrt(NPE))))%kg_num} && flex_is_dm_core()) {{\n"
+        reduction_tasklet_str += f"if ({reduce_cond} && flex_is_dm_core()) {{\n"
         reduction_tasklet_str += (
-            f"    bare_dma_start_1d_reduction(local(_in_accumulator), "
+            f"    flex_dma_async_1d_reduction(local(_in_accumulator), "
             f"dace_remote_xy(gi+{kg_m-1-kg_oi},gj+{kg_n-1-kg_oj},_in_accumulator,{npe_x}), "
             f"{accumulator_size}, COLLECTIVE_REDADD_FP_16);\n"
         )
@@ -163,7 +170,7 @@ class SplitKReduction(transformation.SingleStateTransformation):
         )
 
         store_cfg_cond = CodeBlock(
-            code=f"{kg_off} == {((gi+gj*npe_x)//(int(sqrt(NPE))))%kg_num}",
+            code=f"{reduce_cond}",
             language=dtypes.Language.Python
         )
 
