@@ -524,7 +524,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             lib_node_name = f"move_{memlet.data}_from_{mem_loc_a}_to_{mem_loc_b}"
             dst_arr_shape = shape
             #print(f"dst_arr_shape: {dst_arr_shape}")
-            sdfg.save("explicit_memory_move_before.sdfgz", compress=True)
             num_threads = [
                 int((e + 1 - b) / s)
                 for b, e, s in self.thread_group_map_entry.map.range
@@ -599,6 +598,17 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 dst_arr_name,
                 [beg for (beg, end, step) in memlet.subset],
             )
+            # Map thread offsets (tbock + thread offsets) to tblock offsets
+            for n, (n2, offset) in loc1_to_loc2_map.items():
+                noffsets = []
+                for _expr in offset:
+                    expr = _expr
+                    syms = expr.free_symbols
+                    for sym in syms:
+                        expr = expr.subs(sym, dace.symbolic.symbol(str(sym).replace("d_", "b_")))
+                    noffsets.append(expr)
+                loc1_to_loc2_map[n] = (n2, noffsets)
+
 
             dst_access_node = nodes.AccessNode(data=dst_arr_name)
             state.add_node(dst_access_node)

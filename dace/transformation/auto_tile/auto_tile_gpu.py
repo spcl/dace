@@ -438,6 +438,9 @@ def _tile_gpu(
                         print(f"  Max absolute difference: {max_abs_diff:.6e}")
                         print(f"  Max relative difference: {max_rel_diff:.6e}")
                         print("  Saved failing SDFG as 'failing.sdfgz'")
+                        print(abs_diff)
+                        #import numpy as np
+                        #np.savetxt("matrix.txt", abs_diff.numpy(), fmt="%.4f")
 
                 time = auto_tile_util.run_and_measure_time(
                     kernel_sdfg=kernel_sdfg, inputs=copy_inputs_2,
