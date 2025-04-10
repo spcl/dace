@@ -383,6 +383,28 @@ def test_create_map_scope_write():
     sdfg.validate()
 
 
+def test_create_map_scope_read_after_write():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+            'B': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("write", {}, {"out"}, "out = i"), {},
+                                           {"out": dace.Memlet("B[i]")}),
+                            tn.TaskletNode(nodes.Tasklet("read", {"in_field"}, {"out_field"}, "out_field = in_field"),
+                                           {"in_field": dace.Memlet("B[i]")}, {"out_field": dace.Memlet("A[i]")})
+                        ])
+        ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
 def test_create_map_scope_copy():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
@@ -404,6 +426,8 @@ def test_create_map_scope_copy():
     sdfg.validate()
 
 
+# TODO: restart testing here
+# TODO 2: find an automatic way to test stuff here
 def test_create_map_scope_double_memlet():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
@@ -486,6 +510,18 @@ def test_map_with_two_tasklets():
                                                                    {'out': dace.Memlet('A[1]')}),
                                                 ])
                                 ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_xppm_tmp():
+    loaded = dace.SDFG.from_file("test.sdfgz")
+    stree = loaded.as_schedule_tree()
+
+    # TODO
+    # - fix missing data dependency with "al"
+    # - fix read after write issue
 
     sdfg = stree.as_sdfg()
     sdfg.validate()

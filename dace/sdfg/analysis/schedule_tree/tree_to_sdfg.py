@@ -51,7 +51,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._interstate_symbols: List[tn.AssignNode] = []
 
             # dataflow scopes
-            self._dataflow_stack: List[Tuple[nodes.EntryNode, nodes.ExitNode]] = []
+            self._dataflow_stack: List[Tuple[nodes.EntryNode, Dict[str, Tuple[nodes.AccessNode, Memlet]]]] = []
 
             # caches
             self._access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
@@ -230,77 +230,109 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
         def _generate_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
             dataflow_stack_size = len(self._dataflow_stack)
-            outer_map_entry, outer_map_exit = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
-            cache = self._ensure_access_cache(self._current_state)
 
             # map entry
+            # ---------
             map_entry = nodes.MapEntry(node.node.map)
             self._current_state.add_node(map_entry)
+            self._dataflow_stack.append((map_entry, dict()))
 
-            for memlet in node.input_memlets():
-                new_in_connector = map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
-                new_out_connector = map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
-                assert new_in_connector == new_out_connector
+            # keep a copy of the access cache
+            access_cache = self._ensure_access_cache(self._current_state)
 
-                if not new_in_connector:
-                    continue
-
-                if outer_map_entry is not None:
-                    # passthrough if we are inside another map
-                    self._current_state.add_edge(outer_map_entry, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", map_entry,
-                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
-                else:
-                    # add access node "outside the map" and connect to it
-                    if memlet.data not in cache:
-                        # cache read access
-                        cache[memlet.data] = self._current_state.add_read(memlet.data)
-
-                    self._current_state.add_edge(cache[memlet.data], None, map_entry,
-                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
-
-            # Add empty memlet if outer_map_entry has no out_connectors to connect to
-            if outer_map_entry is not None and not outer_map_entry.out_connectors and self._current_state.out_degree(
-                    outer_map_entry) < 1:
-                self._current_state.add_edge(outer_map_entry, None, map_entry, None, memlet=Memlet())
-
-            # map exit
-            map_exit = nodes.MapExit(node.node.map)
-            self._current_state.add_node(map_exit)
-
-            for memlet in node.output_memlets():
-                new_in_connector = map_exit.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
-                new_out_connector = map_exit.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}")
-                assert new_in_connector == new_out_connector
-
-                if not new_in_connector:
-                    continue
-
-                if outer_map_exit:
-                    # passthrough if we are inside another map
-                    self._current_state.add_edge(map_exit, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", outer_map_exit,
-                                                 f"{PREFIX_PASSTHROUGH_IN}{memlet.data}", memlet)
-                else:
-                    # add access nodes "outside the map" and connect to it
-                    # we always write to a new access_node
-                    access_node = self._current_state.add_write(memlet.data)
-                    self._current_state.add_edge(map_exit, f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}", access_node, None,
-                                                 memlet)
-
-                    # cache write access node (or update an existing one) for read after write cases
-                    cache[memlet.data] = access_node
-
-            # Add empty memlet if outer_map_exit has no in_connectors to connect to
-            if outer_map_exit is not None and not outer_map_exit.in_connectors and self._current_state.in_degree(
-                    outer_map_exit) < 1:
-                self._current_state.add_edge(map_exit, None, outer_map_exit, None, memlet=Memlet())
-
-            self._dataflow_stack.append((map_entry, map_exit))
+            # clear the access_cache before visiting children such that they have their
+            # own access cache (per map scope)
+            self._access_cache[self._current_state].clear()
 
             # visit children inside the map
             self.visit(node.children, sdfg=sdfg)
+            _, to_connect = self._dataflow_stack.pop()
 
-            self._dataflow_stack.pop()
-            assert len(self._dataflow_stack) == dataflow_stack_size  # sanity check
+            # reset the access_cache
+            self._access_cache[self._current_state] = access_cache
+
+            assert len(self._dataflow_stack) == dataflow_stack_size
+            outer_map_entry, outer_to_connect = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
+
+            # connect potential input connectors on map_entry
+            input_memlets = node.input_memlets()
+            for connector in map_entry.in_connectors:
+                memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
+                # find input memlet
+                memlets = [memlet for memlet in input_memlets if memlet.data == memlet_data]
+                assert len(memlets) == 1
+
+                # connect to local access node (if available)
+                if memlet_data in access_cache:
+                    cached_access = access_cache[memlet_data]
+                    self._current_state.add_memlet_path(cached_access,
+                                                        map_entry,
+                                                        dst_conn=connector,
+                                                        memlet=input_memlets[0])
+                    continue
+
+                if outer_map_entry is not None:
+                    # get it from outside the map
+                    connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet_data}"
+                    if connector_name not in outer_map_entry.out_connectors:
+                        new_in_connector = outer_map_entry.add_in_connector(connector)
+                        new_out_connector = outer_map_entry.add_out_connector(connector_name)
+                        assert new_in_connector == True
+                        assert new_in_connector == new_out_connector
+
+                    self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector, memlets[0])
+                else:
+                    # cache local read access
+                    assert memlet_data not in access_cache
+                    access_cache[memlet_data] = self._current_state.add_read(memlet_data)
+                    cached_access = access_cache[memlet_data]
+                    self._current_state.add_memlet_path(cached_access, map_entry, dst_conn=connector, memlet=memlets[0])
+
+            if outer_map_entry is not None and self._current_state.out_degree(outer_map_entry) < 1:
+                self._current_state.add_edge(outer_map_entry, None, map_entry, None, memlet=Memlet())
+
+            # map_exit
+            # --------
+            map_exit = nodes.MapExit(node.node.map)
+            self._current_state.add_node(map_exit)
+
+            # connect writes to map_exit node
+            output_memlets = node.output_memlets()
+            for name in to_connect:
+                in_connector_name = f"{PREFIX_PASSTHROUGH_IN}{name}"
+                out_connector_name = f"{PREFIX_PASSTHROUGH_OUT}{name}"
+                new_in_connector = map_exit.add_in_connector(in_connector_name)
+                new_out_connector = map_exit.add_out_connector(out_connector_name)
+                assert new_in_connector == new_out_connector
+
+                # connect "inside the map"
+                access_node, memlet = to_connect[name]
+                self._current_state.add_memlet_path(access_node,
+                                                    map_exit,
+                                                    dst_conn=in_connector_name,
+                                                    memlet=copy.deepcopy(memlet))
+
+                # connect "outside the map"
+                # find output memlet
+                memlets = [memlet for memlet in output_memlets if memlet.data == name]
+                assert len(memlets) == 1
+
+                access_node = self._current_state.add_write(name)
+                self._current_state.add_memlet_path(map_exit,
+                                                    access_node,
+                                                    src_conn=out_connector_name,
+                                                    memlet=memlets[0])
+
+                # cache write access into access_cache
+                access_cache[name] = access_node
+
+                if outer_to_connect is not None:
+                    outer_to_connect[name] = (access_node, memlets[0])
+
+            # TODO If nothing is connected at this point, figure out what's the last thing that
+            #      we should connect to. Then, add an empty memlet from that last thing to this
+            #      map_exit.
+            assert len(self._current_state.in_edges(map_exit)) > 0
 
         def _generate_MapScope_with_nested_SDFG(self, node: tn.MapScope, sdfg: SDFG) -> None:
             inputs = node.input_memlets()
@@ -411,7 +443,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
         def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
             if any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
                 # support multiple states within this map by inserting a nested SDFG
-                return self._generate_MapScope_with_nested_SDFG(node, sdfg)
+                # return self._generate_MapScope_with_nested_SDFG(node, sdfg)
+                raise NotImplementedError("todo")
 
             self._generate_MapScope(node, sdfg)
 
@@ -429,35 +462,39 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state.add_node(tasklet)
 
             cache = self._ensure_access_cache(self._current_state)
-            map_entry, map_exit = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
+            map_entry, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
 
             # Connect input memlets
             for name, memlet in node.in_memlets.items():
-                # connect to dataflow_stack (if applicable)
-                connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}"
-                if map_entry is not None and connector_name in map_entry.out_connectors:
-                    self._current_state.add_edge(map_entry, connector_name, tasklet, name, memlet)
+                # connect to local access node if possible
+                if memlet.data in cache:
+                    cached_access = cache[memlet.data]
+                    self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
                     continue
 
-                # cache read access
-                if memlet.data not in cache:
-                    cache[memlet.data] = self._current_state.add_read(memlet.data)
+                if map_entry is not None:
+                    # get it from outside the map
+                    connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}"
+                    if connector_name not in map_entry.out_connectors:
+                        new_in_connector = map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
+                        new_out_connector = map_entry.add_out_connector(connector_name)
+                        assert new_in_connector == True
+                        assert new_in_connector == new_out_connector
 
-                access_node = cache[memlet.data]
-                self._current_state.add_memlet_path(access_node, tasklet, dst_conn=name, memlet=memlet)
+                    self._current_state.add_edge(map_entry, connector_name, tasklet, name, memlet)
+                else:
+                    # cache local read access
+                    assert memlet.data not in cache
+                    cache[memlet.data] = self._current_state.add_read(memlet.data)
+                    cached_access = cache[memlet.data]
+                    self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
 
             # Add empty memlet if map_entry has no out_connectors to connect to
-            if map_entry is not None and not map_entry.out_connectors and self._current_state.out_degree(map_entry) < 1:
+            if map_entry is not None and self._current_state.out_degree(map_entry) < 1:
                 self._current_state.add_edge(map_entry, None, tasklet, None, memlet=Memlet())
 
             # Connect output memlets
             for name, memlet in node.out_memlets.items():
-                # connect to dataflow_stack (if applicable)
-                connector_name = f"{PREFIX_PASSTHROUGH_IN}{memlet.data}"
-                if map_exit is not None and connector_name in map_exit.in_connectors:
-                    self._current_state.add_edge(tasklet, name, map_exit, connector_name, memlet)
-                    continue
-
                 # we always write to a new access_node
                 access_node = self._current_state.add_write(memlet.data)
                 self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
@@ -465,9 +502,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 # cache write access node (or update an existing one) for read after write cases
                 cache[memlet.data] = access_node
 
-            # Add empty memlet if map_exit has no in_connectors to connect to
-            if map_exit is not None and not map_exit.in_connectors and self._current_state.in_degree(map_exit) < 1:
-                self._current_state.add_edge(tasklet, None, map_exit, None, memlet=Memlet())
+                if to_connect is not None:
+                    to_connect[memlet.data] = (access_node, memlet)
 
         def visit_LibraryCall(self, node: tn.LibraryCall, sdfg: SDFG) -> None:
             # AFAIK we expand all library calls in the gt4py/dace bridge before coming here.
