@@ -62,7 +62,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
         # S2. one special case if memory is moved from global to shared memory
         #     then we need preserve the mapping of shrA -> glbA when checking any entry
         #     this can be done by going through library nodes whr data was moved from glb to shr
-        sdfg.save("rb.sdfg")
 
         inner_work_map_entry = self.inner_work_map_entry
         map_entry = self.inner_work_map_entry
@@ -160,6 +159,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
         for param in thread_block_map_entry[0].map.params:
             symbols_to_ensure_in_scope.add(param)
+        thread_block_map_entry = thread_block_map_entry[0]
 
         # 5. Go up until all the variables are defined (remove the vars as iterating the scopes ap)
         map_before_split = None
@@ -219,7 +219,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 conditions_and_ranges[param] = (
                                     [block_param, dev_param], de+1, l)
                                 added_conditions.add(
-                                    f"{block_param} + {dev_param} <= {de+1} - {l}")
+                                    f"{block_param} <= {de+1} - {l}")
                                 break
             for n in state.nodes():
                 if isinstance(n, nodes.MapEntry) and n.map.label.startswith("InnerWorkMap"):
@@ -345,20 +345,38 @@ class RemainderLoop(transformation.SingleStateTransformation):
         rkernel: SDFGState = remainder_loop_kernel_sdfg.add_state(
             'rkernel_state')
 
-        symmap = dict()
-        _, _, v, _, _ = state.out_edges(map_before_split)[0]
-        for name, typeclass in state.symbols_defined_at(v).items():
-            symmap[name] = symbolic.symbol(name, typeclass)
-        d = state.symbols_defined_at(v)
-
-        symmap_ns = dict()
-        _, _, v, _, _ = state.out_edges(map_before_split)[0]
-        for name, typeclass in state.symbols_defined_at(v).items():
-            symmap_ns[name] = symbolic.symbol(name, typeclass)
-            # raise Exception(symmap, ins, outs, sdfg.symbols, sub_sdfg.symbols, d)
-
+        symbols_defined_at_entry = state.symbols_defined_at(map_before_split)
+        inputs  = [ie.data.data for ie in state.in_edges(map_before_split) if ie.data is not None and ie.data.data is not None]
+        outputs = [oe.data.data for oe in state.in_edges(state.exit_node(map_before_split)) if oe.data is not None and oe.data.data is not None]
+        used_arrs = set(inputs).union(set(outputs))
+        sym_map = dict()
+        sym_and_type_map = dict()
+        for k in symbols_defined_at_entry.keys():
+            sym_map[k] = k
+            sym_and_type_map[k] = symbols_defined_at_entry[k].dtype if symbols_defined_at_entry[k] is not None else dace.int64
+        # Need end range of device map for bound checks
+        # Need to save the type for nested SDFG (add symbol)
+        sym_and_types = dict()
+        for me in [dev_entry, thread_block_map_entry, inner_kernel_entry]:
+            #print(me, type(me))
+            for (db, _de, ds) in me.map.range:
+                for de in [db, _de, ds]:
+                    if isinstance(de, dace.symbolic.symbol):
+                        sym_map[str(de)] = str(de)
+                        sym_and_types[str(de)] = de.dtype
+                    elif hasattr(de, 'free_symbols'):
+                        for fe in de.free_symbols:
+                            sym_map[str(fe)] = str(fe)
+                            sym_and_types[str(fe)] = fe.dtype
+            for de in me.map.params:
+                sym_map[str(de)] = str(de)
+                sym_and_types[str(de)] = sdfg.symbols[de] if de in sdfg.symbols else dace.int64
+        for sym, symtype in sym_and_types.items():
+            sub_sdfg.add_symbol(sym, symtype)
+        for sym, symtype in sym_and_type_map.items():
+            sub_sdfg.add_symbol(sym, symtype)
         nsdfg: nodes.NestedSDFG = state.add_nested_sdfg(
-            sub_sdfg, sdfg, ins, outs) # , symbol_type_mapping=copy.deepcopy(d)
+            sub_sdfg, sdfg, ins, outs, symbol_mapping=sym_map) # , symbol_type_mapping=copy.deepcopy(d)
 
         # raise Exception(syms_defiend)
         # raise Exception(nsdfg.symbol_mapping, state.symbols_defined_at(map_before_split), map_before_split)
@@ -728,7 +746,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     n.sdfg.simplify()
                     from dace.transformation.passes.struct_to_container_group import clean_trivial_views
                     clean_trivial_views(n.sdfg)
-        sdfg.save("rl.sdfg")
 
     def create_offsets(self, edges):
         offsets = dict()

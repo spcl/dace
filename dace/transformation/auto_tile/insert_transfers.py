@@ -530,7 +530,6 @@ class InsertTransfers(ppl.Pass):
 
                     if arr.storage == dace.dtypes.StorageType.Register:
                         raise Exception(arr)
-        sdfg.save("hm.sdfg")
     def _apply(self, state: SDFGState, sdfg: SDFG, device_map_entry: nodes.MapEntry):
         print(self._G)
         self._specialize_register_storage(sdfg, state, device_map_entry)

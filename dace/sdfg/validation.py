@@ -746,8 +746,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if not _accessible(sdfg, e.data.data, memlet_context):
                     raise InvalidSDFGEdgeError(
                         f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '
-                        'but accessed on host', sdfg, state_id, eid)
-
+                        f'but accessed on host {e}, {e.data}, {state}, {e.src}, {e.dst}', sdfg, state_id, eid)
+                    #print(
+                    #    f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '
+                    #    f'but accessed on host {e}, {e.data}, {state}, {e.src}, {e.dst}', sdfg, state_id, eid)
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
             subset_node = (dst_node

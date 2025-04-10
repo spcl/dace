@@ -245,7 +245,6 @@ class RemainderLoopStencilMap(transformation.SingleStateTransformation):
             state.remove_node(node)
 
         sdfg.reset_cfg_list()
-        sdfg.save("after_remainder_loop_stencil_map.sdfg")
         sdfg.validate()
 
 

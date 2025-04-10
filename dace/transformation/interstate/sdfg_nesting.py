@@ -92,6 +92,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             ostrides = [1]
 
         if len(ostrides) != len(istrides):
+            print("Strides do not match: {} vs {}".format(istrides, ostrides))
             return False
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
@@ -99,8 +100,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
+            print("Cannot inline SDFG {}: no_inline is set.".format(nested_sdfg.label))
             return False
         if len(nested_sdfg.sdfg.nodes()) != 1 or not isinstance(nested_sdfg.sdfg.nodes()[0], SDFGState):
+            print("Cannot inline SDFG {}: {} nested SDFG must have exactly one state. {} {}".format(nested_sdfg.label, len(nested_sdfg.sdfg.nodes()), nested_sdfg.sdfg.nodes()[0], type(nested_sdfg.sdfg.nodes()[0])))
             return False
 
         # Ensure every connector has one incoming/outgoing edge and that it
@@ -109,16 +112,21 @@ class InlineSDFG(transformation.SingleStateTransformation):
         out_connectors = set()
         for edge in graph.in_edges(nested_sdfg):
             if edge.dst_conn in in_connectors:
+                print("Cannot inline SDFG {}: connector {} has multiple incoming edges.".format(nested_sdfg.label, edge.dst_conn))
                 return False
             if (edge.data.is_empty() and not isinstance(edge.src, nodes.EntryNode)):
+                print("Cannot inline SDFG {}: connector {} has empty memlet.".format(nested_sdfg.label, edge.dst_conn))
                 return False
             # NOTE: Empty memlets do not attach to connectors
             if edge.dst_conn or not edge.data.is_empty():
                 in_connectors.add(edge.dst_conn)
         for edge in graph.out_edges(nested_sdfg):
             if edge.src_conn in out_connectors:
-                return False
+                #print("Cannot inline SDFG {}: connector {} has multiple outgoing edges.".format(nested_sdfg.label, edge.src_conn))
+                #return False
+                pass
             if (edge.data.is_empty() and not isinstance(edge.dst, nodes.ExitNode)):
+                print("Cannot inline SDFG {}: connector {} has empty memlet.".format(nested_sdfg.label, edge.src_conn))
                 return False
             # NOTE: Empty memlets do not attach to connectors
             if edge.src_conn or not edge.data.is_empty():
@@ -133,10 +141,13 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if isinstance(node, nodes.AccessNode):
                     if (node.data in out_connectors and nstate.out_degree(node) > 0
                             and (node.data not in in_connectors or nstate.in_degree(node) > 0)):
-                        return False
+                        #print("Cannot inline SDFG {}: connector {} has multiple outgoing edges.".format(nested_sdfg.label, node.data))
+                        #return False
+                        pass
                     if (node.data in in_connectors
                             and any(e.dst.data in all_connectors
                                     for e in nstate.out_edges(node) if isinstance(e.dst, nodes.AccessNode))):
+                        print("Cannot inline SDFG {}: connector {} has multiple outgoing edges.".format(nested_sdfg.label, node.data))
                         return False
 
         # Ensure that every connector has at least one corresponding access
@@ -304,7 +315,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 new_e = state.add_edge(view_node, None, nsdfg_node, inner_dataname, Memlet.from_array(view_name, view_node.desc(sdfg)))
                 state.remove_edge(e)
                 e = new_e
-            
+
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
             if isinstance(e.src, nodes.AccessNode):
