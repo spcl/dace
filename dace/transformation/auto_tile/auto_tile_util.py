@@ -4,7 +4,6 @@ import random
 import statistics
 from typing import Any, Dict, Type
 import dace
-import torch
 from dace.codegen.compiled_sdfg import CompiledSDFG
 import numpy
 from dace.sdfg.analysis.cutout import SDFGCutout
@@ -183,6 +182,7 @@ def generate_random_data(
     defined_symbols: Dict[Type[str], Any],
     storage_type: dace.StorageType = dace.StorageType.GPU_Global,
 ):
+    import torch
     randomly_generated_data = dict()
     # print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
     # TODO: HMMM, understand?
@@ -210,6 +210,7 @@ def generate_random_data(
             if storage_type == dace.StorageType.GPU_Global:
                 def func(indices):
                     return (indices.sum() + 1) / indices.numel()
+
 
                 new_input = torch.from_function(func, shape, dtype=np_dtype)
             elif storage_type == dace.StorageType.Default:

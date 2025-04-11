@@ -33,6 +33,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
 
     unroll = Property(dtype=bool, default=True, desc="Unroll the thread group map")
     unroll_mask = ListProperty(element_type=bool, default=None, desc="Which dimensions to unroll")
+    tiles_evenly = Property(dtype=bool, default=False, desc="Tiles evenly")
 
     @classmethod
     def expressions(cls):
@@ -88,7 +89,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
             sdfg=sdfg,
             options=dict(
                 prefix="d",
-                skew=True,
+                skew=False,
                 tile_sizes=tile_sizes,
                 divides_evenly=True,
                 tile_trivial=True,
@@ -129,6 +130,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         """
 
         # Move the access above the outer sequential map and update memlets for the map entry
+        """
         if inner_sequential_map_entry is not None:
             updated_arr_names = set()
 
@@ -283,6 +285,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                         alignment=16,
                     )
 
+
             # Now update remaining memlets, accessing temporary scalars
             data_to_check = set(updated_arr_names)
             edges_to_check = set(state.out_edges(inner_sequential_map_entry))
@@ -305,18 +308,25 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     and v == state.exit_node(sequential_map_entry)
                 ):
                     edges_to_check = edges_to_check.union(state.out_edges(v))
+            """
 
         # Map Tiling does not update the range as we need them
         # Update the threadblock and device ranges
+
+        # tblock map -> tb=beg:end:step -> only step is updated new end is tb=beg:(step*(end+1-beg))+beg:step (the step was 1, and now is the coarsening)
+        # dev map -> dev=beg:end:step -> new end is dev=beg:end:steap*coarsening
+
         dev_updated_range_list = [
-            (beg, end, step * tstep)
-            for (beg, end, step), (_, _, tstep) in zip(
-                dev_entry.map.range, thread_group_entry.map.range
+            (beg, end, step * coarsening)
+            for (beg, end, step), coarsening in zip(
+                dev_entry.map.range, tile_sizes
             )
         ]
         dev_entry.map.range = subsets.Range(dev_updated_range_list)
+
+
         thread_block_updated_range_list = [
-            (beg, (end + 1) * step - 1, step)
+            (beg, beg + ((end + 1 - beg) * step) - 1, step)
             for (beg, end, step) in thread_group_entry.map.range
         ]
         thread_group_entry.map.range = subsets.Range(thread_block_updated_range_list)

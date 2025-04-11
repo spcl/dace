@@ -162,7 +162,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                             conds[-2] -= remainder_iters
                         else:
                             remainder_iters = 0
-                    code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{\n"
+                    code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{//A\n"
                     further_access_str_src += (
                         " + " + f"((i{var_id}) * {cpp.sym2cpp(self.src_arr.strides[-2])})"
                     )
@@ -274,6 +274,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
         tiles_evenly = self.tiles_evenly
 
         conds = []
+        #raise Exception(self.src_subset, self.src_arr_name, self.dst_arr_name, self.src_arr.shape, self.dst_arr.shape)
         for (beg, end, step), lim in zip(self.src_subset, self.src_arr.shape):
             load_len = end + 1 - beg
             conds.append(f"{beg} <= {lim} - {load_len}")
@@ -349,7 +350,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     locations_with_purpose = DictProperty(
         key_type=str, value_type=dtypes.StorageType, default=dict(), desc="Locations with purpose"
     )
-
+    exclude_from_explicit_memory = ListProperty(element_type=str, default=[], desc="List of arrays to exclude from explicit memory movement")
     def __init__(self):
         super().__init__()
 
@@ -438,7 +439,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             if memlet is not None and memlet.data is not None:
                 src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
                 if src_arrstorage_type == self.src_memory_location:
-                    num_loads += 1
+                    if src_arr_name not in self.exclude_from_explicit_memory:
+                        num_loads += 1
 
         current_load = 0
         for out_edge in state.out_edges(self.map_entry):
@@ -451,6 +453,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             if src_arrstorage_type != self.src_memory_location or isinstance(
                 sdfg.arrays[src_arr_name], dace.data.Scalar
             ):
+                continue
+            if src_arr_name in self.exclude_from_explicit_memory:
                 continue
 
             pruned_src_arr_name = self.remove_prefix(src_arr_name)
@@ -513,11 +517,13 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
 
                 shape = [(end + 1 - beg)//step for beg, end, step in subset_to_pass]
             # End Mapping
+            #raise Exception(subset_to_pass)
 
             mem_loc_a = parsedstorage_type
             mem_loc_b = parsed_memory_location
             lib_node_name = f"move_{memlet.data}_from_{mem_loc_a}_to_{mem_loc_b}"
             dst_arr_shape = shape
+            #print(f"dst_arr_shape: {dst_arr_shape}")
             num_threads = [
                 int((e + 1 - b) / s)
                 for b, e, s in self.thread_group_map_entry.map.range
@@ -544,6 +550,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             dst_arr_name = (
                 self._location_to_prefix(self.dst_memory_location) + "_" + pruned_src_arr_name
             )
+
             c = 0
             while dst_arr_name in sdfg.arrays:
                 if not (dst_arr_name + str(c) in sdfg.arrays):
@@ -591,11 +598,24 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 dst_arr_name,
                 [beg for (beg, end, step) in memlet.subset],
             )
+            # Map thread offsets (tbock + thread offsets) to tblock offsets
+            for n, (n2, offset) in loc1_to_loc2_map.items():
+                noffsets = []
+                for _expr in offset:
+                    expr = _expr
+                    syms = expr.free_symbols
+                    for sym in syms:
+                        expr = expr.subs(sym, dace.symbolic.symbol(str(sym).replace("d_", "b_")))
+                    noffsets.append(expr)
+                loc1_to_loc2_map[n] = (n2, noffsets)
+
 
             dst_access_node = nodes.AccessNode(data=dst_arr_name)
             state.add_node(dst_access_node)
             # Compute thread block offset
             old_subset = memlet.subset
+
+
 
             # This removes any parameter that depends on the grid loop
             new_subset = []
@@ -622,7 +642,11 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                         )
                     else:
                         thread_group_offset.append(False)
-                    new_subset.append((_beg, _end, _step))
+
+                    if _beg == 0:
+                        new_subset.append((_beg, _end, _step))
+                    else:
+                        new_subset.append((_beg - beg, _end - beg, _step))
             else:
                 for i, (beg, end, step) in enumerate(memlet.subset):
                     subs_dict = {sym: 0 for sym in smys_to_rm}
@@ -685,21 +709,9 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 if memlet.data in loc1_to_loc2_map.keys():
                     dst_name, offset = loc1_to_loc2_map[memlet.data]
                     new_subset_list = [
-                        (beg - offset, end - offset, step)
-                        for (beg, end, step), offset in zip(memlet.subset, offset)
+                        (beg - o, end - o, step)
+                        for (beg, end, step), o in zip(memlet.subset, offset)
                     ]
-
-                    for i, ((beg, end, step), apply_offset) in enumerate(
-                        zip(new_subset_list, thread_group_offset)
-                    ):
-                        if apply_offset:
-                            params = self.thread_group_map_entry.map.params
-                            nb = (
-                                beg + symbol(params[i]),
-                                end + symbol(params[i]),
-                                step,
-                            )
-                            new_subset_list[i] = nb
 
                     new_memlet = Memlet(
                         subset=subsets.Range(new_subset_list), data=dst_name

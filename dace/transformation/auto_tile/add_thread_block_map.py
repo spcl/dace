@@ -3,6 +3,7 @@
     transformation."""
 
 
+from dace.data import Property
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, SymbolicProperty
 from dace.sdfg import nodes
@@ -23,6 +24,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     thread_block_size_x = SymbolicProperty(dtype=int, default=32, desc="Number threads in the threadBlock X Dim")
     thread_block_size_y = SymbolicProperty(dtype=int, default=8, desc="Number threads in the threadBlock Y Dim")
     thread_block_size_z = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Z Dim")
+
+    skew = Property(dtype=bool, default=False, desc="Whether to apply skewing to the map")
 
     @classmethod
     def expressions(cls):
@@ -65,7 +68,9 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                                         tile_sizes=tile_sizes,
                                         divides_evenly=True,
                                         tile_trivial=True,
-                                        skew=True),
+                                        #skew=True,
+                                        skew=False,
+                                        ),
                             map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
