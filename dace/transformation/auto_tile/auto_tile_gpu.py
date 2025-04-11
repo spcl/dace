@@ -439,8 +439,8 @@ def _tile_gpu(
                         print(f"  Max relative difference: {max_rel_diff:.6e}")
                         print("  Saved failing SDFG as 'failing.sdfgz'")
                         print(abs_diff)
-                        #import numpy as np
-                        #np.savetxt("matrix.txt", abs_diff.numpy(), fmt="%.4f")
+                        import numpy as np
+                        np.savetxt("matrix.txt", abs_diff.cpu().numpy(), fmt="%.4f")
 
                 time = auto_tile_util.run_and_measure_time(
                     kernel_sdfg=kernel_sdfg, inputs=copy_inputs_2,
@@ -471,8 +471,8 @@ def _tile_gpu(
                     logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","99999999999999.9","0.0"\n')
                 if i % 20 == 0:
                     logfile.flush()
-                clean_cache(sdfg.build_folder)
-                clean_cache(kernel_sdfg.build_folder)
+                #clean_cache(sdfg.build_folder)
+                #clean_cache(kernel_sdfg.build_folder)
     return best_config
 
 

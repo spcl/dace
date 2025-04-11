@@ -162,7 +162,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                             conds[-2] -= remainder_iters
                         else:
                             remainder_iters = 0
-                    code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{\n"
+                    code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{//A\n"
                     further_access_str_src += (
                         " + " + f"((i{var_id}) * {cpp.sym2cpp(self.src_arr.strides[-2])})"
                     )
