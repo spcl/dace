@@ -513,12 +513,27 @@ def test_map_with_state_boundary_inside():
     sdfg.validate()
 
 
+def test_edge_assignment_read_after_write():
+    stree = tn.ScheduleTreeRoot(name="tester",
+                                containers={},
+                                children=[
+                                    tn.AssignNode("my_condition", CodeBlock("True"), dace.InterstateEdge()),
+                                    tn.AssignNode("condition", CodeBlock("my_condition"), dace.InterstateEdge()),
+                                    tn.StateBoundaryNode()
+                                ])
+
+    sdfg = stree.as_sdfg(simplify=False)
+
+    assert [node.name for node in sdfg.nodes()] == ["tree_root", "state_boundary", "state_boundary_0"]
+    assert [edge.data.assignments for edge in sdfg.edges()] == [{"my_condition": "True"}, {"condition": "my_condition"}]
+
+
 def test_xppm_tmp():
     loaded = dace.SDFG.from_file("test.sdfgz")
     stree = loaded.as_schedule_tree()
 
     # TODO
-    # - fix issue with state transition variable assignments
+    # - nestedSDFG: don't add input connections in read after write situations
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -553,3 +568,4 @@ if __name__ == '__main__':
     test_create_nested_map_scope()
     test_create_nested_map_scope_multi_read()
     test_map_with_state_boundary_inside()
+    test_edge_assignment_read_after_write()

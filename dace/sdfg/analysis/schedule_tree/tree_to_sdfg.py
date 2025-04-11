@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections import defaultdict
-from dace import subsets
+from dace import subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu, utils as sdfg_utils
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -115,15 +115,16 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
         def visit_AssignNode(self, node: tn.AssignNode, sdfg: SDFG) -> None:
             # We just collect them here. They'll be added when state boundaries are added,
-            # see `visit_StateBoundaryNode()` above.
+            # see visitors below.
             self._interstate_symbols.append(node)
 
         def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
             before_state = self._current_state
-            guard_state = sdfg.add_state(label="loop_guard")
+            pending = self._pending_interstate_assignments()
+            pending[node.header.itervar] = node.header.init
+
+            guard_state = _insert_and_split_assignments(sdfg, before_state, label="loop_guard", assignments=pending)
             self._current_state = guard_state
-            sdfg.add_edge(before_state, self._current_state,
-                          InterstateEdge(assignments=dict({node.header.itervar: node.header.init})))
 
             body_state = sdfg.add_state(label="loop_body")
             self._current_state = body_state
@@ -131,8 +132,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             # visit children inside the loop
             self.visit(node.children, sdfg=sdfg)
-            sdfg.add_edge(self._current_state, guard_state,
-                          InterstateEdge(assignments=dict({node.header.itervar: node.header.update})))
+
+            pending = self._pending_interstate_assignments()
+            pending[node.header.itervar] = node.header.update
+            _insert_and_split_assignments(sdfg, self._current_state, after_state=guard_state, assignments=pending)
 
             after_state = sdfg.add_state(label="loop_after")
             self._current_state = after_state
@@ -140,9 +143,11 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
         def visit_WhileScope(self, node: tn.WhileScope, sdfg: SDFG) -> None:
             before_state = self._current_state
-            guard_state = sdfg.add_state(label="guard_state")
+            guard_state = _insert_and_split_assignments(sdfg,
+                                                        before_state,
+                                                        label="guard_state",
+                                                        assignments=self._pending_interstate_assignments())
             self._current_state = guard_state
-            sdfg.add_edge(before_state, guard_state, InterstateEdge())
 
             body_state = sdfg.add_state(label="loop_body")
             self._current_state = body_state
@@ -150,7 +155,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             # visit children inside the loop
             self.visit(node.children, sdfg=sdfg)
-            sdfg.add_edge(self._current_state, guard_state, InterstateEdge())
+            _insert_and_split_assignments(sdfg,
+                                          before_state=self._current_state,
+                                          after_state=guard_state,
+                                          assignments=self._pending_interstate_assignments())
 
             after_state = sdfg.add_state(label="loop_after")
             self._current_state = after_state
@@ -168,8 +176,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             before_state = self._current_state
 
             # add guard state
-            guard_state = sdfg.add_state(label="guard_state")
-            sdfg.add_edge(before_state, guard_state, InterstateEdge())
+            guard_state = _insert_and_split_assignments(sdfg,
+                                                        before_state,
+                                                        label="guard_state",
+                                                        assignments=self._pending_interstate_assignments())
 
             # add true_state
             true_state = sdfg.add_state(label="true_state")
@@ -180,7 +190,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self.visit(node.children, sdfg=sdfg)
 
             # add merge_state
-            merge_state = sdfg.add_state_after(self._current_state, label="merge_state")
+            merge_state = _insert_and_split_assignments(sdfg,
+                                                        self._current_state,
+                                                        label="merge_state",
+                                                        assignments=self._pending_interstate_assignments())
 
             # Check if there's an `ElseScope` following this node (in the parent's children).
             # Filter StateBoundaryNodes, which we inserted earlier, for this analysis.
@@ -227,7 +240,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             # merge false-branch into merge_state
             merge_state = self._pop_state("merge_state")
-            sdfg.add_edge(self._current_state, merge_state, InterstateEdge())
+            _insert_and_split_assignments(sdfg,
+                                          before_state=self._current_state,
+                                          after_state=merge_state,
+                                          assignments=self._pending_interstate_assignments())
             self._current_state = merge_state
 
         def _insert_nestedSDFG(self, node: tn.MapScope, sdfg: SDFG) -> None:
@@ -485,13 +501,25 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
         def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
             # When creating a state boundary, include all inter-state assignments that precede it.
+            pending = self._pending_interstate_assignments()
+
+            self._current_state = create_state_boundary(node,
+                                                        sdfg,
+                                                        self._current_state,
+                                                        StateBoundaryBehavior.STATE_TRANSITION,
+                                                        assignments=pending)
+
+        def _pending_interstate_assignments(self) -> Dict:
+            """
+            Return currently pending interstate assignments. Clears the cache.
+            """
             assignments = {}
+
             for symbol in self._interstate_symbols:
                 assignments[symbol.name] = symbol.value.as_string
             self._interstate_symbols.clear()
 
-            self._current_state = create_state_boundary(node, sdfg, self._current_state,
-                                                        StateBoundaryBehavior.STATE_TRANSITION, assignments)
+            return assignments
 
     StreeToSDFG().visit(stree, sdfg=result)
 
@@ -633,7 +661,52 @@ def create_state_boundary(bnode: tn.StateBoundaryNode,
     #       behavior. Fall back to state transition in that case.
 
     label = "cf_state_boundary" if bnode.due_to_control_flow else "state_boundary"
-    return sdfg_region.add_state_after(state, label=label, assignments=assignments)
+    return _insert_and_split_assignments(sdfg_region, state, label=label, assignments=assignments)
+
+
+def _insert_and_split_assignments(sdfg_region: ControlFlowRegion,
+                                  before_state: SDFGState,
+                                  after_state: Optional[SDFGState] = None,
+                                  label: Optional[str] = None,
+                                  assignments: Optional[Dict] = None) -> SDFGState:
+    """
+    Insert given assignments splitting them in case of potential race conditions.
+
+    DaCe validation (currently) won't let us add multiple assignment with read after
+    write pattern on the same edge. We thus split them over multiple state transitions
+    (inserting empty states in between) to be safe.
+
+    NOTE (later) This should be double-checked since python dictionaries preserve
+                 insertion order since python 3.7 (which we rely on in this function
+                 too). Depending on code generation it could(TM) be that we can
+                 weaken (best case remove) the corresponding check from the sdfg
+                 validator.
+    """
+    has_potential_race = False
+    for key, value in assignments.items():
+        syms = symbolic.free_symbols_and_functions(value)
+        also_assigned = (syms & assignments.keys()) - {key}
+        if also_assigned:
+            has_potential_race = True
+            break
+
+    if not has_potential_race:
+        if after_state is not None:
+            sdfg_region.add_edge(before_state, after_state, InterstateEdge(assignments=assignments))
+            return after_state
+        return sdfg_region.add_state_after(before_state, label=label, assignments=assignments)
+
+    last_state = before_state
+    for index, assignment in enumerate(assignments.items()):
+        key, value = assignment
+        is_last_state = index == len(assignments) - 1
+        if is_last_state and after_state is not None:
+            sdfg_region.add_edge(last_state, after_state, InterstateEdge(assignments={key: value}))
+            last_state = after_state
+        else:
+            last_state = sdfg_region.add_state_after(last_state, label=label, assignments={key: value})
+
+    return last_state
 
 
 def _list_index(list: List[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode) -> int:
