@@ -389,7 +389,7 @@ def test_create_map_scope_read_after_write():
         name="tester",
         containers={
             'A': dace.data.Array(dace.float64, [20]),
-            'B': dace.data.Array(dace.float64, [20]),
+            'B': dace.data.Array(dace.float64, [20], transient=True),
         },
         children=[
             tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
@@ -426,8 +426,6 @@ def test_create_map_scope_copy():
     sdfg.validate()
 
 
-# TODO: restart testing here
-# TODO 2: find an automatic way to test stuff here
 def test_create_map_scope_double_memlet():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
@@ -496,7 +494,7 @@ def test_create_nested_map_scope_multi_read():
     sdfg.validate()
 
 
-def test_map_with_two_tasklets():
+def test_map_with_state_boundary_inside():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
                                 containers={'A': dace.data.Array(dace.float64, [20])},
@@ -520,12 +518,13 @@ def test_xppm_tmp():
     stree = loaded.as_schedule_tree()
 
     # TODO
-    # - fix missing data dependency with "al"
-    # - fix read after write issue
+    # - fix issue with state transition variable assignments
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
 
+
+# TODO: find an automatic way to test stuff here
 
 if __name__ == '__main__':
     test_state_boundaries_none()
@@ -553,4 +552,4 @@ if __name__ == '__main__':
     test_create_map_scope_double_memlet()
     test_create_nested_map_scope()
     test_create_nested_map_scope_multi_read()
-    test_map_with_two_tasklets()
+    test_map_with_state_boundary_inside()
