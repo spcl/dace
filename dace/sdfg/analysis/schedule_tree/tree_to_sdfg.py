@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections import defaultdict
+from dace import subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu, utils as sdfg_utils
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -260,15 +261,21 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
                 # find input memlet
                 memlets = [memlet for memlet in input_memlets if memlet.data == memlet_data]
-                assert len(memlets) == 1
+                assert len(memlets) > 0
+                memlet = copy.deepcopy(memlets[0])
+                if len(memlets) > 1:
+                    # merge memlets
+                    for index, element in enumerate(memlets):
+                        if index == 0:
+                            continue
+                        memlet.subset = subsets.union(memlet.subset, element.subset)
+                        # TODO(later): figure out the volume thing (also in MemletSet). Also: num_accesses (for legacy reasons)
+                        memlet.volume += element.volume
 
                 # connect to local access node (if available)
                 if memlet_data in access_cache:
                     cached_access = access_cache[memlet_data]
-                    self._current_state.add_memlet_path(cached_access,
-                                                        map_entry,
-                                                        dst_conn=connector,
-                                                        memlet=input_memlets[0])
+                    self._current_state.add_memlet_path(cached_access, map_entry, dst_conn=connector, memlet=memlet)
                     continue
 
                 if outer_map_entry is not None:
@@ -280,13 +287,13 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                         assert new_in_connector == True
                         assert new_in_connector == new_out_connector
 
-                    self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector, memlets[0])
+                    self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector, memlet)
                 else:
                     # cache local read access
                     assert memlet_data not in access_cache
                     access_cache[memlet_data] = self._current_state.add_read(memlet_data)
                     cached_access = access_cache[memlet_data]
-                    self._current_state.add_memlet_path(cached_access, map_entry, dst_conn=connector, memlet=memlets[0])
+                    self._current_state.add_memlet_path(cached_access, map_entry, dst_conn=connector, memlet=memlet)
 
             if outer_map_entry is not None and self._current_state.out_degree(outer_map_entry) < 1:
                 self._current_state.add_edge(outer_map_entry, None, map_entry, None, memlet=Memlet())
