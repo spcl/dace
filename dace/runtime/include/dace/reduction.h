@@ -532,7 +532,7 @@ namespace dace {
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value)
         {
-            return wcr_custom<T>::template reduce_atomic(
+            return wcr_custom<T>::template reduce_atomic<decltype(_wcr_fixed<REDTYPE, T>())>(
                 _wcr_fixed<REDTYPE, T>(), ptr, value);
         }
     };
