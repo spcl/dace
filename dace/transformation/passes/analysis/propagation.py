@@ -201,6 +201,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
     CATEGORY: str = 'Analysis'
 
     shared_transients: Dict[int, Set[str]] = None
+    written_symbols: Set[str] = None
 
     def __init__(self) -> None:
         super().__init__()
@@ -581,6 +582,9 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         arrays_and_symbols = NestedDict()
         arrays_and_symbols.update(conditional.sdfg.arrays)
         arrays_and_symbols.update(conditional.sdfg.symbols)
+        for sym in self.written_symbols:
+            if sym not in arrays_and_symbols:
+                arrays_and_symbols[sym] = ''
 
         # Gather the union of possible reads and writes. At the same time, determine if there is an else branch present.
         has_else = False
@@ -664,6 +668,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         arrays_and_symbols = NestedDict()
         arrays_and_symbols.update(loop.sdfg.arrays)
         arrays_and_symbols.update(loop.sdfg.symbols)
+        for sym in self.written_symbols:
+            if sym not in arrays_and_symbols:
+                arrays_and_symbols[sym] = ''
+
         for code in loop.loop_condition.code:
             for read in memlets_in_ast(code, arrays_and_symbols):
                 if read.data in loop.certain_reads:
@@ -736,46 +744,48 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             # TODO: Remove loop-carried dependencies from the writes (i.e., only the first read would be a true read)
             for repo in [loop.certain_reads, loop.possible_reads]:
                 for dat in repo.keys():
-                    desc = loop.sdfg.data(dat)
-                    initial_memlet = Memlet()
-                    initial_memlet.data = dat
-                    initial_memlet.subset = repo[dat].subset
-                    initial_memlet.dynamic = repo[dat].dynamic
-                    initial_memlet.volume = repo[dat].volume
-                    #if dat in loop_carry_dependencies and read_memlet in loop_carry_dependencies[dat]:
-                    #    #dep_write = loop_carry_deps[read_memlet]
-                    #    #diff = subsets.difference(read.subset, dep_write.subset)
-                    #    #if isinstance(diff, subsets.SubsetUnion):
-                    #    #    diff = diff.to_bounding_box_subset()
-                    #    #tgt_expr = symbolic.pystr_to_symbolic(itvar) - loop_range.ranges[0][-1]
-                    #    #for i in range(diff.dims()):
-                    #    #    dim = diff.dim_to_string(i)
-                    #    #    ...
-                    #    ## Check if the remaining read subset is only in the direction opposing the loop iteration. If
-                    #    #diff.__getitem__(0)
-                    #    propagated_read_memlet = propagate_subset([read_memlet], desc, [itvar], loop_range,
-                    #                                              defined_variables, use_dst=False)
-                    #    repo[dat] = propagated_read_memlet
-                    #    repo_moredata[dat].memlet = propagated_read_memlet
-                    #else:
-                    propagated_read_memlet = propagate_subset([initial_memlet], desc, [itvar], loop_range,
-                                                            defined_variables, use_dst=False)
-                    repo[dat].subset = propagated_read_memlet.subset
-                    repo[dat].dynamic = propagated_read_memlet.dynamic
-                    repo[dat].volume = propagated_read_memlet.volume
+                    if dat in loop.sdfg.arrays:
+                        desc = loop.sdfg.data(dat)
+                        initial_memlet = Memlet()
+                        initial_memlet.data = dat
+                        initial_memlet.subset = repo[dat].subset
+                        initial_memlet.dynamic = repo[dat].dynamic
+                        initial_memlet.volume = repo[dat].volume
+                        #if dat in loop_carry_dependencies and read_memlet in loop_carry_dependencies[dat]:
+                        #    #dep_write = loop_carry_deps[read_memlet]
+                        #    #diff = subsets.difference(read.subset, dep_write.subset)
+                        #    #if isinstance(diff, subsets.SubsetUnion):
+                        #    #    diff = diff.to_bounding_box_subset()
+                        #    #tgt_expr = symbolic.pystr_to_symbolic(itvar) - loop_range.ranges[0][-1]
+                        #    #for i in range(diff.dims()):
+                        #    #    dim = diff.dim_to_string(i)
+                        #    #    ...
+                        #    ## Check if the remaining read subset is only in the direction opposing the loop iteration. If
+                        #    #diff.__getitem__(0)
+                        #    propagated_read_memlet = propagate_subset([read_memlet], desc, [itvar], loop_range,
+                        #                                              defined_variables, use_dst=False)
+                        #    repo[dat] = propagated_read_memlet
+                        #    repo_moredata[dat].memlet = propagated_read_memlet
+                        #else:
+                        propagated_read_memlet = propagate_subset([initial_memlet], desc, [itvar], loop_range,
+                                                                defined_variables, use_dst=False)
+                        repo[dat].subset = propagated_read_memlet.subset
+                        repo[dat].dynamic = propagated_read_memlet.dynamic
+                        repo[dat].volume = propagated_read_memlet.volume
             for repo in [loop.certain_writes, loop.possible_writes]:
                 for dat in repo.keys():
-                    desc = loop.sdfg.data(dat)
-                    initial_memlet = Memlet()
-                    initial_memlet.data = dat
-                    initial_memlet.subset = repo[dat].subset
-                    initial_memlet.dynamic = repo[dat].dynamic
-                    initial_memlet.volume = repo[dat].volume
-                    propagated_write_memlet = propagate_subset([initial_memlet], desc, [itvar], loop_range,
-                                                            defined_variables, use_dst=True)
-                    repo[dat].subset = propagated_write_memlet.subset
-                    repo[dat].dynamic = propagated_write_memlet.dynamic
-                    repo[dat].volume = propagated_write_memlet.volume
+                    if dat in loop.sdfg.arrays:
+                        desc = loop.sdfg.data(dat)
+                        initial_memlet = Memlet()
+                        initial_memlet.data = dat
+                        initial_memlet.subset = repo[dat].subset
+                        initial_memlet.dynamic = repo[dat].dynamic
+                        initial_memlet.volume = repo[dat].volume
+                        propagated_write_memlet = propagate_subset([initial_memlet], desc, [itvar], loop_range,
+                                                                defined_variables, use_dst=True)
+                        repo[dat].subset = propagated_write_memlet.subset
+                        repo[dat].dynamic = propagated_write_memlet.dynamic
+                        repo[dat].volume = propagated_write_memlet.volume
 
         # Identify any symbols written inside the loop, and check if dependencies of the loop rely on those symbols.
         # If so, they need to be propagated as dynamic unbounded (in the possible reads / writes).
@@ -830,6 +840,9 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         arrays_and_symbols = NestedDict()
         arrays_and_symbols.update(cfg.sdfg.arrays)
         arrays_and_symbols.update(cfg.sdfg.symbols)
+        for sym in self.written_symbols:
+            if sym not in arrays_and_symbols:
+                arrays_and_symbols[sym] = ''
 
         alldoms = cfg_analysis.all_dominators(cfg)
         allpostdom = cfg_analysis.all_post_dominators(cfg)
@@ -948,6 +961,15 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         result[cfg] = (cfg.certain_reads, cfg.possible_reads, cfg.certain_writes, cfg.possible_writes)
 
     def apply(self, region: ControlFlowRegion, _) -> Optional[MemletPropResultT]:
+        if self.written_symbols is None:
+            self.written_symbols = set()
+            for edge in region.root_sdfg.all_interstate_edges(recursive=True):
+                for k in edge.data.assignments.keys():
+                    self.written_symbols.add(k)
+            for reg in region.cfg_list:
+                if isinstance(reg, LoopRegion) and reg.loop_variable:
+                    self.written_symbols.add(reg.loop_variable)
+
         if self.shared_transients is None:
             self.shared_transients = {}
         if region.sdfg.cfg_id not in self.shared_transients:
