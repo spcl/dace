@@ -3,7 +3,7 @@ import copy
 from collections import defaultdict
 from dace import subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg import nodes, memlet_utils as mmu, utils as sdfg_utils
+from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -292,81 +292,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 to_connect[name] = (nsdfg, Memlet(name))
 
             assert not nsdfg.sdfg.free_symbols
-            return
-
-            # connect nsdfg input memlets
-            for name in nsdfg.in_connectors:
-                memlets = [memlet for memlet in node.input_memlets() if memlet.data == name]
-                assert len(memlets) == 1
-
-                new_in_connector = map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{name}")
-                new_out_connector = map_entry.add_out_connector(f"{PREFIX_PASSTHROUGH_OUT}{name}")
-                assert new_in_connector
-                assert new_in_connector == new_out_connector
-
-                self._current_state.add_edge(map_entry, f"{PREFIX_PASSTHROUGH_OUT}{name}", nsdfg, name, memlets[0])
-
-            # Add empty memlet if we didn't add any in the loop above
-            if self._current_state.out_degree(map_entry) < 1:
-                self._current_state.add_edge(map_entry, None, nsdfg, None, memlet=Memlet())
-
-            # connect nsdfg output memlets
-            for name in nsdfg.out_connectors:
-                memlets = [memlet for memlet in node.output_memlets() if memlet.data == name]
-                assert len(memlets) == 1
-
-                to_connect[memlets[0].data] = (nsdfg, memlets[0])
-
-            # # ------------- old
-            # inputs = node.input_memlets()
-            # outputs = node.output_memlets()
-            #
-            # # setup nested SDFG
-            # nsdfg = SDFG("nested_sdfg", parent=self._current_state)
-            # start_state = nsdfg.add_state("nested_root", is_start_block=True)
-            # for memlet in [*inputs, *outputs]:
-            #     if memlet.data not in nsdfg.arrays:
-            #         nsdfg.add_datadesc(memlet.data, sdfg.arrays[memlet.data].clone())
-            #
-            #         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-            #         if sdfg.arrays[memlet.data].transient:
-            #             nsdfg.arrays[memlet.data].transient = False
-            #
-            # # visit children inside nested SDFG
-            # inner_visitor = StreeToSDFG(start_state)
-            # for child in node.children:
-            #     inner_visitor.visit(child, sdfg=nsdfg)
-            #
-            # nested_SDFG = self._current_state.add_nested_sdfg(nsdfg,
-            #                                                   sdfg,
-            #                                                   inputs={memlet.data
-            #                                                           for memlet in inputs},
-            #                                                   outputs={memlet.data
-            #                                                            for memlet in outputs})
-            #
-            # assert self._dataflow_stack
-            # map_entry, to_connect = self._dataflow_stack[-1]
-            #
-            # # connect input memlets
-            # for memlet in inputs:
-            #     # get it from outside the map
-            #     array_name = memlet.data
-            #     connector_name = f"{PREFIX_PASSTHROUGH_OUT}{array_name}"
-            #     if connector_name not in map_entry.out_connectors:
-            #         new_in_connector = map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{array_name}")
-            #         new_out_connector = map_entry.add_out_connector(connector_name)
-            #         assert new_in_connector == True
-            #         assert new_in_connector == new_out_connector
-            #
-            #     self._current_state.add_edge(map_entry, connector_name, nested_SDFG, array_name, memlet)
-            #
-            # # Add empty memlet if we didn't add any in the loop above
-            # if self._current_state.out_degree(map_entry) < 1:
-            #     self._current_state.add_edge(map_entry, None, nested_SDFG, None, memlet=Memlet())
-            #
-            # # connect output memlets
-            # for memlet in outputs:
-            #     to_connect[memlet.data] = (nested_SDFG, memlet)
 
         def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
             dataflow_stack_size = len(self._dataflow_stack)
@@ -386,11 +311,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             # visit children inside the map
             if any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
-                # to the funky stuff
                 self._insert_nestedSDFG(node, sdfg)
-                # only propagate memlets once the full SDFG is built to ensure that all memlets
-                # are connected to their (outermost) AccessNode.
-                # propagate_memlets_nested_sdfg(sdfg, self._current_state, nsdfg)
             else:
                 self.visit(node.children, sdfg=sdfg)
 
@@ -403,21 +324,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             outer_map_entry, outer_to_connect = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
 
             # connect potential input connectors on map_entry
-            # input_memlets = node.input_memlets()
             for connector in map_entry.in_connectors:
                 memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
-                # # find input memlet
-                # memlets = [memlet for memlet in input_memlets if memlet.data == memlet_data]
-                # assert len(memlets) > 0
-                # memlet = copy.deepcopy(memlets[0])
-                # if len(memlets) > 1:
-                #     # merge memlets
-                #     for index, element in enumerate(memlets):
-                #         if index == 0:
-                #             continue
-                #         memlet.subset = subsets.union(memlet.subset, element.subset)
-                #         # TODO(later): figure out the volume thing (also in MemletSet). Also: num_accesses (for legacy reasons)
-                #         memlet.volume += element.volume
 
                 # connect to local access node (if available)
                 if memlet_data in access_cache:
@@ -458,7 +366,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._current_state.add_node(map_exit)
 
             # connect writes to map_exit node
-            # output_memlets = node.output_memlets()
             for name in to_connect:
                 in_connector_name = f"{PREFIX_PASSTHROUGH_IN}{name}"
                 out_connector_name = f"{PREFIX_PASSTHROUGH_OUT}{name}"
@@ -478,10 +385,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                                                         memlet=memlet)
 
                 # connect "outside the map"
-                # # find output memlet
-                # memlets = [memlet for memlet in output_memlets if memlet.data == name]
-                # assert len(memlets) == 1
-
                 access_node = self._current_state.add_write(name)
                 self._current_state.add_memlet_path(map_exit,
                                                     access_node,
@@ -536,10 +439,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     continue
 
                 if isinstance(scope_node, nodes.NestedSDFG):
-                    # connector_name = f"{PREFIX_PASSTHROUGH_IN}{name}"
-                    # scope_node.add_in_connector(connector_name)
-                    # self._current_state.add_edge(scope_node, connector_name, tasklet, name, memlet)
-                    # continue
                     # Copy data descriptor from parent SDFG and add input connector
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = sdfg.parent.parent
@@ -594,7 +493,6 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
                     # Add out_connector in any case if not yet present, e.g. write after read
                     scope_node.add_out_connector(memlet.data)
-                    # self._current_state.add_memlet_path(access_node, scope_node, dst_conn=memlet.data, memlet=copy.deepcopy(memlet))
 
                 else:
                     assert scope_node is None
