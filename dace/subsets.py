@@ -1121,7 +1121,7 @@ class SubsetUnion(Subset):
 
         if isinstance(other, SubsetUnion):
             for subset in self.subset_list:
-                # check if ther is a subset in self that covers every subset in other
+                # check if there is a subset in self that covers every subset in other
                 if all(subset.covers(s) for s in other.subset_list):
                     return True
             # return False if that's not the case for any of the subsets in self
@@ -1139,7 +1139,7 @@ class SubsetUnion(Subset):
 
         if isinstance(other, SubsetUnion):
             for subset in self.subset_list:
-                # check if ther is a subset in self that covers every subset in other
+                # check if there is a subset in self that covers every subset in other
                 if all(subset.covers_precise(s) for s in other.subset_list):
                     return True
             # return False if that's not the case for any of the subsets in self

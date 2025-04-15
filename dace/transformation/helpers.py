@@ -235,7 +235,7 @@ def _copy_state(sdfg: SDFG,
         sdfg.add_edge(state_copy, state, InterstateEdge(condition=condition))
     else:
         condition = None
-        # NOTE: The following should be unecessary for preserving program semantics. Therefore we comment it out to
+        # NOTE: The following should be unnecessary for preserving program semantics. Therefore we comment it out to
         # avoid the overhead of evaluating the condition.
         # if out_conditions:
         #     condition = 'or'.join([f"({c})" for c in out_conditions])
@@ -267,7 +267,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
     ipostdom = utils.postdominators(sdfg)
     cft = cf.structured_control_flow_tree(sdfg, None)
 
-    # Iterate over the SDFG's control flow scopes and create for each an SDFG subraph. These subgraphs must be disjoint,
+    # Iterate over the SDFG's control flow scopes and create for each an SDFG subgraph. These subgraphs must be disjoint,
     # so we duplicate SDFGStates that appear in more than one scopes (guards and exits of loops and conditionals).
     components = {}
     visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
@@ -799,6 +799,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      external_offset: Tuple[int] = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
+
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
