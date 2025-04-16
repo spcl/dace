@@ -532,9 +532,6 @@ def test_xppm_tmp():
     loaded = dace.SDFG.from_file("test.sdfgz")
     stree = loaded.as_schedule_tree()
 
-    # TODO
-    # - nestedSDFG: don't add input connections in read after write situations
-
     sdfg = stree.as_sdfg()
     sdfg.validate()
 

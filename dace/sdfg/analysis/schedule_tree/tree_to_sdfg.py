@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections import defaultdict
-from dace import subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -53,8 +53,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._interstate_symbols: List[tn.AssignNode] = []
 
             # dataflow scopes
-            self._dataflow_stack: List[Tuple[nodes.EntryNode | nodes.NestedSDFG,
-                                             Dict[str, Tuple[nodes.AccessNode | nodes.NestedSDFG, Memlet]]]] = []
+            # List[ (MapEntryNode, ToConnect) | (SDFG, (inputs, outputs))]
+            self._dataflow_stack: List[Tuple[nodes.EntryNode, Dict[str, Tuple[nodes.AccessNode, Memlet]]]
+                                       | Tuple[SDFG, Tuple[Set[str], Set[str]]]] = []
 
             # caches
             self._access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
@@ -249,27 +250,32 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
         def _insert_nestedSDFG(self, node: tn.MapScope, sdfg: SDFG) -> None:
             dataflow_stack_size = len(self._dataflow_stack)
+            state_stack_size = len(self._state_stack)
 
             # setup inner SDFG
             inner_sdfg = SDFG("nested_sdfg", parent=self._current_state)
-            nsdfg = self._current_state.add_nested_sdfg(inner_sdfg, sdfg, inputs={}, outputs={})
             start_state = inner_sdfg.add_state("nested_root", is_start_block=True)
 
             # update stacks and current state
             old_state_label = self._current_state.label
             self._state_stack.append(self._current_state)
-            self._dataflow_stack.append((nsdfg, dict()))
+            self._dataflow_stack.append((inner_sdfg, (set(), set())))
             self._current_state = start_state
 
             # visit children
             for child in node.children:
                 self.visit(child, sdfg=inner_sdfg)
 
-            # restore current state and do stack handling
+            # restore current state and stacks
             self._current_state = self._pop_state(old_state_label)
-            _, to_connect = self._dataflow_stack.pop()
-            assert not to_connect
+            assert len(self._state_stack) == state_stack_size
+            _, connectors = self._dataflow_stack.pop()
             assert len(self._dataflow_stack) == dataflow_stack_size
+
+            # insert nested SDFG
+            nsdfg = self._current_state.add_nested_sdfg(inner_sdfg, sdfg, inputs=connectors[0], outputs=connectors[1])
+
+            # connect nested SDFG to surrounding map scope
             assert self._dataflow_stack
             map_entry, to_connect = self._dataflow_stack[-1]
 
@@ -281,7 +287,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 assert new_in_connector == True
                 assert new_in_connector == new_out_connector
 
-                self._current_state.add_edge(map_entry, out_connector, nsdfg, name, Memlet(name))
+                self._current_state.add_edge(map_entry, out_connector, nsdfg, name,
+                                             Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
 
             # Add empty memlet if we didn't add any in the loop above
             if self._current_state.out_degree(map_entry) < 1:
@@ -289,9 +296,18 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             # connect nsdfg output memlets (to be propagated)
             for name in nsdfg.out_connectors:
-                to_connect[name] = (nsdfg, Memlet(name))
+                to_connect[name] = (nsdfg, Memlet.from_array(name, nsdfg.sdfg.arrays[name]))
 
-            assert not nsdfg.sdfg.free_symbols
+            # # Add new global symbols to nested SDFG
+            # new_symbols = {sym: sym for sym in nsdfg.sdfg.free_symbols if sym not in nsdfg.symbol_mapping}
+            # nsdfg.symbol_mapping.update(new_symbols)
+            #
+            # from dace.codegen.tools.type_inference import infer_expr_type
+            # for sym, symval in new_symbols.items():
+            #     if sym not in nsdfg.sdfg.symbols:
+            #         nsdfg.sdfg.add_symbol(sym, infer_expr_type(symval, sdfg.symbols) or dtypes.typeclass(int))
+
+            # assert not nsdfg.sdfg.free_symbols
 
         def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
             dataflow_stack_size = len(self._dataflow_stack)
@@ -299,6 +315,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             # map entry
             # ---------
             map_entry = nodes.MapEntry(node.node.map)
+            # # Add node.node.map.params as symbols here?
+            # for param in node.node.map.params:
+            #     sdfg.add_symbol(param)
             self._current_state.add_node(map_entry)
             self._dataflow_stack.append((map_entry, dict()))
 
@@ -333,7 +352,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     self._current_state.add_memlet_path(cached_access,
                                                         map_entry,
                                                         dst_conn=connector,
-                                                        memlet=Memlet(memlet_data))
+                                                        memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
                     continue
 
                 if outer_map_entry is not None:
@@ -346,7 +365,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                         assert new_in_connector == new_out_connector
 
                     self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector,
-                                                 Memlet(memlet_data))
+                                                 Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
                 else:
                     # cache local read access
                     assert memlet_data not in access_cache
@@ -355,7 +374,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     self._current_state.add_memlet_path(cached_access,
                                                         map_entry,
                                                         dst_conn=connector,
-                                                        memlet=Memlet(memlet_data))
+                                                        memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
 
             if outer_map_entry is not None and self._current_state.out_degree(outer_map_entry) < 1:
                 self._current_state.add_nedge(outer_map_entry, map_entry, memlet=Memlet())
@@ -389,13 +408,13 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 self._current_state.add_memlet_path(map_exit,
                                                     access_node,
                                                     src_conn=out_connector_name,
-                                                    memlet=Memlet(name))
+                                                    memlet=Memlet.from_array(name, sdfg.arrays[name]))
 
                 # cache write access into access_cache
                 access_cache[name] = access_node
 
                 if outer_to_connect is not None:
-                    outer_to_connect[name] = (access_node, Memlet(name))
+                    outer_to_connect[name] = (access_node, Memlet.from_array(name, sdfg.arrays[name]))
 
             # TODO If nothing is connected at this point, figure out what's the last thing that
             #      we should connect to. Then, add an empty memlet from that last thing to this
@@ -438,7 +457,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     self._current_state.add_edge(scope_node, connector_name, tasklet, name, memlet)
                     continue
 
-                if isinstance(scope_node, nodes.NestedSDFG):
+                if isinstance(scope_node, SDFG):
                     # Copy data descriptor from parent SDFG and add input connector
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = sdfg.parent.parent
@@ -453,8 +472,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                             # NOTE This can probably be done automatically by a cleanup pass in the end.
                             #      Something like DDE should be able to do this.
 
-                        new_in_connector = scope_node.add_in_connector(memlet.data)
-                        assert new_in_connector == True
+                        assert memlet.data not in to_connect[0]
+                        to_connect[0].add(memlet.data)
+                        # new_in_connector = scope_node.add_in_connector(memlet.data)
+                        # assert new_in_connector == True
                 else:
                     assert scope_node is None
 
@@ -482,7 +503,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     to_connect[memlet.data] = (access_node, copy.deepcopy(memlet))
                     continue
 
-                if isinstance(scope_node, nodes.NestedSDFG):
+                if isinstance(scope_node, SDFG):
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = sdfg.parent.parent
                         sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
@@ -492,7 +513,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                             sdfg.arrays[memlet.data].transient = False
 
                     # Add out_connector in any case if not yet present, e.g. write after read
-                    scope_node.add_out_connector(memlet.data)
+                    # assert memlet.data not in to_connect[1]
+                    to_connect[1].add(memlet.data)
+                    # scope_node.add_out_connector(memlet.data)
 
                 else:
                     assert scope_node is None
