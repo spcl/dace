@@ -161,6 +161,13 @@ def generate_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size,
             filtered_combos = [combo for combo in combos if (OI_func(combo[3], combo[4], combo[2])) >= max_OI/2]
             all_combos.extend(filtered_combos)
 
+        # sort the combinations by OI in descending order to have the largest OI first
+        all_combos.sort(key=lambda x: OI_func(x[3], x[4], x[2]), reverse=True)
+        # pick the top 32 combinations
+        if len(all_combos) > 20:
+            all_combos = all_combos[:20]
+        
+
     return all_combos
 
 def generate_remap_split_k_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_size, 
@@ -271,7 +278,7 @@ def generate_remap_split_k_tiling(M_val, N_val, K_val, thread_group_dims, tcdm_s
             # Filter combinations based on the maximum product of hw_M and hw_N.
             if combos:
                 max_OI = max([OI_func(combo[3]/kg_m, combo[4]/kg_n, combo[2]) for combo in combos])
-                filtered_combos = [combo for combo in combos if (OI_func(combo[3]/kg_m, combo[4]/kg_n, combo[2])) >= max_OI/2]
+                filtered_combos = [combo for combo in combos if (OI_func(combo[3]/kg_m, combo[4]/kg_n, combo[2])) >= max_OI]
                 filtered_combos = [(combo[:7] + ((kg_m, kg_n),) + combo[7:]) for combo in filtered_combos]
                 all_combos.extend(filtered_combos)
 
