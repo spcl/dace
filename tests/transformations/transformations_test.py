@@ -49,6 +49,7 @@ def get_transformations():
 
     # If the subclass is a subclass of dace.transformation.PatternTransformation, the function apply() should not return NotImplementedError
     # Otherwise apply_pass() should not return NotImplementedError
+    # FIXME: This is suboptimal, as some subclasses might have a partial implementation of apply() and apply_pass()
     usable_transformations = []
     for cls in subclasses:
         if inspect.isabstract(cls):
@@ -88,7 +89,8 @@ def test_transformation(transformation_cls, sdfg_path):
         orig_sdfg.validate()
         orig_sdfg.compile()
     except Exception as e:
-        # Issue pytest warning if the SDFG is invalid
+        # The SDFG in the corpus is not valid, so we skip the test
+        # Check the origin of the test
         warnings.warn(f"SDFG {sdfg_path} is invalid: {e}. Skipping test for this SDFG.")
         return
 
@@ -101,7 +103,7 @@ def test_transformation(transformation_cls, sdfg_path):
             # TODO: Some passes have dependencies
             transformation_cls().apply_pass(sdfg, {})
     except Exception as e:
-        # Issue pytest warning if the transformation fails
+        # This should not happen, but it's here for now as we are not handling pass dependencies yet.
         warnings.warn(
             f"Transformation {transformation_cls.__name__} failed on SDFG {sdfg_path}: {e}. Skipping test for this transformation."
         )
