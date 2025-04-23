@@ -316,7 +316,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._access_cache[self._current_state] = {}
 
             # visit children inside the map
-            if any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
+            if [type(child) for child in node.children] == [tn.StateBoundaryNode, tn.MapScope]:
+                # skip weirdly added StateBoundaryNode
+                self.visit(node.children[1], sdfg=sdfg)
+            elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
                 self._insert_nestedSDFG(node, sdfg)
             else:
                 self.visit(node.children, sdfg=sdfg)
@@ -343,6 +346,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     continue
 
                 if outer_map_entry is not None:
+                    assert isinstance(outer_map_entry, nodes.EntryNode)
+
                     # get it from outside the map
                     connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet_data}"
                     if connector_name not in outer_map_entry.out_connectors:
@@ -461,6 +466,9 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     # Copy data descriptor from parent SDFG and add input connector
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = sdfg.parent.parent
+                        while memlet.data not in parent_sdfg.arrays:
+                            parent_sdfg = parent_sdfg.parent.parent
+                            assert isinstance(parent_sdfg, SDFG)
                         sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
 
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
@@ -521,8 +529,19 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             raise NotImplementedError(f"{type(node)} not implemented")
 
         def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
-            # AFAIK we don't support copy nodes in the gt4py/dace bridge.
-            raise NotImplementedError(f"{type(node)} not implemented")
+            # apparently we need this for the first prototype
+            self._ensure_access_cache(self._current_state)
+            access_cache = self._access_cache[self._current_state]
+
+            # assumption source access may or may not yet exist (in this state)
+            src_name = node.memlet.data
+            source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
+
+            # assumption: target access node doesn't exist yet
+            assert node.target not in access_cache
+            target = self._current_state.add_write(node.target)
+
+            self._current_state.add_memlet_path(source, target, memlet=node.memlet)
 
         def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:
             # AFAIK we don't support dyn scope copy nodes in the gt4py/dace bridge.
