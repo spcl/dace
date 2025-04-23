@@ -1,0 +1,1363 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "sequential2_cudatest_sequential2_cudaprogram",
+    "arg_names": [
+      "A",
+      "C"
+    ],
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "N",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "N"
+          ],
+          "debuginfo": null
+        }
+      },
+      "C": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "N",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "N"
+          ],
+          "debuginfo": null
+        }
+      },
+      "B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "N",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "N"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "N": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 15,
+      "end_line": 28,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "5dcc0ce0-ded7-42ea-99a0-286cce1e5dbe",
+    "hash": "41827652c2db659c4be952ca99bc6da4977827ca8bf9c77cf1b99171fab709a5"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "f88d9a63-ee9b-409a-a2fa-169d161fca69",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "call_17",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "3ee0cdf7-30f6-4886-9289-cd0a9bc2ce0f",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "MapState",
+      "id": 2,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          3,
+          4
+        ],
+        "0": [
+          1,
+          2
+        ]
+      },
+      "nodes": [
+        {
+          "type": "MapEntry",
+          "label": "sequential2_cudatest_program_18[i=0:N]",
+          "attributes": {
+            "label": "sequential2_cudatest_program_18",
+            "params": [
+              "i"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "N - 1",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 18,
+              "end_line": 18,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "in_connectors": {
+              "IN_A": null
+            },
+            "out_connectors": {
+              "OUT_A": null
+            },
+            "guid": "bbf8df85-2c75-4824-839a-ec0cb6272bad"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": "1"
+        },
+        {
+          "type": "MapExit",
+          "label": "sequential2_cudatest_program_18[i=0:N]",
+          "attributes": {
+            "in_connectors": {
+              "IN___tmp0": null
+            },
+            "out_connectors": {
+              "OUT___tmp0": null
+            },
+            "guid": "e0fcfea0-7d1d-4b1a-a616-c028601234e4"
+          },
+          "id": 1,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "NestedSDFG",
+          "label": "sequential2_cudatest_program_18_4",
+          "attributes": {
+            "sdfg": {
+              "type": "SDFG",
+              "attributes": {
+                "name": "sequential2_cudatest_program_18_4",
+                "_arrays": {
+                  "__tmp_20_19": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp_21_20": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  }
+                },
+                "global_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "init_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "exit_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "guid": "63103a52-d7bf-4fe6-803e-2076f0a2d2f9"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "init",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "54a04031-0743-4893-aaba-62d3669d1db1",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "with_19",
+                  "id": 1,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1,
+                      2
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "Tasklet",
+                      "label": "sequential2_cudatest_program_19",
+                      "attributes": {
+                        "code": {
+                          "string_data": "out1 = (in1 + 1)",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 19,
+                          "end_line": 22,
+                          "start_column": 8,
+                          "end_column": 12,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+                        },
+                        "label": "sequential2_cudatest_program_19",
+                        "in_connectors": {
+                          "in1": null
+                        },
+                        "out_connectors": {
+                          "out1": null
+                        },
+                        "guid": "d1f187dd-9385-4733-ae8c-6974a8b6f078"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_20_19",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 19,
+                          "end_line": 19,
+                          "start_column": 8,
+                          "end_column": 8,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+                        },
+                        "data": "__tmp_20_19",
+                        "guid": "e312e021-8b6e-4391-bd45-b1fe3344d91c"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_21_20",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 19,
+                          "end_line": 19,
+                          "start_column": 8,
+                          "end_column": 8,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+                        },
+                        "data": "__tmp_21_20",
+                        "guid": "47e82a0e-8c55-4017-a356-ac29c099bbca"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_20_19",
+                            "debuginfo": null,
+                            "guid": "271c183e-3617-49a4-aba9-12b42aec6da6",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": null,
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "1",
+                      "dst": "0",
+                      "dst_connector": "in1",
+                      "src_connector": null
+                    },
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_21_20",
+                            "debuginfo": null,
+                            "guid": "699ef37f-61c3-46f1-bb31-f1786de9446b",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "0",
+                      "dst": "2",
+                      "dst_connector": null,
+                      "src_connector": "out1"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "d88a8011-4fad-47d0-8eb3-849c7ae0e5f9",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "7037f15b-2d60-4dee-9654-b4b81d3426ad"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                }
+              ],
+              "collapsed": false,
+              "label": "",
+              "id": null,
+              "cfg_list_id": 1,
+              "start_block": 0
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 18,
+              "end_line": 18,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "label": "sequential2_cudatest_program_18_4",
+            "in_connectors": {
+              "__tmp_20_19": null
+            },
+            "out_connectors": {
+              "__tmp_21_20": null
+            },
+            "guid": "5578cb2e-887a-4b06-a505-d2eef0abebf0"
+          },
+          "id": 2,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "AccessNode",
+          "label": "A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 18,
+              "end_line": 18,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "data": "A",
+            "guid": "bed91bf8-6080-4d30-9aa8-bcc3fd682440"
+          },
+          "id": 3,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "B",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 18,
+              "end_line": 18,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "data": "B",
+            "guid": "84920e3c-a03c-4931-b74c-fd95e531e40e"
+          },
+          "id": 4,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "N",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "6c27020b-2fa9-438b-9698-a0dfb0776feb",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "N"
+              }
+            }
+          },
+          "src": "3",
+          "dst": "0",
+          "dst_connector": "IN_A",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "6c27020b-2fa9-438b-9698-a0dfb0776feb",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": "__tmp_20_19",
+          "src_connector": "OUT_A"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "N",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "B",
+                "debuginfo": null,
+                "guid": "ff453427-090d-4331-8bae-a20c01bb248f",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "N"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "4",
+          "dst_connector": null,
+          "src_connector": "OUT___tmp0"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "B",
+                "debuginfo": null,
+                "guid": "ff453427-090d-4331-8bae-a20c01bb248f",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "1",
+          "dst_connector": "IN___tmp0",
+          "src_connector": "__tmp_21_20"
+        }
+      ],
+      "attributes": {
+        "guid": "59e6d5f8-1289-480b-a4fe-0e72e5732d63",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "MapState_0",
+      "id": 3,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          3,
+          4
+        ],
+        "0": [
+          1,
+          2
+        ]
+      },
+      "nodes": [
+        {
+          "type": "MapEntry",
+          "label": "sequential2_cudatest_program_24[i=0:N]",
+          "attributes": {
+            "label": "sequential2_cudatest_program_24",
+            "params": [
+              "i"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "N - 1",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 24,
+              "end_line": 24,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "in_connectors": {
+              "IN___tmp0": null
+            },
+            "out_connectors": {
+              "OUT___tmp0": null
+            },
+            "guid": "15765f15-64b8-4e4d-a86c-9851bb88f8a3"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": "1"
+        },
+        {
+          "type": "MapExit",
+          "label": "sequential2_cudatest_program_24[i=0:N]",
+          "attributes": {
+            "in_connectors": {
+              "IN_C": null
+            },
+            "out_connectors": {
+              "OUT_C": null
+            },
+            "guid": "e3faac89-3634-4beb-aa47-edeace705846"
+          },
+          "id": 1,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "NestedSDFG",
+          "label": "sequential2_cudatest_program_24_4",
+          "attributes": {
+            "sdfg": {
+              "type": "SDFG",
+              "attributes": {
+                "name": "sequential2_cudatest_program_24_4",
+                "_arrays": {
+                  "__tmp_26_19": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp_27_20": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  }
+                },
+                "global_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "init_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "exit_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "guid": "b362ea69-6d45-4761-9e82-b30d4bcee5b9"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "init",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "f5445115-09e0-4672-a141-795a5ca02018",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "with_25",
+                  "id": 1,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1,
+                      2
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "Tasklet",
+                      "label": "sequential2_cudatest_program_25",
+                      "attributes": {
+                        "code": {
+                          "string_data": "out1 = (in1 + 1)",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 25,
+                          "end_line": 28,
+                          "start_column": 8,
+                          "end_column": 12,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+                        },
+                        "label": "sequential2_cudatest_program_25",
+                        "in_connectors": {
+                          "in1": null
+                        },
+                        "out_connectors": {
+                          "out1": null
+                        },
+                        "guid": "b630e38b-cb4b-46d5-a7bf-db75cefab0fd"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_26_19",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 25,
+                          "end_line": 25,
+                          "start_column": 8,
+                          "end_column": 8,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+                        },
+                        "data": "__tmp_26_19",
+                        "guid": "296a3f68-9dae-425f-af5d-d5f4cd0e6d77"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_27_20",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 25,
+                          "end_line": 25,
+                          "start_column": 8,
+                          "end_column": 8,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+                        },
+                        "data": "__tmp_27_20",
+                        "guid": "8798c567-c812-4d2c-a99f-4c10ca92596b"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_26_19",
+                            "debuginfo": null,
+                            "guid": "2f1a489d-4f31-4bdb-bd59-9ab5a5759931",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": null,
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "1",
+                      "dst": "0",
+                      "dst_connector": "in1",
+                      "src_connector": null
+                    },
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_27_20",
+                            "debuginfo": null,
+                            "guid": "ee2fe2a6-23a0-4c1b-8973-f1e0b7b49f66",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "0",
+                      "dst": "2",
+                      "dst_connector": null,
+                      "src_connector": "out1"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "32760d8f-5dce-496c-8b88-2e59dbcaaf35",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "d73de817-9fc8-4020-ad6c-3b39b2e43517"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                }
+              ],
+              "collapsed": false,
+              "label": "",
+              "id": null,
+              "cfg_list_id": 2,
+              "start_block": 0
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 24,
+              "end_line": 24,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "label": "sequential2_cudatest_program_24_4",
+            "in_connectors": {
+              "__tmp_26_19": null
+            },
+            "out_connectors": {
+              "__tmp_27_20": null
+            },
+            "guid": "62c764d1-d812-4a38-8c7a-20e6c7cb4bf6"
+          },
+          "id": 2,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "AccessNode",
+          "label": "B",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 24,
+              "end_line": 24,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "data": "B",
+            "guid": "ecfcab5d-27a1-46db-add5-040c5d8af978"
+          },
+          "id": 3,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "C",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 24,
+              "end_line": 24,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential2_cudatest.py"
+            },
+            "data": "C",
+            "guid": "8bcee762-ce8b-4132-a946-ad5d8bb41cbe"
+          },
+          "id": 4,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "N",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "B",
+                "debuginfo": null,
+                "guid": "af4d6c44-a9e3-4a19-90ae-ae2892781e4c",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "N"
+              }
+            }
+          },
+          "src": "3",
+          "dst": "0",
+          "dst_connector": "IN___tmp0",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "N",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "C",
+                "debuginfo": null,
+                "guid": "42f50189-55d4-4982-b279-c7d1a06d0be3",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "N"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "4",
+          "dst_connector": null,
+          "src_connector": "OUT_C"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "B",
+                "debuginfo": null,
+                "guid": "af4d6c44-a9e3-4a19-90ae-ae2892781e4c",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": "__tmp_26_19",
+          "src_connector": "OUT___tmp0"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "C",
+                "debuginfo": null,
+                "guid": "42f50189-55d4-4982-b279-c7d1a06d0be3",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "1",
+          "dst_connector": "IN_C",
+          "src_connector": "__tmp_27_20"
+        }
+      ],
+      "attributes": {
+        "guid": "cb0f3f26-04f0-4fa7-80d0-cf33f7429cdd",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "4f0c2a7a-58dc-426f-8257-4e283dbaf3af"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "f215946f-1503-4605-b9ee-1a32503cdaf8"
+          },
+          "label": ""
+        }
+      },
+      "src": "1",
+      "dst": "2"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "7e5d9ba6-62f9-4cb3-a77f-43821758f79a"
+          },
+          "label": ""
+        }
+      },
+      "src": "2",
+      "dst": "3"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

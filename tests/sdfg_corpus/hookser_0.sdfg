@@ -1,0 +1,60 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "hookser",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 14,
+      "end_line": 16,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/interface/hooks_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "39c97ee8-4773-4666-9488-02fa32d3fcb5",
+    "hash": "f4f6dbf488074b5cb32444964c86532e46aa750a1e45da019f1168b782d41105"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "e4e4373b-f75c-4ed0-9d02-0cd364e64916",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

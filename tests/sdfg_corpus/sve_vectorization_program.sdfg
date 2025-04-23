@@ -1,0 +1,709 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "sve_vectorization_program",
+    "arg_names": [
+      "A",
+      "B"
+    ],
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "N",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "N"
+          ],
+          "debuginfo": null
+        }
+      },
+      "B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "N",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "N"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "N": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 26,
+      "end_line": 32,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "44f8e3ac-8d0e-4b7a-ba92-53c887ea3f0e",
+    "hash": "8941f685f669ff361466c3afbdcbe633b3e8c5565aa1f02bfead5e2ab7cbc6e1"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "56772e55-d311-4174-a223-a4a596637079",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "MapState",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          3,
+          4
+        ],
+        "0": [
+          1,
+          2
+        ]
+      },
+      "nodes": [
+        {
+          "type": "MapEntry",
+          "label": "sve_vectorization_test_program_28[i=0:N]",
+          "attributes": {
+            "label": "sve_vectorization_test_program_28",
+            "params": [
+              "i"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "N - 1",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 28,
+              "end_line": 28,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+            },
+            "in_connectors": {
+              "IN_A": null
+            },
+            "out_connectors": {
+              "OUT_A": null
+            },
+            "guid": "37f02055-1de9-408c-8497-551540a1786a"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": "1"
+        },
+        {
+          "type": "MapExit",
+          "label": "sve_vectorization_test_program_28[i=0:N]",
+          "attributes": {
+            "in_connectors": {
+              "IN_B": null
+            },
+            "out_connectors": {
+              "OUT_B": null
+            },
+            "guid": "12c9b97b-5e5a-4262-8893-78e6a0ff9639"
+          },
+          "id": 1,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "NestedSDFG",
+          "label": "sve_vectorization_test_program_28_4",
+          "attributes": {
+            "sdfg": {
+              "type": "SDFG",
+              "attributes": {
+                "name": "sve_vectorization_test_program_28_4",
+                "_arrays": {
+                  "__tmp_30_17": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float32",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp_31_17": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float32",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  }
+                },
+                "global_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "init_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "exit_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "guid": "94e7bfc0-404a-4018-8add-caf6f7670ec0"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "init",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "126dfee2-a229-4fa2-9661-fb78abd5f8b3",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "with_29",
+                  "id": 1,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1,
+                      2
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "Tasklet",
+                      "label": "sve_vectorization_test_program_29",
+                      "attributes": {
+                        "code": {
+                          "string_data": "b = a",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 29,
+                          "end_line": 32,
+                          "start_column": 8,
+                          "end_column": 12,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+                        },
+                        "label": "sve_vectorization_test_program_29",
+                        "in_connectors": {
+                          "a": null
+                        },
+                        "out_connectors": {
+                          "b": null
+                        },
+                        "guid": "4ec159ba-ca1f-4838-802c-375b2f85537f"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_30_17",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 29,
+                          "end_line": 29,
+                          "start_column": 8,
+                          "end_column": 8,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+                        },
+                        "data": "__tmp_30_17",
+                        "guid": "c6283451-69c5-48cb-ba39-c8977670f1fd"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_31_17",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 29,
+                          "end_line": 29,
+                          "start_column": 8,
+                          "end_column": 8,
+                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+                        },
+                        "data": "__tmp_31_17",
+                        "guid": "e40cf08f-f97b-4609-81b9-eb1b559f8df3"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_30_17",
+                            "debuginfo": null,
+                            "guid": "7b7505a5-a66f-459c-8be2-d31b611a3c33",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": null,
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "1",
+                      "dst": "0",
+                      "dst_connector": "a",
+                      "src_connector": null
+                    },
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_31_17",
+                            "debuginfo": null,
+                            "guid": "adce2ccf-78ab-4c30-a560-7f23fc7fd4cd",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "0",
+                      "dst": "2",
+                      "dst_connector": null,
+                      "src_connector": "b"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "b06b8e2b-b3e6-47b7-87ad-48b2637dbdda",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "48c33047-091c-48b5-ba17-5cb28b68dd86"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                }
+              ],
+              "collapsed": false,
+              "label": "",
+              "id": null,
+              "cfg_list_id": 1,
+              "start_block": 0
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 28,
+              "end_line": 28,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+            },
+            "label": "sve_vectorization_test_program_28_4",
+            "in_connectors": {
+              "__tmp_30_17": null
+            },
+            "out_connectors": {
+              "__tmp_31_17": null
+            },
+            "guid": "b3074de7-6b57-46fb-8599-1f06c1749c6c"
+          },
+          "id": 2,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "AccessNode",
+          "label": "A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 28,
+              "end_line": 28,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+            },
+            "data": "A",
+            "guid": "5721b6fa-61fb-4240-9089-eb8a2be26d0a"
+          },
+          "id": 3,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "B",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 28,
+              "end_line": 28,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/sve_vectorization_test.py"
+            },
+            "data": "B",
+            "guid": "d52823e5-53a6-4786-bde3-1a3a1dbab476"
+          },
+          "id": 4,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "N",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "99716005-7d3f-48e3-9ec7-a3181b1bcf3c",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "N"
+              }
+            }
+          },
+          "src": "3",
+          "dst": "0",
+          "dst_connector": "IN_A",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "99716005-7d3f-48e3-9ec7-a3181b1bcf3c",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": "__tmp_30_17",
+          "src_connector": "OUT_A"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "N",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "B",
+                "debuginfo": null,
+                "guid": "0d1b640f-55ff-4ca8-b643-619751cdad61",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "N"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "4",
+          "dst_connector": null,
+          "src_connector": "OUT_B"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "B",
+                "debuginfo": null,
+                "guid": "0d1b640f-55ff-4ca8-b643-619751cdad61",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "1",
+          "dst_connector": "IN_B",
+          "src_connector": "__tmp_31_17"
+        }
+      ],
+      "attributes": {
+        "guid": "4191d4cb-70db-4bef-a173-45471a4ad018",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "5a71a243-3512-489a-8570-8b854ea809c2"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

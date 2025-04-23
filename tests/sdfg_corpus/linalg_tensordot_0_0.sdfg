@@ -1,0 +1,184 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "linalg_tensordot_0",
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "243",
+            "81",
+            "27",
+            "9",
+            "3",
+            "1"
+          ],
+          "total_size": "729",
+          "offset": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "3",
+            "3",
+            "3",
+            "3",
+            "3",
+            "3"
+          ],
+          "debuginfo": null
+        }
+      },
+      "B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "243",
+            "81",
+            "27",
+            "9",
+            "3",
+            "1"
+          ],
+          "total_size": "729",
+          "offset": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "3",
+            "3",
+            "3",
+            "3",
+            "3",
+            "3"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__tmp0": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "2187",
+            "729",
+            "243",
+            "81",
+            "27",
+            "9",
+            "3",
+            "1"
+          ],
+          "total_size": "6561",
+          "offset": [
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0",
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float32",
+          "shape": [
+            "3",
+            "3",
+            "3",
+            "3",
+            "3",
+            "3",
+            "3",
+            "3"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "5463f37c-7155-4a7f-8cce-1acfe38c39f2",
+    "hash": "c63575f4a65d968b4dc87f0f29071b41945f256d32755a2342ffe56d99b7396e"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "4d334b22-5984-4151-b842-61fca8c8418b"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "call_85",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "3272e116-6073-4cb0-b67d-a0ed2e7f57bc"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "38f31673-8200-414e-8a53-563b176559bd"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

@@ -1,0 +1,1079 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "math_func",
+    "constants_prop": {
+      "__tmp0": [
+        {
+          "type": "Scalar",
+          "attributes": {
+            "dtype": "float64",
+            "shape": [
+              "1"
+            ],
+            "transient": true,
+            "debuginfo": null
+          }
+        },
+        3.0
+      ]
+    },
+    "_arrays": {
+      "__tmp0": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "__return": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "1",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "n": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "int64",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 135,
+      "end_line": 141,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "f6b53a52-e82b-4bc3-ae8b-083cb5c454f4",
+    "hash": "f3007c87ad0b32dd2c37c9555a0d98977f8f449852b43062f075356eca6dfa17"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "e3907d71-fc10-4333-a4ae-2f598bbc4750",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "BinOp_137",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "fe3d3972-fc09-455a-9a44-45ec64911992",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "call_137",
+      "id": 2,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1,
+          2
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "__tmp0",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 137,
+              "end_line": 137,
+              "start_column": 25,
+              "end_column": 25,
+              "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+            },
+            "data": "__tmp0",
+            "guid": "a109b52c-6ec5-40ae-be2e-2204c864a5d4"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "n",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 137,
+              "end_line": 137,
+              "start_column": 25,
+              "end_column": 25,
+              "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+            },
+            "data": "n",
+            "guid": "55519a01-0f08-4727-8842-f86723def71c"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "Tasklet",
+          "label": "floor",
+          "attributes": {
+            "code": {
+              "string_data": "__out = floor(__inp)",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 137,
+              "end_line": 137,
+              "start_column": 25,
+              "end_column": 25,
+              "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+            },
+            "label": "floor",
+            "in_connectors": {
+              "__inp": null
+            },
+            "out_connectors": {
+              "__out": null
+            },
+            "guid": "080d8af6-1e9e-4800-b553-afb4fd70ed90"
+          },
+          "id": 2,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "__tmp0",
+                "debuginfo": null,
+                "guid": "eef65f11-8382-47c3-aa4c-799b7b6d7740",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": "__inp",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "n",
+                "debuginfo": null,
+                "guid": "12dc394d-67b6-49ca-b2b2-7232fdb75516",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "1",
+          "dst_connector": null,
+          "src_connector": "__out"
+        }
+      ],
+      "attributes": {
+        "guid": "396745f0-dd27-4e5c-ab06-597a3518ccdb",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "ConditionalBlock",
+      "attributes": {
+        "guid": "83fed3fe-3c73-4ef4-8cb8-e6e5e5c34cba",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "9b9c91fe-760a-4972-900a-76689b436359"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "if_138",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "cc275c20-9423-4cbc-8f89-8fc121e2fffb"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "assign_139_8",
+              "id": 1,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__return",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 139,
+                      "end_line": 139,
+                      "start_column": 15,
+                      "end_column": 15,
+                      "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                    },
+                    "data": "__return",
+                    "guid": "4d3bc452-cc88-4d1b-9466-f8fd87480652"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "assign_139_8",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = 0.0",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 139,
+                      "end_line": 139,
+                      "start_column": 15,
+                      "end_column": 15,
+                      "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                    },
+                    "label": "assign_139_8",
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "caee2167-9c28-4476-bc33-086907b42e0c"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__return",
+                        "debuginfo": null,
+                        "guid": "78f8437e-309a-4f41-b94b-f696213a9567",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "1",
+                  "dst": "0",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "ede431bd-7a1b-44cf-9699-e61c3a914b9f"
+              }
+            },
+            {
+              "type": "ReturnBlock",
+              "collapsed": false,
+              "label": "return_if_138_body_139",
+              "id": 2,
+              "attributes": {
+                "guid": "2ad395fa-f018-4a67-bde3-5fc39e5e1bd2"
+              },
+              "nodes": [],
+              "edges": []
+            }
+          ],
+          "edges": [
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "6113323d-0024-41e8-b3c8-6fa15cfae889"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "0",
+              "dst": "1"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "9c4fcd89-721f-49ad-9512-a8ed0f17008c"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "1",
+              "dst": "2"
+            }
+          ],
+          "collapsed": false,
+          "label": "if_138_body",
+          "id": 0,
+          "cfg_list_id": 2,
+          "start_block": null
+        },
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "2186adc6-6bad-4e8c-9fe8-6cd250396b51"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "else_138",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "ee75979e-6283-4696-ad1b-1b9160afd1b8"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "assign_141_8",
+              "id": 1,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__return",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 141,
+                      "end_line": 141,
+                      "start_column": 15,
+                      "end_column": 15,
+                      "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                    },
+                    "data": "__return",
+                    "guid": "75a3631a-6626-4636-a24a-96ce67ab682a"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "assign_141_8",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = 1.0",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 141,
+                      "end_line": 141,
+                      "start_column": 15,
+                      "end_column": 15,
+                      "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                    },
+                    "label": "assign_141_8",
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "bb46fb22-f7a0-4d86-b241-a7ca01c31941"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__return",
+                        "debuginfo": null,
+                        "guid": "03b6b385-f571-4a7c-b49f-bdb6110230b4",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "1",
+                  "dst": "0",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "18c28948-3305-43db-be3c-d074a4f98a5f"
+              }
+            },
+            {
+              "type": "ReturnBlock",
+              "collapsed": false,
+              "label": "return_if_138_else_141_141",
+              "id": 2,
+              "attributes": {
+                "guid": "853277c7-9dcd-4ae2-8b8f-704ac1326a79"
+              },
+              "nodes": [],
+              "edges": []
+            }
+          ],
+          "edges": [
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "1cfcac80-1822-4ff6-84ba-bf31843f7e74"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "0",
+              "dst": "1"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "7900a04a-1a98-4125-811c-46846bad4dde"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "1",
+              "dst": "2"
+            }
+          ],
+          "collapsed": false,
+          "label": "if_138_else_141",
+          "id": 1,
+          "cfg_list_id": 3,
+          "start_block": null
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "if_138",
+      "id": 3,
+      "cfg_list_id": 1,
+      "start_block": null,
+      "branches": [
+        [
+          {
+            "string_data": "(n > 1.0)",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "9b9c91fe-760a-4972-900a-76689b436359"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "if_138",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "cc275c20-9423-4cbc-8f89-8fc121e2fffb"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "assign_139_8",
+                "id": 1,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "__return",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 139,
+                        "end_line": 139,
+                        "start_column": 15,
+                        "end_column": 15,
+                        "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                      },
+                      "data": "__return",
+                      "guid": "4d3bc452-cc88-4d1b-9466-f8fd87480652"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "assign_139_8",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = 0.0",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 139,
+                        "end_line": 139,
+                        "start_column": 15,
+                        "end_column": 15,
+                        "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                      },
+                      "label": "assign_139_8",
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "caee2167-9c28-4476-bc33-086907b42e0c"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__return",
+                          "debuginfo": null,
+                          "guid": "78f8437e-309a-4f41-b94b-f696213a9567",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "1",
+                    "dst": "0",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "ede431bd-7a1b-44cf-9699-e61c3a914b9f"
+                }
+              },
+              {
+                "type": "ReturnBlock",
+                "collapsed": false,
+                "label": "return_if_138_body_139",
+                "id": 2,
+                "attributes": {
+                  "guid": "2ad395fa-f018-4a67-bde3-5fc39e5e1bd2"
+                },
+                "nodes": [],
+                "edges": []
+              }
+            ],
+            "edges": [
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "6113323d-0024-41e8-b3c8-6fa15cfae889"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "0",
+                "dst": "1"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "9c4fcd89-721f-49ad-9512-a8ed0f17008c"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "1",
+                "dst": "2"
+              }
+            ],
+            "collapsed": false,
+            "label": "if_138_body",
+            "id": null,
+            "cfg_list_id": 2,
+            "start_block": null
+          }
+        ],
+        [
+          null,
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "2186adc6-6bad-4e8c-9fe8-6cd250396b51"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "else_138",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "ee75979e-6283-4696-ad1b-1b9160afd1b8"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "assign_141_8",
+                "id": 1,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "__return",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 141,
+                        "end_line": 141,
+                        "start_column": 15,
+                        "end_column": 15,
+                        "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                      },
+                      "data": "__return",
+                      "guid": "75a3631a-6626-4636-a24a-96ce67ab682a"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "assign_141_8",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = 1.0",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 141,
+                        "end_line": 141,
+                        "start_column": 15,
+                        "end_column": 15,
+                        "filename": "/home/beates/Desktop/dace/tests/numpy/math_test.py"
+                      },
+                      "label": "assign_141_8",
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "bb46fb22-f7a0-4d86-b241-a7ca01c31941"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__return",
+                          "debuginfo": null,
+                          "guid": "03b6b385-f571-4a7c-b49f-bdb6110230b4",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "1",
+                    "dst": "0",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "18c28948-3305-43db-be3c-d074a4f98a5f"
+                }
+              },
+              {
+                "type": "ReturnBlock",
+                "collapsed": false,
+                "label": "return_if_138_else_141_141",
+                "id": 2,
+                "attributes": {
+                  "guid": "853277c7-9dcd-4ae2-8b8f-704ac1326a79"
+                },
+                "nodes": [],
+                "edges": []
+              }
+            ],
+            "edges": [
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "1cfcac80-1822-4ff6-84ba-bf31843f7e74"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "0",
+                "dst": "1"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "7900a04a-1a98-4125-811c-46846bad4dde"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "1",
+                "dst": "2"
+              }
+            ],
+            "collapsed": false,
+            "label": "if_138_else_141",
+            "id": null,
+            "cfg_list_id": 3,
+            "start_block": null
+          }
+        ]
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "d6022692-d99f-4b5d-989f-81626b5511c7"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "ba9afe00-dad9-40b1-a0db-7df802790395"
+          },
+          "label": ""
+        }
+      },
+      "src": "1",
+      "dst": "2"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "0bc690b2-194d-4023-8251-e8503695677a"
+          },
+          "label": ""
+        }
+      },
+      "src": "2",
+      "dst": "3"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

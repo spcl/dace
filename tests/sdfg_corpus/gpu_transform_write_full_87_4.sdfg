@@ -1,0 +1,219 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "gpu_transform_write_full_87_4",
+    "_arrays": {
+      "__tmp_88_8_w": {
+        "type": "Scalar",
+        "attributes": {
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64",
+      "j": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "2b7e5562-5821-418b-b09f-92850cc3a322",
+    "hash": "222079e42f19703c7680298b2e4b987b0d2eed151fa52af623af85f788d54f4d"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "60f5e2d9-537d-46aa-a867-5776d6dbd579",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "BinOp_88",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "4f16f576-2040-46ec-b3ed-c419fedc3cc2",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "assign_88_8",
+      "id": 2,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "__tmp_88_8_w",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 88,
+              "end_line": 88,
+              "start_column": 13,
+              "end_column": 13,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/gpu_transform_test.py"
+            },
+            "data": "__tmp_88_8_w",
+            "guid": "70dc8600-3e0a-4644-a67b-8992412f4e2f"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "Tasklet",
+          "label": "assign_88_8",
+          "attributes": {
+            "code": {
+              "string_data": "__out = (i + j)",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 88,
+              "end_line": 88,
+              "start_column": 13,
+              "end_column": 13,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/gpu_transform_test.py"
+            },
+            "label": "assign_88_8",
+            "out_connectors": {
+              "__out": null
+            },
+            "guid": "e25a2352-04c0-4bef-abdd-05ca1220b66e"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "__tmp_88_8_w",
+                "debuginfo": null,
+                "guid": "176d99eb-4afe-402f-ac97-8ca975096ee5",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "0",
+          "dst_connector": null,
+          "src_connector": "__out"
+        }
+      ],
+      "attributes": {
+        "guid": "3e5bf3d2-2659-4f2f-b72f-3384d2c81675",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "a3829ab0-fa9d-4b6c-a4a6-12375688ed32"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "c050678e-155a-4f71-9f92-ad91c20c1a95"
+          },
+          "label": ""
+        }
+      },
+      "src": "1",
+      "dst": "2"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": 0
+}

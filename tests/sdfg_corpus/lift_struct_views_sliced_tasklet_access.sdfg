@@ -1,0 +1,318 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "lift_struct_views_sliced_tasklet_access",
+    "_arrays": {
+      "A": {
+        "type": "Structure",
+        "attributes": {
+          "members": [
+            [
+              "b",
+              {
+                "type": "Array",
+                "attributes": {
+                  "strides": [
+                    "1"
+                  ],
+                  "total_size": "20",
+                  "offset": [
+                    "0"
+                  ],
+                  "shape": [
+                    "20"
+                  ],
+                  "debuginfo": null
+                }
+              }
+            ]
+          ],
+          "name": "t_A",
+          "dtype": {
+            "type": "pointer",
+            "dtype": {
+              "type": "struct",
+              "name": "t_A",
+              "data": [
+                [
+                  "b",
+                  {
+                    "type": "pointer",
+                    "dtype": "int32"
+                  }
+                ]
+              ],
+              "length": [
+                [
+                  "b",
+                  "20"
+                ]
+              ],
+              "bytes": 8
+            }
+          },
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "Z": {
+        "type": "Structure",
+        "attributes": {
+          "members": [
+            [
+              "b",
+              {
+                "type": "Array",
+                "attributes": {
+                  "strides": [
+                    "1"
+                  ],
+                  "total_size": "20",
+                  "offset": [
+                    "0"
+                  ],
+                  "shape": [
+                    "20"
+                  ],
+                  "debuginfo": null
+                }
+              }
+            ]
+          ],
+          "name": "t_Z",
+          "dtype": {
+            "type": "pointer",
+            "dtype": {
+              "type": "struct",
+              "name": "t_Z",
+              "data": [
+                [
+                  "b",
+                  {
+                    "type": "pointer",
+                    "dtype": "int32"
+                  }
+                ]
+              ],
+              "length": [
+                [
+                  "b",
+                  "20"
+                ]
+              ],
+              "bytes": 8
+            }
+          },
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "e7ed0661-ec36-4f7a-843b-f557cf269382",
+    "hash": "1f1b4b12dd054ae2d055d190f370afa2574bcfc52d75e7eb58ef3c6e7f8bb9f5"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "state",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1,
+          2
+        ]
+      },
+      "nodes": [
+        {
+          "type": "Tasklet",
+          "label": "t1",
+          "attributes": {
+            "code": {
+              "string_data": "o1.b[0] = i1.b[0]",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 1,
+              "end_line": 1,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "skipped"
+            },
+            "label": "t1",
+            "in_connectors": {
+              "i1": null
+            },
+            "out_connectors": {
+              "o1": null
+            },
+            "guid": "21e4a50c-b197-493c-8cab-eceda867309b"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 1,
+              "end_line": 1,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "skipped"
+            },
+            "data": "A",
+            "guid": "14c721b7-d46e-42cb-87ca-3958a0f4b917"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "Z",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 1,
+              "end_line": 1,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "skipped"
+            },
+            "data": "Z",
+            "guid": "e854b71e-e68b-4044-981f-8f5addbe1ae9"
+          },
+          "id": 2,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "6d91d1d4-199e-4813-b5e1-7de3d5b403dd",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "0",
+          "dst_connector": "i1",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "Z",
+                "debuginfo": null,
+                "guid": "f48e412d-1d80-48e9-b3ba-c76a88791ec0",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": null,
+          "src_connector": "o1"
+        }
+      ],
+      "attributes": {
+        "guid": "5578dfdd-ed00-4431-a3e2-665b2f28306e"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

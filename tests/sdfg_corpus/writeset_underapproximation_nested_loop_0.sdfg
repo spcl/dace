@@ -1,0 +1,1984 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "writeset_underapproximation_nested_loop",
+    "arg_names": [
+      "A"
+    ],
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "N",
+            "1"
+          ],
+          "total_size": "M*N",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "M",
+            "N"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "M": "int32",
+      "N": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 492,
+      "end_line": 500,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "3e665f03-0251-4308-b712-5bfabd858aea",
+    "hash": "11efbef62256b089a942527de50bd5960a3c4ffa4c69b5f9764858e24280d335"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "5a0107e8-b5cc-4e49-867a-c77273b312f2",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "MapState",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          3,
+          4
+        ],
+        "0": [
+          1,
+          2
+        ]
+      },
+      "nodes": [
+        {
+          "type": "MapEntry",
+          "label": "writeset_underapproximation_test_nested_loop_494[i=0:M]",
+          "attributes": {
+            "label": "writeset_underapproximation_test_nested_loop_494",
+            "params": [
+              "i"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "M - 1",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 494,
+              "end_line": 494,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+            },
+            "in_connectors": {
+              "IN_A": null
+            },
+            "out_connectors": {
+              "OUT_A": null
+            },
+            "guid": "b98303ca-4d30-49d7-81ac-a9b1ee8e1e22"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": "1"
+        },
+        {
+          "type": "MapExit",
+          "label": "writeset_underapproximation_test_nested_loop_494[i=0:M]",
+          "attributes": {
+            "in_connectors": {
+              "IN_A": null
+            },
+            "out_connectors": {
+              "OUT_A": null
+            },
+            "guid": "788cb12c-120e-4f43-a556-b735ee20fb0c"
+          },
+          "id": 1,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "NestedSDFG",
+          "label": "writeset_underapproximation_test_nested_loop_494_4",
+          "attributes": {
+            "sdfg": {
+              "type": "SDFG",
+              "attributes": {
+                "name": "writeset_underapproximation_test_nested_loop_494_4",
+                "_arrays": {
+                  "__tmp_496_15_r": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "N",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "N"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp_497_16_w": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "N - 2",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "N - 2"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp1": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "optional": false,
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "transient": true,
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp2": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "optional": false,
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "transient": true,
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp3": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "optional": false,
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "transient": true,
+                      "debuginfo": null
+                    }
+                  }
+                },
+                "symbols": {
+                  "N": "int32",
+                  "i": "int64",
+                  "j": "int64"
+                },
+                "global_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "init_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "exit_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "guid": "1f0de62d-7af4-400b-88e6-a2cfdb3fbf90"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "init",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "213f3870-950a-495d-9c6e-ad26c3dfb8db",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_init",
+                  "id": 1,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "cce2c737-104f-4662-a3f4-15b6da127001"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_guard",
+                  "id": 2,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "e4967073-e753-485f-9fcc-cf186d6ad50f"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_end",
+                  "id": 3,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "c0e91f93-b34f-4ad2-9ab8-22670746733d"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_latch",
+                  "id": 4,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "87b90b0b-0694-4c94-931c-1e58d9dbf34a"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_for_495_495",
+                  "id": 5,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "bd2d9a87-fa37-4958-93a5-52a6b7b30b08"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_slice___tmp_497_16_w",
+                  "id": 6,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_497_16_w",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 27,
+                          "end_column": 27,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp_497_16_w",
+                        "guid": "5d168ca1-0438-467b-927c-75a52db018eb"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp1",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 27,
+                          "end_column": 27,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp1",
+                        "guid": "fb014d10-8089-4e52-ad9d-e82bb3ea64be"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "other_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_497_16_w",
+                            "debuginfo": null,
+                            "guid": "5b85b1bc-54b6-4c3f-bb75-84187fd1bf35",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "0",
+                      "dst": "1",
+                      "dst_connector": null,
+                      "src_connector": null
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "0c98e1d2-5a7e-436a-aa35-105babd58f61"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_slice___tmp_497_16_w_0",
+                  "id": 7,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_497_16_w",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 37,
+                          "end_column": 37,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp_497_16_w",
+                        "guid": "097fc00a-019f-4e44-8adf-e3d01754c4d7"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp2",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 37,
+                          "end_column": 37,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp2",
+                        "guid": "7d8026fa-375f-48d7-88b5-33c2c6f54671"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "other_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_497_16_w",
+                            "debuginfo": null,
+                            "guid": "25c5de00-9f40-4741-9411-ce0627aafc81",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "0",
+                      "dst": "1",
+                      "dst_connector": null,
+                      "src_connector": null
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "ae0d5812-39fd-45ec-97a7-3b57dc4d958e"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_BinOp_500",
+                  "id": 8,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1,
+                      2,
+                      3
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "Tasklet",
+                      "label": "_Mult_",
+                      "attributes": {
+                        "code": {
+                          "string_data": "__out = (__in1 * __in2)",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 37,
+                          "end_column": 37,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "label": "_Mult_",
+                        "in_connectors": {
+                          "__in1": null,
+                          "__in2": null
+                        },
+                        "out_connectors": {
+                          "__out": null
+                        },
+                        "guid": "4fde643f-af15-486c-ad38-2a369efd3ecb"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp1",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 37,
+                          "end_column": 37,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp1",
+                        "guid": "0831a228-c1e4-4e65-8879-877d05ef330f"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp2",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 37,
+                          "end_column": 37,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp2",
+                        "guid": "1039b064-124e-4bee-b3bf-8e1f4855baa4"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp3",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 37,
+                          "end_column": 37,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp3",
+                        "guid": "a0ee7f06-1b0d-4698-b3f9-76233fc92732"
+                      },
+                      "id": 3,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp1",
+                            "debuginfo": null,
+                            "guid": "0263702f-38cb-4fa6-abf8-4a87809671bd",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": null,
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "1",
+                      "dst": "0",
+                      "dst_connector": "__in1",
+                      "src_connector": null
+                    },
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp2",
+                            "debuginfo": null,
+                            "guid": "03524e60-929f-4b54-b386-d409da0c4d75",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": null,
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "2",
+                      "dst": "0",
+                      "dst_connector": "__in2",
+                      "src_connector": null
+                    },
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp3",
+                            "debuginfo": null,
+                            "guid": "b75997d3-b9a4-4f96-91d5-037bdcbe3e84",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "0",
+                      "dst": "3",
+                      "dst_connector": null,
+                      "src_connector": "__out"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "98d6ef25-3ee4-428a-87af-f1f349604d12"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_assign_500_12",
+                  "id": 9,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1,
+                      2
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp3",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 17,
+                          "end_column": 17,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp3",
+                        "guid": "a17cb485-6c08-43a9-b863-57e0004b8869"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_497_16_w",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 17,
+                          "end_column": 17,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp_497_16_w",
+                        "guid": "67e9d630-563a-40e4-9fde-a949bc6739bd"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "Tasklet",
+                      "label": "assign_500_12",
+                      "attributes": {
+                        "code": {
+                          "string_data": "__out = __inp",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 500,
+                          "end_line": 500,
+                          "start_column": 17,
+                          "end_column": 17,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "label": "assign_500_12",
+                        "in_connectors": {
+                          "__inp": null
+                        },
+                        "out_connectors": {
+                          "__out": null
+                        },
+                        "guid": "b0488737-de2b-42c6-8bee-70b1217e5b13"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp3",
+                            "debuginfo": null,
+                            "guid": "865e7b5a-7e3b-4865-84b4-263bdf8d64a4",
+                            "src_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "dst_subset": null,
+                            "is_data_src": true,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "0",
+                      "dst": "2",
+                      "dst_connector": "__inp",
+                      "src_connector": null
+                    },
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_497_16_w",
+                            "debuginfo": null,
+                            "guid": "34d33031-2ad9-47c9-b30d-06d193b37791",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "2",
+                      "dst": "1",
+                      "dst_connector": null,
+                      "src_connector": "__out"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "0b8f129f-ee4a-4cb5-992c-bca0384e555a"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_guard",
+                  "id": 10,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "7d8676cf-f04e-4a2f-bc25-820857443179"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_end",
+                  "id": 11,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "be281c2e-48b6-4efe-ae32-f0c2bff531bc"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_body_if_496",
+                  "id": 12,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "3773ffb3-145d-4a89-bcc5-5c1f6a488b4b"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_body_assign_497_16",
+                  "id": 13,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_497_16_w",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 497,
+                          "end_line": 497,
+                          "start_column": 21,
+                          "end_column": 21,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp_497_16_w",
+                        "guid": "3b01d35f-09c0-435e-ba8c-671b02076f76"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "Tasklet",
+                      "label": "assign_497_16",
+                      "attributes": {
+                        "code": {
+                          "string_data": "__out = 1",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 497,
+                          "end_line": 497,
+                          "start_column": 21,
+                          "end_column": 21,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "label": "assign_497_16",
+                        "out_connectors": {
+                          "__out": null
+                        },
+                        "guid": "52f6d6e0-c69b-4d3f-bf62-4fa438bdd238"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_497_16_w",
+                            "debuginfo": null,
+                            "guid": "7720f695-992c-4fca-a7c8-1709fb8c4711",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "1",
+                      "dst": "0",
+                      "dst_connector": null,
+                      "src_connector": "__out"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "621d1ec9-9c73-45b9-8963-a52bd9b383db"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_body_end",
+                  "id": 14,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "f38bccf5-fffd-4e91-b5ae-08bfad1bbf93"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_else_499_else_496",
+                  "id": 15,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "2f9d6879-abfd-434c-a061-2d4d6bf7da43"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_else_499_assign_499_16",
+                  "id": 16,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_497_16_w",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 499,
+                          "end_line": 499,
+                          "start_column": 21,
+                          "end_column": 21,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "data": "__tmp_497_16_w",
+                        "guid": "de876c7a-35fe-42c7-85cc-2e569aae6430"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "Tasklet",
+                      "label": "assign_499_16",
+                      "attributes": {
+                        "code": {
+                          "string_data": "__out = 2",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 499,
+                          "end_line": 499,
+                          "start_column": 21,
+                          "end_column": 21,
+                          "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+                        },
+                        "label": "assign_499_16",
+                        "out_connectors": {
+                          "__out": null
+                        },
+                        "guid": "e03ce472-c870-4759-835d-23c60ca7fcd3"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_497_16_w",
+                            "debuginfo": null,
+                            "guid": "d3c73c12-83bf-4b18-a4c8-e83667efc146",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "j - 2",
+                                  "end": "j - 2",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "1",
+                      "dst": "0",
+                      "dst_connector": null,
+                      "src_connector": "__out"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "5f251acf-c951-4059-859e-d82ea2917377"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_if_496_else_499_end",
+                  "id": 17,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "fa138e26-f92c-49ce-929c-79eef65ac9d0"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_cond_prep_496_cond_prep_start_496",
+                  "id": 18,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "5853be01-33d7-445d-abcd-9961213b9322"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "for_495_cond_prep_496_end",
+                  "id": 19,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "f1313480-1c45-45a6-b6d8-4d3045388b50"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "42985ff2-5616-452b-a720-07fa68cf37ef"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "6",
+                  "dst": "7"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "791fe52a-dc92-4028-ba74-494ccbb3e748"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "7",
+                  "dst": "8"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "097b3ff3-ef38-43ea-ba9a-f61fa8000d68"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "8",
+                  "dst": "9"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "6bc96532-97c4-42f2-83d0-66cd85bc3a19"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "11",
+                  "dst": "6"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "5da7928d-792e-47ff-94a8-1141130f2f0c"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "12",
+                  "dst": "13"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "condition": {
+                          "string_data": "__tmp_496_15_r[0]",
+                          "language": "Python"
+                        },
+                        "guid": "7b489ed9-df04-4349-b87c-0667180a410a"
+                      },
+                      "label": "__tmp_496_15_r[0]"
+                    }
+                  },
+                  "src": "10",
+                  "dst": "12"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "e6c365be-ac76-4acc-a78e-9cf700f5cb03"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "14",
+                  "dst": "11"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "384101c4-c8d8-4dee-be9a-7376eb59822b"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "13",
+                  "dst": "14"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "30d99eac-e60f-4e72-9b8d-5e655ef2fe0a"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "15",
+                  "dst": "16"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "condition": {
+                          "string_data": "(not __tmp_496_15_r[0])",
+                          "language": "Python"
+                        },
+                        "guid": "a4c8defb-b0c6-4ef7-8116-5bc521399f03"
+                      },
+                      "label": "(not __tmp_496_15_r[0])"
+                    }
+                  },
+                  "src": "10",
+                  "dst": "15"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "bfb44c03-9cb6-43ac-914f-d73bb06c7c9f"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "17",
+                  "dst": "11"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "0997fb46-ceaf-40b6-acd0-357f45f1f0a1"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "16",
+                  "dst": "17"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "950c86d9-98f1-4be3-a951-54389e4408e6"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "5",
+                  "dst": "18"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "cc4e0c5e-e049-41cc-a9d4-3891291d956a"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "19",
+                  "dst": "10"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "2bec8598-1e6c-478b-8b9b-4c697d062109"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "18",
+                  "dst": "19"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "e773708d-6581-44e4-b2a9-810817c2c2ba"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "assignments": {
+                          "j": "2"
+                        },
+                        "guid": "0163dab4-4acd-40b2-8bdd-0fbc0a56b569"
+                      },
+                      "label": "j=2"
+                    }
+                  },
+                  "src": "1",
+                  "dst": "2"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "assignments": {
+                          "j": "(j + 1)"
+                        },
+                        "guid": "d53bc1e0-6cfa-401e-bd09-41a7aa2a2860"
+                      },
+                      "label": "j=(j + 1)"
+                    }
+                  },
+                  "src": "4",
+                  "dst": "2"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "condition": {
+                          "string_data": "(not (j < N))",
+                          "language": "Python"
+                        },
+                        "guid": "19af6a44-40af-41b7-acd5-a630aa4c0474"
+                      },
+                      "label": "(not (j < N))"
+                    }
+                  },
+                  "src": "2",
+                  "dst": "3"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "condition": {
+                          "string_data": "(j < N)",
+                          "language": "Python"
+                        },
+                        "guid": "ee5dfb7b-c896-4971-a0a3-6edb1a2d0fb4"
+                      },
+                      "label": "(j < N)"
+                    }
+                  },
+                  "src": "2",
+                  "dst": "5"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "561b4cf0-9561-4304-b826-bb846fc0332c"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "9",
+                  "dst": "4"
+                }
+              ],
+              "collapsed": false,
+              "label": "",
+              "id": null,
+              "cfg_list_id": 1,
+              "start_block": 0
+            },
+            "symbol_mapping": {
+              "N": "N",
+              "i": "i"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 494,
+              "end_line": 494,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+            },
+            "label": "writeset_underapproximation_test_nested_loop_494_4",
+            "in_connectors": {
+              "__tmp_496_15_r": null
+            },
+            "out_connectors": {
+              "__tmp_497_16_w": null
+            },
+            "guid": "52c99540-6c08-4cc8-87ea-5c08bfd0e7ee"
+          },
+          "id": 2,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "AccessNode",
+          "label": "A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 494,
+              "end_line": 494,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+            },
+            "data": "A",
+            "guid": "a6bf2e27-7b75-42c5-b6c8-513e4ca885b3"
+          },
+          "id": 3,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 494,
+              "end_line": 494,
+              "start_column": 4,
+              "end_column": 4,
+              "filename": "/home/beates/Desktop/dace/tests/passes/writeset_underapproximation_test.py"
+            },
+            "data": "A",
+            "guid": "111edceb-a0c2-419d-ac4c-cdc83df1bcae"
+          },
+          "id": 4,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "dynamic": true,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "951d7865-0b27-494a-ab5a-e54b65cf1059",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": -1
+              }
+            }
+          },
+          "src": "3",
+          "dst": "0",
+          "dst_connector": "IN_A",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "dynamic": true,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "M - 1",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "7eb83a81-f55e-4fca-b63f-68f3edeff050",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "M - 1",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": -1
+              }
+            }
+          },
+          "src": "1",
+          "dst": "4",
+          "dst_connector": null,
+          "src_connector": "OUT_A"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "dynamic": true,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "951d7865-0b27-494a-ab5a-e54b65cf1059",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": -1
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": "__tmp_496_15_r",
+          "src_connector": "OUT_A"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "dynamic": true,
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "7eb83a81-f55e-4fca-b63f-68f3edeff050",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i",
+                      "end": "i",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "N - 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": -1
+              }
+            }
+          },
+          "src": "2",
+          "dst": "1",
+          "dst_connector": "IN_A",
+          "src_connector": "__tmp_497_16_w"
+        }
+      ],
+      "attributes": {
+        "guid": "136af531-6a71-411e-a461-228652dd8678",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "be95e648-93e0-4998-b469-7e26e036390d"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

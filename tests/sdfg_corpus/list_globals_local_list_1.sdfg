@@ -1,0 +1,105 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "list_globals_local_list",
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "8",
+            "4",
+            "1"
+          ],
+          "total_size": "8*N",
+          "offset": [
+            "0",
+            "0",
+            "0"
+          ],
+          "shape": [
+            "N",
+            "2",
+            "4"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "N": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "bf44858a-3d70-40ab-b775-649fb72ea01b",
+    "hash": "a596ecff220093a5a9fc3a7aae18fe22ad9c150aedfedb17d2d57feaf79fd423"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "6f1c1bdf-fe39-4d46-9fb7-ce39b19094d5"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "call_80",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "be0bf231-3254-4367-8c2e-73075ac83cad"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "664c1ba3-73a0-4316-9e61-d451b309fe22"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

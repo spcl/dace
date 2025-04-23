@@ -1,0 +1,231 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "array_creation_array_constant",
+    "_arrays": {
+      "__g_cst": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "10",
+            "1"
+          ],
+          "total_size": "100",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "10",
+            "10"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__return": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "10",
+            "1"
+          ],
+          "total_size": "100",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "10",
+            "10"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 110,
+      "end_line": 112,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/numpy/array_creation_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "29f6b541-f824-4054-899c-d240de44c545",
+    "hash": "e780ad69cd2cf18dab99e846c5e188fc6ea031c579651c47db1061213748933a"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "5755dfea-95b6-4b9d-8b7e-9ba31d6bf960",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "call_112",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "__g_cst",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 112,
+              "end_line": 112,
+              "start_column": 31,
+              "end_column": 31,
+              "filename": "/home/beates/Desktop/dace/tests/numpy/array_creation_test.py"
+            },
+            "data": "__g_cst",
+            "guid": "b192ad54-3ca6-48af-91d6-955430c8d7ac"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "__return",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 112,
+              "end_line": 112,
+              "start_column": 31,
+              "end_column": 31,
+              "filename": "/home/beates/Desktop/dace/tests/numpy/array_creation_test.py"
+            },
+            "data": "__return",
+            "guid": "206bc6af-a968-4410-ac4e-b45af4ca807f"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "100",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "9",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "9",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "__return",
+                "debuginfo": null,
+                "guid": "3b90fa7d-03f0-4b6e-8f03-aec0a5d5a619",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "9",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "9",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "100"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "1",
+          "dst_connector": null,
+          "src_connector": null
+        }
+      ],
+      "attributes": {
+        "guid": "0ae2c7f7-5bfd-4884-ad6a-48403d7007b8",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "407aaf55-8f2b-4d03-aa5a-58f3d78ec0b8"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

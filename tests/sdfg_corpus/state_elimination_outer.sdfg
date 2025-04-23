@@ -1,0 +1,184 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "state_elimination_outer",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "e5b6f81c-0019-4821-9b59-dde367f1419a",
+    "hash": "06d548654c8fe0b34c680f84761c93d1887c87beb965808fa90a403ebc2390c1"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "block",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0
+        ]
+      },
+      "nodes": [
+        {
+          "type": "NestedSDFG",
+          "label": "state_elimination_test",
+          "attributes": {
+            "sdfg": {
+              "type": "SDFG",
+              "attributes": {
+                "name": "state_elimination_test",
+                "symbols": {
+                  "k": "int64"
+                },
+                "global_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "init_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "exit_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "guid": "927908b4-9a1f-4316-b606-73bd24484100"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "block",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "11b37548-7332-4847-8145-d24942c531d2"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "block_0",
+                  "id": 1,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "963d293b-4d48-4d1a-ae26-eadea7f25310"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "block_1",
+                  "id": 2,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "f989526d-259d-406f-842d-9bec1ec8d9f9"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "559d62bc-ee01-4a78-a48f-b62572feee0e"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "assignments": {
+                          "k": "k + 1"
+                        },
+                        "guid": "20da31f3-a89e-43c4-9f63-aa30f0727626"
+                      },
+                      "label": "k=k + 1"
+                    }
+                  },
+                  "src": "1",
+                  "dst": "2"
+                }
+              ],
+              "collapsed": false,
+              "label": "",
+              "id": null,
+              "cfg_list_id": 1,
+              "start_block": null
+            },
+            "symbol_mapping": {
+              "k": "3"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 1,
+              "end_line": 1,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "skipped"
+            },
+            "label": "state_elimination_test",
+            "guid": "d7643bfd-5f7d-4ca0-8e9e-7e18344221a8"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [],
+      "attributes": {
+        "guid": "062359a3-0b0f-4de2-be6b-19e40c041b66"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

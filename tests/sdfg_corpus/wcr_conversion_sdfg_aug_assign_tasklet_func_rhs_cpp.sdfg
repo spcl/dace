@@ -1,0 +1,383 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "wcr_conversion_sdfg_aug_assign_tasklet_func_rhs_cpp",
+    "arg_names": [
+      "A",
+      "B"
+    ],
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "32",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "32"
+          ],
+          "debuginfo": null
+        }
+      },
+      "B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "32",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "32"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 160,
+      "end_line": 169,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "453904ce-ecd5-453b-ae30-273202bb78dc",
+    "hash": "923a22d5973cd29f834266ad5a96d68439aface8500dde8516c92fa87a9be577"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "ff1d022a-8d3c-44c0-a533-b6a45fb0a6c8",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "LoopRegion",
+      "attributes": {
+        "update_statement": {
+          "string_data": "i = (i + 1)",
+          "language": "Python"
+        },
+        "init_statement": {
+          "string_data": "i = 0",
+          "language": "Python"
+        },
+        "loop_condition": {
+          "string_data": "(i < 32)",
+          "language": "Python"
+        },
+        "loop_variable": "i",
+        "guid": "764360a3-c363-4fd9-9875-8036fa44df80",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "for_162_162",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "c9a2ea74-eb9f-45c1-9fca-536547b102f5"
+          }
+        },
+        {
+          "type": "SDFGState",
+          "label": "with_163",
+          "id": 1,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": [
+              0,
+              1,
+              2,
+              3
+            ]
+          },
+          "nodes": [
+            {
+              "type": "Tasklet",
+              "label": "wcr_conversion_test_sdfg_aug_assign_tasklet_func_163",
+              "attributes": {
+                "code": {
+                  "string_data": "\n            b = min(c, a);\n            ",
+                  "language": "CPP"
+                },
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 163,
+                  "end_line": 167,
+                  "start_column": 8,
+                  "end_column": 12,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+                },
+                "label": "wcr_conversion_test_sdfg_aug_assign_tasklet_func_163",
+                "in_connectors": {
+                  "a": null,
+                  "c": null
+                },
+                "out_connectors": {
+                  "b": null
+                },
+                "guid": "764cfb92-ddcd-4914-aad9-b1097ca5035c"
+              },
+              "id": 0,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "A",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 163,
+                  "end_line": 163,
+                  "start_column": 8,
+                  "end_column": 8,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+                },
+                "data": "A",
+                "guid": "4e3d5b6b-75ef-4797-8ec0-6c27ea160ff1"
+              },
+              "id": 1,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "B",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 163,
+                  "end_line": 163,
+                  "start_column": 8,
+                  "end_column": 8,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+                },
+                "data": "B",
+                "guid": "54ef5ef3-00e5-491f-90a0-a5d394ca5efe"
+              },
+              "id": 2,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "A",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 163,
+                  "end_line": 163,
+                  "start_column": 8,
+                  "end_column": 8,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+                },
+                "data": "A",
+                "guid": "eafc7606-15a1-402a-a67c-1249dbd719a9"
+              },
+              "id": 3,
+              "scope_entry": null,
+              "scope_exit": null
+            }
+          ],
+          "edges": [
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Indices",
+                      "indices": [
+                        "i"
+                      ]
+                    },
+                    "data": "A",
+                    "debuginfo": null,
+                    "guid": "4b7be4ac-6e77-45e1-a1e7-5a274840e8bd",
+                    "src_subset": {
+                      "type": "Indices",
+                      "indices": [
+                        "i"
+                      ]
+                    },
+                    "dst_subset": null,
+                    "is_data_src": true,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "1",
+              "dst": "0",
+              "dst_connector": "a",
+              "src_connector": null
+            },
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Indices",
+                      "indices": [
+                        "i"
+                      ]
+                    },
+                    "data": "B",
+                    "debuginfo": null,
+                    "guid": "d4e309b3-2c3a-4c06-bbe8-90b0f9a331f8",
+                    "src_subset": {
+                      "type": "Indices",
+                      "indices": [
+                        "i"
+                      ]
+                    },
+                    "dst_subset": null,
+                    "is_data_src": true,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "2",
+              "dst": "0",
+              "dst_connector": "c",
+              "src_connector": null
+            },
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Indices",
+                      "indices": [
+                        "i"
+                      ]
+                    },
+                    "data": "A",
+                    "debuginfo": null,
+                    "guid": "87dc0c5c-ed2d-4e4b-847c-0d4320f9fc65",
+                    "src_subset": null,
+                    "dst_subset": {
+                      "type": "Indices",
+                      "indices": [
+                        "i"
+                      ]
+                    },
+                    "is_data_src": false,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "0",
+              "dst": "3",
+              "dst_connector": null,
+              "src_connector": "b"
+            }
+          ],
+          "attributes": {
+            "guid": "add2d3b0-4178-4e5e-98fa-b13596558e1c"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "176fc7c5-29d9-43e9-b66b-f8e69100296a"
+              },
+              "label": ""
+            }
+          },
+          "src": "0",
+          "dst": "1"
+        }
+      ],
+      "collapsed": false,
+      "label": "for_162",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": 0
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "6a109ce2-f974-47b0-a9be-91eb877f23bd"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

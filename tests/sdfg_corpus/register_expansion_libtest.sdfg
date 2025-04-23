@@ -1,0 +1,65 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "register_expansion_libtest",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "75345322-a601-4fff-9c9c-55cb24029098",
+    "hash": "08585d9ceac2d8add0b60360690ff520c7d418c39ead6478416878788a2dbc2b"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "block",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0
+        ]
+      },
+      "nodes": [
+        {
+          "type": "LibraryNode",
+          "label": "MyLibNode",
+          "attributes": {
+            "name": "MyLibNode",
+            "label": "MyLibNode",
+            "guid": "166d2ace-efc7-4c3e-a374-47d87c509a7e"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null,
+          "classpath": "register_expansion_test.MyLibNode"
+        }
+      ],
+      "edges": [],
+      "attributes": {
+        "guid": "0eb8897a-cae7-458f-8bd0-3b3c934ae0bd"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

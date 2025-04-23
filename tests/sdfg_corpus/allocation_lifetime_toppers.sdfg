@@ -1,0 +1,953 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "allocation_lifetime_toppers",
+    "arg_names": [
+      "a"
+    ],
+    "_arrays": {
+      "a": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__return": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 337,
+      "end_line": 339,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "b390906f-2e22-4f44-89fa-7c2c0cdc0b69",
+    "hash": "0b59da29f49a5a80d7f7ff591437afa7e05a43a9f632cb29e701b4431b36488b"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "51cd9441-9425-4c96-ba41-32f10adedc57",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "FunctionCallRegion",
+      "attributes": {
+        "arguments": {
+          "__tmp2": "a"
+        },
+        "debuginfo": null,
+        "guid": "48b09003-168e-45bc-8d00-6af126d0f589",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "init",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "2763ed4c-646c-492d-9170-cef1fe1a2484"
+          }
+        },
+        {
+          "type": "SDFGState",
+          "label": "call_allocation_lifetime_test_nestpers_339",
+          "id": 1,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": [
+              0,
+              1,
+              2
+            ]
+          },
+          "nodes": [
+            {
+              "type": "NestedSDFG",
+              "label": "allocation_lifetime_test_nestpers",
+              "attributes": {
+                "sdfg": {
+                  "type": "SDFG",
+                  "attributes": {
+                    "name": "allocation_lifetime_test_nestpers",
+                    "arg_names": [
+                      "a"
+                    ],
+                    "_arrays": {
+                      "__tmp1": {
+                        "type": "Array",
+                        "attributes": {
+                          "strides": [
+                            "1"
+                          ],
+                          "total_size": "20",
+                          "offset": [
+                            "0"
+                          ],
+                          "optional": false,
+                          "dtype": "float64",
+                          "shape": [
+                            "20"
+                          ],
+                          "transient": true,
+                          "lifetime": "Persistent",
+                          "debuginfo": null
+                        }
+                      },
+                      "__return": {
+                        "type": "Array",
+                        "attributes": {
+                          "strides": [
+                            "1"
+                          ],
+                          "total_size": "20",
+                          "offset": [
+                            "0"
+                          ],
+                          "optional": false,
+                          "dtype": "float64",
+                          "shape": [
+                            "20"
+                          ],
+                          "debuginfo": null
+                        }
+                      },
+                      "__tmp2": {
+                        "type": "Array",
+                        "attributes": {
+                          "strides": [
+                            "1"
+                          ],
+                          "total_size": "20",
+                          "offset": [
+                            "0"
+                          ],
+                          "dtype": "float64",
+                          "shape": [
+                            "20"
+                          ],
+                          "debuginfo": null
+                        }
+                      }
+                    },
+                    "global_code": {
+                      "frame": {
+                        "string_data": "",
+                        "language": "CPP"
+                      }
+                    },
+                    "init_code": {
+                      "frame": {
+                        "string_data": "",
+                        "language": "CPP"
+                      }
+                    },
+                    "exit_code": {
+                      "frame": {
+                        "string_data": "",
+                        "language": "CPP"
+                      }
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 331,
+                      "end_line": 335,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                    },
+                    "using_explicit_control_flow": true,
+                    "guid": "187f4a37-48c8-4a2b-9393-deda3b218d5f"
+                  },
+                  "nodes": [
+                    {
+                      "type": "SDFGState",
+                      "label": "init",
+                      "id": 0,
+                      "collapsed": false,
+                      "scope_dict": {
+                        "-1": []
+                      },
+                      "nodes": [],
+                      "edges": [],
+                      "attributes": {
+                        "guid": "2635d92f-887a-4c28-af67-e29f8f07ea82",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      }
+                    },
+                    {
+                      "type": "SDFGState",
+                      "label": "call_333",
+                      "id": 1,
+                      "collapsed": false,
+                      "scope_dict": {
+                        "-1": []
+                      },
+                      "nodes": [],
+                      "edges": [],
+                      "attributes": {
+                        "guid": "931907f3-45d4-485a-9fb5-b74217b80eab",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      }
+                    },
+                    {
+                      "type": "SDFGState",
+                      "label": "BinOp_334",
+                      "id": 2,
+                      "collapsed": false,
+                      "scope_dict": {
+                        "-1": [
+                          0,
+                          3,
+                          4
+                        ],
+                        "0": [
+                          1,
+                          2
+                        ]
+                      },
+                      "nodes": [
+                        {
+                          "type": "MapEntry",
+                          "label": "_Add__map[__i0=0:20]",
+                          "attributes": {
+                            "label": "_Add__map",
+                            "params": [
+                              "__i0"
+                            ],
+                            "range": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "19",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 334,
+                              "end_line": 334,
+                              "start_column": 17,
+                              "end_column": 17,
+                              "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                            },
+                            "in_connectors": {
+                              "IN_a": null
+                            },
+                            "out_connectors": {
+                              "OUT_a": null
+                            },
+                            "guid": "04c2e19f-3df4-4f55-9eaf-cd8f9ba79a9b"
+                          },
+                          "id": 0,
+                          "scope_entry": null,
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "Tasklet",
+                          "label": "_Add_",
+                          "attributes": {
+                            "code": {
+                              "string_data": "__out = (__in1 + dace.float64(1))",
+                              "language": "Python"
+                            },
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 334,
+                              "end_line": 334,
+                              "start_column": 17,
+                              "end_column": 17,
+                              "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                            },
+                            "label": "_Add_",
+                            "in_connectors": {
+                              "__in1": null
+                            },
+                            "out_connectors": {
+                              "__out": null
+                            },
+                            "guid": "fc00d185-448a-4260-9c10-9643c61210af"
+                          },
+                          "id": 1,
+                          "scope_entry": "0",
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "MapExit",
+                          "label": "_Add__map[__i0=0:20]",
+                          "attributes": {
+                            "in_connectors": {
+                              "IN___tmp1": null
+                            },
+                            "out_connectors": {
+                              "OUT___tmp1": null
+                            },
+                            "guid": "3a7f5ba8-5086-4aca-b9f5-613dfed92d51"
+                          },
+                          "id": 2,
+                          "scope_entry": "0",
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "__tmp2",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 334,
+                              "end_line": 334,
+                              "start_column": 17,
+                              "end_column": 17,
+                              "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                            },
+                            "data": "__tmp2",
+                            "guid": "c447d3a7-9265-4efb-a3ba-05b172548f31"
+                          },
+                          "id": 3,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "__tmp1",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 334,
+                              "end_line": 334,
+                              "start_column": 17,
+                              "end_column": 17,
+                              "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                            },
+                            "data": "__tmp1",
+                            "guid": "52392509-f7e2-44a8-af40-54c056ba026c"
+                          },
+                          "id": 4,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        }
+                      ],
+                      "edges": [
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp2",
+                                "debuginfo": null,
+                                "guid": "d2ff8392-ba1b-4f4c-9367-7c74b10fc8c2",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "3",
+                          "dst": "0",
+                          "dst_connector": "IN_a",
+                          "src_connector": null
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp1",
+                                "debuginfo": null,
+                                "guid": "d8e14ba3-6319-4f4d-b9fe-2ae48e0e5755",
+                                "src_subset": null,
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": false,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "2",
+                          "dst": "4",
+                          "dst_connector": null,
+                          "src_connector": "OUT___tmp1"
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "1",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp2",
+                                "debuginfo": null,
+                                "guid": "d2ff8392-ba1b-4f4c-9367-7c74b10fc8c2",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "1"
+                              }
+                            }
+                          },
+                          "src": "0",
+                          "dst": "1",
+                          "dst_connector": "__in1",
+                          "src_connector": "OUT_a"
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "1",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp1",
+                                "debuginfo": null,
+                                "guid": "d8e14ba3-6319-4f4d-b9fe-2ae48e0e5755",
+                                "src_subset": null,
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": false,
+                                "num_accesses": "1"
+                              }
+                            }
+                          },
+                          "src": "1",
+                          "dst": "2",
+                          "dst_connector": "IN___tmp1",
+                          "src_connector": "__out"
+                        }
+                      ],
+                      "attributes": {
+                        "guid": "f4161c66-83b5-459d-9c4d-a2a06e494929",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      }
+                    },
+                    {
+                      "type": "SDFGState",
+                      "label": "assign_334_4",
+                      "id": 3,
+                      "collapsed": false,
+                      "scope_dict": {
+                        "-1": [
+                          0,
+                          1
+                        ]
+                      },
+                      "nodes": [
+                        {
+                          "type": "AccessNode",
+                          "label": "__tmp1",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 334,
+                              "end_line": 334,
+                              "start_column": 17,
+                              "end_column": 17,
+                              "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                            },
+                            "data": "__tmp1",
+                            "guid": "d110ea84-12cb-4217-8cae-293f5b5d4141"
+                          },
+                          "id": 0,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "__return",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 334,
+                              "end_line": 334,
+                              "start_column": 17,
+                              "end_column": 17,
+                              "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                            },
+                            "data": "__return",
+                            "guid": "b492bc93-09bb-4c71-9319-b21eeed1d412"
+                          },
+                          "id": 1,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        }
+                      ],
+                      "edges": [
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "other_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__return",
+                                "debuginfo": null,
+                                "guid": "e710dec0-2422-4751-bde0-82647cdf8e6f",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": false,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "0",
+                          "dst": "1",
+                          "dst_connector": null,
+                          "src_connector": null
+                        }
+                      ],
+                      "attributes": {
+                        "guid": "6a74ea81-e1f6-4ba0-bb61-9fc5e5989c15",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      }
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "Edge",
+                      "attributes": {
+                        "data": {
+                          "type": "InterstateEdge",
+                          "attributes": {
+                            "guid": "b6ec2c74-02c6-4794-86da-0c97bdfa0b63"
+                          },
+                          "label": ""
+                        }
+                      },
+                      "src": "0",
+                      "dst": "1"
+                    },
+                    {
+                      "type": "Edge",
+                      "attributes": {
+                        "data": {
+                          "type": "InterstateEdge",
+                          "attributes": {
+                            "guid": "9ec1c6bd-1972-46d9-9736-bf6b903dd6b9"
+                          },
+                          "label": ""
+                        }
+                      },
+                      "src": "1",
+                      "dst": "2"
+                    },
+                    {
+                      "type": "Edge",
+                      "attributes": {
+                        "data": {
+                          "type": "InterstateEdge",
+                          "attributes": {
+                            "guid": "4c9a4209-660c-4ab9-b99f-f8be11633da9"
+                          },
+                          "label": ""
+                        }
+                      },
+                      "src": "2",
+                      "dst": "3"
+                    }
+                  ],
+                  "collapsed": false,
+                  "label": "",
+                  "id": null,
+                  "cfg_list_id": 2,
+                  "start_block": 0
+                },
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 339,
+                  "end_line": 339,
+                  "start_column": 20,
+                  "end_column": 20,
+                  "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                },
+                "label": "allocation_lifetime_test_nestpers",
+                "in_connectors": {
+                  "__tmp2": null
+                },
+                "out_connectors": {
+                  "__return": null
+                },
+                "guid": "98fbd109-9ad8-4a67-b377-e93d73039362"
+              },
+              "id": 0,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "a",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 339,
+                  "end_line": 339,
+                  "start_column": 20,
+                  "end_column": 20,
+                  "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                },
+                "data": "a",
+                "guid": "3ca35d45-c3b8-4371-a365-49881401fdcd"
+              },
+              "id": 1,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "__return",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 339,
+                  "end_line": 339,
+                  "start_column": 20,
+                  "end_column": 20,
+                  "filename": "/home/beates/Desktop/dace/tests/codegen/allocation_lifetime_test.py"
+                },
+                "data": "__return",
+                "guid": "b52b58fd-8d07-4145-823f-c7110a961400"
+              },
+              "id": 2,
+              "scope_entry": null,
+              "scope_exit": null
+            }
+          ],
+          "edges": [
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "20",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "a",
+                    "debuginfo": null,
+                    "guid": "7170fecc-ceec-4761-a02e-3187f486daa3",
+                    "src_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "dst_subset": null,
+                    "is_data_src": true,
+                    "num_accesses": "20"
+                  }
+                }
+              },
+              "src": "1",
+              "dst": "0",
+              "dst_connector": "__tmp2",
+              "src_connector": null
+            },
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "20",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "__return",
+                    "debuginfo": null,
+                    "guid": "768b5d02-297a-41c5-af94-03283570412d",
+                    "src_subset": null,
+                    "dst_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "is_data_src": false,
+                    "num_accesses": "20"
+                  }
+                }
+              },
+              "src": "0",
+              "dst": "2",
+              "dst_connector": null,
+              "src_connector": "__return"
+            }
+          ],
+          "attributes": {
+            "guid": "f35d2eb0-e0f7-40f5-9e56-a3225cbcf937"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "c91e392e-e62b-4778-8c8b-06ee67d572d2"
+              },
+              "label": ""
+            }
+          },
+          "src": "0",
+          "dst": "1"
+        }
+      ],
+      "collapsed": false,
+      "label": "allocation_lifetime_test_nestpers_339",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": 0
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "3f4248b4-a5ee-4400-98f9-24ff35488217"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

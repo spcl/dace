@@ -1,0 +1,97 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "reshape_reint_invalid",
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "5",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "5"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "06fc18dd-dd35-4dce-8009-0c47fdc31bc3",
+    "hash": "1f2bfe2eba16575a7e9b14ec24c61230abb1ed6bb064040e4e00c31184518f6e"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "ed7c3a5f-bbef-4c05-91d8-349d5c694bb0"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "call_182",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "bbaa2608-1751-4948-a5a4-025e14716cf1"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "d9105132-97a5-4d2d-b24f-70283cfdbe0a"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

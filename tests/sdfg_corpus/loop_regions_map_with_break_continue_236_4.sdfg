@@ -1,0 +1,142 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "loop_regions_map_with_break_continue_236_4",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "4e729570-8cd2-43ea-96fd-5361a7f31e32",
+    "hash": "2fb126ff6167b26438ebb5470601dd12713275449fcc7bc1c7a9c359722c3e20"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "25ee9200-440e-4dbc-abb7-2c91b829c471"
+      }
+    },
+    {
+      "type": "ConditionalBlock",
+      "attributes": {
+        "guid": "1fbcb360-d1a1-4ae9-8e08-155a9c7c573c"
+      },
+      "nodes": [
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "8647edf0-4ba9-43b9-b271-dac26431daaf"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "if_237",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "40890f10-8c6f-4737-ad07-7bc702269cc7"
+              }
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "if_237_body",
+          "id": 0,
+          "cfg_list_id": 2,
+          "start_block": null
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "if_237",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": null,
+      "branches": [
+        [
+          {
+            "string_data": "(i >= 10)",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "8647edf0-4ba9-43b9-b271-dac26431daaf"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "if_237",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "40890f10-8c6f-4737-ad07-7bc702269cc7"
+                }
+              }
+            ],
+            "edges": [],
+            "collapsed": false,
+            "label": "if_237_body",
+            "id": null,
+            "cfg_list_id": 2,
+            "start_block": null
+          }
+        ]
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "7d0d5563-763c-455a-b49d-8c9346606495"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

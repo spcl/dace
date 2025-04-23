@@ -1,0 +1,96 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "multibank_validation_jdj",
+    "_arrays": {
+      "a": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "3",
+            "1"
+          ],
+          "total_size": "12",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "shape": [
+            "4",
+            "3"
+          ],
+          "storage": "FPGA_Global",
+          "location": {
+            "bank": "0:4",
+            "memorytype": "hbm"
+          },
+          "debuginfo": null
+        }
+      },
+      "b": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "4",
+          "offset": [
+            "0"
+          ],
+          "shape": [
+            "4"
+          ],
+          "storage": "FPGA_Global",
+          "location": {
+            "bank": "4",
+            "memorytype": "hbm"
+          },
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "e1e0f37f-3229-4043-9efb-2f47546b5111",
+    "hash": "feb5f6102ddb3ab42cd5fef3d01c58e760c7e5ceba0d0acf08240da28a2a2612"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "dummy",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "b9f78a85-b1c5-40a1-96c5-0222f491775a"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

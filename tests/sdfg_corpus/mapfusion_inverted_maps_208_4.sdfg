@@ -1,0 +1,188 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "mapfusion_inverted_maps_208_4",
+    "_arrays": {
+      "__tmp_209_8_w": {
+        "type": "Scalar",
+        "attributes": {
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "9dd4f54b-07fe-48b4-8f8f-5ecd6eddb680",
+    "hash": "a1099b483d6862cfd9d9984eedd7730f6fbfefc65a7e4b95dcdfb48d7f6e0a68"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "5a12c4f3-ced1-4237-8f4a-29d64621e084",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "assign_209_8",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "__tmp_209_8_w",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 209,
+              "end_line": 209,
+              "start_column": 10,
+              "end_column": 10,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/mapfusion_test.py"
+            },
+            "data": "__tmp_209_8_w",
+            "guid": "bc666f4d-52a1-4923-af86-ae4519c1f2d8"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "Tasklet",
+          "label": "assign_209_8",
+          "attributes": {
+            "code": {
+              "string_data": "__out = i",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 209,
+              "end_line": 209,
+              "start_column": 10,
+              "end_column": 10,
+              "filename": "/home/beates/Desktop/dace/tests/transformations/mapfusion_test.py"
+            },
+            "label": "assign_209_8",
+            "out_connectors": {
+              "__out": null
+            },
+            "guid": "0b0e7384-8ebb-40ab-8e69-a220bd69a70f"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "__tmp_209_8_w",
+                "debuginfo": null,
+                "guid": "ee7ee968-6f9d-4b56-9049-1a3056767dc2",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "0",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "0",
+          "dst_connector": null,
+          "src_connector": "__out"
+        }
+      ],
+      "attributes": {
+        "guid": "8c44fa40-4555-4e31-9a24-b46b0ec0d2cc",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "797aad5a-bbd3-4671-bcd2-c8c56b653881"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": 0
+}

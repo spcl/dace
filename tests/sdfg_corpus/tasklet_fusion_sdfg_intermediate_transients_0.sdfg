@@ -1,0 +1,3516 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "tasklet_fusion_sdfg_intermediate_transients",
+    "arg_names": [
+      "A",
+      "B"
+    ],
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "10",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "10"
+          ],
+          "debuginfo": null
+        }
+      },
+      "B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "10",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "10"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__tmp1": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float32",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "__tmp2": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "bool",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "__tmp3": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float32",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "__tmp4": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "__tmp5": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float32",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "__tmp6": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "tmp": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float32",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 296,
+      "end_line": 306,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "b43ce090-979f-40b8-bb3e-4223b15a577c",
+    "hash": "459e3c32f0063bbf14912c73eb2f7f7861c96f71c8853a433b222293d4cf815a"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "1bcd97f2-ee8e-4155-bb57-77ad18ada227",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "call_298",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "c9d34dd3-5e8d-48a4-ab9d-2763de392a55",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "ControlFlowRegion",
+      "attributes": {
+        "guid": "67940d6d-2a1b-40de-aa80-cca7dced1da8",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "cond_prep_start_301",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "4c4654db-738c-49a6-a285-2789b4a09350"
+          }
+        },
+        {
+          "type": "SDFGState",
+          "label": "slice_B_301",
+          "id": 1,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": [
+              0,
+              1
+            ]
+          },
+          "nodes": [
+            {
+              "type": "AccessNode",
+              "label": "B",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 301,
+                  "end_line": 301,
+                  "start_column": 9,
+                  "end_column": 9,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                },
+                "data": "B",
+                "guid": "82868eb6-22a7-4bbd-8fd3-ac3ddf43ae86"
+              },
+              "id": 0,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "__tmp1",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 301,
+                  "end_line": 301,
+                  "start_column": 9,
+                  "end_column": 9,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                },
+                "data": "__tmp1",
+                "guid": "e46fd744-347b-478a-a392-d3e53a12f449"
+              },
+              "id": 1,
+              "scope_entry": null,
+              "scope_exit": null
+            }
+          ],
+          "edges": [
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "other_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "B",
+                    "debuginfo": null,
+                    "guid": "a3b1417f-8663-4806-b612-6987b513f90b",
+                    "src_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "dst_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "is_data_src": true,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "0",
+              "dst": "1",
+              "dst_connector": null,
+              "src_connector": null
+            }
+          ],
+          "attributes": {
+            "guid": "c152bd03-0128-40c7-8727-04e9cfa4e8ac"
+          }
+        },
+        {
+          "type": "SDFGState",
+          "label": "BinOp_301",
+          "id": 2,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": [
+              0,
+              1,
+              2
+            ]
+          },
+          "nodes": [
+            {
+              "type": "AccessNode",
+              "label": "__tmp1",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 301,
+                  "end_line": 301,
+                  "start_column": 14,
+                  "end_column": 14,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                },
+                "data": "__tmp1",
+                "guid": "ede8a9e5-349d-4bed-873e-8529c7027242"
+              },
+              "id": 0,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "Tasklet",
+              "label": "_Lt_",
+              "attributes": {
+                "code": {
+                  "string_data": "__out = (__in1 < 0)",
+                  "language": "Python"
+                },
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 301,
+                  "end_line": 301,
+                  "start_column": 14,
+                  "end_column": 14,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                },
+                "label": "_Lt_",
+                "in_connectors": {
+                  "__in1": null
+                },
+                "out_connectors": {
+                  "__out": null
+                },
+                "guid": "e2be22c0-28b9-401e-8f53-2667f2222c3b"
+              },
+              "id": 1,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "__tmp2",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 301,
+                  "end_line": 301,
+                  "start_column": 14,
+                  "end_column": 14,
+                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                },
+                "data": "__tmp2",
+                "guid": "959a41a7-8514-422c-88a5-49ba40bb5058"
+              },
+              "id": 2,
+              "scope_entry": null,
+              "scope_exit": null
+            }
+          ],
+          "edges": [
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "__tmp1",
+                    "debuginfo": null,
+                    "guid": "cbccec93-25b7-4ecf-b4ea-9ee16205cc58",
+                    "src_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "dst_subset": null,
+                    "is_data_src": true,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "0",
+              "dst": "1",
+              "dst_connector": "__in1",
+              "src_connector": null
+            },
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "__tmp2",
+                    "debuginfo": null,
+                    "guid": "8627b6a3-7b13-42a2-bbda-38e1692e348c",
+                    "src_subset": null,
+                    "dst_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "is_data_src": false,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "1",
+              "dst": "2",
+              "dst_connector": null,
+              "src_connector": "__out"
+            }
+          ],
+          "attributes": {
+            "guid": "85838611-7a8a-4737-95fb-001b62f27406"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "2bdb012c-5aa7-4368-a284-04c2fc65fc29"
+              },
+              "label": ""
+            }
+          },
+          "src": "0",
+          "dst": "1"
+        },
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "63dc57ca-2def-43ef-afb8-7d8f39bdb065"
+              },
+              "label": ""
+            }
+          },
+          "src": "1",
+          "dst": "2"
+        }
+      ],
+      "collapsed": false,
+      "label": "cond_prep_301",
+      "id": 2,
+      "cfg_list_id": 1,
+      "start_block": null
+    },
+    {
+      "type": "ConditionalBlock",
+      "attributes": {
+        "guid": "03101037-eaf9-4135-bf32-6a436a1cb2e1",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "206c9a8e-f19a-4840-9422-735e175b1188"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "if_301",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "0a83043b-6c9d-486d-b15a-18a8d1f02cca"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "slice_A_302",
+              "id": 1,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "A",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 16,
+                      "end_column": 16,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "A",
+                    "guid": "6227a4b0-1285-450d-9bcf-0fe8c25c9d14"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp3",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 16,
+                      "end_column": 16,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp3",
+                    "guid": "869ebc3d-3601-443c-8ddb-c27472128241"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "other_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "A",
+                        "debuginfo": null,
+                        "guid": "5faca645-a9ed-4606-a169-0faaa8fe1a0d",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": null
+                }
+              ],
+              "attributes": {
+                "guid": "d1c12641-31a2-4fbf-83ad-3cec7f6358e3"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "BinOp_302",
+              "id": 2,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1,
+                  2
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp3",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp3",
+                    "guid": "209d6f71-726d-4595-a863-0384e62c6852"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "_Sub_",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = (dace.float64(__in1) - dace.float64(1))",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "label": "_Sub_",
+                    "in_connectors": {
+                      "__in1": null
+                    },
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "af5fa802-d89d-4d1f-b3cc-d0107226e014"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp4",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp4",
+                    "guid": "a09af73f-d29f-4715-8f75-c8dcfddc3126"
+                  },
+                  "id": 2,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp3",
+                        "debuginfo": null,
+                        "guid": "295dff2c-b517-4519-8db9-02e017d43368",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": null,
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": "__in1",
+                  "src_connector": null
+                },
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp4",
+                        "debuginfo": null,
+                        "guid": "6d8a302b-8207-4ba4-8340-a73ac0cdecfd",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "1",
+                  "dst": "2",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "cbf6a408-e6b0-4349-aa60-6f7aa22bbebd"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "assign_302_8",
+              "id": 3,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1,
+                  2
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp4",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp4",
+                    "guid": "f306f33a-8cfc-4acc-be53-b1f5ccaf9675"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "tmp",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "tmp",
+                    "guid": "7ce862f7-2aad-4b83-ac3f-1f846acca659"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "assign_302_8",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = __inp",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 302,
+                      "end_line": 302,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "label": "assign_302_8",
+                    "in_connectors": {
+                      "__inp": null
+                    },
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "8a21b0c3-3be2-4c51-8f1a-d666e876c4f6"
+                  },
+                  "id": 2,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp4",
+                        "debuginfo": null,
+                        "guid": "dbd64584-bd93-4ed1-83a9-556edefe7acf",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": null,
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "2",
+                  "dst_connector": "__inp",
+                  "src_connector": null
+                },
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "tmp",
+                        "debuginfo": null,
+                        "guid": "41fa570e-53fc-4ea9-8915-cdc525370c77",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "2",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "36189d2b-06fb-42fc-8dfe-1e8048141ba9"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "assign_303_8",
+              "id": 4,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1,
+                  2
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "tmp",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 303,
+                      "end_line": 303,
+                      "start_column": 10,
+                      "end_column": 10,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "tmp",
+                    "guid": "083b25d6-4505-43ab-a27c-65a94d78a34d"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "B",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 303,
+                      "end_line": 303,
+                      "start_column": 10,
+                      "end_column": 10,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "B",
+                    "guid": "87622695-a5b2-4805-b65a-1e3eec249cb9"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "assign_303_8",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = __inp",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 303,
+                      "end_line": 303,
+                      "start_column": 10,
+                      "end_column": 10,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "label": "assign_303_8",
+                    "in_connectors": {
+                      "__inp": null
+                    },
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "7a53ad9d-e0e9-4d13-8db6-1a2dc4b9b5e1"
+                  },
+                  "id": 2,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "tmp",
+                        "debuginfo": null,
+                        "guid": "f2fc6d8d-cf30-4e04-b74a-be99d624913d",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": null,
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "2",
+                  "dst_connector": "__inp",
+                  "src_connector": null
+                },
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "B",
+                        "debuginfo": null,
+                        "guid": "6e480dbd-abb8-4198-85af-044b20ef5e19",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "2",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "bec2172a-2cd9-46aa-b210-980db9a31fe7"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "35d13f95-7f3c-47c2-8000-583df765a486"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "0",
+              "dst": "1"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "8c462c0e-d994-4688-a018-531845250b1f"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "1",
+              "dst": "2"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "958175bb-391a-4266-b7cb-d136cd9d0729"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "2",
+              "dst": "3"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "bd0a678d-4d73-4c34-af28-043b7c891108"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "3",
+              "dst": "4"
+            }
+          ],
+          "collapsed": false,
+          "label": "if_301_body",
+          "id": 0,
+          "cfg_list_id": 3,
+          "start_block": null
+        },
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "1183ab50-fc54-43ff-a3c1-a68da5ae0b5a"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "else_301",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "ea080878-d7d7-4b50-aec9-3e48fb0259fd"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "slice_A_305",
+              "id": 1,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "A",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 16,
+                      "end_column": 16,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "A",
+                    "guid": "2e29f5a4-7208-42c4-b1b4-055887231012"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp5",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 16,
+                      "end_column": 16,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp5",
+                    "guid": "e070dd84-18e7-4cce-a72b-515bcdaef810"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "other_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "A",
+                        "debuginfo": null,
+                        "guid": "ace28ee4-aba1-4092-91c1-357d5acf2e46",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": null
+                }
+              ],
+              "attributes": {
+                "guid": "ce192a12-acaf-4993-872b-797530641201"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "BinOp_305",
+              "id": 2,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1,
+                  2
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp5",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp5",
+                    "guid": "a2c57b48-6e76-4030-b092-de449ade38f6"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "_Add_",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = (dace.float64(__in1) + dace.float64(1))",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "label": "_Add_",
+                    "in_connectors": {
+                      "__in1": null
+                    },
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "bdbc40e9-2d21-49a2-9785-82cead9fc334"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp6",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp6",
+                    "guid": "13575399-e1eb-4ef3-b4cb-fd003261045f"
+                  },
+                  "id": 2,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp5",
+                        "debuginfo": null,
+                        "guid": "0c56cf86-9f26-46fb-a5da-702c4b511b2a",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": null,
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": "__in1",
+                  "src_connector": null
+                },
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp6",
+                        "debuginfo": null,
+                        "guid": "536c253a-79c3-4436-a5e8-5bad0287145e",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "1",
+                  "dst": "2",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "61735b2d-57e4-4f53-9330-ec3d9eb7f46f"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "assign_305_8",
+              "id": 3,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1,
+                  2
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp6",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "__tmp6",
+                    "guid": "53c0bc50-743d-4b83-b664-fba8e57718a2"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "tmp",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "tmp",
+                    "guid": "acdc7ae7-a651-43d5-a3ac-44442e41ab2a"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "assign_305_8",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = __inp",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 305,
+                      "end_line": 305,
+                      "start_column": 21,
+                      "end_column": 21,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "label": "assign_305_8",
+                    "in_connectors": {
+                      "__inp": null
+                    },
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "d291b0d3-74b5-4df7-bd99-b5eeda9c537a"
+                  },
+                  "id": 2,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp6",
+                        "debuginfo": null,
+                        "guid": "091ef9f0-15a2-47aa-9201-966c1846db55",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": null,
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "2",
+                  "dst_connector": "__inp",
+                  "src_connector": null
+                },
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "tmp",
+                        "debuginfo": null,
+                        "guid": "cfc190a4-747d-4150-abe7-0cff28a1b621",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "2",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "bf8dbb04-08d2-4958-9d72-4043e2893315"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "assign_306_8",
+              "id": 4,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1,
+                  2
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "tmp",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 306,
+                      "end_line": 306,
+                      "start_column": 10,
+                      "end_column": 10,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "tmp",
+                    "guid": "c0257f56-0fe2-429a-bdec-df70a6967290"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "B",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 306,
+                      "end_line": 306,
+                      "start_column": 10,
+                      "end_column": 10,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "data": "B",
+                    "guid": "2dad21bf-8e7a-450c-b44e-e2e6657e51b2"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "assign_306_8",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = __inp",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 306,
+                      "end_line": 306,
+                      "start_column": 10,
+                      "end_column": 10,
+                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                    },
+                    "label": "assign_306_8",
+                    "in_connectors": {
+                      "__inp": null
+                    },
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "ad1e4819-3e60-4a37-933a-8d7fa8af0d07"
+                  },
+                  "id": 2,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "tmp",
+                        "debuginfo": null,
+                        "guid": "89204758-bddd-46e2-bb66-30fe8db60f5c",
+                        "src_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "dst_subset": null,
+                        "is_data_src": true,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "2",
+                  "dst_connector": "__inp",
+                  "src_connector": null
+                },
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "B",
+                        "debuginfo": null,
+                        "guid": "ba4364f9-ada0-43b6-a76a-2fdfd786cbe8",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "2",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "ea4cfaff-6c2c-46b5-862b-c598f413723a"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "f1ad365e-7eaa-49e1-a6a7-ff7778bae50d"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "0",
+              "dst": "1"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "baf0a6b5-4de9-45e6-a972-bf35e250c410"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "1",
+              "dst": "2"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "c9b8ec3b-b564-4246-8c41-a97675b57996"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "2",
+              "dst": "3"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "6d0aac2b-6d8d-415f-ac8a-723a0a571dfb"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "3",
+              "dst": "4"
+            }
+          ],
+          "collapsed": false,
+          "label": "if_301_else_305",
+          "id": 1,
+          "cfg_list_id": 4,
+          "start_block": null
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "if_301",
+      "id": 3,
+      "cfg_list_id": 2,
+      "start_block": null,
+      "branches": [
+        [
+          {
+            "string_data": "__tmp2",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "206c9a8e-f19a-4840-9422-735e175b1188"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "if_301",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "0a83043b-6c9d-486d-b15a-18a8d1f02cca"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "slice_A_302",
+                "id": 1,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "A",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 16,
+                        "end_column": 16,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "A",
+                      "guid": "6227a4b0-1285-450d-9bcf-0fe8c25c9d14"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp3",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 16,
+                        "end_column": 16,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp3",
+                      "guid": "869ebc3d-3601-443c-8ddb-c27472128241"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "other_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "A",
+                          "debuginfo": null,
+                          "guid": "5faca645-a9ed-4606-a169-0faaa8fe1a0d",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": null
+                  }
+                ],
+                "attributes": {
+                  "guid": "d1c12641-31a2-4fbf-83ad-3cec7f6358e3"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "BinOp_302",
+                "id": 2,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1,
+                    2
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp3",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp3",
+                      "guid": "209d6f71-726d-4595-a863-0384e62c6852"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "_Sub_",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = (dace.float64(__in1) - dace.float64(1))",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "label": "_Sub_",
+                      "in_connectors": {
+                        "__in1": null
+                      },
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "af5fa802-d89d-4d1f-b3cc-d0107226e014"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp4",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp4",
+                      "guid": "a09af73f-d29f-4715-8f75-c8dcfddc3126"
+                    },
+                    "id": 2,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp3",
+                          "debuginfo": null,
+                          "guid": "295dff2c-b517-4519-8db9-02e017d43368",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": null,
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": "__in1",
+                    "src_connector": null
+                  },
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp4",
+                          "debuginfo": null,
+                          "guid": "6d8a302b-8207-4ba4-8340-a73ac0cdecfd",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "1",
+                    "dst": "2",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "cbf6a408-e6b0-4349-aa60-6f7aa22bbebd"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "assign_302_8",
+                "id": 3,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1,
+                    2
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp4",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp4",
+                      "guid": "f306f33a-8cfc-4acc-be53-b1f5ccaf9675"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "tmp",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "tmp",
+                      "guid": "7ce862f7-2aad-4b83-ac3f-1f846acca659"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "assign_302_8",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = __inp",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 302,
+                        "end_line": 302,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "label": "assign_302_8",
+                      "in_connectors": {
+                        "__inp": null
+                      },
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "8a21b0c3-3be2-4c51-8f1a-d666e876c4f6"
+                    },
+                    "id": 2,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp4",
+                          "debuginfo": null,
+                          "guid": "dbd64584-bd93-4ed1-83a9-556edefe7acf",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": null,
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "2",
+                    "dst_connector": "__inp",
+                    "src_connector": null
+                  },
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "tmp",
+                          "debuginfo": null,
+                          "guid": "41fa570e-53fc-4ea9-8915-cdc525370c77",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "2",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "36189d2b-06fb-42fc-8dfe-1e8048141ba9"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "assign_303_8",
+                "id": 4,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1,
+                    2
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "tmp",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 303,
+                        "end_line": 303,
+                        "start_column": 10,
+                        "end_column": 10,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "tmp",
+                      "guid": "083b25d6-4505-43ab-a27c-65a94d78a34d"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "B",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 303,
+                        "end_line": 303,
+                        "start_column": 10,
+                        "end_column": 10,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "B",
+                      "guid": "87622695-a5b2-4805-b65a-1e3eec249cb9"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "assign_303_8",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = __inp",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 303,
+                        "end_line": 303,
+                        "start_column": 10,
+                        "end_column": 10,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "label": "assign_303_8",
+                      "in_connectors": {
+                        "__inp": null
+                      },
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "7a53ad9d-e0e9-4d13-8db6-1a2dc4b9b5e1"
+                    },
+                    "id": 2,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "tmp",
+                          "debuginfo": null,
+                          "guid": "f2fc6d8d-cf30-4e04-b74a-be99d624913d",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": null,
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "2",
+                    "dst_connector": "__inp",
+                    "src_connector": null
+                  },
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "B",
+                          "debuginfo": null,
+                          "guid": "6e480dbd-abb8-4198-85af-044b20ef5e19",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "2",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "bec2172a-2cd9-46aa-b210-980db9a31fe7"
+                }
+              }
+            ],
+            "edges": [
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "35d13f95-7f3c-47c2-8000-583df765a486"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "0",
+                "dst": "1"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "8c462c0e-d994-4688-a018-531845250b1f"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "1",
+                "dst": "2"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "958175bb-391a-4266-b7cb-d136cd9d0729"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "2",
+                "dst": "3"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "bd0a678d-4d73-4c34-af28-043b7c891108"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "3",
+                "dst": "4"
+              }
+            ],
+            "collapsed": false,
+            "label": "if_301_body",
+            "id": null,
+            "cfg_list_id": 3,
+            "start_block": null
+          }
+        ],
+        [
+          null,
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "1183ab50-fc54-43ff-a3c1-a68da5ae0b5a"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "else_301",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "ea080878-d7d7-4b50-aec9-3e48fb0259fd"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "slice_A_305",
+                "id": 1,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "A",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 16,
+                        "end_column": 16,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "A",
+                      "guid": "2e29f5a4-7208-42c4-b1b4-055887231012"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp5",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 16,
+                        "end_column": 16,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp5",
+                      "guid": "e070dd84-18e7-4cce-a72b-515bcdaef810"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "other_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "A",
+                          "debuginfo": null,
+                          "guid": "ace28ee4-aba1-4092-91c1-357d5acf2e46",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": null
+                  }
+                ],
+                "attributes": {
+                  "guid": "ce192a12-acaf-4993-872b-797530641201"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "BinOp_305",
+                "id": 2,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1,
+                    2
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp5",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp5",
+                      "guid": "a2c57b48-6e76-4030-b092-de449ade38f6"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "_Add_",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = (dace.float64(__in1) + dace.float64(1))",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "label": "_Add_",
+                      "in_connectors": {
+                        "__in1": null
+                      },
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "bdbc40e9-2d21-49a2-9785-82cead9fc334"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp6",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp6",
+                      "guid": "13575399-e1eb-4ef3-b4cb-fd003261045f"
+                    },
+                    "id": 2,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp5",
+                          "debuginfo": null,
+                          "guid": "0c56cf86-9f26-46fb-a5da-702c4b511b2a",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": null,
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": "__in1",
+                    "src_connector": null
+                  },
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp6",
+                          "debuginfo": null,
+                          "guid": "536c253a-79c3-4436-a5e8-5bad0287145e",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "1",
+                    "dst": "2",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "61735b2d-57e4-4f53-9330-ec3d9eb7f46f"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "assign_305_8",
+                "id": 3,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1,
+                    2
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp6",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "__tmp6",
+                      "guid": "53c0bc50-743d-4b83-b664-fba8e57718a2"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "tmp",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "tmp",
+                      "guid": "acdc7ae7-a651-43d5-a3ac-44442e41ab2a"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "assign_305_8",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = __inp",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 305,
+                        "end_line": 305,
+                        "start_column": 21,
+                        "end_column": 21,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "label": "assign_305_8",
+                      "in_connectors": {
+                        "__inp": null
+                      },
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "d291b0d3-74b5-4df7-bd99-b5eeda9c537a"
+                    },
+                    "id": 2,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp6",
+                          "debuginfo": null,
+                          "guid": "091ef9f0-15a2-47aa-9201-966c1846db55",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": null,
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "2",
+                    "dst_connector": "__inp",
+                    "src_connector": null
+                  },
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "tmp",
+                          "debuginfo": null,
+                          "guid": "cfc190a4-747d-4150-abe7-0cff28a1b621",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "2",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "bf8dbb04-08d2-4958-9d72-4043e2893315"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "assign_306_8",
+                "id": 4,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1,
+                    2
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "tmp",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 306,
+                        "end_line": 306,
+                        "start_column": 10,
+                        "end_column": 10,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "tmp",
+                      "guid": "c0257f56-0fe2-429a-bdec-df70a6967290"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "B",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 306,
+                        "end_line": 306,
+                        "start_column": 10,
+                        "end_column": 10,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "data": "B",
+                      "guid": "2dad21bf-8e7a-450c-b44e-e2e6657e51b2"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "assign_306_8",
+                    "attributes": {
+                      "code": {
+                        "string_data": "__out = __inp",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 306,
+                        "end_line": 306,
+                        "start_column": 10,
+                        "end_column": 10,
+                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      },
+                      "label": "assign_306_8",
+                      "in_connectors": {
+                        "__inp": null
+                      },
+                      "out_connectors": {
+                        "__out": null
+                      },
+                      "guid": "ad1e4819-3e60-4a37-933a-8d7fa8af0d07"
+                    },
+                    "id": 2,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "tmp",
+                          "debuginfo": null,
+                          "guid": "89204758-bddd-46e2-bb66-30fe8db60f5c",
+                          "src_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "dst_subset": null,
+                          "is_data_src": true,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "2",
+                    "dst_connector": "__inp",
+                    "src_connector": null
+                  },
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "B",
+                          "debuginfo": null,
+                          "guid": "ba4364f9-ada0-43b6-a76a-2fdfd786cbe8",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "2",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": "__out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "ea4cfaff-6c2c-46b5-862b-c598f413723a"
+                }
+              }
+            ],
+            "edges": [
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "f1ad365e-7eaa-49e1-a6a7-ff7778bae50d"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "0",
+                "dst": "1"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "baf0a6b5-4de9-45e6-a972-bf35e250c410"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "1",
+                "dst": "2"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "c9b8ec3b-b564-4246-8c41-a97675b57996"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "2",
+                "dst": "3"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "6d0aac2b-6d8d-415f-ac8a-723a0a571dfb"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "3",
+                "dst": "4"
+              }
+            ],
+            "collapsed": false,
+            "label": "if_301_else_305",
+            "id": null,
+            "cfg_list_id": 4,
+            "start_block": null
+          }
+        ]
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "d447c2a1-f4bc-40ef-be9f-559d665bb438"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "dda300d8-2ddc-4f07-96dc-abe6c9d0848a"
+          },
+          "label": ""
+        }
+      },
+      "src": "1",
+      "dst": "2"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "c98a94ee-ea33-480c-a07e-04735f54c9bd"
+          },
+          "label": ""
+        }
+      },
+      "src": "2",
+      "dst": "3"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

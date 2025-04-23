@@ -1,0 +1,60 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "preparseer",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 124,
+      "end_line": 126,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/python_frontend/preparse_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "c1d9833b-7554-4d6e-ab9d-9cf5bf53ae22",
+    "hash": "ef3cbaf2b104ae151c1b0079ee43c43e26b4c5de7f72f507937c5a4ad32f3f5e"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "6a1ea92b-215a-4eff-bc86-63ad81df63a1",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

@@ -1,0 +1,240 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "inlining_nested_squeezed",
+    "arg_names": [
+      "c",
+      "d"
+    ],
+    "_arrays": {
+      "c": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "i + 2",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "shape": [
+            "i + 2"
+          ],
+          "debuginfo": null
+        }
+      },
+      "d": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "3"
+          ],
+          "total_size": "3*i + 4",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "shape": [
+            "i + 2"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 365,
+      "end_line": 367,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/inlining_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "463e1c09-b6b3-4701-a450-53751ab7693b",
+    "hash": "8feb3404ddaf085d1f35be6d25facd6f95f3064838b819db9aff1f73410ac01e"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "56a314e5-5717-42c6-83fd-e84b0a849c65",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "assign_367_4",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "c",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 367,
+              "end_line": 367,
+              "start_column": 11,
+              "end_column": 11,
+              "filename": "/home/beates/Desktop/dace/tests/inlining_test.py"
+            },
+            "data": "c",
+            "guid": "dadeed8c-79fc-4495-b57e-2a5e9a9a7a1b"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "d",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 367,
+              "end_line": 367,
+              "start_column": 11,
+              "end_column": 11,
+              "filename": "/home/beates/Desktop/dace/tests/inlining_test.py"
+            },
+            "data": "d",
+            "guid": "16d9fa42-04d5-4877-9fd1-8fa68b6e82ab"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "i + 2",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "i + 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "other_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "i + 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "d",
+                "debuginfo": null,
+                "guid": "85dae739-d72d-4183-afee-5c25320f09aa",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "i + 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "i + 1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "i + 2"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "1",
+          "dst_connector": null,
+          "src_connector": null
+        }
+      ],
+      "attributes": {
+        "guid": "a89bee1c-e232-4726-b938-f0d7da51dc5f",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "589487be-cea6-4a44-a16f-8d756e851c1d"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 3,
+  "start_block": 0
+}

@@ -1,0 +1,34 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "dace_program_very_unique_program_321",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "791a7b86-b164-44b7-9a01-7bc89a42a973",
+    "hash": "2df813d7d73aebbc70352eada0b595edeffe704c63d760644cb462fc1d6a2271"
+  },
+  "nodes": [],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

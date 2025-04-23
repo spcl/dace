@@ -1,0 +1,77 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "constant_propagation_nested",
+    "symbols": {
+      "i": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "150119a9-6073-4153-b6b4-dad9ac62d725",
+    "hash": "f14ee5b1c1d82af0c455c7ac029136af0d509059a1849c23b40de08f248a0683"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "block",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0
+        ]
+      },
+      "nodes": [
+        {
+          "type": "Tasklet",
+          "label": "doprint",
+          "attributes": {
+            "code": {
+              "string_data": "printf('%d\\n', i)",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 1,
+              "end_line": 1,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "skipped"
+            },
+            "label": "doprint",
+            "guid": "098ac0a6-3aa8-45fc-9711-b6e07f1240d9"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [],
+      "attributes": {
+        "guid": "6024176c-bffc-4bb9-b530-19e54abaa1fb"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": null
+}

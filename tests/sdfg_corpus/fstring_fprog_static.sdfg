@@ -1,0 +1,117 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "fstring_fprog_static",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 9,
+      "end_line": 12,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/python_frontend/fstring_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "e9ef6703-71d4-4d5e-be7b-6c35ab6508ae",
+    "hash": "0293832647000f7146dc7ba0d3ca37a11533a6149fc60a4e7e3a7dede2562c5e"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "4d8cc5e6-d6e6-423f-9c81-3dcf68a756b0",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "with_11",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0
+        ]
+      },
+      "nodes": [
+        {
+          "type": "Tasklet",
+          "label": "fstring_test_11",
+          "attributes": {
+            "code": {
+              "string_data": "printf('hi 5\\n')",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 11,
+              "end_line": 12,
+              "start_column": 4,
+              "end_column": 8,
+              "filename": "/home/beates/Desktop/dace/tests/python_frontend/fstring_test.py"
+            },
+            "label": "fstring_test_11",
+            "guid": "cd758116-a71a-4501-b684-0555d7005865"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [],
+      "attributes": {
+        "guid": "d186bd54-223c-4ccf-bb36-e9277a8620e9",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "cb24541d-b25b-42a7-806a-83122bc5761e"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

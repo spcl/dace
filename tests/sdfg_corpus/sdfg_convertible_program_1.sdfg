@@ -1,0 +1,112 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "sdfg_convertible_program",
+    "_arrays": {
+      "arr": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "10",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "10"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "cd124357-c6e6-4c51-ad5f-24df455a7e5a",
+    "hash": "becc2f68568984687bd3c437566ccd027311a92c82797e8fa61ff96095e9bc57"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "852faddf-7765-403a-b0c5-117a334dce97"
+      }
+    },
+    {
+      "type": "FunctionCallRegion",
+      "attributes": {
+        "debuginfo": null,
+        "guid": "7094fbd2-dca7-4fce-89f0-afcfb4699e03"
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "init",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "2077c75f-9011-4c30-8e53-8e8fde14bf82"
+          }
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "sdfg_convertible_test_program2_82",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": 0
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "ddc3b530-0afc-4951-a19f-0c6bd70dbc43"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

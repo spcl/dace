@@ -1,0 +1,397 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "loops_branch_in_for",
+    "arg_names": [
+      "cond"
+    ],
+    "_arrays": {
+      "cond": {
+        "type": "Scalar",
+        "attributes": {
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 472,
+      "end_line": 478,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/python_frontend/loops_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "d8e870fa-8b6c-4814-a5a6-f287eb774329",
+    "hash": "ebb668cbaf5ec2994efa3dc824dd71ee4737203679de36705df1da98e7fa478d"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "275aa2e6-f1b6-46ec-902d-6994b66a75e3",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "LoopRegion",
+      "attributes": {
+        "update_statement": {
+          "string_data": "i = (i + 1)",
+          "language": "Python"
+        },
+        "init_statement": {
+          "string_data": "i = 0",
+          "language": "Python"
+        },
+        "loop_condition": {
+          "string_data": "(i < 10)",
+          "language": "Python"
+        },
+        "loop_variable": "i",
+        "guid": "bc319ec3-81dc-4ab0-8197-66ca5ec57e7e",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "for_474_474",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "99c15f8d-282e-4fa4-b46e-1b8151a1bb74"
+          }
+        },
+        {
+          "type": "ConditionalBlock",
+          "attributes": {
+            "guid": "5562a2c5-efd6-4e00-b60d-4f5e85131abd"
+          },
+          "nodes": [
+            {
+              "type": "ControlFlowRegion",
+              "attributes": {
+                "guid": "00d55865-eddb-41d9-8947-df77245a0b5e"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "if_475",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "c3ae5a33-1147-4f12-b705-8912c5fbdc13"
+                  }
+                },
+                {
+                  "type": "BreakBlock",
+                  "collapsed": false,
+                  "label": "break_476",
+                  "id": 1,
+                  "attributes": {
+                    "guid": "0f352280-ee70-429e-a2d3-e98957d6a2a2"
+                  },
+                  "nodes": [],
+                  "edges": []
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "assignments": {
+                          "__dace_did_break_for_474": "1"
+                        },
+                        "guid": "6920552a-040b-46a5-acb0-9c5ae0240c6d"
+                      },
+                      "label": "__dace_did_break_for_474=1"
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                }
+              ],
+              "collapsed": false,
+              "label": "if_475_body",
+              "id": 0,
+              "cfg_list_id": 3,
+              "start_block": null
+            },
+            {
+              "type": "ControlFlowRegion",
+              "attributes": {
+                "guid": "18d2b1d5-216a-4ce6-9b0e-0ef426ee87eb"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "else_475",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "d9aa0494-7930-454d-80fb-00e8bfbaccdc"
+                  }
+                },
+                {
+                  "type": "ContinueBlock",
+                  "collapsed": false,
+                  "label": "continue_478",
+                  "id": 1,
+                  "attributes": {
+                    "guid": "bf1b7ee1-5ea1-4c00-bebf-b1217bc846c6"
+                  },
+                  "nodes": [],
+                  "edges": []
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "4437b584-a363-499f-8572-8a882f98d172"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                }
+              ],
+              "collapsed": false,
+              "label": "if_475_else_478",
+              "id": 1,
+              "cfg_list_id": 4,
+              "start_block": null
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "if_475",
+          "id": 1,
+          "cfg_list_id": 2,
+          "start_block": null,
+          "branches": [
+            [
+              {
+                "string_data": "(cond > 0)",
+                "language": "Python"
+              },
+              {
+                "type": "ControlFlowRegion",
+                "attributes": {
+                  "guid": "00d55865-eddb-41d9-8947-df77245a0b5e"
+                },
+                "nodes": [
+                  {
+                    "type": "SDFGState",
+                    "label": "if_475",
+                    "id": 0,
+                    "collapsed": false,
+                    "scope_dict": {
+                      "-1": []
+                    },
+                    "nodes": [],
+                    "edges": [],
+                    "attributes": {
+                      "guid": "c3ae5a33-1147-4f12-b705-8912c5fbdc13"
+                    }
+                  },
+                  {
+                    "type": "BreakBlock",
+                    "collapsed": false,
+                    "label": "break_476",
+                    "id": 1,
+                    "attributes": {
+                      "guid": "0f352280-ee70-429e-a2d3-e98957d6a2a2"
+                    },
+                    "nodes": [],
+                    "edges": []
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "Edge",
+                    "attributes": {
+                      "data": {
+                        "type": "InterstateEdge",
+                        "attributes": {
+                          "assignments": {
+                            "__dace_did_break_for_474": "1"
+                          },
+                          "guid": "6920552a-040b-46a5-acb0-9c5ae0240c6d"
+                        },
+                        "label": "__dace_did_break_for_474=1"
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1"
+                  }
+                ],
+                "collapsed": false,
+                "label": "if_475_body",
+                "id": null,
+                "cfg_list_id": 3,
+                "start_block": null
+              }
+            ],
+            [
+              null,
+              {
+                "type": "ControlFlowRegion",
+                "attributes": {
+                  "guid": "18d2b1d5-216a-4ce6-9b0e-0ef426ee87eb"
+                },
+                "nodes": [
+                  {
+                    "type": "SDFGState",
+                    "label": "else_475",
+                    "id": 0,
+                    "collapsed": false,
+                    "scope_dict": {
+                      "-1": []
+                    },
+                    "nodes": [],
+                    "edges": [],
+                    "attributes": {
+                      "guid": "d9aa0494-7930-454d-80fb-00e8bfbaccdc"
+                    }
+                  },
+                  {
+                    "type": "ContinueBlock",
+                    "collapsed": false,
+                    "label": "continue_478",
+                    "id": 1,
+                    "attributes": {
+                      "guid": "bf1b7ee1-5ea1-4c00-bebf-b1217bc846c6"
+                    },
+                    "nodes": [],
+                    "edges": []
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "Edge",
+                    "attributes": {
+                      "data": {
+                        "type": "InterstateEdge",
+                        "attributes": {
+                          "guid": "4437b584-a363-499f-8572-8a882f98d172"
+                        },
+                        "label": ""
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1"
+                  }
+                ],
+                "collapsed": false,
+                "label": "if_475_else_478",
+                "id": null,
+                "cfg_list_id": 4,
+                "start_block": null
+              }
+            ]
+          ]
+        }
+      ],
+      "edges": [
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "e8cd8941-6164-4e2f-add9-c6e2801512c0"
+              },
+              "label": ""
+            }
+          },
+          "src": "0",
+          "dst": "1"
+        }
+      ],
+      "collapsed": false,
+      "label": "for_474",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": 0
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "d24289b2-0b8c-4571-a8c1-aa485432d258"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

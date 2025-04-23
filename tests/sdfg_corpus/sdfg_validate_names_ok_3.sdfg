@@ -1,0 +1,49 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "sdfg_validate_names_ok",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "091e54aa-6ede-4c8d-9fb1-caf15ce9de38",
+    "hash": "51b148ddd4934c9318e806f04c3d8629817067e8ea82db6810c012488a092f1b"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "not ok",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "ae8ed6d6-818d-4b5d-986e-b468ac5b2cc5"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

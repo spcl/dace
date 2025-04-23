@@ -1,0 +1,112 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "sdfg_convertible_program2",
+    "_arrays": {
+      "arr": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "10",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "10"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "5374c553-2086-4d93-aa72-1add64349047",
+    "hash": "985f4ebab686adaee0c77165e61ef4f32106a217ec4898f444298dca0d4e131a"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "e34e5c54-c5f9-4a47-b57e-fae984603ae9"
+      }
+    },
+    {
+      "type": "FunctionCallRegion",
+      "attributes": {
+        "debuginfo": null,
+        "guid": "21eef702-cee9-4230-b758-13cbd4267be0"
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "init",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "8483a19b-3202-4751-8585-5f007ccc4b57"
+          }
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "AConvertible_75",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": 0
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "0bc6df94-54f8-4536-a9f9-40dd53634643"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

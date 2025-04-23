@@ -1,0 +1,77 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "prune_connectors_isolated_sdfg",
+    "symbols": {
+      "i": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "b6ad9991-39f2-4f3e-8371-fa380dfb4ecf",
+    "hash": "189d4369cc9841d1c0506d1c9f4f8b2b2e96a4d6a018daee03cbc32ace2abce7"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "isolated",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0
+        ]
+      },
+      "nodes": [
+        {
+          "type": "Tasklet",
+          "label": "isolated",
+          "attributes": {
+            "code": {
+              "string_data": "static std::mutex mutex;\nstd::unique_lock<std::mutex> lock(mutex);\nstd::ofstream of(\"prune_connectors_test.txt\", std::ofstream::app);\nof << i << \"\\n\";",
+              "language": "CPP"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 1,
+              "end_line": 1,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "skipped"
+            },
+            "label": "isolated",
+            "guid": "47bb5910-2202-4ce9-87b0-27ceb56a7932"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [],
+      "attributes": {
+        "guid": "3c65cd1e-0bf3-42b5-a6a5-9d18990b72a7"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 3,
+  "start_block": null
+}

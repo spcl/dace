@@ -1,0 +1,451 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "symbol_ssa_branch_subscope_nofission",
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "2",
+          "offset": [
+            "0"
+          ],
+          "shape": [
+            "2"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "2f514cff-4b36-4577-abeb-a48493b6ab2c",
+    "hash": "92e365b357d7ad6f5a2b0ad73762ac72ec50043557272a47df10cd117c05b7a1"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "4c02259c-8501-4770-a278-900e9e1b4007"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "guard_1",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "e40c7b8c-255c-4958-8c58-d347aeb23c08"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "guard_2",
+      "id": 2,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "fef2eb23-ed18-4a36-93bc-5d344e56f7d0"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "right1",
+      "id": 3,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "95d19f95-aa5a-4afb-a233-bf55e28fa2d1"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "right2",
+      "id": 4,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "ac324cc5-fcab-47ca-a4ae-8ade9e7bc294"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "left2",
+      "id": 5,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "c0070ec2-14a9-4ebb-b564-507c1df4f077"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "merge_1",
+      "id": 6,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "01c0757e-3090-4b84-b098-9ecc1f3c89d4"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "merge_2",
+      "id": 7,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "d361b4c7-a955-44a1-baa5-1dc30717a4e7"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "guard_after",
+      "id": 8,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "b4f22a72-f569-48a8-89ef-280fb227444e"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "left_after",
+      "id": 9,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "1c6dad42-48fd-405a-aa25-225e2d1e8df0"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "right_after",
+      "id": 10,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "740a39eb-409c-40dd-bc81-4f1ad5c3a26c"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "merge_after",
+      "id": 11,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "2adb046a-f395-4444-9848-b5face88a623"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "assignments": {
+              "i": "A[0]"
+            },
+            "guid": "91f74c28-9bf3-45e3-90f6-98430a94e600"
+          },
+          "label": "i=A[0]"
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "assignments": {
+              "i": "A[1]"
+            },
+            "condition": {
+              "string_data": "(i > 0)",
+              "language": "Python"
+            },
+            "guid": "710fbd6e-5fa5-41ab-b75c-e4856cf1b359"
+          },
+          "label": "(i > 0); i=A[1]"
+        }
+      },
+      "src": "1",
+      "dst": "2"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(i <= 0)",
+              "language": "Python"
+            },
+            "guid": "54754c63-683f-40d3-83c2-da5a3a8ea71b"
+          },
+          "label": "(i <= 0)"
+        }
+      },
+      "src": "1",
+      "dst": "3"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(i > 0)",
+              "language": "Python"
+            },
+            "guid": "61b13202-4fa8-4d90-8426-0ca5ded82807"
+          },
+          "label": "(i > 0)"
+        }
+      },
+      "src": "2",
+      "dst": "4"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(i <= 0)",
+              "language": "Python"
+            },
+            "guid": "306eeb59-d0bc-49e6-be6d-6127b2264891"
+          },
+          "label": "(i <= 0)"
+        }
+      },
+      "src": "2",
+      "dst": "5"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "9b4ffdab-fbdf-4457-b392-c37d1f25742c"
+          },
+          "label": ""
+        }
+      },
+      "src": "3",
+      "dst": "6"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "4416dc61-bf58-40ff-b758-14f0d4d793df"
+          },
+          "label": ""
+        }
+      },
+      "src": "4",
+      "dst": "7"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "732647c5-0bb2-462f-96de-583d4b880e80"
+          },
+          "label": ""
+        }
+      },
+      "src": "5",
+      "dst": "7"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "6fb752d5-53a2-40bc-b148-848314b69508"
+          },
+          "label": ""
+        }
+      },
+      "src": "7",
+      "dst": "6"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "a5c2505e-718d-40e0-aede-dd8c095f2922"
+          },
+          "label": ""
+        }
+      },
+      "src": "6",
+      "dst": "8"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(i <= 0)",
+              "language": "Python"
+            },
+            "guid": "421f3f39-002e-4710-86e1-ebd5738761ca"
+          },
+          "label": "(i <= 0)"
+        }
+      },
+      "src": "8",
+      "dst": "9"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(i > 0)",
+              "language": "Python"
+            },
+            "guid": "d6f25718-34fa-4985-b115-65234f838b39"
+          },
+          "label": "(i > 0)"
+        }
+      },
+      "src": "8",
+      "dst": "10"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "a95cc7de-08b7-4003-9fc8-6a0f60a116e8"
+          },
+          "label": ""
+        }
+      },
+      "src": "9",
+      "dst": "11"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "87426c0a-7bec-4701-aaeb-05ad24098392"
+          },
+          "label": ""
+        }
+      },
+      "src": "10",
+      "dst": "11"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

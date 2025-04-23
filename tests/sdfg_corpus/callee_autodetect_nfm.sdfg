@@ -1,0 +1,1912 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "callee_autodetect_nfm",
+    "arg_names": [
+      "a"
+    ],
+    "_arrays": {
+      "a": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__return": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 81,
+      "end_line": 83,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "685020a1-dc27-4b71-aec1-1e8cc51076a9",
+    "hash": "222d46e3ddaaa91ac8b09b6dbecead1b480d018b628fd2b880459bd63abafdc3"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "7318ecc4-91a0-4b61-a5fc-416307fed047",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "FunctionCallRegion",
+      "attributes": {
+        "arguments": {
+          "__tmp1": "a"
+        },
+        "debuginfo": null,
+        "guid": "aaa0f03d-65c6-43e5-864e-6d9f8af1893a",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "init",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "a6c079b1-b3cf-4739-8122-b900fd57c574"
+          }
+        },
+        {
+          "type": "SDFGState",
+          "label": "call_callee_autodetect_test_nested_83",
+          "id": 1,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": [
+              0,
+              1,
+              2
+            ]
+          },
+          "nodes": [
+            {
+              "type": "NestedSDFG",
+              "label": "callee_autodetect_test_nested",
+              "attributes": {
+                "sdfg": {
+                  "type": "SDFG",
+                  "attributes": {
+                    "name": "callee_autodetect_test_nested",
+                    "arg_names": [
+                      "a"
+                    ],
+                    "_arrays": {
+                      "__tmp0": {
+                        "type": "Array",
+                        "attributes": {
+                          "strides": [
+                            "1"
+                          ],
+                          "total_size": "20",
+                          "offset": [
+                            "0"
+                          ],
+                          "optional": false,
+                          "dtype": "float64",
+                          "shape": [
+                            "20"
+                          ],
+                          "transient": true,
+                          "debuginfo": null
+                        }
+                      },
+                      "callee_autodetect_test_TestClass_some_method_ret_0": {
+                        "type": "Array",
+                        "attributes": {
+                          "strides": [
+                            "1"
+                          ],
+                          "total_size": "20",
+                          "offset": [
+                            "0"
+                          ],
+                          "optional": false,
+                          "dtype": "float64",
+                          "shape": [
+                            "20"
+                          ],
+                          "transient": true,
+                          "debuginfo": null
+                        }
+                      },
+                      "__return": {
+                        "type": "Array",
+                        "attributes": {
+                          "strides": [
+                            "1"
+                          ],
+                          "total_size": "20",
+                          "offset": [
+                            "0"
+                          ],
+                          "optional": false,
+                          "dtype": "float64",
+                          "shape": [
+                            "20"
+                          ],
+                          "debuginfo": null
+                        }
+                      },
+                      "__tmp1": {
+                        "type": "Array",
+                        "attributes": {
+                          "strides": [
+                            "1"
+                          ],
+                          "total_size": "20",
+                          "offset": [
+                            "0"
+                          ],
+                          "dtype": "float64",
+                          "shape": [
+                            "20"
+                          ],
+                          "debuginfo": null
+                        }
+                      }
+                    },
+                    "global_code": {
+                      "frame": {
+                        "string_data": "",
+                        "language": "CPP"
+                      }
+                    },
+                    "init_code": {
+                      "frame": {
+                        "string_data": "",
+                        "language": "CPP"
+                      }
+                    },
+                    "exit_code": {
+                      "frame": {
+                        "string_data": "",
+                        "language": "CPP"
+                      }
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 78,
+                      "end_line": 79,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                    },
+                    "using_explicit_control_flow": true,
+                    "guid": "6e6aeb02-979c-48bf-a736-31430dd9d82c"
+                  },
+                  "nodes": [
+                    {
+                      "type": "SDFGState",
+                      "label": "init",
+                      "id": 0,
+                      "collapsed": false,
+                      "scope_dict": {
+                        "-1": []
+                      },
+                      "nodes": [],
+                      "edges": [],
+                      "attributes": {
+                        "guid": "38c36f61-ef7f-4cae-8ed1-068df14e5e46",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      }
+                    },
+                    {
+                      "type": "SDFGState",
+                      "label": "BinOp_79",
+                      "id": 1,
+                      "collapsed": false,
+                      "scope_dict": {
+                        "-1": [
+                          0,
+                          3,
+                          4
+                        ],
+                        "0": [
+                          1,
+                          2
+                        ]
+                      },
+                      "nodes": [
+                        {
+                          "type": "MapEntry",
+                          "label": "_Add__map[__i0=0:20]",
+                          "attributes": {
+                            "label": "_Add__map",
+                            "params": [
+                              "__i0"
+                            ],
+                            "range": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "19",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 15,
+                              "end_column": 15,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "in_connectors": {
+                              "IN_a": null
+                            },
+                            "out_connectors": {
+                              "OUT_a": null
+                            },
+                            "guid": "f83c4d12-3c40-4fa7-8726-bbe9657c905d"
+                          },
+                          "id": 0,
+                          "scope_entry": null,
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "Tasklet",
+                          "label": "_Add_",
+                          "attributes": {
+                            "code": {
+                              "string_data": "__out = (__in1 + dace.float64(1))",
+                              "language": "Python"
+                            },
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 15,
+                              "end_column": 15,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "label": "_Add_",
+                            "in_connectors": {
+                              "__in1": null
+                            },
+                            "out_connectors": {
+                              "__out": null
+                            },
+                            "guid": "25ff7417-3947-413b-9695-b70c0dcdfe4f"
+                          },
+                          "id": 1,
+                          "scope_entry": "0",
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "MapExit",
+                          "label": "_Add__map[__i0=0:20]",
+                          "attributes": {
+                            "in_connectors": {
+                              "IN___tmp0": null
+                            },
+                            "out_connectors": {
+                              "OUT___tmp0": null
+                            },
+                            "guid": "4da2bf79-15d5-48b4-8fdc-47e3ebd66e27"
+                          },
+                          "id": 2,
+                          "scope_entry": "0",
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "__tmp1",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 15,
+                              "end_column": 15,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "data": "__tmp1",
+                            "guid": "510d5de3-1bf1-42bb-ab5d-be46ca2231a1"
+                          },
+                          "id": 3,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "__tmp0",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 15,
+                              "end_column": 15,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "data": "__tmp0",
+                            "guid": "45c2731c-73af-4725-88b5-c7adb976d9f7"
+                          },
+                          "id": 4,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        }
+                      ],
+                      "edges": [
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp1",
+                                "debuginfo": null,
+                                "guid": "87f77443-2d83-4d06-b9e2-1c2c44a13c23",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "3",
+                          "dst": "0",
+                          "dst_connector": "IN_a",
+                          "src_connector": null
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp0",
+                                "debuginfo": null,
+                                "guid": "e6b921b5-dedf-4bb2-ad15-79637e3de261",
+                                "src_subset": null,
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": false,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "2",
+                          "dst": "4",
+                          "dst_connector": null,
+                          "src_connector": "OUT___tmp0"
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "1",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp1",
+                                "debuginfo": null,
+                                "guid": "87f77443-2d83-4d06-b9e2-1c2c44a13c23",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "1"
+                              }
+                            }
+                          },
+                          "src": "0",
+                          "dst": "1",
+                          "dst_connector": "__in1",
+                          "src_connector": "OUT_a"
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "1",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp0",
+                                "debuginfo": null,
+                                "guid": "e6b921b5-dedf-4bb2-ad15-79637e3de261",
+                                "src_subset": null,
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": false,
+                                "num_accesses": "1"
+                              }
+                            }
+                          },
+                          "src": "1",
+                          "dst": "2",
+                          "dst_connector": "IN___tmp0",
+                          "src_connector": "__out"
+                        }
+                      ],
+                      "attributes": {
+                        "guid": "b042a82d-c27d-4221-b79d-633150dcb9c6",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      }
+                    },
+                    {
+                      "type": "FunctionCallRegion",
+                      "attributes": {
+                        "arguments": {
+                          "q": "a"
+                        },
+                        "debuginfo": null,
+                        "guid": "b25d95c7-749e-43fb-882c-964a33abc9fa",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      },
+                      "nodes": [
+                        {
+                          "type": "SDFGState",
+                          "label": "init",
+                          "id": 0,
+                          "collapsed": false,
+                          "scope_dict": {
+                            "-1": []
+                          },
+                          "nodes": [],
+                          "edges": [],
+                          "attributes": {
+                            "guid": "412839a7-f3cb-451a-a95c-7c5833601421"
+                          }
+                        },
+                        {
+                          "type": "SDFGState",
+                          "label": "call_callee_autodetect_test_TestClass_some_method_79",
+                          "id": 1,
+                          "collapsed": false,
+                          "scope_dict": {
+                            "-1": [
+                              0,
+                              1,
+                              2
+                            ]
+                          },
+                          "nodes": [
+                            {
+                              "type": "NestedSDFG",
+                              "label": "callee_autodetect_test_TestClass_some_method",
+                              "attributes": {
+                                "sdfg": {
+                                  "type": "SDFG",
+                                  "attributes": {
+                                    "name": "callee_autodetect_test_TestClass_some_method",
+                                    "arg_names": [
+                                      "q"
+                                    ],
+                                    "_arrays": {
+                                      "q": {
+                                        "type": "Array",
+                                        "attributes": {
+                                          "strides": [
+                                            "1"
+                                          ],
+                                          "total_size": "20",
+                                          "offset": [
+                                            "0"
+                                          ],
+                                          "dtype": "float64",
+                                          "shape": [
+                                            "20"
+                                          ],
+                                          "debuginfo": null
+                                        }
+                                      },
+                                      "__return": {
+                                        "type": "Array",
+                                        "attributes": {
+                                          "strides": [
+                                            "1"
+                                          ],
+                                          "total_size": "20",
+                                          "offset": [
+                                            "0"
+                                          ],
+                                          "optional": false,
+                                          "dtype": "float64",
+                                          "shape": [
+                                            "20"
+                                          ],
+                                          "debuginfo": null
+                                        }
+                                      }
+                                    },
+                                    "global_code": {
+                                      "frame": {
+                                        "string_data": "",
+                                        "language": "CPP"
+                                      }
+                                    },
+                                    "init_code": {
+                                      "frame": {
+                                        "string_data": "",
+                                        "language": "CPP"
+                                      }
+                                    },
+                                    "exit_code": {
+                                      "frame": {
+                                        "string_data": "",
+                                        "language": "CPP"
+                                      }
+                                    },
+                                    "debuginfo": {
+                                      "type": "DebugInfo",
+                                      "start_line": 73,
+                                      "end_line": 74,
+                                      "start_column": 0,
+                                      "end_column": 0,
+                                      "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                    },
+                                    "using_explicit_control_flow": true,
+                                    "guid": "86d3fca9-3300-456d-853c-75f8fe746518"
+                                  },
+                                  "nodes": [
+                                    {
+                                      "type": "SDFGState",
+                                      "label": "init",
+                                      "id": 0,
+                                      "collapsed": false,
+                                      "scope_dict": {
+                                        "-1": []
+                                      },
+                                      "nodes": [],
+                                      "edges": [],
+                                      "attributes": {
+                                        "guid": "0f5510a5-950f-4020-94b2-40c13c38b493",
+                                        "executions": "1",
+                                        "dynamic_executions": false
+                                      }
+                                    },
+                                    {
+                                      "type": "SDFGState",
+                                      "label": "BinOp_74",
+                                      "id": 1,
+                                      "collapsed": false,
+                                      "scope_dict": {
+                                        "-1": [
+                                          0,
+                                          3,
+                                          4
+                                        ],
+                                        "0": [
+                                          1,
+                                          2
+                                        ]
+                                      },
+                                      "nodes": [
+                                        {
+                                          "type": "MapEntry",
+                                          "label": "_Mult__map[__i0=0:20]",
+                                          "attributes": {
+                                            "label": "_Mult__map",
+                                            "params": [
+                                              "__i0"
+                                            ],
+                                            "range": {
+                                              "type": "Range",
+                                              "ranges": [
+                                                {
+                                                  "start": "0",
+                                                  "end": "19",
+                                                  "step": "1",
+                                                  "tile": "1"
+                                                }
+                                              ]
+                                            },
+                                            "debuginfo": {
+                                              "type": "DebugInfo",
+                                              "start_line": 74,
+                                              "end_line": 74,
+                                              "start_column": 15,
+                                              "end_column": 15,
+                                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                            },
+                                            "in_connectors": {
+                                              "IN_q": null
+                                            },
+                                            "out_connectors": {
+                                              "OUT_q": null
+                                            },
+                                            "guid": "040e4841-495c-42a4-9589-e94d4d2de20c"
+                                          },
+                                          "id": 0,
+                                          "scope_entry": null,
+                                          "scope_exit": "2"
+                                        },
+                                        {
+                                          "type": "Tasklet",
+                                          "label": "_Mult_",
+                                          "attributes": {
+                                            "code": {
+                                              "string_data": "__out = (__in1 * dace.float64(5))",
+                                              "language": "Python"
+                                            },
+                                            "debuginfo": {
+                                              "type": "DebugInfo",
+                                              "start_line": 74,
+                                              "end_line": 74,
+                                              "start_column": 15,
+                                              "end_column": 15,
+                                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                            },
+                                            "label": "_Mult_",
+                                            "in_connectors": {
+                                              "__in1": null
+                                            },
+                                            "out_connectors": {
+                                              "__out": null
+                                            },
+                                            "guid": "38ae8cf6-5183-4c9a-84c5-f4f9f2666096"
+                                          },
+                                          "id": 1,
+                                          "scope_entry": "0",
+                                          "scope_exit": "2"
+                                        },
+                                        {
+                                          "type": "MapExit",
+                                          "label": "_Mult__map[__i0=0:20]",
+                                          "attributes": {
+                                            "in_connectors": {
+                                              "IN___tmp0": null
+                                            },
+                                            "out_connectors": {
+                                              "OUT___tmp0": null
+                                            },
+                                            "guid": "14debdc6-1085-47c3-bf85-072a19bfa5f2"
+                                          },
+                                          "id": 2,
+                                          "scope_entry": "0",
+                                          "scope_exit": "2"
+                                        },
+                                        {
+                                          "type": "AccessNode",
+                                          "label": "q",
+                                          "attributes": {
+                                            "debuginfo": {
+                                              "type": "DebugInfo",
+                                              "start_line": 74,
+                                              "end_line": 74,
+                                              "start_column": 15,
+                                              "end_column": 15,
+                                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                            },
+                                            "data": "q",
+                                            "guid": "5fc52afe-3ac2-4f96-8832-a2dae189ae64"
+                                          },
+                                          "id": 3,
+                                          "scope_entry": null,
+                                          "scope_exit": null
+                                        },
+                                        {
+                                          "type": "AccessNode",
+                                          "label": "__return",
+                                          "attributes": {
+                                            "debuginfo": {
+                                              "type": "DebugInfo",
+                                              "start_line": 74,
+                                              "end_line": 74,
+                                              "start_column": 15,
+                                              "end_column": 15,
+                                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                            },
+                                            "data": "__return",
+                                            "guid": "01b45c6c-5847-4eeb-9348-2cc88286cf3e"
+                                          },
+                                          "id": 4,
+                                          "scope_entry": null,
+                                          "scope_exit": null
+                                        }
+                                      ],
+                                      "edges": [
+                                        {
+                                          "type": "MultiConnectorEdge",
+                                          "attributes": {
+                                            "data": {
+                                              "type": "Memlet",
+                                              "attributes": {
+                                                "volume": "20",
+                                                "subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "0",
+                                                      "end": "19",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "data": "q",
+                                                "debuginfo": null,
+                                                "guid": "87a6e46b-5fec-40da-b1e0-ff93aff0c6b4",
+                                                "src_subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "0",
+                                                      "end": "19",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "dst_subset": null,
+                                                "is_data_src": true,
+                                                "num_accesses": "20"
+                                              }
+                                            }
+                                          },
+                                          "src": "3",
+                                          "dst": "0",
+                                          "dst_connector": "IN_q",
+                                          "src_connector": null
+                                        },
+                                        {
+                                          "type": "MultiConnectorEdge",
+                                          "attributes": {
+                                            "data": {
+                                              "type": "Memlet",
+                                              "attributes": {
+                                                "volume": "20",
+                                                "subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "0",
+                                                      "end": "19",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "data": "__return",
+                                                "debuginfo": null,
+                                                "guid": "35a1cfab-a6db-4278-b5eb-211cf041404b",
+                                                "src_subset": null,
+                                                "dst_subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "0",
+                                                      "end": "19",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "is_data_src": false,
+                                                "num_accesses": "20"
+                                              }
+                                            }
+                                          },
+                                          "src": "2",
+                                          "dst": "4",
+                                          "dst_connector": null,
+                                          "src_connector": "OUT___tmp0"
+                                        },
+                                        {
+                                          "type": "MultiConnectorEdge",
+                                          "attributes": {
+                                            "data": {
+                                              "type": "Memlet",
+                                              "attributes": {
+                                                "volume": "1",
+                                                "subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "__i0",
+                                                      "end": "__i0",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "data": "q",
+                                                "debuginfo": null,
+                                                "guid": "87a6e46b-5fec-40da-b1e0-ff93aff0c6b4",
+                                                "src_subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "__i0",
+                                                      "end": "__i0",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "dst_subset": null,
+                                                "is_data_src": true,
+                                                "num_accesses": "1"
+                                              }
+                                            }
+                                          },
+                                          "src": "0",
+                                          "dst": "1",
+                                          "dst_connector": "__in1",
+                                          "src_connector": "OUT_q"
+                                        },
+                                        {
+                                          "type": "MultiConnectorEdge",
+                                          "attributes": {
+                                            "data": {
+                                              "type": "Memlet",
+                                              "attributes": {
+                                                "volume": "1",
+                                                "subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "__i0",
+                                                      "end": "__i0",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "data": "__return",
+                                                "debuginfo": null,
+                                                "guid": "35a1cfab-a6db-4278-b5eb-211cf041404b",
+                                                "src_subset": null,
+                                                "dst_subset": {
+                                                  "type": "Range",
+                                                  "ranges": [
+                                                    {
+                                                      "start": "__i0",
+                                                      "end": "__i0",
+                                                      "step": "1",
+                                                      "tile": "1"
+                                                    }
+                                                  ]
+                                                },
+                                                "is_data_src": false,
+                                                "num_accesses": "1"
+                                              }
+                                            }
+                                          },
+                                          "src": "1",
+                                          "dst": "2",
+                                          "dst_connector": "IN___tmp0",
+                                          "src_connector": "__out"
+                                        }
+                                      ],
+                                      "attributes": {
+                                        "guid": "8cf3bc7b-02a2-4c50-bcb9-0b30e3b7852c",
+                                        "executions": "1",
+                                        "dynamic_executions": false
+                                      }
+                                    }
+                                  ],
+                                  "edges": [
+                                    {
+                                      "type": "Edge",
+                                      "attributes": {
+                                        "data": {
+                                          "type": "InterstateEdge",
+                                          "attributes": {
+                                            "guid": "cfbb7868-f811-4d25-8c37-1e333989aacf"
+                                          },
+                                          "label": ""
+                                        }
+                                      },
+                                      "src": "0",
+                                      "dst": "1"
+                                    }
+                                  ],
+                                  "collapsed": false,
+                                  "label": "",
+                                  "id": null,
+                                  "cfg_list_id": 4,
+                                  "start_block": 0
+                                },
+                                "debuginfo": {
+                                  "type": "DebugInfo",
+                                  "start_line": 79,
+                                  "end_line": 79,
+                                  "start_column": 35,
+                                  "end_column": 35,
+                                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                },
+                                "label": "callee_autodetect_test_TestClass_some_method",
+                                "in_connectors": {
+                                  "q": null
+                                },
+                                "out_connectors": {
+                                  "__return": null
+                                },
+                                "guid": "5b207f3e-41a6-4491-8086-2c690ac71c16"
+                              },
+                              "id": 0,
+                              "scope_entry": null,
+                              "scope_exit": null
+                            },
+                            {
+                              "type": "AccessNode",
+                              "label": "__tmp1",
+                              "attributes": {
+                                "debuginfo": {
+                                  "type": "DebugInfo",
+                                  "start_line": 79,
+                                  "end_line": 79,
+                                  "start_column": 35,
+                                  "end_column": 35,
+                                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                },
+                                "data": "__tmp1",
+                                "guid": "923fe0d4-d8e4-4e01-85d8-91f1c7de1c9c"
+                              },
+                              "id": 1,
+                              "scope_entry": null,
+                              "scope_exit": null
+                            },
+                            {
+                              "type": "AccessNode",
+                              "label": "callee_autodetect_test_TestClass_some_method_ret_0",
+                              "attributes": {
+                                "debuginfo": {
+                                  "type": "DebugInfo",
+                                  "start_line": 79,
+                                  "end_line": 79,
+                                  "start_column": 35,
+                                  "end_column": 35,
+                                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                                },
+                                "data": "callee_autodetect_test_TestClass_some_method_ret_0",
+                                "guid": "a0dcd83c-498a-4623-9a58-9183a8133d18"
+                              },
+                              "id": 2,
+                              "scope_entry": null,
+                              "scope_exit": null
+                            }
+                          ],
+                          "edges": [
+                            {
+                              "type": "MultiConnectorEdge",
+                              "attributes": {
+                                "data": {
+                                  "type": "Memlet",
+                                  "attributes": {
+                                    "volume": "20",
+                                    "subset": {
+                                      "type": "Range",
+                                      "ranges": [
+                                        {
+                                          "start": "0",
+                                          "end": "19",
+                                          "step": "1",
+                                          "tile": "1"
+                                        }
+                                      ]
+                                    },
+                                    "data": "__tmp1",
+                                    "debuginfo": null,
+                                    "guid": "04e19e43-bfcd-4744-ba30-b356b4b9747e",
+                                    "src_subset": {
+                                      "type": "Range",
+                                      "ranges": [
+                                        {
+                                          "start": "0",
+                                          "end": "19",
+                                          "step": "1",
+                                          "tile": "1"
+                                        }
+                                      ]
+                                    },
+                                    "dst_subset": null,
+                                    "is_data_src": true,
+                                    "num_accesses": "20"
+                                  }
+                                }
+                              },
+                              "src": "1",
+                              "dst": "0",
+                              "dst_connector": "q",
+                              "src_connector": null
+                            },
+                            {
+                              "type": "MultiConnectorEdge",
+                              "attributes": {
+                                "data": {
+                                  "type": "Memlet",
+                                  "attributes": {
+                                    "volume": "20",
+                                    "subset": {
+                                      "type": "Range",
+                                      "ranges": [
+                                        {
+                                          "start": "0",
+                                          "end": "19",
+                                          "step": "1",
+                                          "tile": "1"
+                                        }
+                                      ]
+                                    },
+                                    "data": "callee_autodetect_test_TestClass_some_method_ret_0",
+                                    "debuginfo": null,
+                                    "guid": "acc2046d-f484-4e18-a9d8-680ea9562612",
+                                    "src_subset": null,
+                                    "dst_subset": {
+                                      "type": "Range",
+                                      "ranges": [
+                                        {
+                                          "start": "0",
+                                          "end": "19",
+                                          "step": "1",
+                                          "tile": "1"
+                                        }
+                                      ]
+                                    },
+                                    "is_data_src": false,
+                                    "num_accesses": "20"
+                                  }
+                                }
+                              },
+                              "src": "0",
+                              "dst": "2",
+                              "dst_connector": null,
+                              "src_connector": "__return"
+                            }
+                          ],
+                          "attributes": {
+                            "guid": "9a5e6b38-d948-4195-b272-bf2b24e76097"
+                          }
+                        }
+                      ],
+                      "edges": [
+                        {
+                          "type": "Edge",
+                          "attributes": {
+                            "data": {
+                              "type": "InterstateEdge",
+                              "attributes": {
+                                "guid": "52131ace-7a3c-4125-8668-f14ef71efc7d"
+                              },
+                              "label": ""
+                            }
+                          },
+                          "src": "0",
+                          "dst": "1"
+                        }
+                      ],
+                      "collapsed": false,
+                      "label": "callee_autodetect_test_TestClass_some_method_79",
+                      "id": 2,
+                      "cfg_list_id": 3,
+                      "start_block": 0
+                    },
+                    {
+                      "type": "SDFGState",
+                      "label": "BinOp_79_0",
+                      "id": 3,
+                      "collapsed": false,
+                      "scope_dict": {
+                        "-1": [
+                          0,
+                          3,
+                          4,
+                          5
+                        ],
+                        "0": [
+                          1,
+                          2
+                        ]
+                      },
+                      "nodes": [
+                        {
+                          "type": "MapEntry",
+                          "label": "_Add__map[__i0=0:20]",
+                          "attributes": {
+                            "label": "_Add__map",
+                            "params": [
+                              "__i0"
+                            ],
+                            "range": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "19",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 35,
+                              "end_column": 35,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "in_connectors": {
+                              "IN___tmp0": null,
+                              "IN_callee_autodetect_test_TestClass_some_method_ret_0": null
+                            },
+                            "out_connectors": {
+                              "OUT___tmp0": null,
+                              "OUT_callee_autodetect_test_TestClass_some_method_ret_0": null
+                            },
+                            "guid": "342cff3f-5927-44fa-af5b-c2b64cf0e9a0"
+                          },
+                          "id": 0,
+                          "scope_entry": null,
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "Tasklet",
+                          "label": "_Add_",
+                          "attributes": {
+                            "code": {
+                              "string_data": "__out = (__in1 + __in2)",
+                              "language": "Python"
+                            },
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 35,
+                              "end_column": 35,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "label": "_Add_",
+                            "in_connectors": {
+                              "__in1": null,
+                              "__in2": null
+                            },
+                            "out_connectors": {
+                              "__out": null
+                            },
+                            "guid": "8adc92bc-eba4-46dd-85bd-2fd297b6924f"
+                          },
+                          "id": 1,
+                          "scope_entry": "0",
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "MapExit",
+                          "label": "_Add__map[__i0=0:20]",
+                          "attributes": {
+                            "in_connectors": {
+                              "IN___tmp1": null
+                            },
+                            "out_connectors": {
+                              "OUT___tmp1": null
+                            },
+                            "guid": "4a6fadf6-2bc1-4bec-8dc7-42699e91d394"
+                          },
+                          "id": 2,
+                          "scope_entry": "0",
+                          "scope_exit": "2"
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "__tmp0",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 35,
+                              "end_column": 35,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "data": "__tmp0",
+                            "guid": "0c2840b2-f24a-4fb5-bca9-ca818f060c43"
+                          },
+                          "id": 3,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "callee_autodetect_test_TestClass_some_method_ret_0",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 35,
+                              "end_column": 35,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "data": "callee_autodetect_test_TestClass_some_method_ret_0",
+                            "guid": "b2af0e61-7f87-4c18-b61c-b0c3f04adac5"
+                          },
+                          "id": 4,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        },
+                        {
+                          "type": "AccessNode",
+                          "label": "__return",
+                          "attributes": {
+                            "debuginfo": {
+                              "type": "DebugInfo",
+                              "start_line": 79,
+                              "end_line": 79,
+                              "start_column": 35,
+                              "end_column": 35,
+                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                            },
+                            "data": "__return",
+                            "guid": "8e854816-3cf5-4299-ac47-91fe2427aa79"
+                          },
+                          "id": 5,
+                          "scope_entry": null,
+                          "scope_exit": null
+                        }
+                      ],
+                      "edges": [
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp0",
+                                "debuginfo": null,
+                                "guid": "a88070df-ed54-4905-adfe-1aa8ac1d18d9",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "3",
+                          "dst": "0",
+                          "dst_connector": "IN___tmp0",
+                          "src_connector": null
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "callee_autodetect_test_TestClass_some_method_ret_0",
+                                "debuginfo": null,
+                                "guid": "e1307afe-45f3-4a1f-a516-1e9b83f3883e",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "4",
+                          "dst": "0",
+                          "dst_connector": "IN_callee_autodetect_test_TestClass_some_method_ret_0",
+                          "src_connector": null
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "1",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__tmp0",
+                                "debuginfo": null,
+                                "guid": "a88070df-ed54-4905-adfe-1aa8ac1d18d9",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "1"
+                              }
+                            }
+                          },
+                          "src": "0",
+                          "dst": "1",
+                          "dst_connector": "__in1",
+                          "src_connector": "OUT___tmp0"
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "20",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__return",
+                                "debuginfo": null,
+                                "guid": "9278f8a2-d82f-4fd0-9a37-ce51144ddfab",
+                                "src_subset": null,
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "0",
+                                      "end": "19",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": false,
+                                "num_accesses": "20"
+                              }
+                            }
+                          },
+                          "src": "2",
+                          "dst": "5",
+                          "dst_connector": null,
+                          "src_connector": "OUT___tmp1"
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "1",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "callee_autodetect_test_TestClass_some_method_ret_0",
+                                "debuginfo": null,
+                                "guid": "e1307afe-45f3-4a1f-a516-1e9b83f3883e",
+                                "src_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "dst_subset": null,
+                                "is_data_src": true,
+                                "num_accesses": "1"
+                              }
+                            }
+                          },
+                          "src": "0",
+                          "dst": "1",
+                          "dst_connector": "__in2",
+                          "src_connector": "OUT_callee_autodetect_test_TestClass_some_method_ret_0"
+                        },
+                        {
+                          "type": "MultiConnectorEdge",
+                          "attributes": {
+                            "data": {
+                              "type": "Memlet",
+                              "attributes": {
+                                "volume": "1",
+                                "subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "data": "__return",
+                                "debuginfo": null,
+                                "guid": "9278f8a2-d82f-4fd0-9a37-ce51144ddfab",
+                                "src_subset": null,
+                                "dst_subset": {
+                                  "type": "Range",
+                                  "ranges": [
+                                    {
+                                      "start": "__i0",
+                                      "end": "__i0",
+                                      "step": "1",
+                                      "tile": "1"
+                                    }
+                                  ]
+                                },
+                                "is_data_src": false,
+                                "num_accesses": "1"
+                              }
+                            }
+                          },
+                          "src": "1",
+                          "dst": "2",
+                          "dst_connector": "IN___tmp1",
+                          "src_connector": "__out"
+                        }
+                      ],
+                      "attributes": {
+                        "guid": "b5e46d63-74ff-4c2a-bdd7-ae156cdf312b",
+                        "executions": "1",
+                        "dynamic_executions": false
+                      }
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "Edge",
+                      "attributes": {
+                        "data": {
+                          "type": "InterstateEdge",
+                          "attributes": {
+                            "guid": "62a0ad48-29c3-4131-8490-f5ffde38b3ee"
+                          },
+                          "label": ""
+                        }
+                      },
+                      "src": "0",
+                      "dst": "1"
+                    },
+                    {
+                      "type": "Edge",
+                      "attributes": {
+                        "data": {
+                          "type": "InterstateEdge",
+                          "attributes": {
+                            "guid": "9485201f-967b-400b-93c9-403b67055ee7"
+                          },
+                          "label": ""
+                        }
+                      },
+                      "src": "1",
+                      "dst": "2"
+                    },
+                    {
+                      "type": "Edge",
+                      "attributes": {
+                        "data": {
+                          "type": "InterstateEdge",
+                          "attributes": {
+                            "guid": "b02da64c-ebf4-4a95-b80f-385d23225c30"
+                          },
+                          "label": ""
+                        }
+                      },
+                      "src": "2",
+                      "dst": "3"
+                    }
+                  ],
+                  "collapsed": false,
+                  "label": "",
+                  "id": null,
+                  "cfg_list_id": 2,
+                  "start_block": 0
+                },
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 83,
+                  "end_line": 83,
+                  "start_column": 18,
+                  "end_column": 18,
+                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                },
+                "label": "callee_autodetect_test_nested",
+                "in_connectors": {
+                  "__tmp1": null
+                },
+                "out_connectors": {
+                  "__return": null
+                },
+                "guid": "7b341638-3b8f-46df-b157-ea4a74ac0022"
+              },
+              "id": 0,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "a",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 83,
+                  "end_line": 83,
+                  "start_column": 18,
+                  "end_column": 18,
+                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                },
+                "data": "a",
+                "guid": "3fae4e40-b957-4a63-aae7-ba4df00e136d"
+              },
+              "id": 1,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "__return",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 83,
+                  "end_line": 83,
+                  "start_column": 18,
+                  "end_column": 18,
+                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/callee_autodetect_test.py"
+                },
+                "data": "__return",
+                "guid": "b5185398-c0be-4350-b78e-66028f349fdd"
+              },
+              "id": 2,
+              "scope_entry": null,
+              "scope_exit": null
+            }
+          ],
+          "edges": [
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "20",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "a",
+                    "debuginfo": null,
+                    "guid": "2baef05a-bfcc-4eea-800f-cc39f9621d93",
+                    "src_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "dst_subset": null,
+                    "is_data_src": true,
+                    "num_accesses": "20"
+                  }
+                }
+              },
+              "src": "1",
+              "dst": "0",
+              "dst_connector": "__tmp1",
+              "src_connector": null
+            },
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "20",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "__return",
+                    "debuginfo": null,
+                    "guid": "75c9b7bc-cc58-4e35-89e0-062bb09ebe02",
+                    "src_subset": null,
+                    "dst_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "19",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "is_data_src": false,
+                    "num_accesses": "20"
+                  }
+                }
+              },
+              "src": "0",
+              "dst": "2",
+              "dst_connector": null,
+              "src_connector": "__return"
+            }
+          ],
+          "attributes": {
+            "guid": "f3d040ca-e50e-420a-bd6d-827e82ebec18"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "00a6a6ef-fac5-4e0c-b7b6-55ab2a229354"
+              },
+              "label": ""
+            }
+          },
+          "src": "0",
+          "dst": "1"
+        }
+      ],
+      "collapsed": false,
+      "label": "callee_autodetect_test_nested_83",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": 0
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "126ea252-e03a-4426-ae36-e9d04e1a5cc7"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

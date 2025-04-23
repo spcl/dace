@@ -1,0 +1,113 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "named_region_func",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 23,
+      "end_line": 26,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/home/beates/Desktop/dace/tests/python_frontend/named_region_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "51a073db-c729-4284-9382-74592fb19c75",
+    "hash": "5f94c15e6b21a805ebde3daedb21dc5018ea5e98d32352c23300986de97766d7"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "a37aed33-6100-47c5-8edc-b5bb1eb80870",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "NamedRegion",
+      "attributes": {
+        "debuginfo": {
+          "type": "DebugInfo",
+          "start_line": 25,
+          "end_line": 25,
+          "start_column": 4,
+          "end_column": 4,
+          "filename": "/home/beates/Desktop/dace/tests/python_frontend/named_region_test.py"
+        },
+        "guid": "e840b16e-e9db-408b-96e6-8dd718c5eeff",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "init_named_25",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "a2bd843a-a431-4af4-ae34-7c7e519b652c"
+          }
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "my named region",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": null
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "4dc2f673-50a5-42b2-9600-543485078e72"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}
