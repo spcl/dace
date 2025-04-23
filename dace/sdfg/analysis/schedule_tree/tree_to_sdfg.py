@@ -273,7 +273,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             assert len(self._dataflow_stack) == dataflow_stack_size
 
             # insert nested SDFG
-            nsdfg = self._current_state.add_nested_sdfg(inner_sdfg, sdfg, inputs=connectors["inputs"], outputs=connectors["outputs"])
+            nsdfg = self._current_state.add_nested_sdfg(inner_sdfg,
+                                                        sdfg,
+                                                        inputs=connectors["inputs"],
+                                                        outputs=connectors["outputs"])
 
             # connect nested SDFG to surrounding map scope
             assert self._dataflow_stack
@@ -382,10 +385,23 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     self._current_state.add_edge(access_node, name, map_exit, in_connector_name, memlet)
                 else:
                     assert isinstance(access_node, nodes.AccessNode)
-                    self._current_state.add_memlet_path(access_node,
-                                                        map_exit,
-                                                        dst_conn=in_connector_name,
-                                                        memlet=memlet)
+                    if self._current_state.out_degree(access_node) == 0 and self._current_state.in_degree(
+                            access_node) == 1:
+                        # this access_node is not used for anything else.
+                        # let's remove it and add a direct connection instead
+                        edges = [edge for edge in self._current_state.edges() if edge.dst == access_node]
+                        assert len(edges) == 1
+                        self._current_state.add_memlet_path(edges[0].src,
+                                                            map_exit,
+                                                            src_conn=edges[0].src_conn,
+                                                            dst_conn=in_connector_name,
+                                                            memlet=edges[0].data)
+                        self._current_state.remove_node(access_node)  # edge is remove automatically
+                    else:
+                        self._current_state.add_memlet_path(access_node,
+                                                            map_exit,
+                                                            dst_conn=in_connector_name,
+                                                            memlet=memlet)
 
                 # connect "outside the map"
                 access_node = self._current_state.add_write(name)
