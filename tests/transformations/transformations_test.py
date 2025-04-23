@@ -4,13 +4,12 @@
 import dace
 import os
 import pytest
-import warnings
-import inspect
 
-# Import everything from the dace/transformation folder recursively
+# Import everything from the dace/transformation folder recursively, so we can check for subclasses
 import importlib
 import pkgutil
 import dace.transformation
+from dace.transformation.pass_pipeline import Pass, Pipeline
 
 
 def import_all_submodules(package):
@@ -39,50 +38,36 @@ def get_sdfg_paths():
 
 # Returns a list of all transformations
 def get_transformations():
-    subclasses = set([dace.transformation.Pass])
-    while True:
-        prev_size = len(subclasses)
-        for subclass in list(subclasses):
-            subclasses.update(subclass.__subclasses__())
-        if len(subclasses) == prev_size:
-            break
-
-    # If the subclass is a subclass of dace.transformation.PatternTransformation, the function apply() should not return NotImplementedError
-    # Otherwise apply_pass() should not return NotImplementedError
-    # FIXME: This is suboptimal, as some subclasses might have a partial implementation of apply() and apply_pass()
-    usable_transformations = []
-    for cls in subclasses:
-        if inspect.isabstract(cls):
-            continue  # Skip abstract base classes
-
-        instance = cls()
-        if isinstance(instance, dace.transformation.PatternTransformation):
-            # Try calling apply(); if it raises NotImplementedError, skip it
-            try:
-                instance.apply(None, None)
-                usable_transformations.append(cls)
-            except NotImplementedError:
-                continue
-            except Exception:
-                # Ignore runtime errors for now, only skip NotImplemented
-                usable_transformations.append(cls)
-        else:
-            # Try calling apply_pass(); if it raises NotImplementedError, skip it
-            try:
-                instance.apply_pass(None, None)
-                usable_transformations.append(cls)
-            except NotImplementedError:
-                continue
-            except Exception:
-                usable_transformations.append(cls)
-
+    full_pass_set = Pass.subclasses_recursive()
+    # If the class has any subclasses, it's probably a base class
+    # and we don't want to test it
+    usable_transformations = [c for c in full_pass_set if len(c.__subclasses__()) == 0]
     return usable_transformations
 
 
+# Store transformation classes and SDFGs that have already failed
+_failed_transformations = set()
+_failed_sdfgs = set()
+
+
 # Tests all transformations using the SDFG corpus
+@pytest.mark.timeout(10)
 @pytest.mark.parametrize("transformation_cls", get_transformations())
 @pytest.mark.parametrize("sdfg_path", get_sdfg_paths())
 def test_transformation(transformation_cls, sdfg_path):
+    # If this transformation_cls has failed before, skip the test
+    if transformation_cls in _failed_transformations:
+        pytest.skip(f"Skipping because {transformation_cls.__name__} already failed")
+    # If this SDFG has failed before, skip the test
+    if sdfg_path in _failed_sdfgs:
+        pytest.skip(f"Skipping because {sdfg_path} already failed")
+
+    # Filter large SDFGs
+    if os.path.getsize(sdfg_path) > 10 * 1024:
+        # The SDFG is too large, so we skip the test
+        _failed_sdfgs.add(sdfg_path)
+        pytest.skip(f"SDFG {sdfg_path} is too large")
+
     # First check if the provided SDFG is valid
     try:
         orig_sdfg = dace.SDFG.from_file(sdfg_path)
@@ -91,29 +76,28 @@ def test_transformation(transformation_cls, sdfg_path):
     except Exception as e:
         # The SDFG in the corpus is not valid, so we skip the test
         # Check the origin of the test
-        warnings.warn(f"SDFG {sdfg_path} is invalid: {e}. Skipping test for this SDFG.")
-        return
+        _failed_sdfgs.add(sdfg_path)
+        pytest.skip(f"SDFG {sdfg_path} is invalid: {e}")
 
-    # Apply the transformation
     try:
+        # Apply the transformation
         sdfg = dace.SDFG.from_file(sdfg_path)
         if issubclass(transformation_cls, dace.transformation.PatternTransformation):
             sdfg.apply_transformations_repeated(transformation_cls)
         else:
-            # TODO: Some passes have dependencies
-            transformation_cls().apply_pass(sdfg, {})
+            pipe = Pipeline([transformation_cls()])  # To resolve dependencies
+            pipe.apply_pass(sdfg, {})
+
+        # Check if the transformed SDFG is valid
+        sdfg.validate()
+        sdfg.compile()
+
+        # TODO: Check numerical correctness
+
     except Exception as e:
-        # This should not happen, but it's here for now as we are not handling pass dependencies yet.
-        warnings.warn(
-            f"Transformation {transformation_cls.__name__} failed on SDFG {sdfg_path}: {e}. Skipping test for this transformation."
-        )
-        return
-
-    # Check if the transformed SDFG is valid
-    sdfg.validate()
-    sdfg.compile()
-
-    # TODO: Check numerical correctness
+        # The transformation failed, so we add it to the failed transformations set
+        _failed_transformations.add(transformation_cls)
+        pytest.fail(f"Transformation {transformation_cls.__name__} failed: {e}")
 
 
 if __name__ == "__main__":
