@@ -295,7 +295,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
 
             # Add empty memlet if we didn't add any in the loop above
             if self._current_state.out_degree(map_entry) < 1:
-                self._current_state.add_nedge(map_entry, nsdfg, memlet=Memlet())
+                self._current_state.add_nedge(map_entry, nsdfg, Memlet())
 
             # connect nsdfg output memlets (to be propagated)
             for name in nsdfg.out_connectors:
@@ -369,7 +369,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                                                         memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
 
             if outer_map_entry is not None and self._current_state.out_degree(outer_map_entry) < 1:
-                self._current_state.add_nedge(outer_map_entry, map_entry, memlet=Memlet())
+                self._current_state.add_nedge(outer_map_entry, map_entry, Memlet())
 
             # map_exit
             # --------
