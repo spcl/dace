@@ -52,11 +52,6 @@ def get_transformations():
     return usable_transformations
 
 
-# Store transformation classes and SDFGs that have already failed
-_failed_transformations = set()
-_failed_sdfgs = set()
-
-
 # Tests all transformations using the SDFG corpus
 @pytest.mark.timeout(10)
 @pytest.mark.parametrize("transformation_cls", get_transformations())
@@ -138,7 +133,7 @@ if __name__ == "__main__":
 
         for transformation_cls in get_transformations():
             try:
-              test_transformation(transformation_cls, sdfg_path)
+                test_transformation(transformation_cls, sdfg_path)
             except Exception as e:
                 continue
         cov.stop()
