@@ -4,12 +4,19 @@
 import dace
 import os
 import pytest
+import warnings
 
 # Import everything from the dace/transformation folder recursively, so we can check for subclasses
 import importlib
 import pkgutil
 import dace.transformation
+import dace.transformation.passes
+import dace.transformation.interstate
 from dace.transformation.pass_pipeline import Pass, Pipeline
+
+import coverage
+import json
+from collections import defaultdict
 
 
 def import_all_submodules(package):
@@ -55,19 +62,6 @@ _failed_sdfgs = set()
 @pytest.mark.parametrize("transformation_cls", get_transformations())
 @pytest.mark.parametrize("sdfg_path", get_sdfg_paths())
 def test_transformation(transformation_cls, sdfg_path):
-    # If this transformation_cls has failed before, skip the test
-    if transformation_cls in _failed_transformations:
-        pytest.skip(f"Skipping because {transformation_cls.__name__} already failed")
-    # If this SDFG has failed before, skip the test
-    if sdfg_path in _failed_sdfgs:
-        pytest.skip(f"Skipping because {sdfg_path} already failed")
-
-    # Filter large SDFGs
-    if os.path.getsize(sdfg_path) > 10 * 1024:
-        # The SDFG is too large, so we skip the test
-        _failed_sdfgs.add(sdfg_path)
-        pytest.skip(f"SDFG {sdfg_path} is too large")
-
     # First check if the provided SDFG is valid
     try:
         orig_sdfg = dace.SDFG.from_file(sdfg_path)
@@ -76,31 +70,111 @@ def test_transformation(transformation_cls, sdfg_path):
     except Exception as e:
         # The SDFG in the corpus is not valid, so we skip the test
         # Check the origin of the test
-        _failed_sdfgs.add(sdfg_path)
-        pytest.skip(f"SDFG {sdfg_path} is invalid: {e}")
+        warnings.warn(f"SDFG {sdfg_path} is invalid: {e}")
+        return
 
-    try:
-        # Apply the transformation
-        sdfg = dace.SDFG.from_file(sdfg_path)
-        if issubclass(transformation_cls, dace.transformation.PatternTransformation):
-            sdfg.apply_transformations_repeated(transformation_cls)
-        else:
-            pipe = Pipeline([transformation_cls()])  # To resolve dependencies
-            pipe.apply_pass(sdfg, {})
+    # Apply the transformation
+    sdfg = dace.SDFG.from_file(sdfg_path)
+    if issubclass(transformation_cls, dace.transformation.PatternTransformation):
+        # Limit to a 10 executions
+        # sdfg.apply_transformations_repeated(transformation_cls)
+        for i in range(10):
+            app = sdfg.apply_transformations(transformation_cls)
+            if app == 0:
+                break
+    else:
+        pipe = Pipeline([transformation_cls()])  # To resolve dependencies
+        pipe.apply_pass(sdfg, {})
 
-        # Check if the transformed SDFG is valid
-        sdfg.validate()
-        sdfg.compile()
+    # Check if the transformed SDFG is valid
+    sdfg.validate()
+    sdfg.compile()
 
-        # TODO: Check numerical correctness
+    # TODO: Check numerical correctness
 
-    except Exception as e:
-        # The transformation failed, so we add it to the failed transformations set
-        _failed_transformations.add(transformation_cls)
-        pytest.fail(f"Transformation {transformation_cls.__name__} failed: {e}")
+
+# Loads a json coverage report and returns a dictionary of covered lines
+def load_coverage_lines(report_path):
+    with open(report_path) as f:
+        data = json.load(f)
+
+    covered = defaultdict(set)
+    for file in data.get("files", {}):
+        lines = data["files"][file]["executed_lines"]
+        covered[file].update(lines)
+
+    return covered
+
+
+# Computes the percentage of overlap between two coverage reports using the lower line count as the denominator
+def compute_overlap(cov1, cov2):
+    overlap_lines = 0
+    shared_files = set(cov1.keys()) & set(cov2.keys())
+
+    for file in shared_files:
+        lines1 = cov1[file]
+        lines2 = cov2[file]
+        overlap_lines += len(lines1 & lines2)
+
+    total_cov1 = sum(len(lines) for lines in cov1.values())
+    total_cov2 = sum(len(lines) for lines in cov2.values())
+    total_lines = min(total_cov1, total_cov2)
+    if total_lines == 0:
+        return 0.0
+    return overlap_lines / total_lines
 
 
 if __name__ == "__main__":
-    for transformation_cls in get_transformations():
-        for sdfg_path in get_sdfg_paths():
-            test_transformation(transformation_cls, sdfg_path)
+    # XXX: This main will try to reduce the corpus by measuring the codecoverage. It does not perform the testing itself.
+    # Run the test suite with coverage
+    for sdfg_path in get_sdfg_paths():
+        sdfg_name = os.path.basename(sdfg_path).replace(".sdfg", "")
+        cov_datafile = f"coverage/{sdfg_name}"
+        os.makedirs(os.path.dirname(cov_datafile), exist_ok=True)
+        cov = coverage.Coverage(
+            data_file=cov_datafile, source=["dace"], data_suffix="cov"
+        )
+        cov.start()
+
+        for transformation_cls in get_transformations():
+            try:
+              test_transformation(transformation_cls, sdfg_path)
+            except Exception as e:
+                continue
+        cov.stop()
+        cov.save()
+        cov.json_report(outfile=f"coverage/{sdfg_name}.json")
+        print(".", end="")
+    print("")
+
+    # Remove SDFGs with high overlap
+    sdfg_paths = get_sdfg_paths()
+    removable_sdfgs = []
+    changed = True
+
+    while changed:
+        changed = False
+        for sdfg_path1 in sdfg_paths:
+            combined = defaultdict(set)
+            for sdfg_path2 in sdfg_paths:
+                if sdfg_path1 == sdfg_path2:
+                    continue
+                sdfg_name2 = os.path.basename(sdfg_path2).replace(".sdfg", "")
+                cov2 = load_coverage_lines(f"coverage/{sdfg_name2}.json")
+                for file, lines in cov2.items():
+                    combined[file].update(lines)
+
+            sdfg_name1 = os.path.basename(sdfg_path1).replace(".sdfg", "")
+            cov1 = load_coverage_lines(f"coverage/{sdfg_name1}.json")
+            overlap = compute_overlap(cov1, combined)
+
+            if overlap > 0.99:
+                removable_sdfgs.append(sdfg_path1)
+
+        # Sort the removable SDFGs by size and remove the largest one from sdfg_paths
+        removable_sdfgs.sort(key=lambda x: os.path.getsize(x), reverse=True)
+        if removable_sdfgs:
+            # os.remove(removable_sdfgs[0])
+            sdfg_paths.remove(removable_sdfgs[0])
+            removable_sdfgs = []
+            changed = True
