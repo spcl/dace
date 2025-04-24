@@ -252,8 +252,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
                 and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
-                '__state->report.save("%s", __HASH_%s);' % (
-                    pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
+                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -326,8 +325,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
                 and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
-                '__state->report.save("%s", __HASH_%s);' % (
-                    pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
+                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
