@@ -52,8 +52,8 @@ def _tile_gpu(
     static_sram_limit = 48 * 1024,
     bound_dims = [-1, -1, -1],
     copy_whole = False,
-    exclude_from_explicit_memory=["Cr", "Cim"],
-    output_name="Cr",
+    exclude_from_explicit_memory=[],
+    output_name=None,
 ):
 
     # Copy kernel as a single state SDFG if we are working on the copy
@@ -854,9 +854,9 @@ def auto_tile_gpu(
     random_iter: bool=True,
     static_sram_limit: int = 48*1024,
     bound_dims: List[int] = None,
-    copy_whole = True,
-    exclude_from_explicit_memory=["Cr", "Cim"],
-    output_name="Cr"
+    copy_whole: bool = False,
+    exclude_from_explicit_memory: List[str] = [],
+    output_name: str = None
 ):
     sdfg_name = sdfg.name
     sym_dict = sdfg.symbols
