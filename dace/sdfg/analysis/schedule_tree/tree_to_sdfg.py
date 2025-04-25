@@ -552,7 +552,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             raise NotImplementedError(f"{type(node)} not implemented")
 
         def visit_NView(self, node: tn.NView, sdfg: SDFG) -> None:
-            # Let's see if we need this for the first prototype ...
+            # TODO: Fillz and Ray_Fast will need these ...
             raise NotImplementedError(f"{type(node)} not implemented")
 
         def visit_RefSetNode(self, node: tn.RefSetNode, sdfg: SDFG) -> None:
