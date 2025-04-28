@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -52,8 +52,8 @@ class MapFusion(transformation.SingleStateTransformation):
     `partition_first_outputs()` will only be created if the data is not referred downstream in
     the dataflow.
 
-    In order to determine if an intermediate can be removed or has to be kept, it is in generally
-    necessary to scan the whole SDFG, which is the default behaviour. There are three ways to
+    In order to determine if an intermediate can be removed or has to be kept, it is in general
+    necessary to scan the whole SDFG, which is the default behaviour. There are two ways to
     speed this up. The first way is to set `assume_always_shared` to `True`. In this case the
     transformation will not perform the scan, but assume that the data is shared, i.e. used
     somewhere else. This might lead to dead data flow.
@@ -63,8 +63,6 @@ class MapFusion(transformation.SingleStateTransformation):
     Note that `assume_always_shared` takes precedence.
     For this pattern the `FullMapFusion` pass is provided, that combines the analysis
     pass and `MapFusion`.
-    The third way is to pass the result of `FindSingleUseData` as `single_use_data` argument
-    to the constructor.
 
     By default this transformation only handles the case where to maps are right after each other,
     separated by an intermediate array. However, by setting `allow_parallel_map_fusion` to `True`,
@@ -81,8 +79,6 @@ class MapFusion(transformation.SingleStateTransformation):
     :param allow_parallel_map_fusion: Allow to merge parallel maps, by default `False`.
     :param only_if_common_ancestor: In parallel map fusion mode, only fuse if both map
         have a common direct ancestor.
-    :param single_use_data: Which data containers are only used in one location,
-        if not passed the transformation will scan the SDFG every time.
 
     :note: This transformation modifies more nodes than it matches.
     :note: If `assume_always_shared` is `True` then the transformation will assume that
@@ -151,7 +147,6 @@ class MapFusion(transformation.SingleStateTransformation):
         allow_serial_map_fusion: Optional[bool] = None,
         allow_parallel_map_fusion: Optional[bool] = None,
         only_if_common_ancestor: Optional[bool] = None,
-        single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -171,7 +166,7 @@ class MapFusion(transformation.SingleStateTransformation):
             self.only_if_common_ancestor = only_if_common_ancestor
 
         # See comment in `is_shared_data()` for more information.
-        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = single_use_data
+        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
 
     @classmethod
     def expressions(cls) -> Any:
@@ -341,10 +336,12 @@ class MapFusion(transformation.SingleStateTransformation):
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
         #  or `None` if the maps can not be structurally fused.
-        param_repl = self.can_topologically_be_fused(first_map_entry=first_map_entry,
-                                                     second_map_entry=second_map_entry,
-                                                     graph=graph,
-                                                     sdfg=sdfg)
+        param_repl = self.can_topologically_be_fused(
+            first_map_entry=first_map_entry,
+            second_map_entry=second_map_entry,
+            graph=graph,
+            sdfg=sdfg,
+        )
         if param_repl is None:
             return False
 
@@ -591,14 +588,6 @@ class MapFusion(transformation.SingleStateTransformation):
                 return None
             processed_inter_nodes.add(intermediate_node)
 
-            # The intermediate can only have one incoming degree. It might be possible
-            #  to handle multiple incoming edges, if they all come from the top map.
-            #  However, the resulting SDFG might be invalid.
-            # NOTE: Allow this to happen (under certain cases) if the only producer
-            #   is the top map.
-            if state.in_degree(intermediate_node) != 1:
-                return None
-
             # If the second map is not reachable from the intermediate node, then
             #  the output is pure and we can end here.
             if not self.is_node_reachable_from(
@@ -608,6 +597,21 @@ class MapFusion(transformation.SingleStateTransformation):
             ):
                 pure_outputs.add(out_edge)
                 continue
+
+            # We require that there is only one edge between the MapExit of the
+            #  top Map and the intermediate. We allow that the intermediate has
+            #  multiple incoming edges. We assume that there is no write conflicts.
+            for intermediate_node_iedge in state.in_edges(intermediate_node):
+                if intermediate_node_iedge is out_edge:
+                    continue
+                if intermediate_node_iedge.src is first_map_exit:
+                    return None
+                if self.is_node_reachable_from(
+                        graph=state,
+                        begin=first_map_exit,
+                        end=intermediate_node_iedge.src,
+                ):
+                    return None
 
             # The following tests are _after_ we have determined if we have a pure
             #  output node, because this allows us to handle more exotic pure node
@@ -632,7 +636,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
             # It can happen that multiple edges converges at the `IN_` connector
             #  of the first map exit, but there is only one edge leaving the exit.
-            #  It is complicate to handle this, so for now we ignore it.
+            #  This is complicate to handle, so for now we ignore it.
             # TODO(phimuell): Handle this case properly.
             #   To handle this we need to associate a consumer edge (the outgoing edges
             #   of the second map) with exactly one producer.
@@ -901,10 +905,10 @@ class MapFusion(transformation.SingleStateTransformation):
                 raise NotImplementedError()
             pre_exit_edge = pre_exit_edges[0]
 
-            (new_inter_shape_raw, new_inter_shape, squeezed_dims) = self.compute_reduced_intermediate(
+            (new_inter_shape_raw, new_inter_shape, squeezed_dims) = (self.compute_reduced_intermediate(
                 producer_subset=pre_exit_edge.data.dst_subset,
                 inter_desc=inter_desc,
-            )
+            ))
 
             # This is the name of the new "intermediate" node that we will create.
             #  It will only have the shape `new_inter_shape` which is basically its
