@@ -203,9 +203,50 @@ def test_multiple_edge_assignments():
     sdfg.compile()
 
 
+def test_deeply_nested_sdfg():
+    """
+    Tests that SymbolPropagation handles deeply nested SDFGs correctly.
+    """
+    sdfg1 = dace.SDFG("nested1")
+    sdfg1.add_symbol("v", dace.int32)
+    sdfg1.add_symbol("a", dace.int32)
+
+    s11 = sdfg1.add_state(is_start_block=True)
+    s12 = sdfg1.add_state()
+    edge1 = sdfg1.add_edge(s11, s12, dace.InterstateEdge(assignments={"v": "a"}))
+
+    sdfg2 = dace.SDFG("nested2")
+    s12.add_node(nodes.NestedSDFG("n2", sdfg2, {},{},symbol_mapping={"v": "v"}))
+    sdfg2.add_symbol("v", dace.int32)
+    s21 = sdfg2.add_state(is_start_block=True)
+
+    sdfg3 = dace.SDFG("nested3")
+    s21.add_node(nodes.NestedSDFG("n3", sdfg3, {},{},symbol_mapping={"v": "v"}))
+    sdfg3.add_symbol("v", dace.int32)
+    s31 = sdfg3.add_state(is_start_block=True)
+
+    sdfg4 = dace.SDFG("nested4")
+    s31.add_node(nodes.NestedSDFG("n4", sdfg4, {},{},symbol_mapping={"v": "v"}))
+    sdfg4.add_symbol("c", dace.int32)
+    sdfg4.add_symbol("v", dace.int32)
+    s41 = sdfg4.add_state(is_start_block=True)
+    s42 = sdfg4.add_state()
+    edge4 = sdfg4.add_edge(s41, s42, dace.InterstateEdge(assignments={"c": "v+1"}))
+    sdfg1.validate()
+
+    # Apply SymbolPropagation
+    SymbolPropagation().apply_pass(sdfg1, {})
+    sdfg1.validate()
+
+    # No assignment should have been changed
+    assert edge1.data.assignments["v"] == "a"
+    assert edge4.data.assignments["c"] == "v+1"
+
+
 if __name__ == "__main__":
     test_loop_carried_symbol()
     test_nested_loop_carried_symbol()
     test_nested_symbol()
     test_multiple_sources()
     test_multiple_edge_assignments()
+    test_deeply_nested_sdfg()
