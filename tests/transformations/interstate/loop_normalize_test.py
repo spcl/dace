@@ -72,6 +72,69 @@ def test_normalize(start, step):
           assert B[i] == A[i]
 
 
+def test_normalize_altered_iter():
+    """
+    Tests if loop normalization works correctly with an altered iteration variable.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [32], dace.float32)
+    sdfg.add_array("B", [32], dace.float32)
+
+    loop = LoopRegion("loop", f"i < 32", "i", f"i = 2", f"i = i + 1")
+    sdfg.add_node(loop)
+    s = loop.add_state("loop_body", is_start_block=True)
+    a = s.add_access("A")
+    b = s.add_access("B")
+    s.add_edge(a, None, b, None, Memlet("A[i] -> B[i]"))
+    loop.add_state_after(s, assignments={"i": "i // 2"})
+    sdfg.validate()
+
+    # Should not apply
+    assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+
+
+def test_normalize_nonlin_step():
+    """
+    Tests if loop normalization works correctly with a non-linear step.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [32], dace.float32)
+    sdfg.add_array("B", [32], dace.float32)
+
+    loop = LoopRegion("loop", f"i < 32", "i", f"i = 0", f"i = i * i")
+    sdfg.add_node(loop)
+    s = loop.add_state("loop_body", is_start_block=True)
+    a = s.add_access("A")
+    b = s.add_access("B")
+    s.add_edge(a, None, b, None, Memlet("A[i] -> B[i]"))
+    sdfg.validate()
+
+    # Should not apply
+    assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+
+
+def test_normalize_altered_step():
+    """
+    Tests if loop normalization works correctly with an altered step.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [32], dace.float32)
+    sdfg.add_array("B", [32], dace.float32)
+    sdfg.add_symbol("step", dace.int32)
+
+    loop = LoopRegion("loop", f"i < 32", "i", f"i = 0", f"i = i + step")
+    sdfg.add_node(loop)
+    s = loop.add_state("loop_body", is_start_block=True)
+    a = s.add_access("A")
+    b = s.add_access("B")
+    s.add_edge(a, None, b, None, Memlet("A[i] -> B[i]"))
+    loop.add_state_after(s, assignments={"step": "step + 1"})
+    sdfg.validate()
+
+    # Should not apply
+    assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+
+
 if __name__ == "__main__":
     test_normalize(0, 1)
     test_normalize(1, 1)
@@ -85,3 +148,6 @@ if __name__ == "__main__":
     test_normalize(4, -2)
     test_normalize(8, -4)
     test_normalize(16, -4)
+    test_normalize_altered_iter()
+    test_normalize_nonlin_step()
+    test_normalize_altered_step()

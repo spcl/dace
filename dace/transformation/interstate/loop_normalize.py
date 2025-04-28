@@ -19,7 +19,7 @@ from dace.symbolic import pystr_to_symbolic
 def _defined_symbols(loop: LoopRegion) -> Set[str]:
     defined = set()
     for edge, _ in loop.all_edges_recursive():
-        if isinstance(edge, InterstateEdge):
+        if isinstance(edge.data, InterstateEdge):
             defined.update(edge.data.assignments.keys())
     return defined
 
@@ -42,10 +42,11 @@ def _can_normalize_step(loop: LoopRegion, sdfg: SDFG) -> bool:
     itervar = loop.loop_variable
     step = loop_analysis.get_loop_stride(loop)
     defined_syms = _defined_symbols(loop)
+    step_free_syms = set([str(s) for s in step.free_symbols])
     return (
         itervar not in defined_syms
-        and step.free_symbols.isdisjoint(defined_syms)
-        and step.free_symbols.isdisjoint({itervar})
+        and step_free_syms.isdisjoint(defined_syms)
+        and step_free_syms.isdisjoint({itervar})
         and symbolic.resolve_symbol_to_constant(step, sdfg) != 1
     )
 
