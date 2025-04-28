@@ -1,6 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 import ctypes.util
+import os
+import warnings
+
+from dace import Config
 
 
 @dace.library.environment
@@ -38,6 +42,33 @@ rocblas_handle &__dace_rocblas_handle = __state->rocblas_handle.Get(__dace_cuda_
 rocblas_set_stream(__dace_rocblas_handle, __dace_current_stream);\n"""
 
         return code.format(location=location)
+
+    @staticmethod
+    def cmake_includes():
+        if 'ROCBLAS_ROOT' in os.environ:
+            return [os.path.join(os.environ['ROCBLAS_ROOT'], 'include')]
+        return []
+    
+    @staticmethod
+    def cmake_libraries():
+        if 'ROCBLAS_ROOT' in os.environ:
+            prefix = Config.get('compiler', 'library_prefix')
+            suffix = Config.get('compiler', 'library_extension')
+            libfile = os.path.join(os.environ['ROCBLAS_ROOT'], 'lib', prefix + 'rocblas.' + suffix)
+            if os.path.isfile(libfile):
+                return [libfile]
+        
+        path = ctypes.util.find_library('rocblas')
+        if path:
+            # Attempt to link on Windows
+            if path.endswith('.dll'):
+                libfile = os.path.join(os.path.dirname(os.path.abspath(path)), '..', 'lib', 'rocblas.lib')
+                if os.path.isfile(libfile):
+                    return [libfile]
+                else:
+                    return []
+
+            return [path]
 
     @staticmethod
     def _find_library():
