@@ -155,11 +155,16 @@ class SymbolPropagation(ppl.Pass):
             return new_out_syms
 
         elif isinstance(cfgb, ConditionalBlock):
-            # XXX: What if there is no else branch?
             # Combine all outgoing symbols of the branches
             new_out_syms = copy.deepcopy(out_syms[cfgb.sub_regions()[0]])
             for b in cfgb.sub_regions():
                 self._combine_syms(new_out_syms, out_syms[b])
+
+            # If no else branch is present, also combine the incoming table (implicit else branch)
+            has_non_conds = any([c is None for c, _ in cfgb.branches])
+            if not has_non_conds:
+                self._combine_syms(new_out_syms, in_syms[cfgb])
+
             return new_out_syms
 
         elif isinstance(cfgb, SDFGState):
