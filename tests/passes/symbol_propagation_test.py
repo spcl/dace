@@ -42,9 +42,7 @@ def test_loop_carried_symbol():
     e = loop.add_state()
     loop.add_edge(s, s1, dace.InterstateEdge(assignments={"a": "i", "c": "cnt + 1"}))
     loop.add_edge(s1, s2, dace.InterstateEdge(assignments={"b": "a+1"}))
-    loop.add_edge(
-        s2, e, dace.InterstateEdge(assignments={"idx": "b - 1 - LB", "cnt": "c"})
-    )
+    loop.add_edge(s2, e, dace.InterstateEdge(assignments={"idx": "b - 1 - LB", "cnt": "c"}))
     task = e.add_tasklet("init", {}, {"out"}, "out = 0")
     access = e.add_access("A")
     e.add_edge(task, "out", access, None, dace.Memlet("A[idx]"))
@@ -106,7 +104,7 @@ def test_nested_loop_carried_symbol():
     A = dace.ndarray([64], dtype=dace.float32)
     A[:] = np.random.rand(64).astype(dace.float32.type)
     sdfg(A=A)
-    assert np.allclose(A[0], 64*64)
+    assert np.allclose(A[0], 64 * 64)
 
 
 def test_nested_symbol():
@@ -216,17 +214,17 @@ def test_deeply_nested_sdfg():
     edge1 = sdfg1.add_edge(s11, s12, dace.InterstateEdge(assignments={"v": "a"}))
 
     sdfg2 = dace.SDFG("nested2")
-    s12.add_node(nodes.NestedSDFG("n2", sdfg2, {},{},symbol_mapping={"v": "v"}))
+    s12.add_node(nodes.NestedSDFG("n2", sdfg2, {}, {}, symbol_mapping={"v": "v"}))
     sdfg2.add_symbol("v", dace.int32)
     s21 = sdfg2.add_state(is_start_block=True)
 
     sdfg3 = dace.SDFG("nested3")
-    s21.add_node(nodes.NestedSDFG("n3", sdfg3, {},{},symbol_mapping={"v": "v"}))
+    s21.add_node(nodes.NestedSDFG("n3", sdfg3, {}, {}, symbol_mapping={"v": "v"}))
     sdfg3.add_symbol("v", dace.int32)
     s31 = sdfg3.add_state(is_start_block=True)
 
     sdfg4 = dace.SDFG("nested4")
-    s31.add_node(nodes.NestedSDFG("n4", sdfg4, {},{},symbol_mapping={"v": "v"}))
+    s31.add_node(nodes.NestedSDFG("n4", sdfg4, {}, {}, symbol_mapping={"v": "v"}))
     sdfg4.add_symbol("c", dace.int32)
     sdfg4.add_symbol("v", dace.int32)
     s41 = sdfg4.add_state(is_start_block=True)

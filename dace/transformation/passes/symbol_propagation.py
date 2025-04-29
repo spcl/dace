@@ -87,24 +87,15 @@ class SymbolPropagation(ppl.Pass):
             sym_table.update(edge.data.assignments)
 
             # Filter out symbols containing arrays accesses as they cannot be safely propagated (nested array accesses are not supported)
-            sym_table = {
-                k: v
-                for k, v in sym_table.items()
-                if v is None or ("[" not in v and "]" not in v)
-            }
+            sym_table = {k: v for k, v in sym_table.items() if v is None or ("[" not in v and "]" not in v)}
 
             # Also filter out symbols containing views as they cannot be safely propagated (they are seen as pointers)
             sym_table = {
                 k: v
-                for k, v in sym_table.items()
-                if v is None
-                or not any(
-                    [
-                        str(s) in sdfg.arrays
-                        and isinstance(sdfg.arrays[str(s)], dt.View)
-                        for s in pystr_to_symbolic(v).free_symbols
-                    ]
-                )
+                for k, v in sym_table.items() if v is None or not any([
+                    str(s) in sdfg.arrays and isinstance(sdfg.arrays[str(s)], dt.View)
+                    for s in pystr_to_symbolic(v).free_symbols
+                ])
             }
 
             # Combine the symbols
@@ -115,22 +106,15 @@ class SymbolPropagation(ppl.Pass):
 
         # Nested starting CFBGs should inherit the symbols from their parent
         # Ignore SDFGs as nested SDFGs have symbol mappings
-        if (parent.start_block == cfgb and not isinstance(parent, SDFG)) or (
-            isinstance(parent, ConditionalBlock) and cfgb in parent.sub_regions()
-        ):
+        if (parent.start_block == cfgb and not isinstance(parent, SDFG)) or (isinstance(parent, ConditionalBlock)
+                                                                             and cfgb in parent.sub_regions()):
             assert new_in_syms == {}
             new_in_syms = in_syms[parent]
 
             # For LoopRegions, remove loop carried variables from the incoming symbols
             if isinstance(parent, LoopRegion):
                 new_in_syms = copy.deepcopy(new_in_syms)
-                all_syms = set(
-                    [
-                        s
-                        for e in parent.all_interstate_edges()
-                        for s in e.data.assignments.keys()
-                    ]
-                )
+                all_syms = set([s for e in parent.all_interstate_edges() for s in e.data.assignments.keys()])
                 for sym in all_syms:
                     if sym in new_in_syms:
                         new_in_syms[sym] = None
@@ -173,11 +157,7 @@ class SymbolPropagation(ppl.Pass):
 
         else:
             # Use sink symbols as outgoing symbols
-            sink_nodes = [
-                n
-                for n in cfgb.nodes()
-                if cfgb.out_degree(n) == 0 and isinstance(n, ControlFlowBlock)
-            ]
+            sink_nodes = [n for n in cfgb.nodes() if cfgb.out_degree(n) == 0 and isinstance(n, ControlFlowBlock)]
             if len(sink_nodes) == 0:
                 return in_syms[cfgb]
 
@@ -199,21 +179,13 @@ class SymbolPropagation(ppl.Pass):
 
         # Remove all symbols that are None
         new_in_syms = {sym: val for sym, val in new_in_syms.items() if val is not None}
-        new_out_syms = {
-            sym: val for sym, val in new_out_syms.items() if val is not None
-        }
+        new_out_syms = {sym: val for sym, val in new_out_syms.items() if val is not None}
 
         changed = True
         while changed:
             changed = False
             free_sym = cfgb.free_symbols
-            free_edge_sym = set(
-                [
-                    sym
-                    for edge in parent.out_edges(cfgb)
-                    for sym in edge.data.free_symbols
-                ]
-            )
+            free_edge_sym = set([sym for edge in parent.out_edges(cfgb) for sym in edge.data.free_symbols])
 
             # Replace all symbols in the CFGB with their values
             if isinstance(cfgb, LoopRegion):
@@ -231,13 +203,7 @@ class SymbolPropagation(ppl.Pass):
                 edge.data.replace_dict(new_out_syms, replace_keys=False)
 
             # Check if the symbols have changed
-            new_free_edge_sym = set(
-                [
-                    sym
-                    for edge in parent.out_edges(cfgb)
-                    for sym in edge.data.free_symbols
-                ]
-            )
+            new_free_edge_sym = set([sym for edge in parent.out_edges(cfgb) for sym in edge.data.free_symbols])
             if free_sym != cfgb.free_symbols or free_edge_sym != new_free_edge_sym:
                 changed = True
 
