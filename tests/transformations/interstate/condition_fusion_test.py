@@ -20,7 +20,7 @@ def test_consecutive_conditions():
             s += 1
         a[2] = s
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Should have exactly two conditional block
@@ -48,7 +48,7 @@ def test_nested_conditions():
                 s += 2
         a[2] = s
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Should have exactly two conditional block
@@ -77,7 +77,7 @@ def test_dependent_consecutive_conditions():
             s += 1
         a[2] = s
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Should have exactly two conditional block
@@ -107,7 +107,7 @@ def test_dependent_consecutive_conditions2():
             s += 1
         a[2] = s
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Should have exactly two conditional block
