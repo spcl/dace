@@ -13,14 +13,30 @@ from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusion, MapExpansion
 
 
-def count_node(sdfg: SDFG, node_type):
-    nb_nodes = 0
-    for rsdfg in sdfg.all_sdfgs_recursive():
-        for state in rsdfg.states():
-            for node in state.nodes():
-                if isinstance(node, node_type):
-                    nb_nodes += 1
-    return nb_nodes
+def count_nodes(
+    graph: Union[SDFG, SDFGState],
+    node_type: Union[Tuple[Type, ...], Type],
+    return_nodes: bool = False,
+) -> Union[int, List[nodes.Node]]:
+    """Counts the number of nodes in of a particular type in `graph`.
+
+    If `graph` is an SDFGState then only count the nodes inside this state,
+    but if `graph` is an SDFG count in all states.
+
+    Args:
+        graph: The graph to scan.
+        node_type: The type or sequence of types of nodes to look for.
+    """
+
+    states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
+    found_nodes: list[dace_nodes.Node] = []
+    for state_nodes in states:
+        for node in state_nodes.nodes():
+            if isinstance(node, node_type):
+                found_nodes.append(node)
+    if return_nodes:
+        return found_nodes
+    return len(found_nodes)
 
 
 def safe_view(sdfg: SDFG):
@@ -32,6 +48,14 @@ def safe_view(sdfg: SDFG):
         sdfg.view()
     except Exception:
         pass
+
+
+def run_sdfg(sdfg: SDFG, *args: Any, **kwargs: Any) -> Any:
+    csdfg = sdfg.compile()
+    res = csdfg(*args, **kwargs)
+    del csdfg
+    gc.collect(2)
+    return res
 
 
 def apply_fusion(
@@ -53,7 +77,7 @@ def apply_fusion(
     the fusion in strict dataflow mode.
     """
     org_sdfg = copy.deepcopy(sdfg)
-    num_maps_before = None if unspecific else count_node(sdfg, nodes.MapEntry)
+    num_maps_before = None if unspecific else count_nodes(sdfg, nodes.MapEntry)
 
     try:
         with dace.config.temporary_config():
@@ -72,7 +96,7 @@ def apply_fusion(
     if unspecific:
         return sdfg
 
-    num_maps_after = count_node(sdfg, nodes.MapEntry)
+    num_maps_after = count_nodes(sdfg, nodes.MapEntry)
     has_processed = False
     if removed_maps is not None:
         has_processed = True
@@ -713,7 +737,7 @@ def test_fuse_indirect_accesses():
 
     sdfg = inner_product.to_sdfg(simplify=True)
     assert sdfg.number_of_nodes() == 1
-    assert count_node(sdfg, nodes.MapEntry) == 3
+    assert count_nodes(sdfg, nodes.MapEntry) == 3
 
     apply_fusion(sdfg, final_maps=2)
 
@@ -2030,7 +2054,74 @@ def test_multi_producer_sdfg():
     assert all(np.allclose(ref[name], res[name]) for name in ref)
 
 
+def _make_reuse_connector() -> Tuple[SDFG, SDFGState]:
+    sdfg = dace.SDFG("reuse_connector")
+    state = sdfg.add_state(is_start_block=True)
+
+    for name in "abt":
+        sdfg.add_array(
+            name,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=(name == "t"),
+        )
+    t = state.add_access("t")
+
+    state.add_mapped_tasklet(
+        "comp1",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("a[__i]")},
+        code="__out = __in + 10.",
+        outputs={"__out": dace.Memlet("t[__i]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "comp2",
+        map_ranges={"__i": "0:10"},
+        inputs={
+            "__in1": dace.Memlet("t[__i]"),
+            "__in2": dace.Memlet("a[__i]")
+        },
+        code="__out = __in1 + __in2",
+        outputs={"__out": dace.Memlet("b[__i]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+    sdfg.validate()
+
+    return sdfg, state
+
+
+def test_reuse_connector():
+    sdfg, state = _make_reuse_connector()
+    ac_nodes_before = count_nodes(sdfg, nodes.AccessNode, return_nodes=True)
+    assert len(ac_nodes_before) == 4
+    assert len([ac for ac in ac_nodes_before if ac.data == "a"]) == 2
+    assert count_nodes(sdfg, nodes.MapEntry) == 2
+
+    ref = {
+        "a": np.array(np.random.rand(20, 20), dtype=np.float64, copy=True),
+        "b": np.array(np.random.rand(20, 15), dtype=np.float64, copy=True),
+    }
+    res = copy.deepcopy(ref)
+
+    run_sdfg(sdfg, **ref)
+
+    apply_fusion(sdfg, removed_maps=1)
+
+    assert count_nodes(sdfg, nodes.MapEntry) == 1
+    ac_nodes = count_nodes(sdfg, nodes.AccessNode, return_nodes=True)
+    assert len(ac_nodes) == 3
+    assert len([ac for ac in ac_nodes_before if ac.data == "a"]) == 1
+
+    run_sdfg(sdfg, **res)
+
+    assert all(np.allclose(ref[name], res[name]) for name in ref)
+
+
 if __name__ == '__main__':
+    """
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
     test_fusion_different_global_accesses()
@@ -2064,4 +2155,6 @@ if __name__ == '__main__':
     test_inner_map_dependency()
     test_inner_map_dependency_resolved()
     test_possible_cycle_if_fuesed_sdfg()
+    """
     test_multi_producer_sdfg()
+    test_reuse_connector()
