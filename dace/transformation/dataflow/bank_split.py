@@ -129,7 +129,8 @@ class BankSplit(transformation.SingleStateTransformation):
         else:
             split_info = self.split_array_info
             if len(split_info) != ndim:
-                raise RuntimeError("Length of split_array_info must match number of " "dimensions")
+                raise RuntimeError("Length of split_array_info must match number of "
+                                   "dimensions")
         if functools.reduce(lambda a, b: a * b, split_info) != bank_count:
             raise RuntimeError("Splitting is not possible with the selected splits"
                                "and this number of HBM-banks (required number of banks "

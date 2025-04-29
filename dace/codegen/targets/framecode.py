@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import copy
+import pathlib
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
@@ -253,9 +254,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
                 and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
-                '''__state->report.save("{path}/perf", __HASH_{name});'''.format(path=sdfg.build_folder.replace(
-                    '\\', '/'),
-                                                                                 name=sdfg.name), sdfg)
+                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -328,7 +327,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
                 and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
-                '__state->report.save("%s/perf", __HASH_%s);' % (sdfg.build_folder.replace('\\', '/'), sdfg.name), sdfg)
+                '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
@@ -941,8 +940,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         l_start = loop_analysis.get_init_assignment(cfr)
                         l_step = loop_analysis.get_loop_stride(cfr)
                         sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
-                                                        infer_expr_type(l_step, global_symbols),
-                                                        infer_expr_type(l_end, global_symbols))
+                                                         infer_expr_type(l_step, global_symbols),
+                                                         infer_expr_type(l_end, global_symbols))
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]

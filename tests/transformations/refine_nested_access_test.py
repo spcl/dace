@@ -173,20 +173,23 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
     def _make_nested_sdfg(diff_in_out: bool) -> dace.SDFG:
         sdfg = dace.SDFG("inner_sdfg")
         state = sdfg.add_state(is_start_block=True)
-        sdfg.add_array("A", dtype=dace.float64, shape=(2,), transient=False)
-        sdfg.add_array("T1", dtype=dace.float64, shape=(2,), transient=False)
+        sdfg.add_array("A", dtype=dace.float64, shape=(2, ), transient=False)
+        sdfg.add_array("T1", dtype=dace.float64, shape=(2, ), transient=False)
 
         A = state.add_access("A")
         T1_output = state.add_access("T1")
         if diff_in_out:
-            sdfg.add_array("T2", dtype=dace.float64, shape=(2,), transient=False)
+            sdfg.add_array("T2", dtype=dace.float64, shape=(2, ), transient=False)
             T1_input = state.add_access("T2")
         else:
             T1_input = state.add_access("T1")
 
         tsklt = state.add_tasklet(
             "comp",
-            inputs={"__in1": None, "__in2": None},
+            inputs={
+                "__in1": None,
+                "__in2": None
+            },
             outputs={"__out": None},
             code="__out = __in1 + __in2",
         )
@@ -201,10 +204,10 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
 
     sdfg = dace.SDFG("Parent_SDFG")
     state = sdfg.add_state(is_start_block=True)
-    
-    sdfg.add_array("A", dtype=dace.float64, shape=(2,), transient=False)
-    sdfg.add_array("T1", dtype=dace.float64, shape=(2,), transient=False)
-    sdfg.add_array("T2", dtype=dace.float64, shape=(2,), transient=False)
+
+    sdfg.add_array("A", dtype=dace.float64, shape=(2, ), transient=False)
+    sdfg.add_array("T1", dtype=dace.float64, shape=(2, ), transient=False)
+    sdfg.add_array("T2", dtype=dace.float64, shape=(2, ), transient=False)
     A = state.add_access("A")
     T1 = state.add_access("T1")
 

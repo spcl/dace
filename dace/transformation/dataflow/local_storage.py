@@ -123,6 +123,7 @@ class InLocalStorage(LocalStorage):
     """ Implements the InLocalStorage transformation, which adds a transient
         data node between two scope entry nodes.
     """
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         node_a = self.node_a
         node_b = self.node_b
@@ -139,6 +140,7 @@ class OutLocalStorage(LocalStorage):
     """ Implements the OutLocalStorage transformation, which adds a transient
         data node between two scope exit nodes.
     """
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         node_a = self.node_a
         node_b = self.node_b

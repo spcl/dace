@@ -26,6 +26,7 @@ def _is_sequential(index_list):
 
 class EinsumParser(object):
     """ String parser for einsum. """
+
     def __init__(self, string):
         inout = string.split('->')
         if len(inout) == 1:
@@ -35,7 +36,8 @@ class EinsumParser(object):
 
         for char in chain(inputs, output):
             if char not in ascii_letters + ',':
-                raise ValueError('Invalid einsum string, subscript must contain' ' letters, commas, and "->".')
+                raise ValueError('Invalid einsum string, subscript must contain'
+                                 ' letters, commas, and "->".')
 
         inputs = inputs.split(',')
 
@@ -66,7 +68,8 @@ class EinsumParser(object):
         ab_vars = a_vars.union(b_vars)
         c_vars = set(c)
         if not ab_vars.issuperset(c_vars):
-            raise ValueError('Einsum subscript string includes outputs that do' ' not appear as an input')
+            raise ValueError('Einsum subscript string includes outputs that do'
+                             ' not appear as an input')
 
         batch_vars = a_vars.intersection(b_vars).intersection(c_vars)
         sum_vars = a_vars.intersection(b_vars) - c_vars
@@ -236,7 +239,8 @@ def _create_einsum_internal(sdfg: SDFG,
         try:
             import opt_einsum as oe
         except (ModuleNotFoundError, NameError, ImportError):
-            raise ImportError('To optimize einsum expressions, please install ' 'the "opt_einsum" package.')
+            raise ImportError('To optimize einsum expressions, please install '
+                              'the "opt_einsum" package.')
 
         for char, shp in chardict.items():
             if symbolic.issymbolic(shp):
@@ -290,9 +294,8 @@ def _create_einsum_internal(sdfg: SDFG,
     if not is_conflicted and init_output is None:
         to_init = False
 
-    if einsum.is_reduce() and symbolic.equal_valued(1, alpha) and (
-            symbolic.equal_valued(0, beta) or symbolic.equal_valued(1, beta)
-    ):
+    if einsum.is_reduce() and symbolic.equal_valued(1, alpha) and (symbolic.equal_valued(0, beta)
+                                                                   or symbolic.equal_valued(1, beta)):
         from dace.libraries.standard.nodes.reduce import Reduce
         # Get reduce axes
         axes = tuple(i for i, s in enumerate(einsum.inputs[0]) if s not in einsum.output)
@@ -343,16 +346,18 @@ def _create_einsum_internal(sdfg: SDFG,
         wcr = 'lambda a,b: a+b' if is_conflicted else None
         alphacode = '' if symbolic.equal_valued(1, alpha) else f'{alpha} * '
         # Pure einsum map
-        state.add_mapped_tasklet(
-            'einsum', {k: '0:%s' % v
-                       for k, v in chardict.items()},
-            {'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
-             for inp, arr in zip(einsum.inputs, arrays)},
-            'out_%s = %s%s' % (output, alphacode, ' * '.join('inp_%s' % arr for arr in arrays)),
-            {'out_%s' % output: Memlet.simple(output, output_index, wcr_str=wcr)},
-            input_nodes=input_nodes,
-            output_nodes={output: c},
-            external_edges=True)
+        state.add_mapped_tasklet('einsum', {
+            k: '0:%s' % v
+            for k, v in chardict.items()
+        }, {
+            'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
+            for inp, arr in zip(einsum.inputs, arrays)
+        },
+                                 'out_%s = %s%s' % (output, alphacode, ' * '.join('inp_%s' % arr for arr in arrays)),
+                                 {'out_%s' % output: Memlet.simple(output, output_index, wcr_str=wcr)},
+                                 input_nodes=input_nodes,
+                                 output_nodes={output: c},
+                                 external_edges=True)
     else:
         # Represent einsum as a GEMM or batched GEMM (using library nodes)
         a_shape = sdfg.arrays[arrays[0]].shape

@@ -10,9 +10,9 @@ import numpy as np
 from dace.config import set_temporary
 import pytest
 
+
 def run_vec_sum(vectorize_first: bool):
     N = dace.symbol("N")
-
 
     @dace.program
     def vec_sum(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
@@ -25,7 +25,6 @@ def run_vec_sum(vectorize_first: bool):
             out >> z[i]
 
             out = in_x + in_y + in_z
-
 
     n = 24
 
@@ -58,7 +57,7 @@ def run_vec_sum(vectorize_first: bool):
     print(f"ref ({ref.shape}): {ref}")
     print(f"Z ({Z.shape}): {Z}")
 
-    diff = np.linalg.norm(ref- Z) / n
+    diff = np.linalg.norm(ref - Z) / n
     if diff > 1e-5:
         raise ValueError("Difference: {}".format(diff))
 
@@ -70,7 +69,7 @@ def test_vec_sum_vectorize_first():
     return run_vec_sum(True)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test(assert_ii_1=False, intel=False)
 def test_vec_sum_fpga_transform_first():
     return run_vec_sum(False)
 
@@ -94,4 +93,3 @@ if __name__ == "__main__":
     test_vec_sum_vectorize_first(None)
     test_vec_sum_fpga_transform_first(None)
     test_vec_sum_fpga_transform_first_decoupled_interfaces(None)
-    

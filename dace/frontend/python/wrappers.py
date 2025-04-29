@@ -22,6 +22,7 @@ stream: Type[Deque[T]] = deque
 
 class stream_array(Generic[T]):
     """ Stream array object in Python. """
+
     def __init__(self, dtype, shape):
         from dace import data
 

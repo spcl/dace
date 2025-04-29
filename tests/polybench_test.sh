@@ -25,7 +25,7 @@ TGAP="                                                                          
 
 join_by_newline() {
     for a in $*; do
-        echo $a        
+        echo $a
     done
     echo 9999
 }
@@ -76,7 +76,7 @@ endreport() {
     echo "$PASSED / $TOTAL tests passed"
     if [ $SKIPS -ne 0 ]; then
         printf "Skipped tests:\n${SKIPPED_TESTS}"
-    fi    
+    fi
     if [ $ERRORS -ne 0 ]; then
         printf "Failed tests:\n${FAILED_TESTS}"
         exit 1

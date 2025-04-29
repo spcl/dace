@@ -45,8 +45,8 @@ def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dic
         :param maps:            List of maps
         :param common_ranges: Common ranges extracted via
                                 common_map_base_ranges()
-        :param offset: If true, offsets each range to 0  
-                       before checking 
+        :param offset: If true, offsets each range to 0
+                       before checking
         :return: Dict that maps each map to a vector with
                  the same length as number of map loops.
                  The vector contains, in order, an index
