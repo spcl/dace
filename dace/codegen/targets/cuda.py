@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from contextvars import ContextVar
+import contextvars
 import ctypes
 import functools
 import warnings
@@ -61,7 +61,7 @@ class CUDACodeGen(TargetCodeGenerator):
     """ GPU (CUDA/HIP) code generator. """
     target_name = 'cuda'
     title = 'CUDA'
-    _in_device_code = ContextVar('_in_device_code', default=False)
+    _in_device_code = contextvars.ContextVar('_in_device_code')
 
     def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
         self._frame = frame_codegen
@@ -71,6 +71,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self.create_grid_barrier = False
         self.dynamic_tbmap_type = None
         self.extra_nsdfg_args = []
+        CUDACodeGen._in_device_code.set(False)
         self._cpu_codegen: Optional['CPUCodeGen'] = None
         self._block_dims = None
         self._grid_dims = None
