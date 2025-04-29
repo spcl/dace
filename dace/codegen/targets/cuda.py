@@ -61,7 +61,7 @@ class CUDACodeGen(TargetCodeGenerator):
     """ GPU (CUDA/HIP) code generator. """
     target_name = 'cuda'
     title = 'CUDA'
-    _in_device_code = contextvars.ContextVar('_in_device_code')
+    _in_device_code = contextvars.ContextVar('_in_device_code', default=False)
 
     def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
         self._frame = frame_codegen
