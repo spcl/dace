@@ -45,13 +45,10 @@ class ConditionFusion(xf.MultiStateTransformation):
             for e in self.cblck1.all_interstate_edges():
                 modified_symbols |= e.data.assignments.keys()
 
-            if any(
-                [
-                    cnd is not None
-                    and cnd.get_free_symbols() & modified_symbols != set()
+            if any([
+                    cnd is not None and cnd.get_free_symbols() & modified_symbols != set()
                     for cnd, _ in self.cblck2.branches
-                ]
-            ):
+            ]):
                 return False
 
             return True
@@ -79,44 +76,29 @@ class ConditionFusion(xf.MultiStateTransformation):
         elif self.expr_index == 1:
             self.fuse_nested_conditions(sdfg, self.cblck1)
 
-    def fuse_consecutive_conditions(
-        self, sdfg: sd.SDFG, cblck1: ConditionalBlock, cblck2: ConditionalBlock
-    ):
+    def fuse_consecutive_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock, cblck2: ConditionalBlock):
         # Check if cblck1 has a single sink node for each branch
         assert all([len(cfg.sink_nodes()) == 1 for _, cfg in cblck1.branches])
 
         # Check if it only has one successor and that successor is a conditional block
         outer_cfg = cblck1.parent_graph
-        assert (
-            len(outer_cfg.successors(cblck1)) == 1
-        ), "Conditional block has no or multiple successors"
-        assert (
-            outer_cfg.successors(cblck1)[0] == cblck2
-        ), "Consecutive conditional block is not a successor"
+        assert (len(outer_cfg.successors(cblck1)) == 1), "Conditional block has no or multiple successors"
+        assert (outer_cfg.successors(cblck1)[0] == cblck2), "Consecutive conditional block is not a successor"
 
         # Check if cblck2 has a single predecessor
-        assert (
-            len(outer_cfg.predecessors(cblck2)) == 1
-        ), "Conditional block has no or multiple predecessors"
+        assert (len(outer_cfg.predecessors(cblck2)) == 1), "Conditional block has no or multiple predecessors"
 
         # Edge between cblck1 and cblck2 should not have any conditions
-        assert (
-            len(outer_cfg.edges_between(cblck1, cblck2)) == 1
-        ), "Multiple edges between conditional blocks"
+        assert (len(outer_cfg.edges_between(cblck1, cblck2)) == 1), "Multiple edges between conditional blocks"
 
         cblck_edge = outer_cfg.edges_between(cblck1, cblck2)[0]
-        assert (
-            cblck_edge.data.condition.as_string == "1"
-        ), "Edge between conditional blocks has conditions"
+        assert (cblck_edge.data.condition.as_string == "1"), "Edge between conditional blocks has conditions"
 
         # Edge between cblck1 and cblck2 may have assignments, but only if none of the conditions in cblck2 depend on them
-        assert all(
-            [
-                cnd is None
-                or cnd.get_free_symbols() & cblck_edge.data.assignments.keys() == set()
-                for cnd, _ in cblck2.branches
-            ]
-        ), "Assignments in edge are used in cblck2"
+        assert all([
+            cnd is None or cnd.get_free_symbols() & cblck_edge.data.assignments.keys() == set()
+            for cnd, _ in cblck2.branches
+        ]), "Assignments in edge are used in cblck2"
 
         # There should be exactly one or no else branches in each conditional block
         cblck1_elses = len([True for cnd, cfg in cblck1.branches if cnd is None])
@@ -161,11 +143,7 @@ class ConditionFusion(xf.MultiStateTransformation):
         for i, (cnd, cfg) in enumerate(cblck2.branches):
             for j in range(orig_blck1_branches):
                 off = orig_blck1_branches * i + j
-                cblck1.branches[off][
-                    0
-                ].as_string = (
-                    f"({cblck1.branches[off][0].as_string}) and ({cnd.as_string})"
-                )
+                cblck1.branches[off][0].as_string = (f"({cblck1.branches[off][0].as_string}) and ({cnd.as_string})")
 
                 old_new_mapping = {}
                 for node in cfg.nodes():
@@ -208,7 +186,6 @@ class ConditionFusion(xf.MultiStateTransformation):
         for node, parent in sdfg.all_nodes_recursive():
             if hasattr(node, "sdfg"):
                 node.sdfg = parent.sdfg
-
 
     def fuse_nested_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock):
         nbranch = cblck1.parent_graph

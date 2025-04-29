@@ -8,6 +8,7 @@ from dace.sdfg.state import ConditionalBlock
 
 
 def test_consecutive_conditions():
+
     @dace.program
     def tester(a: dace.float64[3]):
         s = 0
@@ -23,9 +24,7 @@ def test_consecutive_conditions():
     sdfg.validate()
 
     # Should have exactly two conditional block
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 2
 
     # Apply the transformation
@@ -33,13 +32,12 @@ def test_consecutive_conditions():
     sdfg.validate()
 
     # Check that the conditional blocks have been fused
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 1
 
 
 def test_nested_conditions():
+
     @dace.program
     def tester(a: dace.float64[3]):
         s = 0
@@ -54,9 +52,7 @@ def test_nested_conditions():
     sdfg.validate()
 
     # Should have exactly two conditional block
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 2
 
     # Apply the transformation
@@ -64,13 +60,12 @@ def test_nested_conditions():
     sdfg.validate()
 
     # Check that the conditional blocks have been fused
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 1
 
 
 def test_dependent_consecutive_conditions():
+
     @dace.program
     def tester(a: dace.float64[3]):
         s = 0
@@ -86,9 +81,7 @@ def test_dependent_consecutive_conditions():
     sdfg.validate()
 
     # Should have exactly two conditional block
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 2
 
     # Apply the transformation
@@ -96,13 +89,12 @@ def test_dependent_consecutive_conditions():
     sdfg.validate()
 
     # Check that the conditional blocks have not been fused
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 2
 
 
 def test_dependent_consecutive_conditions2():
+
     @dace.program
     def tester(a: dace.float64[3]):
         s = 0
@@ -119,9 +111,7 @@ def test_dependent_consecutive_conditions2():
     sdfg.validate()
 
     # Should have exactly two conditional block
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 2
 
     # Apply the transformation
@@ -129,10 +119,9 @@ def test_dependent_consecutive_conditions2():
     sdfg.validate()
 
     # Check that the conditional blocks have not been fused
-    cond_nodes = [
-        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)
-    ]
+    cond_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     assert len(cond_nodes) == 2
+
 
 if __name__ == "__main__":
     test_consecutive_conditions()
