@@ -30,10 +30,7 @@ def _can_normalize_init(loop: LoopRegion, sdfg: SDFG) -> bool:
     itervar = loop.loop_variable
     start = loop_analysis.get_init_assignment(loop)
     defined_syms = _defined_symbols(loop)
-    return (
-        itervar not in defined_syms
-        and symbolic.resolve_symbol_to_constant(start, sdfg) != 0
-    )
+    return (itervar not in defined_syms and symbolic.resolve_symbol_to_constant(start, sdfg) != 0)
 
 
 # Check if we can normalize loop step
@@ -43,12 +40,8 @@ def _can_normalize_step(loop: LoopRegion, sdfg: SDFG) -> bool:
     step = loop_analysis.get_loop_stride(loop)
     defined_syms = _defined_symbols(loop)
     step_free_syms = set([str(s) for s in step.free_symbols])
-    return (
-        itervar not in defined_syms
-        and step_free_syms.isdisjoint(defined_syms)
-        and step_free_syms.isdisjoint({itervar})
-        and symbolic.resolve_symbol_to_constant(step, sdfg) != 1
-    )
+    return (itervar not in defined_syms and step_free_syms.isdisjoint(defined_syms)
+            and step_free_syms.isdisjoint({itervar}) and symbolic.resolve_symbol_to_constant(step, sdfg) != 1)
 
 
 # Modifies the condition of a loop by a shift and scale
@@ -80,7 +73,7 @@ def _modify_cond(condition, var, step, start, norm_start, norm_step):
             end = match[a]
     if len(op) == 0:
         raise ValueError('Cannot match loop condition for loop normalization')
-    
+
     # Invert the operator for reverse loops
     is_reverse = step < 0
     if is_reverse:
@@ -92,7 +85,7 @@ def _modify_cond(condition, var, step, start, norm_start, norm_step):
             op = '<='
         elif op == '>=':
             op = '<'
-        
+
         # swap start and end
         start, end = end, start
 
@@ -104,10 +97,10 @@ def _modify_cond(condition, var, step, start, norm_start, norm_step):
     elif norm_start:
         cond = f"{itersym} {op} ({end}) - ({start})"
     elif norm_step:
-      cond = f"{itersym} {op} ({end}) / {step}"
+        cond = f"{itersym} {op} ({end}) / {step}"
     else:
-      raise ValueError("At least one of norm_start or norm_step must be True")
-    
+        raise ValueError("At least one of norm_start or norm_step must be True")
+
     if is_reverse:
         cond = f"{cond} + 1"
 
@@ -176,13 +169,12 @@ class LoopNormalize(xf.MultiStateTransformation):
 
         # Add new state before the loop to compute the new iteration symbol
         start_state = self.loop.start_block
-        self.loop.add_state_before(
-            start_state, is_start_block=True, assignments={new_iter: val}
-        )
+        self.loop.add_state_before(start_state, is_start_block=True, assignments={new_iter: val})
 
         # Adjust loop header
         if norm_init:
             self.loop.init_statement = CodeBlock(f"{itervar} = 0")
         if norm_step:
             self.loop.update_statement = CodeBlock(f"{itervar} = {itervar} + 1")
-        self.loop.loop_condition = CodeBlock(_modify_cond(self.loop.loop_condition, itervar, step, start, norm_init, norm_step))
+        self.loop.loop_condition = CodeBlock(
+            _modify_cond(self.loop.loop_condition, itervar, step, start, norm_init, norm_step))

@@ -49,9 +49,9 @@ def test_normalize(start, step):
     assert loop_analysis.get_loop_stride(loop) == step
 
     if start == 0 and step == 1:
-      assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+        assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
     else:
-      assert sdfg.apply_transformations_repeated(LoopNormalize) == 1
+        assert sdfg.apply_transformations_repeated(LoopNormalize) == 1
 
     # Check if loop normalization was successful
     assert loop_analysis.get_init_assignment(loop) == 0
@@ -65,11 +65,11 @@ def test_normalize(start, step):
     sdfg(A=A, B=B)
 
     if step >= 0:
-      for i in range(start, 32, step):
-          assert B[i] == A[i]
+        for i in range(start, 32, step):
+            assert B[i] == A[i]
     else:
-      for i in range(start, 0, step):
-          assert B[i] == A[i]
+        for i in range(start, 0, step):
+            assert B[i] == A[i]
 
 
 def test_normalize_altered_iter():
