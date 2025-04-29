@@ -63,6 +63,8 @@ class MapFusion(transformation.SingleStateTransformation):
     Note that `assume_always_shared` takes precedence.
     For this pattern the `FullMapFusion` pass is provided, that combines the analysis
     pass and `MapFusion`.
+    The third way is to pass the result of `FindSingleUseData` as `single_use_data` argument
+    to the constructor.
 
     By default this transformation only handles the case where to maps are right after each other,
     separated by an intermediate array. However, by setting `allow_parallel_map_fusion` to `True`,
@@ -79,6 +81,8 @@ class MapFusion(transformation.SingleStateTransformation):
     :param allow_parallel_map_fusion: Allow to merge parallel maps, by default `False`.
     :param only_if_common_ancestor: In parallel map fusion mode, only fuse if both map
         have a common direct ancestor.
+    :param single_use_data: Which data containers are only used in one location,
+        if not passed the transformation will scan the SDFG every time.
 
     :note: This transformation modifies more nodes than it matches.
     :note: If `assume_always_shared` is `True` then the transformation will assume that
@@ -147,6 +151,7 @@ class MapFusion(transformation.SingleStateTransformation):
         allow_serial_map_fusion: Optional[bool] = None,
         allow_parallel_map_fusion: Optional[bool] = None,
         only_if_common_ancestor: Optional[bool] = None,
+        single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -166,7 +171,7 @@ class MapFusion(transformation.SingleStateTransformation):
             self.only_if_common_ancestor = only_if_common_ancestor
 
         # See comment in `is_shared_data()` for more information.
-        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
+        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = single_use_data
 
     @classmethod
     def expressions(cls) -> Any:
