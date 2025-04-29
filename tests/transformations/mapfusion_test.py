@@ -1923,6 +1923,113 @@ def test_possible_cycle_if_fuesed_sdfg():
     assert not would_transformation_apply
 
 
+def _make_multi_producer_intermediate() -> tuple[dace.SDFG, dace.SDFGState]:
+    """Produces an SDFG where the intermediate node has multiple producer.
+
+    It can be fused because the downstream map only updates it partially.
+    """
+    sdfg = dace.SDFG("multi_producer_intermediate")
+    state = sdfg.add_state(is_start_block=True)
+    state2 = sdfg.add_state_after(state)
+
+    anames = ["a", "t", "o1", "o2"]
+    for aname in anames:
+        sdfg.add_array(
+            name=aname,
+            shape=(20, (15 if aname == "o1" else 20)),
+            dtype=dace.float64,
+            transient=(aname == "t"),
+        )
+    t = state.add_access("t")
+
+    state.add_mapped_tasklet(
+        "comp1",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "0:5"
+        },
+        inputs={"__in": dace.Memlet("a[__i0, __i1]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("t[__i0, __i1]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "comp2",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "15:20"
+        },
+        inputs={"__in": dace.Memlet("a[__i0, __i1]")},
+        code="__out = __in + 2.0",
+        outputs={"__out": dace.Memlet("t[__i0, __i1]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+
+    state.add_mapped_tasklet(
+        "first_map",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "5:15"
+        },
+        inputs={"__in": dace.Memlet("a[__i0, __i1]")},
+        code="__out = __in + 3.0",
+        outputs={"__out": dace.Memlet("t[__i0, __i1]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+
+    state.add_mapped_tasklet(
+        "second_map",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "5:15"
+        },
+        inputs={"__in": dace.Memlet("t[__i0, __i1]")},
+        code="__out = __in + 4.0",
+        outputs={"__out": dace.Memlet("o1[__i0, __i1 - 5]")},
+        input_nodes={t},
+        external_edges=True,
+    )
+
+    state2.add_nedge(
+        state2.add_access("t"),
+        state2.add_access("o2"),
+        dace.Memlet("t[0:20, 0:20] -> [0:20, 0:20]"),
+    )
+    sdfg.validate()
+
+    return sdfg, state
+
+
+def test_multi_producer_sdfg():
+    sdfg, state = _make_multi_producer_intermediate()
+    assert count_nodes(state, nodes.MapEntry) == 4
+
+    ac_initial = count_nodes(state, nodes.AccessNode, return_nodes=True)
+    assert len(ac_initial) == 5
+    assert any(state.out_degree(ac) == 1 and state.in_degree(ac) == 3 for ac in ac_initial if ac.data == "t")
+
+    ref = {
+        "a": np.array(np.random.rand(20, 20), dtype=np.float64, copy=True),
+        "o1": np.array(np.random.rand(20, 15), dtype=np.float64, copy=True),
+        "o2": np.array(np.random.rand(20, 20), dtype=np.float64, copy=True),
+    }
+    res = copy.deepcopy(ref)
+
+    run_sdfg(sdfg, **ref)
+
+    apply_fusion(sdfg, removed_maps=1)
+
+    ac_after = count_nodes(state, nodes.AccessNode, return_nodes=True)
+    assert len(ac_after) == 6  # The additional one is the transient.
+    assert any(state.out_degree(ac) == 0 and state.in_degree(ac) == 3 for ac in ac_initial if ac.data == "t")
+
+    run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[name], res[name]) for name in ref)
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -1957,3 +2064,4 @@ if __name__ == '__main__':
     test_inner_map_dependency()
     test_inner_map_dependency_resolved()
     test_possible_cycle_if_fuesed_sdfg()
+    test_multi_producer_sdfg()
