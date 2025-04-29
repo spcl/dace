@@ -2086,7 +2086,7 @@ def _make_reuse_connector() -> Tuple[SDFG, SDFGState]:
         },
         code="__out = __in1 + __in2",
         outputs={"__out": dace.Memlet("b[__i]")},
-        output_nodes={t},
+        input_nodes={t},
         external_edges=True,
     )
     sdfg.validate()
@@ -2114,7 +2114,7 @@ def test_reuse_connector():
     assert count_nodes(sdfg, nodes.MapEntry) == 1
     ac_nodes = count_nodes(sdfg, nodes.AccessNode, return_nodes=True)
     assert len(ac_nodes) == 3
-    assert len([ac for ac in ac_nodes_before if ac.data == "a"]) == 1
+    assert len([ac for ac in ac_nodes if ac.data == "a"]) == 1
 
     run_sdfg(sdfg, **res)
 
@@ -2122,7 +2122,6 @@ def test_reuse_connector():
 
 
 if __name__ == '__main__':
-    """
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
     test_fusion_different_global_accesses()
@@ -2156,6 +2155,5 @@ if __name__ == '__main__':
     test_inner_map_dependency()
     test_inner_map_dependency_resolved()
     test_possible_cycle_if_fuesed_sdfg()
-    """
     test_multi_producer_sdfg()
     test_reuse_connector()
