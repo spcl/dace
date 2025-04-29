@@ -16,7 +16,7 @@ from dace.transformation.dataflow import MapFusion, MapExpansion
 
 def count_nodes(
     graph: Union[SDFG, SDFGState],
-    node_type: Union[Tuple[Type, ...] | Type],
+    node_type: Union[Tuple[Type, ...], Type],
     return_nodes: bool = False,
 ) -> Union[int, List[nodes.Node]]:
     """Counts the number of nodes in of a particular type in `graph`.
