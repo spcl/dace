@@ -17,7 +17,7 @@ def test_regular_loop():
                 continue
             a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -41,7 +41,7 @@ def test_no_condition():
             continue
             a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -67,7 +67,7 @@ def test_nested_loop():
                     continue
                 a[i, j] = a[i, j] + 1
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Should have exactly one continue node
