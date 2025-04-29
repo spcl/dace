@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Union, Tuple, Optional
+from typing import Any, Union, Tuple, Type, Optional, List
 
 import numpy as np
 import os
@@ -7,6 +7,7 @@ import dace
 import copy
 import uuid
 import pytest
+import gc
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -296,7 +297,7 @@ def test_fusion_simple():
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
     out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A=A, B=B, out=out)
+    run_sdfg(sdfg, A=A, B=B, out=out)
 
     diff = abs(np.sum(A * A + B) - out)
     print('Difference:', diff)
@@ -310,7 +311,7 @@ def test_fusion_rename():
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
     out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A=A, B=B, out=out)
+    run_sdfg(sdfg, A=A, B=B, out=out)
 
     diff = abs(np.sum(A * A + B) - out)
     print('Difference:', diff)
@@ -343,7 +344,7 @@ def test_indirect_accesses():
     out = np.zeros(shape=30, dtype=np.float32)
 
     res = ((A + B * 2) + 3)[idx]
-    sdfg(A=A, B=B, idx=idx, out=out)
+    run_sdfg(sdfg, A=A, B=B, idx=idx, out=out)
 
     assert np.allclose(res, out)
 
@@ -359,7 +360,7 @@ def test_multiple_fusions():
     B = np.zeros_like(A)
     C = np.zeros_like(A)
     out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A=A, B=B, C=C, out=out)
+    run_sdfg(sdfg, A=A, B=B, C=C, out=out)
     diff1 = np.linalg.norm(A * A + 1 - B)
     diff2 = np.linalg.norm(A * A + 2 - C)
     print('Difference1:', diff1)
@@ -372,6 +373,7 @@ def test_multiple_fusions():
 def test_fusion_chain():
     sdfg = fusion_chain.to_sdfg(simplify=True)
     sdfg.simplify()
+    assert count_nodes(sdfg, nodes.MapEntry) > 1
     sdfg = apply_fusion(sdfg, final_maps=1)
 
     A = np.random.rand(10, 20).astype(np.float32)
@@ -389,7 +391,7 @@ def test_fusion_with_transient():
     sdfg.simplify()
     sdfg = apply_fusion(sdfg, removed_maps=2)
 
-    sdfg(A=A)
+    run_sdfg(sdfg, A=A)
     assert np.allclose(A, expected)
 
 
@@ -429,7 +431,7 @@ def test_fusion_with_transient_scalar():
 
     A = np.random.rand(N, K)
     B = np.repeat(np.nan, N)
-    sdfg(A=A, B=B)
+    run_sdfg(sdfg, A=A, B=B)
 
     assert np.allclose(B, (A[:, K - 1] + 1))
 
@@ -455,7 +457,7 @@ def test_fusion_with_inverted_indices():
     apply_fusion(sdfg, removed_maps=0)
 
     val1 = np.ndarray((10, ), dtype=np.int32)
-    sdfg(A=val1)
+    run_sdfg(sdfg, A=val1)
     assert np.array_equal(val1, ref), f"REF: {ref}; VAL: {val1}"
 
 
@@ -481,7 +483,7 @@ def test_fusion_with_empty_memlet():
     A = np.arange(1024, dtype=np.float32)
     B = np.arange(1024, dtype=np.float32)
     val = np.zeros((1, ), dtype=np.float32)
-    sdfg(A=A, B=B, out=val, N=1024)
+    run_sdfg(sdfg, A=A, B=B, out=val, N=1024)
     ref = A @ B
     assert np.allclose(val[0], ref)
 
@@ -649,7 +651,7 @@ def test_fusion_with_nested_sdfg_0():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -707,7 +709,7 @@ def test_interstate_fusion():
     assert sdfg.number_of_nodes() == 2
     assert len([node for node in state1.data_nodes() if node.data == "B"]) == 1
 
-    sdfg(A=A, C=C, D=D)
+    run_sdfg(sdfg, A=A, C=C, D=D)
 
     assert np.allclose(C, ref_C)
     assert np.allclose(D, ref_D)
@@ -829,13 +831,13 @@ def test_offset_correction_range_read():
 
     sdfg = make_correction_offset_sdfg(range_read=True, second_read_start=3)
 
-    sdfg(A=A, C=C)
+    run_sdfg(sdfg, A=A, C=C)
     assert np.allclose(C, exp)
     C[:] = 0.0
 
     apply_fusion(sdfg)
 
-    sdfg(A=A, C=C)
+    run_sdfg(sdfg, A=A, C=C)
     assert np.allclose(C, exp)
 
 
@@ -932,7 +934,7 @@ def test_different_offsets():
     B = np.array(np.random.rand(N + 1, M + 2), dtype=np.float64, copy=True)
 
     ref = exptected(A, B)
-    res = sdfg(A=A, B=B)
+    res = run_sdfg(sdfg, A=A, B=B)
     assert np.allclose(ref, res)
 
 
@@ -1379,7 +1381,7 @@ def _impl_fusion_intermediate_different_access(modified_shape: bool, traditional
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1500,7 +1502,7 @@ def test_fusion_multiple_producers_consumers():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1602,7 +1604,7 @@ def test_fusion_multiple_consumers():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1666,7 +1668,7 @@ def test_fusion_different_global_accesses():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1727,8 +1729,7 @@ def test_fusion_dynamic_producer():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    csdfg = sdfg.compile()
-    csdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1864,7 +1865,7 @@ def test_fusion_intrinsic_memlet_direction():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
