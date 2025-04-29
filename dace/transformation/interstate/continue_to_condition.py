@@ -25,7 +25,6 @@ class ContinueToCondition(xf.MultiStateTransformation):
 
         pg = self.cb.parent_graph.parent_graph
 
-
         if not isinstance(pg, ConditionalBlock):
             return False
         if len(pg.branches) != 1:
@@ -48,7 +47,7 @@ class ContinueToCondition(xf.MultiStateTransformation):
         pg: ConditionalBlock = self.cb.parent_graph.parent_graph
         outer_cfg = pg.parent_graph
         if len(outer_cfg.successors(pg)) == 0:
-            outer_cfg.add_state_after(pg) # Replacement
+            outer_cfg.add_state_after(pg)  # Replacement
             outer_cfg.remove_node(pg)
             return
 

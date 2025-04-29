@@ -7,7 +7,9 @@ from dace.transformation.interstate import ContinueToCondition
 from dace.sdfg.state import ContinueBlock, LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.properties import CodeBlock
 
+
 def test_regular_loop():
+
     @dace.program
     def tester(a: dace.float64[20]):
         for i in range(20):
@@ -30,7 +32,9 @@ def test_regular_loop():
     cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
     assert len(cont_nodes) == 0
 
+
 def test_no_condition():
+
     @dace.program
     def tester(a: dace.float64[20]):
         for i in range(20):
@@ -54,13 +58,14 @@ def test_no_condition():
 
 
 def test_nested_loop():
+
     @dace.program
     def tester(a: dace.float64[20, 10]):
         for i in range(20):
             for j in range(10):
                 if i > j:
                     continue
-                a[i,j] = a[i,j] + 1
+                a[i, j] = a[i, j] + 1
 
     sdfg = tester.to_sdfg()
     sdfg.validate()
@@ -78,17 +83,17 @@ def test_nested_loop():
     assert len(cont_nodes) == 0
 
     # Check correctness
-    a = dace.ndarray([20,10], dtype=dace.float64)
-    a[:] = np.random.rand(20,10).astype(dace.float64.type)
+    a = dace.ndarray([20, 10], dtype=dace.float64)
+    a[:] = np.random.rand(20, 10).astype(dace.float64.type)
     a_copy = a.copy()
     sdfg(a=a)
 
     for i in range(20):
         for j in range(10):
             if i > j:
-                assert a[i,j] == a_copy[i,j]
+                assert a[i, j] == a_copy[i, j]
             else:
-                assert a[i,j] == a_copy[i,j] + 1
+                assert a[i, j] == a_copy[i, j] + 1
 
 
 def test_loop_in_nested_sdfg():
@@ -96,7 +101,7 @@ def test_loop_in_nested_sdfg():
     s11 = sdfg.add_state(is_start_block=True)
 
     sdfg2 = dace.SDFG("nested2")
-    s11.add_node(nodes.NestedSDFG("n2", sdfg2, {},{}))
+    s11.add_node(nodes.NestedSDFG("n2", sdfg2, {}, {}))
 
     loop = LoopRegion("loop", "i < 64", "i", "i = 0", "i = i + 1")
     sdfg2.add_node(loop)
@@ -109,7 +114,7 @@ def test_loop_in_nested_sdfg():
     s21 = loop.add_state_after(cond)
 
     sdfg3 = dace.SDFG("nested3")
-    s21.add_node(nodes.NestedSDFG("n3", sdfg3, {},{}))
+    s21.add_node(nodes.NestedSDFG("n3", sdfg3, {}, {}))
     sdfg3.add_state(is_start_block=True)
     sdfg.validate()
 
@@ -122,7 +127,7 @@ def test_loop_in_nested_sdfg():
     xform.cb = cont
     if xform.can_be_applied(cfr, 0, sdfg2):
         xform.apply(cfr, sdfg2)
-        
+
     # sdfg.apply_transformations_repeated(ContinueToCondition)
     sdfg.validate()
 
@@ -136,4 +141,3 @@ if __name__ == '__main__':
     test_no_condition()
     test_nested_loop()
     test_loop_in_nested_sdfg()
-
