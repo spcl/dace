@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Union, Tuple, Optional, List
+from typing import Any, Union, Tuple, Type, Optional, List
 
 import numpy as np
 import os
@@ -16,7 +16,7 @@ from dace.transformation.dataflow import MapFusion, MapExpansion
 
 def count_nodes(
     graph: Union[SDFG, SDFGState],
-    node_type: Tuple[type, ...] | type,
+    node_type: Union[Tuple[Type, ...] | Type],
     return_nodes: bool = False,
 ) -> Union[int, List[nodes.Node]]:
     """Counts the number of nodes in of a particular type in `graph`.
