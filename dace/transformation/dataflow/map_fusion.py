@@ -69,6 +69,8 @@ class MapFusion(transformation.SingleStateTransformation):
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
     :param assume_always_shared: Assume that all intermediates are shared.
+    :param consolidate_edges: If `True`, the default, try to remove edges on the fused Map if they
+        refer to the same data, this will increase the subset size.
 
     :note: This transformation modifies more nodes than it matches.
     :note: If `assume_always_shared` is `True` then the transformation will assume that
@@ -103,6 +105,11 @@ class MapFusion(transformation.SingleStateTransformation):
         default=False,
         desc="If `True` then all intermediates will be classified as shared.",
     )
+    consolidate_edges = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If `True`, the default, try to remove edges referring to the same data on the fused Map.",
+    )
 
     def __init__(
         self,
@@ -110,6 +117,7 @@ class MapFusion(transformation.SingleStateTransformation):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
+        consolidate_edges: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -121,6 +129,8 @@ class MapFusion(transformation.SingleStateTransformation):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
+        if consolidate_edges is not None:
+            self.consolidate_edges = consolidate_edges
 
         # See comment in `is_shared_data()` for more information.
         self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
@@ -685,23 +695,20 @@ class MapFusion(transformation.SingleStateTransformation):
         name that should be used. The second element is a boolean that indicates if
         the connector name is already present on `to_node`, `True`, or if a new
         connector was created.
+        If `self.consolidate_edges` is `False` the function will always reuse, creating
+        a new connector at `to_node`. This will lead to minimal subsets at the cost of
+        multiple edges to the same data.
         """
         assert edge_to_move.dst_conn.startswith("IN_")
         old_conn = edge_to_move.dst_conn[3:]
 
-        # If `to_node` is a `MapExit` node then we always handle as a non global
-        #  Map, i.e. we never reuse the connector. The reason is that to handle
-        #  that case we would need special logic and it is not that common.
-        # NOTE: Remember special behaviour of `scope_dict` if `to_node` is a `MapExit`.
-        # TODO(phimuell): Fix that.
-        if isinstance(to_node, nodes.MapExit):
-            is_in_global_scop = False
-        else:
-            is_in_global_scop = scope_dict[to_node] is None
-
-        if not is_in_global_scop:
-            # The Map is nested, so we keep the supplying edge. This is a simplification
-            #  because otherwise we would have to modify the surrounding Map.
+        # In case `to_node` is nested, a `MapExit` (pure simplification) or the edge
+        #  consolidation is disabled, we will always reuse the connector. The main
+        #  reason is to simplify things, because we do not have to modify enclosing
+        #  Maps.
+        # TODO(phimuell): Make this more intelligent, i.e. consolidate if one edge
+        #   is for example a subset of the other.
+        if (isinstance(to_node, nodes.MapExit) or (not self.consolidate_edges) or (scope_dict[to_node] is not None)):
             return to_node.next_connector(old_conn), False
 
         # The Map is not nested, so we look if we can reuse an Edge.
