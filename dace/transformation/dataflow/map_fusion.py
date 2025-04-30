@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union, Iterable
 
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
-from dace.sdfg import SDFG, SDFGState, graph, nodes, validation
+from dace.sdfg import SDFG, SDFGState, graph, nodes, validation, propagation
 from dace.transformation import helpers
 
 
@@ -307,6 +307,12 @@ class MapFusion(transformation.SingleStateTransformation):
 
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
+
+        # Now run Memlet propagation to make sure that the wrong subsets caused by
+        #  edge reuse, see `relocate_nodes()`, is corrected.
+        # TODO(phimuell): Restrict it such that it is only done if needed and where
+        #   it is needed.
+        propagation.propagate_memlets_state(sdfg, graph)
 
     def partition_first_outputs(
         self,
@@ -625,7 +631,7 @@ class MapFusion(transformation.SingleStateTransformation):
                     scope_dict=scope_dict,
                 )
 
-                # Now move the incoming edges of `to_node` to `from_node`. However,
+                # Now move the incoming edges of `from_node` to `to_node`. However,
                 #  we only move `edge_to_move` if we have a new connector, if we
                 #  reuse the connector we will simply remove it.
                 dst_in_conn = "IN_" + new_conn
@@ -637,15 +643,14 @@ class MapFusion(transformation.SingleStateTransformation):
                     else:
                         helpers.redirect_edge(state, e, new_dst=to_node, new_dst_conn=dst_in_conn)
 
-                # Now move the outgoing edges of `to_node` to `from_node`.
+                # Now move the outgoing edges of `from_node` to `to_node`.
                 dst_out_conn = "OUT_" + new_conn
                 for e in list(state.out_edges_by_connector(from_node, f"OUT_{old_conn}")):
                     helpers.redirect_edge(state, e, new_src=to_node, new_src_conn=dst_out_conn)
 
                 # If we have used new connectors we must add the new connector names.
                 if not conn_was_reused:
-                    to_node.add_in_connector(dst_in_conn)
-                    to_node.add_out_connector(dst_out_conn)
+                    to_node.add_scope_connectors(new_conn)
 
                 # In any case remove the old connector name from the `from_node`.
                 from_node.remove_in_connector("IN_" + old_conn)
