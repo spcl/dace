@@ -30,7 +30,7 @@ def count_nodes(
     """
 
     states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
-    found_nodes: list[dace_nodes.Node] = []
+    found_nodes: list[nodes.Node] = []
     for state_nodes in states:
         for node in state_nodes.nodes():
             if isinstance(node, node_type):
