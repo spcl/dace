@@ -42,7 +42,47 @@ class KCaching(xf.MultiStateTransformation):
       2, a0 a2, a1
 
     With K = 3 the memory footprint is reduced from O(N) to O(K).
-    We can only do this, if 
+   
+    Second example:
+
+      for i in range(3, N-2):
+          v[i] = a[i + 1] + a[i - 3] 
+          a[i - 1] = b[i] * 2
+          a[i + 2] = b[i] * 2
+
+      i, Reads, Writes:
+      0, a4 a0, a2 a5
+      1, a5 a1, a3 a6
+      2, a6 a2, a4 a7
+      3, a7 a3, a5 a8
+  
+    Transforms to:
+
+      for i in range(3, N-2):
+        v[i] = a[(i + 1) % K] + a[(i - 3) % K] 
+        a[(i - 1) % K] = b[i] * 2
+        a[(i + 2) % K] = b[i] * 2 
+
+      i, Reads, Writes:
+      0, a4 a0, a2 a5
+      1, a5 a1, a3 a0
+      2, a0 a2, a4 a1
+      3, a1 a3, a5 a2
+
+    With K = 6, which can be determined by the distance of lowest read and highest write: K = hw - lr + 1 = (i + 2) - (i - 3) + 1 = 6.
+    If we also analyze the order of reads and writes, we can lower K even further.
+
+    Works with:
+      - Interleaved reads and writes
+      - Gaps in the range of indices
+    
+    Might work with:
+      - Constant indexes (i.e. independent of the loop variable) (Need to check)
+
+    Does not work with:
+      - Non-linear index expressions
+      - Non-linear step expressions
+      - Indirect accesses
     """
 
     loop = xf.PatternNode(LoopRegion)
@@ -58,4 +98,23 @@ class KCaching(xf.MultiStateTransformation):
         pass
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        pass
+
+    
+
+    def _can_apply_for_array(self, array_name: str):
+        """
+        1. Loop step expression must be constant.
+
+        2. All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
+
+        XXX: For now a must be 1. Need to figure out if scaling is possible and how to compute K. 
+
+        3. Outside of the loop, the written subset of the array must be written before read or not read at all.
+
+        4. At least one write index must be higher than all read indices (i.e. K > 1).
+        """
+        pass
+
+    def _apply_for_array(self, array_name: str):
         pass
