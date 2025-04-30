@@ -61,7 +61,7 @@ class CUDACodeGen(TargetCodeGenerator):
     """ GPU (CUDA/HIP) code generator. """
     target_name = 'cuda'
     title = 'CUDA'
-    _in_device_code = contextvars.ContextVar('_in_device_code')
+    _in_device_code = contextvars.ContextVar('_in_device_code', default=False)
 
     def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
         self._frame = frame_codegen
@@ -1530,9 +1530,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     if not defined_type:
                         defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
-                    CUDACodeGen._in_device_code.set(True)
+                    token = CUDACodeGen._in_device_code.set(True)
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                    CUDACodeGen._in_device_code.set(False)
+                    CUDACodeGen._in_device_code.reset(token)
 
                     self._dispatcher.defined_vars.add(inner_ptrname,
                                                       defined_type,
@@ -1549,9 +1549,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                        dtypes.AllocationLifetime.Persistent,
                                                        dtypes.AllocationLifetime.External)
                     defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
-                    CUDACodeGen._in_device_code.set(True)
+                    token = CUDACodeGen._in_device_code.set(True)
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                    CUDACodeGen._in_device_code.set(False)
+                    CUDACodeGen._in_device_code.reset(token)
                     self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
 
                     # Rename argument in kernel prototype as necessary
