@@ -172,8 +172,18 @@ class ConditionFusion(xf.MultiStateTransformation):
             outer_cfg.add_edge(cblck1, e.dst, copy.deepcopy(e.data))
         outer_cfg.remove_node(cblck2)
 
-        # Make the last branch of cblck1 an else branch
-        cblck1.branches[-1] = (None, cblck1.branches[-1][1])
+        # If a branch is empty (single empty state), remove branch (implicit else)
+        implicit_else = False
+        for _, cfg in cblck1.branches:
+            if len(list(cfg.all_nodes_recursive())) == 1:
+                # Remove the branch
+                cblck1.remove_branch(cfg)
+                implicit_else = True
+                break
+
+        # Otherwise, make the last branch of cblck1 an else branch
+        if not implicit_else:
+            cblck1.branches[-1] = (None, cblck1.branches[-1][1])
 
         # Give each branch a unique label and nested nodes unique names
         for i, (cnd, cfg) in enumerate(cblck1.branches):
@@ -248,8 +258,18 @@ class ConditionFusion(xf.MultiStateTransformation):
         # Remove original branch from cblckp
         cblckp.remove_branch(nbranch)
 
-        # Make the last branch of cblckp an else branch
-        cblckp.branches[-1] = (None, cblckp.branches[-1][1])
+        # If a branch is empty (single empty state or two empty states connected by an empty edge), remove branch (implicit else)
+        implicit_else = False
+        for _, cfg in cblckp.branches:
+            if len(list(cfg.all_nodes_recursive())) == 1:
+                # Remove the branch
+                cblckp.remove_branch(cfg)
+                implicit_else = True
+                break
+
+        # Otherwise, make the last branch of cblckp an else branch
+        if not implicit_else:
+            cblckp.branches[-1] = (None, cblckp.branches[-1][1])
 
         # Give each branch a unique label and nested nodes unique names
         for i, (cnd, cfg) in enumerate(cblckp.branches):
