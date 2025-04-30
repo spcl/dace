@@ -14,6 +14,7 @@ from .fpga_transform_sdfg import FPGATransformSDFG
 from .gpu_transform_sdfg import GPUTransformSDFG
 from .inline_map import InlineMap
 from .sdfg_nesting import NestSDFG, InlineSDFG, InlineTransients, RefineNestedAccess
+from .k_caching import KCaching
 from .loop_unroll import LoopUnroll
 from .loop_normalize import LoopNormalize
 from .loop_peeling import LoopPeeling
