@@ -19,7 +19,7 @@ def count_nodes(
     node_type: Union[Tuple[Type, ...], Type],
     return_nodes: bool = False,
 ) -> Union[int, List[nodes.Node]]:
-    """Counts the number of nodes in of a particular type in `graph`.
+    """Counts the number of nodes of a particular type in `graph`.
 
     If `graph` is an SDFGState then only count the nodes inside this state,
     but if `graph` is an SDFG count in all states.
