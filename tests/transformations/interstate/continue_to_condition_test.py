@@ -33,6 +33,32 @@ def test_regular_loop():
     assert len(cont_nodes) == 0
 
 
+def test_flipped():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] <= 10:
+                a[i] = a[i] + 1
+            else:
+                continue
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Should have exactly one continue node
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+    # Apply the transformation
+    sdfg.apply_transformations_repeated(ContinueToCondition)
+    sdfg.validate()
+
+    # Check that the continue node was not removed
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+
 def test_no_condition():
 
     @dace.program
@@ -55,6 +81,58 @@ def test_no_condition():
     # Check that the continue node was not removed
     cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
     assert len(cont_nodes) == 1
+
+
+def test_prev_operation():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] > 10:
+                a[i] = a[i] + 10
+                continue
+            a[i] = a[i] + 1
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Should have exactly one continue node
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+    # Apply the transformation
+    sdfg.apply_transformations_repeated(ContinueToCondition)
+    sdfg.validate()
+
+    # Check that the continue node was not removed
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+
+def test_succ_operation():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] > 10:
+                continue
+                a[i] = a[i] + 10
+            a[i] = a[i] + 1
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Should have exactly one continue node
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+    # Apply the transformation
+    sdfg.apply_transformations_repeated(ContinueToCondition)
+    sdfg.validate()
+
+    # Check that the continue node was removed
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 0
 
 
 def test_nested_loop():
@@ -136,8 +214,127 @@ def test_loop_in_nested_sdfg():
     assert len(cont_nodes) == 0
 
 
+def test_multiple_branches():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] > 10:
+                continue
+            else:
+                a[i] = a[i] + 1
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Should have exactly one continue node
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+    # Apply the transformation
+    sdfg.apply_transformations_repeated(ContinueToCondition)
+    sdfg.validate()
+
+    # Check that the continue node was not removed
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+
+def test_multiple_branches2():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] > 10:
+                continue
+            elif a[i] < 5:
+                continue
+            elif a[i] < 8:
+                a[i] = a[i] + 2
+            else:
+                a[i] = a[i] + 1
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Should have exactly two continue node
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 2
+
+    # Apply the transformation
+    sdfg.apply_transformations_repeated(ContinueToCondition)
+    sdfg.validate()
+
+    # Check that the continue nodes were not removed
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 2
+
+
+def test_nested_conditions():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        for i in range(20):
+            if a[i] > 10:
+                if a[i] < 20:
+                    continue
+            a[i] = a[i] + 1
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Should have exactly one continue node
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 1
+
+    # Apply the transformation
+    sdfg.apply_transformations_repeated(ContinueToCondition)
+    sdfg.validate()
+
+    # Check that the continue node was removed
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 0
+
+
+def test_nested_loops():
+
+    @dace.program
+    def tester(a: dace.float64[20, 20]):
+        for i in range(20):
+            if a[i, 0] > 10:
+                continue
+
+            for j in range(20):
+                if a[i, j] > 10:
+                    if a[i, j] < 20:
+                        continue
+                a[i, j] = a[i, j] + 1
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.validate()
+
+    # Should have exactly two continue node
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 2
+
+    # Apply the transformation
+    sdfg.apply_transformations_repeated(ContinueToCondition)
+    sdfg.validate()
+
+    # Check that the continue node were removed
+    cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
+    assert len(cont_nodes) == 0
+
+
 if __name__ == '__main__':
     test_regular_loop()
+    test_flipped()
     test_no_condition()
+    test_prev_operation()
+    test_succ_operation()
     test_nested_loop()
     test_loop_in_nested_sdfg()
+    test_multiple_branches()
+    test_multiple_branches2()
+    test_nested_conditions()
+    test_nested_loops()
