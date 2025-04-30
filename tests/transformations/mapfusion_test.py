@@ -2062,7 +2062,7 @@ def _make_reuse_connector() -> Tuple[SDFG, SDFGState]:
     for name in "abt":
         sdfg.add_array(
             name,
-            shape=(10, ),
+            shape=((5 if name != "a" else 10), ),
             dtype=dace.float64,
             transient=(name == "t"),
         )
@@ -2070,7 +2070,7 @@ def _make_reuse_connector() -> Tuple[SDFG, SDFGState]:
 
     state.add_mapped_tasklet(
         "comp1",
-        map_ranges={"__i": "0:10"},
+        map_ranges={"__i": "0:5"},
         inputs={"__in": dace.Memlet("a[__i]")},
         code="__out = __in + 10.",
         outputs={"__out": dace.Memlet("t[__i]")},
@@ -2079,10 +2079,10 @@ def _make_reuse_connector() -> Tuple[SDFG, SDFGState]:
     )
     state.add_mapped_tasklet(
         "comp2",
-        map_ranges={"__i": "0:10"},
+        map_ranges={"__i": "0:5"},
         inputs={
             "__in1": dace.Memlet("t[__i]"),
-            "__in2": dace.Memlet("a[__i]")
+            "__in2": dace.Memlet("a[__i + 5]")
         },
         code="__out = __in1 + __in2",
         outputs={"__out": dace.Memlet("b[__i]")},
@@ -2098,8 +2098,17 @@ def test_reuse_connector():
     sdfg, state = _make_reuse_connector()
     ac_nodes_before = count_nodes(sdfg, nodes.AccessNode, return_nodes=True)
     assert len(ac_nodes_before) == 4
-    assert len([ac for ac in ac_nodes_before if ac.data == "a"]) == 2
     assert count_nodes(sdfg, nodes.MapEntry) == 2
+
+    # Find the subsets of the `a` nodes.
+    a_nodes_subset_init = set()
+    for ac in ac_nodes_before:
+        if ac.data != "a":
+            continue
+        assert state.out_degree(ac) == 1
+        a_nodes_subset_init.add(next(iter(state.out_edges(ac))).data.subset[0])
+    assert len(a_nodes_subset_init) == 2
+    assert {(0, 4, 1), (5, 9, 1)} == a_nodes_subset_init
 
     ref = {
         "a": np.array(np.random.rand(20, 20), dtype=np.float64, copy=True),
@@ -2114,7 +2123,13 @@ def test_reuse_connector():
     assert count_nodes(sdfg, nodes.MapEntry) == 1
     ac_nodes = count_nodes(sdfg, nodes.AccessNode, return_nodes=True)
     assert len(ac_nodes) == 3
-    assert len([ac for ac in ac_nodes if ac.data == "a"]) == 1
+    a_nodes = [ac for ac in ac_nodes if ac.data == "a"]
+    assert len(a_nodes) == 1
+    a_node = a_nodes[0]
+    assert state.out_degree(a_node) == 1
+    a_oedge = next(iter(state.out_edges(a_node)))
+    # Test if the subset has been updated.
+    assert a_oedge.data.subset[0] == (0, 9, 1)
 
     run_sdfg(sdfg, **res)
 
