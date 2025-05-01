@@ -20,21 +20,21 @@ class KCaching(xf.MultiStateTransformation):
     """
     Apply K-Caching on loops. K-Caching is a technique to replace thread-local accesses in a loop with a modulo-indexed access to reduce memory footprint.
     Example:
-    
+
       for i in range(2, N):
-        v[i] = a[i - 1] + a[i - 2] 
-        a[i] = b[i] * 2 
+        v[i] = a[i - 1] + a[i - 2]
+        a[i] = b[i] * 2
 
       i, Reads, Writes:
       0, a1 a0, a2
       1, a2 a1, a3
       2, a3 a2, a4
-  
+
     Transforms to:
 
       for i in range(2, N):
-        v[i] = a[(i - 1) % K] + a[(i - 2) % K] 
-        a[i % K] = b[i] * 2 
+        v[i] = a[(i - 1) % K] + a[(i - 2) % K]
+        a[i % K] = b[i] * 2
 
       i, Reads, Writes:
       0, a1 a0, a2
@@ -42,11 +42,11 @@ class KCaching(xf.MultiStateTransformation):
       2, a0 a2, a1
 
     With K = 3 the memory footprint is reduced from O(N) to O(K).
-   
+
     Second example:
 
       for i in range(3, N-2):
-          v[i] = a[i + 1] + a[i - 3] 
+          v[i] = a[i + 1] + a[i - 3]
           a[i - 1] = b[i] * 2
           a[i + 2] = b[i] * 2
 
@@ -55,13 +55,13 @@ class KCaching(xf.MultiStateTransformation):
       1, a5 a1, a3 a6
       2, a6 a2, a4 a7
       3, a7 a3, a5 a8
-  
+
     Transforms to:
 
       for i in range(3, N-2):
-        v[i] = a[(i + 1) % K] + a[(i - 3) % K] 
+        v[i] = a[(i + 1) % K] + a[(i - 3) % K]
         a[(i - 1) % K] = b[i] * 2
-        a[(i + 2) % K] = b[i] * 2 
+        a[(i + 2) % K] = b[i] * 2
 
       i, Reads, Writes:
       0, a4 a0, a2 a5
@@ -75,13 +75,16 @@ class KCaching(xf.MultiStateTransformation):
     Works with:
       - Interleaved reads and writes
       - Gaps in the range of indices
-    
-    Might work with:
-      - Constant indexes (i.e. independent of the loop variable) (Need to check)
+
+    Might work with (need to check and how to compute K):
+      - Constant indexes (i.e. independent of the loop variable)
+      - Index expression (a*i + b) with a != 1
+      - Backwards loops step < 0 or a < 0
+      - Step != 1
 
     Does not work with:
-      - Non-linear index expressions
-      - Non-linear step expressions
+      - Non-linear index expressions (a*i + b)
+      - Non-linear and non-constant step expressions
       - Indirect accesses
     """
 
@@ -95,12 +98,10 @@ class KCaching(xf.MultiStateTransformation):
         return True
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        pass
+        return False
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         pass
-
-    
 
     def _can_apply_for_array(self, array_name: str):
         """
@@ -108,7 +109,7 @@ class KCaching(xf.MultiStateTransformation):
 
         2. All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
 
-        XXX: For now a must be 1. Need to figure out if scaling is possible and how to compute K. 
+        XXX: For now a must be 1. Need to figure out if scaling is possible and how to compute K.
 
         3. Outside of the loop, the written subset of the array must be written before read or not read at all.
 
