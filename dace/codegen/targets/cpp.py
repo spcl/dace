@@ -257,7 +257,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
-        elif not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
+        elif not CUDACodeGen._in_device_code.get():  # GPU kernels cannot access state
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'
