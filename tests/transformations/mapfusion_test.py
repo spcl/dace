@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Union, Tuple, Optional
+from typing import Any, Union, Tuple, Type, Optional, List
 
 import numpy as np
 import os
@@ -7,20 +7,37 @@ import dace
 import copy
 import uuid
 import pytest
+import gc
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusion, MapExpansion
 
 
-def count_node(sdfg: SDFG, node_type):
-    nb_nodes = 0
-    for rsdfg in sdfg.all_sdfgs_recursive():
-        for state in rsdfg.states():
-            for node in state.nodes():
-                if isinstance(node, node_type):
-                    nb_nodes += 1
-    return nb_nodes
+def count_nodes(
+    graph: Union[SDFG, SDFGState],
+    node_type: Union[Tuple[Type, ...], Type],
+    return_nodes: bool = False,
+) -> Union[int, List[nodes.Node]]:
+    """Counts the number of nodes in of a particular type in `graph`.
+
+    If `graph` is an SDFGState then only count the nodes inside this state,
+    but if `graph` is an SDFG count in all states.
+
+    Args:
+        graph: The graph to scan.
+        node_type: The type or sequence of types of nodes to look for.
+    """
+
+    states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
+    found_nodes: list[dace_nodes.Node] = []
+    for state_nodes in states:
+        for node in state_nodes.nodes():
+            if isinstance(node, node_type):
+                found_nodes.append(node)
+    if return_nodes:
+        return found_nodes
+    return len(found_nodes)
 
 
 def safe_view(sdfg: SDFG):
@@ -34,6 +51,14 @@ def safe_view(sdfg: SDFG):
         pass
 
 
+def run_sdfg(sdfg: SDFG, *args: Any, **kwargs: Any) -> Any:
+    csdfg = sdfg.compile()
+    res = csdfg(*args, **kwargs)
+    del csdfg
+    gc.collect(2)
+    return res
+
+
 def apply_fusion(
     sdfg: SDFG,
     removed_maps: Union[int, None] = None,
@@ -41,6 +66,9 @@ def apply_fusion(
     unspecific: bool = False,
     apply_once: bool = False,
     strict_dataflow: bool = True,
+    allow_serial_map_fusion: bool = True,
+    allow_parallel_map_fusion: bool = False,
+    only_if_common_ancestor: bool = False,
 ) -> SDFG:
     """Applies the Map fusion transformation.
 
@@ -53,17 +81,33 @@ def apply_fusion(
     the fusion in strict dataflow mode.
     """
     org_sdfg = copy.deepcopy(sdfg)
-    num_maps_before = None if unspecific else count_node(sdfg, nodes.MapEntry)
+    num_maps_before = None if unspecific else count_nodes(sdfg, nodes.MapEntry)
 
     try:
         with dace.config.temporary_config():
             dace.Config.set("optimizer", "match_exception", value=True)
             if apply_once:
-                sdfg.apply_transformations(MapFusion(strict_dataflow=strict_dataflow), validate=True, validate_all=True)
+                sdfg.apply_transformations(
+                    MapFusion(
+                        strict_dataflow=strict_dataflow,
+                        allow_serial_map_fusion=allow_serial_map_fusion,
+                        allow_parallel_map_fusion=allow_parallel_map_fusion,
+                        only_if_common_ancestor=only_if_common_ancestor,
+                    ),
+                    validate=True,
+                    validate_all=True,
+                )
             else:
-                sdfg.apply_transformations_repeated(MapFusion(strict_dataflow=strict_dataflow),
-                                                    validate=True,
-                                                    validate_all=True)
+                sdfg.apply_transformations_repeated(
+                    MapFusion(
+                        strict_dataflow=strict_dataflow,
+                        allow_serial_map_fusion=allow_serial_map_fusion,
+                        allow_parallel_map_fusion=allow_parallel_map_fusion,
+                        only_if_common_ancestor=only_if_common_ancestor,
+                    ),
+                    validate=True,
+                    validate_all=True,
+                )
     except:
         safe_view(org_sdfg)
         safe_view(sdfg)
@@ -72,7 +116,7 @@ def apply_fusion(
     if unspecific:
         return sdfg
 
-    num_maps_after = count_node(sdfg, nodes.MapEntry)
+    num_maps_after = count_nodes(sdfg, nodes.MapEntry)
     has_processed = False
     if removed_maps is not None:
         has_processed = True
@@ -265,6 +309,86 @@ def make_interstate_transient_fusion_sdfg():
     return sdfg, state1, state2
 
 
+def _make_multi_producer_intermediate() -> tuple[dace.SDFG, dace.SDFGState]:
+    """Produces an SDFG where the intermediate node has multiple producer.
+
+    It can be fused because the downstream map only updates it partially.
+    """
+    sdfg = dace.SDFG("multi_producer_intermediate")
+    state = sdfg.add_state(is_start_block=True)
+    state2 = sdfg.add_state_after(state)
+
+    anames = ["a", "t", "o1", "o2"]
+    for aname in anames:
+        sdfg.add_array(
+            name=aname,
+            shape=(20, (15 if aname == "o1" else 20)),
+            dtype=dace.float64,
+            transient=(aname == "t"),
+        )
+    t = state.add_access("t")
+
+    state.add_mapped_tasklet(
+        "comp1",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "0:5"
+        },
+        inputs={"__in": dace.Memlet("a[__i0, __i1]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("t[__i0, __i1]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "comp2",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "15:20"
+        },
+        inputs={"__in": dace.Memlet("a[__i0, __i1]")},
+        code="__out = __in + 2.0",
+        outputs={"__out": dace.Memlet("t[__i0, __i1]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+
+    state.add_mapped_tasklet(
+        "first_map",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "5:15"
+        },
+        inputs={"__in": dace.Memlet("a[__i0, __i1]")},
+        code="__out = __in + 3.0",
+        outputs={"__out": dace.Memlet("t[__i0, __i1]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+
+    state.add_mapped_tasklet(
+        "second_map",
+        map_ranges={
+            "__i0": "0:20",
+            "__i1": "5:15"
+        },
+        inputs={"__in": dace.Memlet("t[__i0, __i1]")},
+        code="__out = __in + 4.0",
+        outputs={"__out": dace.Memlet("o1[__i0, __i1 - 5]")},
+        input_nodes={t},
+        external_edges=True,
+    )
+
+    state2.add_nedge(
+        state2.add_access("t"),
+        state2.add_access("o2"),
+        dace.Memlet("t[0:20, 0:20] -> [0:20, 0:20]"),
+    )
+    sdfg.validate()
+
+    return sdfg, state
+
+
 def test_fusion_simple():
     sdfg = fusion_simple.to_sdfg(simplify=True)
     sdfg = apply_fusion(sdfg, final_maps=1)
@@ -272,7 +396,7 @@ def test_fusion_simple():
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
     out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A=A, B=B, out=out)
+    run_sdfg(sdfg, A=A, B=B, out=out)
 
     diff = abs(np.sum(A * A + B) - out)
     print('Difference:', diff)
@@ -286,7 +410,7 @@ def test_fusion_rename():
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
     out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A=A, B=B, out=out)
+    run_sdfg(sdfg, A=A, B=B, out=out)
 
     diff = abs(np.sum(A * A + B) - out)
     print('Difference:', diff)
@@ -319,7 +443,7 @@ def test_indirect_accesses():
     out = np.zeros(shape=30, dtype=np.float32)
 
     res = ((A + B * 2) + 3)[idx]
-    sdfg(A=A, B=B, idx=idx, out=out)
+    run_sdfg(sdfg, A=A, B=B, idx=idx, out=out)
 
     assert np.allclose(res, out)
 
@@ -335,7 +459,7 @@ def test_multiple_fusions():
     B = np.zeros_like(A)
     C = np.zeros_like(A)
     out = np.zeros(shape=1, dtype=np.float32)
-    sdfg(A=A, B=B, C=C, out=out)
+    run_sdfg(sdfg, A=A, B=B, C=C, out=out)
     diff1 = np.linalg.norm(A * A + 1 - B)
     diff2 = np.linalg.norm(A * A + 2 - C)
     print('Difference1:', diff1)
@@ -348,6 +472,7 @@ def test_multiple_fusions():
 def test_fusion_chain():
     sdfg = fusion_chain.to_sdfg(simplify=True)
     sdfg.simplify()
+    assert count_nodes(sdfg, nodes.MapEntry) > 1
     sdfg = apply_fusion(sdfg, final_maps=1)
 
     A = np.random.rand(10, 20).astype(np.float32)
@@ -358,6 +483,21 @@ def test_fusion_chain():
     assert diff <= 1e-4
 
 
+def test_fusion_chain_parallel():
+    sdfg = fusion_chain.to_sdfg(simplify=True)
+    sdfg.simplify()
+    initial_maps = count_nodes(sdfg, nodes.MapEntry)
+    assert initial_maps > 1
+
+    # This is a chain so parallel map fusion should not apply.
+    sdfg = apply_fusion(
+        sdfg,
+        removed_maps=0,
+        allow_parallel_map_fusion=True,
+        allow_serial_map_fusion=False,
+    )
+
+
 def test_fusion_with_transient():
     A = np.random.rand(2, 20)
     expected = A * A * 2
@@ -365,7 +505,7 @@ def test_fusion_with_transient():
     sdfg.simplify()
     sdfg = apply_fusion(sdfg, removed_maps=2)
 
-    sdfg(A=A)
+    run_sdfg(sdfg, A=A)
     assert np.allclose(A, expected)
 
 
@@ -405,7 +545,7 @@ def test_fusion_with_transient_scalar():
 
     A = np.random.rand(N, K)
     B = np.repeat(np.nan, N)
-    sdfg(A=A, B=B)
+    run_sdfg(sdfg, A=A, B=B)
 
     assert np.allclose(B, (A[:, K - 1] + 1))
 
@@ -431,7 +571,7 @@ def test_fusion_with_inverted_indices():
     apply_fusion(sdfg, removed_maps=0)
 
     val1 = np.ndarray((10, ), dtype=np.int32)
-    sdfg(A=val1)
+    run_sdfg(sdfg, A=val1)
     assert np.array_equal(val1, ref), f"REF: {ref}; VAL: {val1}"
 
 
@@ -457,7 +597,7 @@ def test_fusion_with_empty_memlet():
     A = np.arange(1024, dtype=np.float32)
     B = np.arange(1024, dtype=np.float32)
     val = np.zeros((1, ), dtype=np.float32)
-    sdfg(A=A, B=B, out=val, N=1024)
+    run_sdfg(sdfg, A=A, B=B, out=val, N=1024)
     ref = A @ B
     assert np.allclose(val[0], ref)
 
@@ -625,7 +765,7 @@ def test_fusion_with_nested_sdfg_0():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -683,7 +823,7 @@ def test_interstate_fusion():
     assert sdfg.number_of_nodes() == 2
     assert len([node for node in state1.data_nodes() if node.data == "B"]) == 1
 
-    sdfg(A=A, C=C, D=D)
+    run_sdfg(sdfg, A=A, C=C, D=D)
 
     assert np.allclose(C, ref_C)
     assert np.allclose(D, ref_D)
@@ -713,7 +853,7 @@ def test_fuse_indirect_accesses():
 
     sdfg = inner_product.to_sdfg(simplify=True)
     assert sdfg.number_of_nodes() == 1
-    assert count_node(sdfg, nodes.MapEntry) == 3
+    assert count_nodes(sdfg, nodes.MapEntry) == 3
 
     apply_fusion(sdfg, final_maps=2)
 
@@ -805,13 +945,13 @@ def test_offset_correction_range_read():
 
     sdfg = make_correction_offset_sdfg(range_read=True, second_read_start=3)
 
-    sdfg(A=A, C=C)
+    run_sdfg(sdfg, A=A, C=C)
     assert np.allclose(C, exp)
     C[:] = 0.0
 
     apply_fusion(sdfg)
 
-    sdfg(A=A, C=C)
+    run_sdfg(sdfg, A=A, C=C)
     assert np.allclose(C, exp)
 
 
@@ -908,7 +1048,7 @@ def test_different_offsets():
     B = np.array(np.random.rand(N + 1, M + 2), dtype=np.float64, copy=True)
 
     ref = exptected(A, B)
-    res = sdfg(A=A, B=B)
+    res = run_sdfg(sdfg, A=A, B=B)
     assert np.allclose(ref, res)
 
 
@@ -1355,7 +1495,7 @@ def _impl_fusion_intermediate_different_access(modified_shape: bool, traditional
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1476,7 +1616,7 @@ def test_fusion_multiple_producers_consumers():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1578,7 +1718,7 @@ def test_fusion_multiple_consumers():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1642,7 +1782,7 @@ def test_fusion_different_global_accesses():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1703,8 +1843,7 @@ def test_fusion_dynamic_producer():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    csdfg = sdfg.compile()
-    csdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1840,7 +1979,7 @@ def test_fusion_intrinsic_memlet_direction():
     args_res = copy.deepcopy(args_ref)
 
     ref(**args_ref)
-    sdfg(**args_res)
+    run_sdfg(sdfg, **args_res)
     for arg in args_ref.keys():
         arg_ref = args_ref[arg]
         arg_res = args_res[arg]
@@ -1923,6 +2062,111 @@ def test_possible_cycle_if_fuesed_sdfg():
     assert not would_transformation_apply
 
 
+def _make_parallel_sdfg() -> dace.SDFG:
+    """Creates maps that are parallel and can only be handled by parallel map fusion.
+    """
+    sdfg = dace.SDFG("parallel_maps_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    names = ["A", "B", "C", "D", "out"]
+    for name in names:
+        sdfg.add_array(
+            name,
+            shape=((10, 4) if name == "out" else (10, )),
+            dtype=dace.float64,
+            transient=False,
+        )
+
+    out = state.add_access("out")
+
+    for i, name in enumerate(["A", "B", "C", "D"]):
+        it = f"__{i}"
+        state.add_mapped_tasklet(
+            f"comp_{i}",
+            map_ranges={it: "0:10"},
+            inputs={"__in": dace.Memlet(f"{name}[{it}]")},
+            code=f"__out = __in + {i}.0",
+            outputs={"__out": dace.Memlet(f"out[{it}, {i}]")},
+            output_nodes={out},
+            external_edges=True,
+        )
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_parallel_map_fusion_simple():
+    sdfg = _make_parallel_sdfg()
+    args_ref = {
+        "A": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+        "B": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+        "C": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+        "D": np.array(np.random.rand(10), dtype=np.float64, copy=True),
+        "out": np.array(np.random.rand(10, 4), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    run_sdfg(sdfg, **args_ref)
+
+    # In serial map fusion nothing will be done.
+    sdfg = apply_fusion(
+        sdfg,
+        removed_maps=0,
+        allow_serial_map_fusion=True,
+        allow_parallel_map_fusion=False,
+    )
+
+    # Because there is no common ancestor the transformation will not apply.
+    sdfg = apply_fusion(
+        sdfg,
+        removed_maps=0,
+        allow_serial_map_fusion=False,
+        allow_parallel_map_fusion=True,
+        only_if_common_ancestor=True,
+    )
+
+    # In parallel map fusion it will be fused away.
+    sdfg = apply_fusion(
+        sdfg,
+        final_maps=1,
+        allow_serial_map_fusion=False,
+        allow_parallel_map_fusion=True,
+        only_if_common_ancestor=False,
+    )
+
+    # Now look if the code is the same.
+    run_sdfg(sdfg, **args_res)
+
+    assert all(np.allclose(args_ref[arg], args_res[arg]) for arg in args_ref.keys())
+
+
+def test_multi_producer_sdfg():
+    sdfg, state = _make_multi_producer_intermediate()
+    assert count_nodes(state, nodes.MapEntry) == 4
+
+    ac_initial = count_nodes(state, nodes.AccessNode, return_nodes=True)
+    assert len(ac_initial) == 5
+    assert any(state.out_degree(ac) == 1 and state.in_degree(ac) == 3 for ac in ac_initial if ac.data == "t")
+
+    ref = {
+        "a": np.array(np.random.rand(20, 20), dtype=np.float64, copy=True),
+        "o1": np.array(np.random.rand(20, 15), dtype=np.float64, copy=True),
+        "o2": np.array(np.random.rand(20, 20), dtype=np.float64, copy=True),
+    }
+    res = copy.deepcopy(ref)
+
+    run_sdfg(sdfg, **ref)
+
+    apply_fusion(sdfg, removed_maps=1)
+
+    ac_after = count_nodes(state, nodes.AccessNode, return_nodes=True)
+    assert len(ac_after) == 6  # The additional one is the transient.
+    assert any(state.out_degree(ac) == 0 and state.in_degree(ac) == 3 for ac in ac_initial if ac.data == "t")
+
+    run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[name], res[name]) for name in ref)
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -1943,6 +2187,7 @@ if __name__ == '__main__':
     test_fusion_simple()
     test_multiple_fusions()
     test_fusion_chain()
+    test_fusion_chain_parallel()
     test_fusion_with_transient_scalar()
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
@@ -1957,3 +2202,5 @@ if __name__ == '__main__':
     test_inner_map_dependency()
     test_inner_map_dependency_resolved()
     test_possible_cycle_if_fuesed_sdfg()
+    test_parallel_map_fusion_simple()
+    test_multi_producer_sdfg()
