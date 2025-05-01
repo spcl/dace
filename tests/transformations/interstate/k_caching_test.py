@@ -231,3 +231,5 @@ if __name__ == "__main__":
     test_used_values()
     test_used_values2()
     test_used_values3()
+    # Views? WCR?
+    # Same iteration variable used in multiple dimensions?

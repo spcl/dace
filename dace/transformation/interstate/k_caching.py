@@ -81,6 +81,7 @@ class KCaching(xf.MultiStateTransformation):
       - Index expression (a*i + b) with a > 1
       - Backwards loops step < 0 or a < 0
       - Step > 1
+      - Iteration variable on multiple dimensions, e.g. a[i, i]
 
     Does not work with:
       - Non-linear index expressions (a*i + b)
@@ -98,14 +99,90 @@ class KCaching(xf.MultiStateTransformation):
         return True
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        arrays = set([acc_node.data for acc_node in self.loop.data_nodes()])
+        arrays = set(acc_node.data for acc_node in self.loop.data_nodes())
         return any(self._can_apply_for_array(arr) for arr in arrays)
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        arrays = set([acc_node.data for acc_node in self.loop.data_nodes()])
+        arrays = set(acc_node.data for acc_node in self.loop.data_nodes())
         for arr in arrays:
             if self._can_apply_for_array(arr):
                 self._apply_for_array(arr)
+
+    def _get_edge_indices(self, subset):
+        # tuples of (a, b) for a*i + b, None if cannot be determined
+        indices = set()
+        itervar = self.loop.loop_variable
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sp.Wild("a", exclude=[itersym])
+        b = sp.Wild("b", exclude=[itersym])
+
+        for rb, re, _ in subset.ndrange():
+            m = rb.match(a * itersym + b)
+            if m is not None and rb == re:
+                indices.add((m[a], m[b]))
+            else:
+                indices.add(None)
+
+        return indices
+
+    def _get_read_write_indices(self, array_name: str):
+        # tuples of (a, b) for a*i + b, None if cannot be determined
+        read_indices = set()
+        write_indices = set()
+
+        access_nodes = set(an for an in self.loop.data_nodes() if an.data == array_name)
+        read_edges = set(
+            e
+            for an in access_nodes
+            for st in self.loop.all_states()
+            for e in st.out_edges(an)
+        )
+        write_edges = set(
+            e
+            for an in access_nodes
+            for st in self.loop.all_states()
+            for e in st.in_edges(an)
+        )
+
+        for edge in read_edges:
+            added = False
+            for ei in self._get_edge_indices(edge.data.src_subset):
+                if ei is not None and ei[0] != 0:
+                    read_indices.add(ei)
+                    added = True
+                    break
+            if not added:
+                read_indices.add(None)
+
+        for edge in write_edges:
+            added = False
+            for ei in self._get_edge_indices(edge.data.dst_subset):
+                if ei is not None and ei[0] != 0:
+                    write_indices.add(ei)
+                    added = True
+                    break
+            if not added:
+                write_indices.add(None)
+
+        return read_indices, write_indices
+
+    def _check_loop_params(self):
+        itervar = self.loop.loop_variable
+        step = loop_analysis.get_loop_stride(self.loop)
+        if step is None:
+            return False
+
+        defined_syms = set()
+        for edge in self.loop.all_interstate_edges():
+            if isinstance(edge.data, InterstateEdge):
+                defined_syms.update(edge.data.assignments.keys())
+
+        return (
+            itervar not in defined_syms
+            and step.free_symbols.isdisjoint(defined_syms)
+            and step.free_symbols.isdisjoint({itervar})
+            and symbolic.resolve_symbol_to_constant(step, self.loop.sdfg) == 1
+        )
 
     def _can_apply_for_array(self, array_name: str):
         """
@@ -119,6 +196,16 @@ class KCaching(xf.MultiStateTransformation):
 
         4. At least one write index must be higher than all read indices (i.e. K > 1).
         """
+        if not self._check_loop_params():
+            return False
+
+        if any(
+            a is None
+            for a in self._get_read_write_indices(array_name)[0]
+            | self._get_read_write_indices(array_name)[1]
+        ):
+            return False
+
         return False
 
     def _apply_for_array(self, array_name: str):
