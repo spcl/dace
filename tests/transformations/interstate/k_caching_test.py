@@ -177,6 +177,44 @@ def test_reverse_index():
     check_kcaching(sdfg, 0)
 
 
+def test_used_values():
+    @dace.program
+    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+        c[0] = a[0] + a[1]
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_kcaching(sdfg, 0)
+
+
+def test_used_values2():
+    @dace.program
+    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+        c[0] = a[0] + a[1]
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_kcaching(sdfg, 1)
+
+
+def test_used_values3():
+    @dace.program
+    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+        a[0] = c[0]
+        a[1] = c[1]
+        c[0] = a[0] + a[1]
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_kcaching(sdfg, 1)
+
+
 if __name__ == "__main__":
     test_simple()
     test_gaps()
@@ -190,3 +228,6 @@ if __name__ == "__main__":
     test_larger_index()
     test_reverse_step()
     test_reverse_index()
+    test_used_values()
+    test_used_values2()
+    test_used_values3()

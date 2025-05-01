@@ -77,10 +77,10 @@ class KCaching(xf.MultiStateTransformation):
       - Gaps in the range of indices
 
     Might work with (need to check and how to compute K):
-      - Constant indexes (i.e. independent of the loop variable)
-      - Index expression (a*i + b) with a != 1
+      - Constant indexes (a*i + b) with a = 0
+      - Index expression (a*i + b) with a > 1
       - Backwards loops step < 0 or a < 0
-      - Step != 1
+      - Step > 1
 
     Does not work with:
       - Non-linear index expressions (a*i + b)
@@ -98,10 +98,14 @@ class KCaching(xf.MultiStateTransformation):
         return True
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        return False
+        arrays = set([acc_node.data for acc_node in self.loop.data_nodes()])
+        return any(self._can_apply_for_array(arr) for arr in arrays)
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        pass
+        arrays = set([acc_node.data for acc_node in self.loop.data_nodes()])
+        for arr in arrays:
+            if self._can_apply_for_array(arr):
+                self._apply_for_array(arr)
 
     def _can_apply_for_array(self, array_name: str):
         """
@@ -109,13 +113,13 @@ class KCaching(xf.MultiStateTransformation):
 
         2. All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
 
-        XXX: For now a must be 1. Need to figure out if scaling is possible and how to compute K.
+        XXX: For now we only support a = 1, step = 1.
 
         3. Outside of the loop, the written subset of the array must be written before read or not read at all.
 
         4. At least one write index must be higher than all read indices (i.e. K > 1).
         """
-        pass
+        return False
 
     def _apply_for_array(self, array_name: str):
         pass
