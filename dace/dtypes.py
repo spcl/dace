@@ -166,6 +166,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     LIKWID_GPU = ()
     GPU_Events = ()
     FPGA = ()
+    NVTX = ()
 
 
 @undefined_safe_enum

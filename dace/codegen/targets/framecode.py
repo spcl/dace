@@ -22,7 +22,7 @@ from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
-
+from dace.codegen.instrumentation.nvtx import NVTXProvider
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
     if callable(func):
@@ -222,6 +222,8 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             # Reset report if written every invocation
             if config.Config.get_bool('instrumentation', 'report_each_invocation'):
                 callsite_stream.write('__state->report.reset();', sdfg)
+        if any(isinstance(provider, NVTXProvider) for provider in self._dispatcher.instrumentation.values()):
+            callsite_stream.write(f'nvtxRangePushA("{sdfg.name}");', sdfg)
 
         self.generate_fileheader(sdfg, global_stream, 'frame')
 
@@ -250,6 +252,8 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
                 and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
+        if any(isinstance(provider, NVTXProvider) for provider in self._dispatcher.instrumentation.values()):
+            callsite_stream.write('nvtxRangePop();', sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
