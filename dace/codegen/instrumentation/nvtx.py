@@ -11,28 +11,18 @@ from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.NVTX)
 class NVTXProvider(InstrumentationProvider):
-    """ Timing instrumentation that adds NVTX ranges. """
+    """ Timing instrumentation that adds NVTX range to the top level SDFG. """
     def __init__(self):
         self.backend = common.get_gpu_backend()
         super().__init__()
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
-        # global_stream.write('#include <nvtx3/nvToolsExt.h> // [NVTXProvider][on_sdfg_begin] global_stream')
+        top_level_sdfg = sdfg.parent is None
+        if top_level_sdfg:
+            sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
+            local_stream.write(f'nvtxRangePushA("{sdfg.name}");')
 
-        # local_stream.write('// [NVTXProvider][on_sdfg_begin] local_stream')
-        # sdfg.append_global_code('// [NVTXProvider][on_sdfg_begin] append_global_code cuda', 'cuda')
-        sdfg.append_global_code('#include <nvtx3/nvToolsExt.h> // [NVTXProvider][on_sdfg_begin] append_global_code frame', 'frame')
-        # sdfg.append_init_code('// [NVTXProvider][on_sdfg_begin] append_init_code cuda', 'cuda')
-        # sdfg.append_init_code('// [NVTXProvider][on_sdfg_begin] append_init_code frame', 'frame')
-        # sdfg.append_exit_code('// [NVTXProvider][on_sdfg_begin] append_exit_code cuda', 'cuda')
-        # sdfg.append_exit_code('// [NVTXProvider][on_sdfg_begin] append_exit_code frame', 'frame')
-
-    # def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-    #     global_stream.write('// [NVTXProvider][on_sdfg_end] global_stream')
-    #     local_stream.write('// [NVTXProvider][on_sdfg_end] local_stream')
-    #     sdfg.append_global_code('// [NVTXProvider][on_sdfg_end] append_global_code cuda', 'cuda')
-    #     sdfg.append_global_code('// [NVTXProvider][on_sdfg_end] append_global_code frame', 'frame')
-    #     sdfg.append_init_code('// [NVTXProvider][on_sdfg_end] append_init_code', 'cuda')
-    #     sdfg.append_init_code('// [NVTXProvider][on_sdfg_end] append_init_code frame', 'frame')
-    #     sdfg.append_exit_code('// [NVTXProvider][on_sdfg_end] append_exit_code', 'cuda')
-    #     sdfg.append_exit_code('// [NVTXProvider][on_sdfg_end] append_exit_code frame', 'frame')
+    def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        top_level_sdfg = sdfg.parent is None
+        if top_level_sdfg:
+            local_stream.write('nvtxRangePop();')
