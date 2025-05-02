@@ -4,6 +4,14 @@ dace.codegen.instrumentation package
 Submodules
 ----------
 
+dace.codegen.instrumentation.nvtx module
+-----------------------------------------------
+
+.. automodule:: dace.codegen.instrumentation.nvtx
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.codegen.instrumentation.fpga module
 ----------------------------------------
 
