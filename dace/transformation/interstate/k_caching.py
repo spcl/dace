@@ -1,16 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import copy
 import sympy as sp
-from typing import Set, Optional
-
 from dace import sdfg as sd, symbolic, properties
-from dace.sdfg import SDFG, InterstateEdge
+from dace.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.nodes import CodeBlock
 from dace.symbolic import pystr_to_symbolic
 
 

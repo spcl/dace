@@ -7,14 +7,37 @@ import copy
 import dace
 from dace.sdfg.state import LoopRegion, CodeBlock
 from dace.transformation.interstate import KCaching
+from dace import InterstateEdge
 
 
 # Checks if KCaching applied N times and if memory footprint was reduced
-def check_kcaching(kc_sdfg: dace.SDFG, N):
+def check_kcaching(kc_sdfg: dace.SDFG, N: int, skip_exec: bool = False):
     orig_sdfg = copy.deepcopy(kc_sdfg)
     orig_sdfg.validate()
     assert kc_sdfg.apply_transformations_repeated(KCaching) == N
     kc_sdfg.validate()
+
+    if N > 0:
+        orig_mods = sum(
+            [
+                "Mod" in str(r)
+                for e, _ in orig_sdfg.all_edges_recursive()
+                if not isinstance(e.data, InterstateEdge)
+                for r in e.data.subset
+            ]
+        )
+        kc_mods = sum(
+            [
+                "Mod" in str(r)
+                for e, _ in kc_sdfg.all_edges_recursive()
+                if not isinstance(e.data, InterstateEdge)
+                for r in e.data.subset
+            ]
+        )
+        assert kc_mods > orig_mods
+
+    if skip_exec:
+        return
 
     input_data_orig = {}
     input_data_kc = {}
@@ -27,13 +50,13 @@ def check_kcaching(kc_sdfg: dace.SDFG, N):
     orig_sdfg(**input_data_orig)
     kc_sdfg(**input_data_kc)
 
-    # If memory footprint was reduced, N of the arrays should be different
+    # No difference should be observable
     assert (
         sum(
             not np.array_equal(input_data_orig[argName], input_data_kc[argName])
             for argName, argType in kc_sdfg.arglist().items()
         )
-        == N
+        == 0
     )
 
 
@@ -41,6 +64,8 @@ def test_simple():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -64,6 +89,9 @@ def test_gaps():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        a[2] = 2
         for i in range(3, 32 - 1):
             b[i] = a[i - 1] + a[i - 3]
             a[i + 1] = c[i] * 2
@@ -76,8 +104,12 @@ def test_interleaved():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
+        a[2] = 2
         for i in range(3, 32 - 2):
             b[i] = a[i + 1] + a[i - 3]
+            a[i] = c[i] + 2
             a[i + 2] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
@@ -88,6 +120,8 @@ def test_nonlinear_index():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 5):
             b[i] = a[i - 1] + a[i - 2]
             a[i * i] = c[i] * 2
@@ -100,6 +134,8 @@ def test_nonlinear_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -117,6 +153,8 @@ def test_nonconstant_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         step = 2
         for i in range(2, 32, step):
             b[i] = a[i - 1] + a[i - 2]
@@ -131,19 +169,23 @@ def test_indirect_access():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             idx = int(b[i]) % 32
             a[idx] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_kcaching(sdfg, 0)
+    check_kcaching(sdfg, 0, skip_exec=True)
 
 
 def test_constant_index():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[0] = c[i] * 2
@@ -156,6 +198,8 @@ def test_larger_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 32, 8):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -168,6 +212,8 @@ def test_larger_index():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 4):
             b[i] = a[8 * i - 1] + a[8 * i - 2]
             a[8 * i] = c[i] * 2
@@ -180,7 +226,25 @@ def test_reverse_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        for i in range(32, 2, -1):
+        a[31] = 0
+        a[30] = 1
+
+        for i in range(29, 0, -1):
+            b[i] = a[i + 1] + a[i + 2]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_kcaching(sdfg, 1)
+
+
+def test_reverse_step2():
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
+        for j in range(32):
+            a[j] = j
+
+        for i in range(31, 2, -1):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
 
@@ -192,6 +256,9 @@ def test_reverse_index():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        for j in range(32):
+            a[j] = j
+
         for i in range(2, 32):
             b[i] = a[-i - 1 + 33] + a[-i - 2 + 33]
             a[-i + 33] = c[i] * 2
@@ -204,6 +271,8 @@ def test_used_values():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -217,6 +286,8 @@ def test_used_values2():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         c[0] = a[0] + a[1]
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
@@ -230,6 +301,8 @@ def test_used_values3():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
+        a[0] = 0
+        a[1] = 1
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -254,6 +327,7 @@ if __name__ == "__main__":
     test_larger_step()
     test_larger_index()
     test_reverse_step()
+    test_reverse_step2()
     test_reverse_index()
     test_used_values()
     test_used_values2()
