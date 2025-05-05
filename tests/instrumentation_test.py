@@ -68,6 +68,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         range_pop = re.search(r'nvtxRangePop\b', code)
         assert range_pop is not None
 
+
 def test_timer():
     onetest(dace.InstrumentationType.Timer)
 
@@ -82,9 +83,11 @@ def test_papi():
 def test_gpu_events():
     onetest(dace.InstrumentationType.GPU_Events)
 
+
 @pytest.mark.gpu
 def test_gpu_events():
     onetest(dace.InstrumentationType.NVTX)
+
 
 if __name__ == '__main__':
     test_timer()
