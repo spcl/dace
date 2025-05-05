@@ -536,8 +536,8 @@ def test_xppm_tmp():
     sdfg.validate()
 
 
-def test_delnflux_tmp():
-    loaded = dace.SDFG.from_file("tmp_delnflux.sdfgz")
+def test_DelnFluxNoSG_tmp():
+    loaded = dace.SDFG.from_file("tmp_DelnFluxNoSG.sdfgz")
     stree = loaded.as_schedule_tree()
 
     sdfg = stree.as_sdfg()
