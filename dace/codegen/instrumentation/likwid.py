@@ -11,6 +11,7 @@ from pathlib import Path
 
 from dace import dtypes, registry, library
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.codegen.instrumentation.nvtx import NVTXProvider
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.sdfg import nodes
@@ -319,7 +320,7 @@ LIKWID_MARKER_CLOSE;
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_GPU)
-class LIKWIDInstrumentationGPU(InstrumentationProvider):
+class LIKWIDInstrumentationGPU(NVTXProvider):
     """ Instrumentation provider that reports CPU performance counters using
         the Likwid tool.
     """
@@ -371,6 +372,7 @@ setenv("LIKWID_GPUFILEPATH", "{likwid_marker_file_gpu.absolute()}", 0);
 LIKWID_NVMARKER_INIT;
 '''
         codegen._initcode.write(init_code)
+        super().on_sdfg_begin(sdfg, local_stream, global_stream, codegen)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if not self._likwid_used or sdfg.parent is not None:
@@ -406,6 +408,7 @@ LIKWID_NVMARKER_INIT;
 LIKWID_NVMARKER_CLOSE;
 '''
         self.codegen._exitcode.write(exit_code, sdfg)
+        super().on_sdfg_end(sdfg, local_stream, global_stream)
 
     def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
