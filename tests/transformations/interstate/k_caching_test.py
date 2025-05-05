@@ -39,7 +39,8 @@ def check_kcaching(kc_sdfg: dace.SDFG, N):
 
 def test_simple():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -48,9 +49,21 @@ def test_simple():
     check_kcaching(sdfg, 1)
 
 
-def test_gaps():
+def test_non_transient():
     @dace.program
     def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+        for i in range(2, 32):
+            b[i] = a[i - 1] + a[i - 2]
+            a[i] = c[i] * 2
+
+    sdfg = tester.to_sdfg(simplify=True)
+    check_kcaching(sdfg, 0)
+
+
+def test_gaps():
+    @dace.program
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(3, 32 - 1):
             b[i] = a[i - 1] + a[i - 3]
             a[i + 1] = c[i] * 2
@@ -61,7 +74,8 @@ def test_gaps():
 
 def test_interleaved():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(3, 32 - 2):
             b[i] = a[i + 1] + a[i - 3]
             a[i + 2] = c[i] * 2
@@ -72,7 +86,8 @@ def test_interleaved():
 
 def test_nonlinear_index():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 5):
             b[i] = a[i - 1] + a[i - 2]
             a[i * i] = c[i] * 2
@@ -83,7 +98,8 @@ def test_nonlinear_index():
 
 def test_nonlinear_step():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -99,7 +115,8 @@ def test_nonlinear_step():
 
 def test_nonconstant_step():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         step = 2
         for i in range(2, 32, step):
             b[i] = a[i - 1] + a[i - 2]
@@ -112,7 +129,8 @@ def test_nonconstant_step():
 
 def test_indirect_access():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             idx = int(b[i]) % 32
@@ -124,7 +142,8 @@ def test_indirect_access():
 
 def test_constant_index():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[0] = c[i] * 2
@@ -135,7 +154,8 @@ def test_constant_index():
 
 def test_larger_step():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32, 8):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -146,7 +166,8 @@ def test_larger_step():
 
 def test_larger_index():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 4):
             b[i] = a[8 * i - 1] + a[8 * i - 2]
             a[8 * i] = c[i] * 2
@@ -157,7 +178,8 @@ def test_larger_index():
 
 def test_reverse_step():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(32, 2, -1):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -168,7 +190,8 @@ def test_reverse_step():
 
 def test_reverse_index():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32):
             b[i] = a[-i - 1 + 33] + a[-i - 2 + 33]
             a[-i + 33] = c[i] * 2
@@ -179,7 +202,8 @@ def test_reverse_index():
 
 def test_used_values():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -191,7 +215,8 @@ def test_used_values():
 
 def test_used_values2():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         c[0] = a[0] + a[1]
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
@@ -203,7 +228,8 @@ def test_used_values2():
 
 def test_used_values3():
     @dace.program
-    def tester(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+    def tester(b: dace.float64[32], c: dace.float64[32]):
+        a = dace.define_local([32], dace.float64)
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -217,6 +243,7 @@ def test_used_values3():
 
 if __name__ == "__main__":
     test_simple()
+    test_non_transient()
     test_gaps()
     test_interleaved()
     test_nonlinear_index()
