@@ -14,6 +14,7 @@ import dace.transformation.passes
 import dace.transformation.interstate
 from dace.transformation.pass_pipeline import Pass, Pipeline
 
+from functools import lru_cache
 import coverage
 import json
 from collections import defaultdict
@@ -89,6 +90,7 @@ def test_transformation(transformation_cls, sdfg_path):
 
 
 # Loads a json coverage report and returns a dictionary of covered lines
+@lru_cache(maxsize=None)
 def load_coverage_lines(report_path):
     with open(report_path) as f:
         data = json.load(f)
@@ -144,6 +146,12 @@ if __name__ == "__main__":
 
     # Remove SDFGs with high overlap
     sdfg_paths = get_sdfg_paths()
+
+    # Filter out SDFGs that are not in the coverage directory
+    sdfg_paths = [
+        path for path in sdfg_paths if os.path.exists(f"coverage/{os.path.basename(path).replace(".sdfg", "")}.json")
+    ]
+
     removable_sdfgs = []
     changed = True
 
@@ -169,7 +177,7 @@ if __name__ == "__main__":
         # Sort the removable SDFGs by size and remove the largest one from sdfg_paths
         removable_sdfgs.sort(key=lambda x: os.path.getsize(x), reverse=True)
         if removable_sdfgs:
-            # os.remove(removable_sdfgs[0])
+            os.remove(removable_sdfgs[0])
             sdfg_paths.remove(removable_sdfgs[0])
             removable_sdfgs = []
             changed = True

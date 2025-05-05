@@ -1,16 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import copy
 import sympy as sp
-from typing import Set, Optional
-
 from dace import sdfg as sd, symbolic, properties
-from dace.sdfg import SDFG, InterstateEdge
+from dace.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.sdfg.nodes import CodeBlock
 from dace.symbolic import pystr_to_symbolic
 
 
@@ -109,8 +105,8 @@ class KCaching(xf.MultiStateTransformation):
                 self._apply_for_array(arr)
 
     def _get_edge_indices(self, subset):
-        # tuples of (a, b) for a*i + b, None if cannot be determined
-        indices = set()
+        # list of tuples of (a, b) for a*i + b, None if cannot be determined
+        indices = list()
         itervar = self.loop.loop_variable
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild("a", exclude=[itersym])
@@ -119,16 +115,16 @@ class KCaching(xf.MultiStateTransformation):
         for rb, re, _ in subset.ndrange():
             m = rb.match(a * itersym + b)
             if m is not None and rb == re:
-                indices.add((m[a], m[b]))
+                indices.append((m[a], m[b]))
             else:
-                indices.add(None)
+                indices.append(None)
 
         return indices
 
     def _get_read_write_indices(self, array_name: str):
-        # tuples of (a, b) for a*i + b, None if cannot be determined
-        read_indices = set()
-        write_indices = set()
+        # list of list of tuples of (a, b) for a*i + b
+        read_indices = list()
+        write_indices = list()
 
         access_nodes = set(an for an in self.loop.data_nodes() if an.data == array_name)
         read_edges = set(
@@ -145,28 +141,16 @@ class KCaching(xf.MultiStateTransformation):
         )
 
         for edge in read_edges:
-            added = False
-            for ei in self._get_edge_indices(edge.data.src_subset):
-                if ei is not None and ei[0] != 0:
-                    read_indices.add(ei)
-                    added = True
-                    break
-            if not added:
-                read_indices.add(None)
+            eri = self._get_edge_indices(edge.data.src_subset)
+            read_indices.append(eri)
 
         for edge in write_edges:
-            added = False
-            for ei in self._get_edge_indices(edge.data.dst_subset):
-                if ei is not None and ei[0] != 0:
-                    write_indices.add(ei)
-                    added = True
-                    break
-            if not added:
-                write_indices.add(None)
+            ewi = self._get_edge_indices(edge.data.dst_subset)
+            write_indices.append(ewi)
 
         return read_indices, write_indices
 
-    def _check_loop_params(self):
+    def _has_constant_loop_expressions(self):
         itervar = self.loop.loop_variable
         step = loop_analysis.get_loop_stride(self.loop)
         if step is None:
@@ -184,29 +168,91 @@ class KCaching(xf.MultiStateTransformation):
             and symbolic.resolve_symbol_to_constant(step, self.loop.sdfg) == 1
         )
 
-    def _can_apply_for_array(self, array_name: str):
-        """
-        1. Loop step expression must be constant.
+    def _get_K_value(self, read_indices, write_indices):
+        read_lb = min(i[1] for il in read_indices for i in il)
+        write_ub = max(i[1] for il in write_indices for i in il)
+        return write_ub - read_lb + 1
 
-        2. All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
+    def _write_is_loop_local(self, array_name: str, write_indices):
+        # To obtain the written subset, use the lower bound and upper bound of the write indices.
+        init = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
 
-        XXX: For now we only support a = 1, step = 1.
-
-        3. Outside of the loop, the written subset of the array must be written before read or not read at all.
-
-        4. At least one write index must be higher than all read indices (i.e. K > 1).
-        """
-        if not self._check_loop_params():
+        # Cannot be determined
+        if init is None or end is None:
             return False
 
+        # Must be transient relative to the root SDFG (otherwise it's observable)
+        access_nodes = set(an for an in self.loop.data_nodes() if an.data == array_name)
+        root_sdfg = self.loop.root_sdfg
+        if not all(an.desc(root_sdfg).transient for an in access_nodes):
+            return False
+
+        return True
+
+    def _can_apply_for_array(self, array_name: str):
+        # Loop step expression must be constant.
+        if not self._has_constant_loop_expressions():
+            return False
+
+        # All read and write indices must be linear combinations of the loop variable. I.e. a*i + b, where a and b are constants.
+        # XXX: For now we only support a = 1, step = 1.
+        read_indices, write_indices = self._get_read_write_indices(array_name)
         if any(
-            a is None
-            for a in self._get_read_write_indices(array_name)[0]
-            | self._get_read_write_indices(array_name)[1]
+            i is None or i[0] != 1 for il in read_indices + write_indices for i in il
         ):
             return False
 
-        return False
+        # Outside of the loop, the written subset of the array must be written before read or not read at all.
+        if not self._write_is_loop_local(array_name, write_indices):
+            return False
+
+        # At least one write index must be higher than all read indices (i.e. K > 1).
+        if self._get_K_value(read_indices, write_indices) <= 1:
+            return False
+
+        # Otherwise, we can apply K-Caching.
+        return True
 
     def _apply_for_array(self, array_name: str):
-        pass
+        read_indices, write_indices = self._get_read_write_indices(array_name)
+        K = self._get_K_value(read_indices, write_indices)
+
+        # Replace all read and write edges in the loop with modulo accesses.
+        access_nodes = set(an for an in self.loop.data_nodes() if an.data == array_name)
+        read_edges = set(
+            e
+            for an in access_nodes
+            for st in self.loop.all_states()
+            for e in st.out_edges(an)
+        )
+        write_edges = set(
+            e
+            for an in access_nodes
+            for st in self.loop.all_states()
+            for e in st.in_edges(an)
+        )
+
+        for edge in read_edges:
+            subset = edge.data.src_subset
+            indices = self._get_edge_indices(subset)
+            for i, v in enumerate(indices):
+                if v is None or v[0] != 1:
+                    continue
+                lb = pystr_to_symbolic(f"({subset[i][0]}) % ({K})")
+                ub = pystr_to_symbolic(f"({subset[i][1]}) % ({K})")
+                st = subset[i][2]
+                subset[i] = (lb, ub, st)
+            edge.data.src_subset = subset
+
+        for edge in write_edges:
+            subset = edge.data.dst_subset
+            indices = self._get_edge_indices(subset)
+            for i, v in enumerate(indices):
+                if v is None or v[0] != 1:
+                    continue
+                lb = pystr_to_symbolic(f"({subset[i][0]}) % ({K})")
+                ub = pystr_to_symbolic(f"({subset[i][1]}) % ({K})")
+                st = subset[i][2]
+                subset[i] = (lb, ub, st)
+            edge.data.dst_subset = subset
