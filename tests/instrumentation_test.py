@@ -85,7 +85,7 @@ def test_gpu_events():
 
 
 @pytest.mark.gpu
-def test_gpu_events():
+def test_nvtx():
     onetest(dace.InstrumentationType.NVTX)
 
 
@@ -94,3 +94,4 @@ if __name__ == '__main__':
     test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_gpu_events()
+        test_nvtx()

@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, registry
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
