@@ -965,7 +965,7 @@ class StructToContainerGroups(ppl.Pass):
 {copy_strs}
 """
         """
-        // Deflatten: 
+        // Deflatten:
         // Form:
         {main_comment}
         // To:
@@ -989,6 +989,7 @@ class StructToContainerGroups(ppl.Pass):
             self._flattening_mode,
             register_as_transient=True if self._interface_with_struct_copy else False,
         )
+        #assert "__CG_p_diag__m_max_vcfl_dyn" in sdfg.arrays
 
         # Preprocess chains as needed
 
@@ -1113,27 +1114,25 @@ class StructToContainerGroups(ppl.Pass):
             registered_descs.remove(desc)
 
         # Do not simplify until flattener is generated it will remove things
-        replace_length_one_arrays_with_scalars(sdfg)
         registered_array_names = set(v for v in registered_names if  isinstance(sdfg.arrays[v], dace.data.Array))
-        registered_scalar_names = set(v for v in registered_names if  isinstance(sdfg.arrays[v], dace.data.Scalar))
 
         if self.clean_trivial_views:
             clean_trivial_views(sdfg)
 
-
         self._flattener_codestr = ""
         self._deflattener_codestr = ""
-        for name, desc in sdfg.arrays.items():
-            if isinstance(desc, dace.data.Structure) and not isinstance(
-                desc, dace.data.View
-            ):
-                self._generate_shallow_flattener(sdfg, name, desc, registered_members, self._verbose)
+        if self._shallow_copy or self._shallow_copy_to_gpu:
+            for name, desc in sdfg.arrays.items():
+                if isinstance(desc, dace.data.Structure) and not isinstance(
+                    desc, dace.data.View
+                ):
+                    self._generate_shallow_flattener(sdfg, name, desc, registered_members, self._verbose)
 
-        with open(f"{sdfg.name}_flattener_code.cpp", "w") as f:
-            self._generate_shallow_flattener(sdfg, name, desc, registered_members, self._verbose)
-            f.write(self._flattener_codestr)
-        with open(f"{sdfg.name}_deflattener_code.cpp", "w") as f:
-            f.write(self._deflattener_codestr)
+            with open(f"{sdfg.name}_flattener_code.cpp", "w") as f:
+                self._generate_shallow_flattener(sdfg, name, desc, registered_members, self._verbose)
+                f.write(self._flattener_codestr)
+            with open(f"{sdfg.name}_deflattener_code.cpp", "w") as f:
+                f.write(self._deflattener_codestr)
 
         self._flattener_codestr = ""
         self._deflattener_codestr = ""
@@ -1272,14 +1271,12 @@ class StructToContainerGroups(ppl.Pass):
                     code=self._flattener_codestr,
                     input_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if isinstance(v, dace.data.Structure) and not
                     # isinstance(v, dace.data.View)],
-                    output_names=["gpu_" + n.lower() for n in registered_array_names] +
-                        [n.lower() for n in registered_scalar_names],
+                    output_names=["gpu_" + n.lower() for n in registered_array_names],
                 )
                 deflatten_lib_node = Flattener(
                     name="deflatten",
                     code=self._deflattener_codestr,
-                    input_names=["gpu_" + n.lower() for n in registered_names] +
-                        [n.lower() for n in registered_scalar_names],
+                    input_names=["gpu_" + n.lower() for n in registered_names],
                     output_names=[],  # [k.lower() for k, v in sdfg.arrays.items() if (isinstance(v, dace.data.Structure)
                     # or isinstance(v, dace.data.ContainerArray)) and not
                     # isinstance(v, dace.data.View)],
@@ -2330,6 +2327,7 @@ def replace_length_one_arrays_with_scalars(sdfg: dace.SDFG):
     for old_name, (new_name, desc) in arrays_that_have_become_scalars.items():
         sdfg.remove_data(old_name, validate=False)
     for old_name, (new_name, desc) in arrays_that_have_become_scalars.items():
+        assert old_name == new_name
         sdfg.add_datadesc(new_name, desc, find_new_name=False)
         assert not isinstance(desc, dace.data.View)
 
@@ -2556,11 +2554,12 @@ def clean_trivial_views(sdfg: dace.SDFG):
         if name in sdfg.arrays:
             sdfg.remove_data(name, validate=False)
 
-    for edge, _ in sdfg.all_edges_recursive():
-        if isinstance(edge, InterstateEdge):
-            edge.data.replace_dict(repl_dict)
-    for edge in sdfg.all_interstate_edges(recursive=True):
-        edge.data.replace_dict(repl_dict)
+    # SDFG.replace_dict should handle these cases
+    #for edge, _ in sdfg.all_edges_recursive():
+    #    if isinstance(edge, InterstateEdge):
+    #        edge.data.replace_dict(repl_dict)
+    #for edge in sdfg.all_interstate_edges(recursive=True):
+    #    edge.data.replace_dict(repl_dict)
 
     for src, dst in repl_dict.items():
         rename_on_if_conds(sdfg, src, dst, recursive=False)
