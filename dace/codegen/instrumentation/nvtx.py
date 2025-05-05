@@ -13,7 +13,7 @@ class NVTXProvider(InstrumentationProvider):
         top_level_sdfg = sdfg.parent is None
         if top_level_sdfg:
             sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
-            local_stream.write(f'nvtxRangePushA("{sdfg.name}");')
+            local_stream.write(f'nvtxRangePush("{sdfg.name}");')
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         top_level_sdfg = sdfg.parent is None

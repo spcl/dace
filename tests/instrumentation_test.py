@@ -63,7 +63,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         code = sdfg.generate_code()[0].clean_code
         nvtx_include = re.search(r'#include <nvtx3/nvToolsExt.h>', code)
         assert nvtx_include is not None
-        range_push = re.search(r'nvtxRangePushA\b', code)
+        range_push = re.search(r'nvtxRangePush\b', code)
         assert range_push is not None
         range_pop = re.search(r'nvtxRangePop\b', code)
         assert range_pop is not None
