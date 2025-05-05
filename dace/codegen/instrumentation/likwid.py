@@ -338,11 +338,15 @@ class LIKWIDInstrumentationGPU(NVTXProvider):
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.parent is not None:
+            # Call super().on_sdfg_end() to make sure that we add anything necessary from the parent class before exiting
+            super().on_sdfg_end(sdfg, local_stream, global_stream)
             return
 
         # Configure CMake project and counters
         self._likwid_used = LIKWID.is_installed()
         if not self._likwid_used:
+            # Call super().on_sdfg_end() to make sure that we add anything necessary from the parent class before exiting
+            super().on_sdfg_end(sdfg, local_stream, global_stream)
             return
 
         codegen.dispatcher.used_environments.add(LIKWID.full_class_path())
@@ -372,9 +376,12 @@ setenv("LIKWID_GPUFILEPATH", "{likwid_marker_file_gpu.absolute()}", 0);
 LIKWID_NVMARKER_INIT;
 '''
         codegen._initcode.write(init_code)
+        # Call super().on_sdfg_end() to make sure we don't include in the NVTX range the LIKWID initialization code
         super().on_sdfg_begin(sdfg, local_stream, global_stream, codegen)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        # Call super().on_sdfg_end() to make sure we don't include in the NVTX range the LIKWID finalization code
+        super().on_sdfg_end(sdfg, local_stream, global_stream)
         if not self._likwid_used or sdfg.parent is not None:
             return
 
@@ -408,7 +415,6 @@ LIKWID_NVMARKER_INIT;
 LIKWID_NVMARKER_CLOSE;
 '''
         self.codegen._exitcode.write(exit_code, sdfg)
-        super().on_sdfg_end(sdfg, local_stream, global_stream)
 
     def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
