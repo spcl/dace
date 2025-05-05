@@ -4,6 +4,7 @@
 
 import pytest
 import numpy as np
+import re
 import sys
 
 import dace
@@ -43,7 +44,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     if instrumentation == dace.InstrumentationType.Timer:
         sdfg.instrument = instrumentation
 
-    if instrumentation == dace.InstrumentationType.GPU_Events:
+    if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.NVTX]:
         sdfg.apply_transformations(GPUTransformSDFG)
 
     sdfg(A=A, B=B, C=C, N=size)
@@ -57,6 +58,15 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         report = sdfg.get_latest_report()
         print(report)
 
+    # Check that the NVTX range wrapper is present in the generated CPU code
+    if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.NVTX]:
+        code = sdfg.generate_code()[0].clean_code
+        nvtx_include = re.search(r'#include <nvtx3/nvToolsExt.h>', code)
+        assert nvtx_include is not None
+        range_push = re.search(r'nvtxRangePushA\b', code)
+        assert range_push is not None
+        range_pop = re.search(r'nvtxRangePop\b', code)
+        assert range_pop is not None
 
 def test_timer():
     onetest(dace.InstrumentationType.Timer)
@@ -72,6 +82,9 @@ def test_papi():
 def test_gpu_events():
     onetest(dace.InstrumentationType.GPU_Events)
 
+@pytest.mark.gpu
+def test_gpu_events():
+    onetest(dace.InstrumentationType.NVTX)
 
 if __name__ == '__main__':
     test_timer()

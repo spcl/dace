@@ -13,6 +13,10 @@ from dace.sdfg.state import ControlFlowRegion, SDFGState
 class GPUEventProvider(NVTXProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
 
+    def __init__(self):
+        self.backend = common.get_gpu_backend()
+        super().__init__()
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if self.backend == 'cuda':
             header_name = 'cuda_runtime.h'
