@@ -1,12 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Union
-from dace import config, dtypes, registry
+from dace import dtypes, registry
 from dace.codegen.prettycode import CodeIOStream
-from dace.sdfg import nodes, is_devicelevel_gpu
-from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.NVTX)
