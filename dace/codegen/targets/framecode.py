@@ -23,6 +23,7 @@ from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
+
 def _get_or_eval_sdfg_first_arg(func, sdfg):
     if callable(func):
         return func(sdfg)
