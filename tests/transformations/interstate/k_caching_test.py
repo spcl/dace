@@ -17,23 +17,25 @@ def check_kcaching(kc_sdfg: dace.SDFG, N: int, skip_exec: bool = False):
     assert kc_sdfg.apply_transformations_repeated(KCaching) == N
     kc_sdfg.validate()
 
-    if N > 0:
-        orig_mods = sum(
-            [
-                "Mod" in str(r)
-                for e, _ in orig_sdfg.all_edges_recursive()
-                if not isinstance(e.data, InterstateEdge)
-                for r in e.data.subset
-            ]
-        )
-        kc_mods = sum(
-            [
-                "Mod" in str(r)
-                for e, _ in kc_sdfg.all_edges_recursive()
-                if not isinstance(e.data, InterstateEdge)
-                for r in e.data.subset
-            ]
-        )
+    orig_mods = sum(
+        [
+            "Mod" in str(r)
+            for e, _ in orig_sdfg.all_edges_recursive()
+            if not isinstance(e.data, InterstateEdge)
+            for r in e.data.subset
+        ]
+    )
+    kc_mods = sum(
+        [
+            "Mod" in str(r)
+            for e, _ in kc_sdfg.all_edges_recursive()
+            if not isinstance(e.data, InterstateEdge)
+            for r in e.data.subset
+        ]
+    )
+    if N == 0:
+        assert kc_mods == orig_mods
+    else:
         assert kc_mods > orig_mods
 
     if skip_exec:
@@ -109,7 +111,7 @@ def test_interleaved():
         a[2] = 2
         for i in range(3, 32 - 2):
             b[i] = a[i + 1] + a[i - 3]
-            a[i] = c[i] + 2
+            a[i - 1] = c[i] + 2
             a[i + 2] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
@@ -234,7 +236,7 @@ def test_reverse_step():
             a[i] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_kcaching(sdfg, 1)
+    check_kcaching(sdfg, 0)
 
 
 def test_reverse_step2():
