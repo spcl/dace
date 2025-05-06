@@ -19,6 +19,7 @@ class StateBoundaryBehavior(Enum):
 
 PREFIX_PASSTHROUGH_IN: Final[str] = "IN_"
 PREFIX_PASSTHROUGH_OUT: Final[str] = "OUT_"
+MAX_NESTED_SDFGS: Final[int] = 1000
 
 
 def from_schedule_tree(stree: tn.ScheduleTreeRoot,
@@ -349,8 +350,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                                                         memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
                     continue
 
-                if outer_map_entry is not None:
-                    assert isinstance(outer_map_entry, nodes.EntryNode)
+                if isinstance(outer_map_entry, nodes.EntryNode):
 
                     # get it from outside the map
                     connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet_data}"
@@ -363,6 +363,31 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector,
                                                  Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
                 else:
+                    if isinstance(outer_map_entry, SDFG):
+                        # Copy data descriptor from parent SDFG and add input connector
+                        if memlet_data not in sdfg.arrays:
+                            parent_sdfg = sdfg.parent.parent
+                            sdfg_counter = 1
+                            while memlet_data not in parent_sdfg.arrays and sdfg_counter < MAX_NESTED_SDFGS:
+                                parent_sdfg = parent_sdfg.parent.parent
+                                assert isinstance(parent_sdfg, SDFG)
+                                sdfg_counter += 1
+                            sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
+
+                            # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                            if parent_sdfg.arrays[memlet_data].transient:
+                                sdfg.arrays[memlet_data].transient = False
+                                # TODO
+                                # ... unless they are only ever used inside the nested SDFG, in which case
+                                # we should delete them from the parent SDFG's array list.
+                                # NOTE This can probably be done automatically by a cleanup pass in the end.
+                                #      Something like DDE should be able to do this.
+
+                            assert memlet_data not in outer_to_connect["inputs"]
+                            outer_to_connect["inputs"].add(memlet_data)
+                    else:
+                        assert outer_map_entry is None
+
                     # cache local read access
                     assert memlet_data not in access_cache
                     access_cache[memlet_data] = self._current_state.add_read(memlet_data)
@@ -372,7 +397,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                                                         dst_conn=connector,
                                                         memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
 
-            if outer_map_entry is not None and self._current_state.out_degree(outer_map_entry) < 1:
+            if isinstance(outer_map_entry, nodes.EntryNode) and self._current_state.out_degree(outer_map_entry) < 1:
                 self._current_state.add_nedge(outer_map_entry, map_entry, Memlet())
 
             # map_exit
@@ -412,6 +437,23 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                                                             dst_conn=in_connector_name,
                                                             memlet=memlet)
 
+                if isinstance(outer_map_entry, SDFG):
+                    if name not in sdfg.arrays:
+                        parent_sdfg = sdfg.parent.parent
+                        sdfg_counter = 1
+                        while name not in parent_sdfg.arrays and sdfg_counter < MAX_NESTED_SDFGS:
+                            parent_sdfg = parent_sdfg.parent.parent
+                            assert isinstance(parent_sdfg, SDFG)
+                            sdfg_counter += 1
+                        sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
+
+                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                        if parent_sdfg.arrays[name].transient:
+                            sdfg.arrays[name].transient = False
+
+                    # Add out_connector in any case if not yet present, e.g. write after read
+                    outer_to_connect["outputs"].add(name)
+
                 # connect "outside the map"
                 access_node = self._current_state.add_write(name)
                 self._current_state.add_memlet_path(map_exit,
@@ -422,8 +464,10 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 # cache write access into access_cache
                 access_cache[name] = access_node
 
-                if outer_to_connect is not None:
+                if isinstance(outer_map_entry, nodes.EntryNode):
                     outer_to_connect[name] = (access_node, Memlet.from_array(name, sdfg.arrays[name]))
+                else:
+                    assert isinstance(outer_map_entry, SDFG) or outer_map_entry is None
 
             # TODO If nothing is connected at this point, figure out what's the last thing that
             #      we should connect to. Then, add an empty memlet from that last thing to this
@@ -470,9 +514,11 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                     # Copy data descriptor from parent SDFG and add input connector
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = sdfg.parent.parent
-                        while memlet.data not in parent_sdfg.arrays:
+                        sdfg_counter = 1
+                        while memlet.data not in parent_sdfg.arrays and sdfg_counter < MAX_NESTED_SDFGS:
                             parent_sdfg = parent_sdfg.parent.parent
                             assert isinstance(parent_sdfg, SDFG)
+                            sdfg_counter += 1
                         sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
 
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
@@ -516,6 +562,11 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
                 if isinstance(scope_node, SDFG):
                     if memlet.data not in sdfg.arrays:
                         parent_sdfg = sdfg.parent.parent
+                        sdfg_counter = 1
+                        while memlet.data not in parent_sdfg.arrays and sdfg_counter < MAX_NESTED_SDFGS:
+                            parent_sdfg = parent_sdfg.parent.parent
+                            assert isinstance(parent_sdfg, SDFG)
+                            sdfg_counter += 1
                         sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
 
                         # Transients passed into a nested SDFG become non-transient inside that nested SDFG
