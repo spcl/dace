@@ -316,10 +316,13 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             self._access_cache[self._current_state] = {}
 
             # visit children inside the map
-            if [type(child) for child in node.children] == [tn.StateBoundaryNode, tn.MapScope]:
+            type_of_children = [type(child) for child in node.children]
+            last_child_is_MapScope = type_of_children[-1] == tn.MapScope
+            all_others_are_Boundaries = type_of_children.count(tn.StateBoundaryNode) == len(type_of_children) - 1
+            if last_child_is_MapScope and all_others_are_Boundaries:
                 # skip weirdly added StateBoundaryNode
                 # tmp: use this - for now - to "backprop-insert" extra state boundaries for nested SDFGs
-                self.visit(node.children[1], sdfg=sdfg)
+                self.visit(node.children[-1], sdfg=sdfg)
             elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
                 self._insert_nestedSDFG(node, sdfg)
             else:
