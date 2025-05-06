@@ -131,12 +131,14 @@ class KCaching(xf.MultiStateTransformation):
             e
             for an in access_nodes
             for st in self.loop.all_states()
+            if an in st.data_nodes()
             for e in st.out_edges(an)
         )
         write_edges = set(
             e
             for an in access_nodes
             for st in self.loop.all_states()
+            if an in st.data_nodes()
             for e in st.in_edges(an)
         )
 
@@ -187,6 +189,9 @@ class KCaching(xf.MultiStateTransformation):
         root_sdfg = self.loop.root_sdfg
         if not all(an.desc(root_sdfg).transient for an in access_nodes):
             return False
+        
+        # The (overapproximated) written subset must be written before read or not read at all.
+        # TODO
 
         return True
 
