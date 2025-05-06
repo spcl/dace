@@ -11,7 +11,7 @@ from dace import InterstateEdge
 
 
 # Checks if KCaching applied N times and if memory footprint was reduced
-def check_kcaching(kc_sdfg: dace.SDFG, N: int, skip_exec: bool = False):
+def check_kcaching(kc_sdfg: dace.SDFG, N: int):
     orig_sdfg = copy.deepcopy(kc_sdfg)
     orig_sdfg.validate()
     assert kc_sdfg.apply_transformations_repeated(KCaching) == N
@@ -37,9 +37,6 @@ def check_kcaching(kc_sdfg: dace.SDFG, N: int, skip_exec: bool = False):
         assert kc_mods == orig_mods
     else:
         assert kc_mods > orig_mods
-
-    if skip_exec:
-        return
 
     input_data_orig = {}
     input_data_kc = {}
@@ -109,6 +106,8 @@ def test_interleaved():
         a[0] = 0
         a[1] = 1
         a[2] = 2
+        a[3] = 3
+        a[4] = 4
         for i in range(3, 32 - 2):
             b[i] = a[i + 1] + a[i - 3]
             a[i - 1] = c[i] + 2
@@ -179,7 +178,7 @@ def test_indirect_access():
             a[idx] = c[i] * 2
 
     sdfg = tester.to_sdfg(simplify=True)
-    check_kcaching(sdfg, 0, skip_exec=True)
+    check_kcaching(sdfg, 0)
 
 
 def test_constant_index():
