@@ -6,7 +6,7 @@ from dace.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import transformation as xf
-from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.passes.analysis import loop_analysis, StateReachability
 from dace.symbolic import pystr_to_symbolic
 
 
@@ -191,7 +191,25 @@ class KCaching(xf.MultiStateTransformation):
             return False
         
         # The (overapproximated) written subset must be written before read or not read at all.
-        # TODO
+        # TODO: This is overly conservative.
+
+        can_reach = StateReachability().apply_pass(self.loop.sdfg, {})
+        loop_states = set(self.loop.all_states())
+
+        reachable_access_nodes = set()
+        for k1, v1 in can_reach.items():
+            for k2, v2 in v1.items():
+                if k2 not in loop_states:
+                    continue
+                for st in v2:
+                  reachable_access_nodes |= set(
+                      an for an in st.data_nodes() if an.data == array_name
+                  )
+
+ 
+        # Array accessed outside of the loop
+        if access_nodes != reachable_access_nodes:
+            return False
 
         return True
 

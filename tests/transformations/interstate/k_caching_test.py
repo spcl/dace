@@ -123,8 +123,7 @@ def test_nonlinear_index():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        a[0] = 0
-        a[1] = 1
+        a[:] = 0
         for i in range(2, 5):
             b[i] = a[i - 1] + a[i - 2]
             a[i * i] = c[i] * 2
@@ -137,8 +136,7 @@ def test_nonlinear_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        a[0] = 0
-        a[1] = 1
+        a[:] = 0
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -156,8 +154,7 @@ def test_nonconstant_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        a[0] = 0
-        a[1] = 1
+        a[:] = 0
         step = 2
         for i in range(2, 32, step):
             b[i] = a[i - 1] + a[i - 2]
@@ -186,8 +183,7 @@ def test_constant_index():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        a[0] = 0
-        a[1] = 1
+        a[:] = 0
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             a[0] = c[i] * 2
@@ -200,8 +196,7 @@ def test_larger_step():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        a[0] = 0
-        a[1] = 1
+        a[:] = 0
         for i in range(2, 32, 8):
             b[i] = a[i - 1] + a[i - 2]
             a[i] = c[i] * 2
@@ -214,8 +209,7 @@ def test_larger_index():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        a[0] = 0
-        a[1] = 1
+        a[:] = 0
         for i in range(2, 4):
             b[i] = a[8 * i - 1] + a[8 * i - 2]
             a[8 * i] = c[i] * 2
@@ -317,22 +311,22 @@ def test_used_values3():
 
 
 if __name__ == "__main__":
-    # test_simple()
-    # test_non_transient()
-    # test_gaps()
-    # test_interleaved()
-    # test_nonlinear_index()
-    # test_nonlinear_step()
-    # test_nonconstant_step()
+    test_simple()
+    test_non_transient()
+    test_gaps()
+    test_interleaved()
+    test_nonlinear_index()
+    test_nonlinear_step()
+    test_nonconstant_step()
     test_indirect_access()
-    # test_constant_index()
-    # test_larger_step()
-    # test_larger_index()
-    # test_reverse_step()
-    # test_reverse_step2()
-    # test_reverse_index()
-    # test_used_values()
-    # test_used_values2()
-    # test_used_values3()
+    test_constant_index()
+    test_larger_step()
+    test_larger_index()
+    test_reverse_step()
+    test_reverse_step2()
+    test_reverse_index()
+    test_used_values()
+    test_used_values2()
+    test_used_values3()
     # Views? WCR?
     # Same iteration variable used in multiple dimensions?
