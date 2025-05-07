@@ -1,0 +1,495 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "schedule_tester",
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "debuginfo": null
+        }
+      },
+      "B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "debuginfo": null
+        }
+      },
+      "C": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "debuginfo": null
+        }
+      },
+      "ref": {
+        "type": "ArrayReference",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "20",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "20"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "n": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "a659a3f0-a079-4e8a-97bb-3526fe808101",
+    "hash": "8b72b12866020e74680f51b61ddbc4e10278a349196143b809eb066090350b7e"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "block",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "1b60758d-4309-4ab8-aa9d-4ea7ebe7d50c"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "block_0",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 206,
+              "end_line": 206,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/schedule_test.py"
+            },
+            "data": "A",
+            "guid": "4c352325-b077-4e51-a95c-07b931ebf702"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "ref",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 206,
+              "end_line": 206,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/schedule_test.py"
+            },
+            "data": "ref",
+            "in_connectors": {
+              "set": null
+            },
+            "guid": "aab3338b-5278-4b9d-b138-f280133c7c55"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "20",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "19",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "f5675f03-499b-410c-b4c6-ae1ba134f31a",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "19",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "20"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "1",
+          "dst_connector": "set",
+          "src_connector": null
+        }
+      ],
+      "attributes": {
+        "guid": "01d73a5c-797f-4ac6-ba01-ca838eaf9d7a"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "block_1",
+      "id": 2,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "B",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 207,
+              "end_line": 207,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/schedule_test.py"
+            },
+            "data": "B",
+            "guid": "3337e3ce-dc54-4acd-9345-241a9187f269"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "ref",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 207,
+              "end_line": 207,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/schedule_test.py"
+            },
+            "data": "ref",
+            "in_connectors": {
+              "set": null
+            },
+            "guid": "6fc6f939-4abb-4821-873c-c245a44b1c28"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "20",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "19",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "B",
+                "debuginfo": null,
+                "guid": "ae4d3e36-aee0-4a2a-86a2-70ab3873e2a1",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "19",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "20"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "1",
+          "dst_connector": "set",
+          "src_connector": null
+        }
+      ],
+      "attributes": {
+        "guid": "b0159de8-7c61-4779-96f9-ffb39bafd5f4"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "block_2",
+      "id": 3,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "ref",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 208,
+              "end_line": 208,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/schedule_test.py"
+            },
+            "data": "ref",
+            "guid": "174e740e-f37a-4a82-947c-14ed710e9c8b"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "C",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 208,
+              "end_line": 208,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/schedule_test.py"
+            },
+            "data": "C",
+            "guid": "c706e6f0-3fc5-412c-85a0-0ba77532ad47"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "20",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "19",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "ref",
+                "debuginfo": null,
+                "guid": "28023b58-3133-402a-8500-0c680b89aab5",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "19",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "20"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "1",
+          "dst_connector": null,
+          "src_connector": null
+        }
+      ],
+      "attributes": {
+        "guid": "881e381f-ba34-407d-9030-8e1708db696f"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(n > 0)",
+              "language": "Python"
+            },
+            "guid": "db5b9c3f-defe-4da9-a08c-7a95870ea486"
+          },
+          "label": "(n > 0)"
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(n <= 0)",
+              "language": "Python"
+            },
+            "guid": "00041cc1-be25-4bb7-b4dd-7755d4e72041"
+          },
+          "label": "(n <= 0)"
+        }
+      },
+      "src": "0",
+      "dst": "2"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "d995f762-e988-49e9-93c0-3394c21d7ddc"
+          },
+          "label": ""
+        }
+      },
+      "src": "1",
+      "dst": "3"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "65122c71-14f1-48f0-89cb-f29ff53849ea"
+          },
+          "label": ""
+        }
+      },
+      "src": "2",
+      "dst": "3"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

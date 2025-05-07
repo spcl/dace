@@ -52,8 +52,8 @@
         "language": "CPP"
       }
     },
-    "guid": "5cd9ddce-d53c-4981-9659-d4b1e8f25eaf",
-    "hash": "7ee79e8ccc2cb59ae0277d7cd6a2ace5bf55fb00879b57abdfa9aa7a1ab5c6d1"
+    "guid": "4e9a7e67-1f88-4f01-925b-7b94e6cc66c5",
+    "hash": "633e434839c38d271c7d5bdf051cfa6d0a07a477e81e78940ce5d8f253bd5148"
   },
   "nodes": [
     {
@@ -80,14 +80,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 66,
+              "end_line": 66,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/trivial_map_elimination_test.py"
             },
             "data": "A",
-            "guid": "66254b2f-c381-4109-8f54-6f339b08679e"
+            "guid": "36440b85-8997-424f-a3bf-4680abda0b08"
           },
           "id": 0,
           "scope_entry": null,
@@ -99,14 +99,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 66,
+              "end_line": 66,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/trivial_map_elimination_test.py"
             },
             "data": "B",
-            "guid": "1784fa27-fe16-43f2-af15-0b39d7b23dd6"
+            "guid": "5e94bcfe-5ba3-4ae1-ab03-669a88616f4c"
           },
           "id": 1,
           "scope_entry": null,
@@ -118,14 +118,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 66,
+              "end_line": 66,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/trivial_map_elimination_test.py"
             },
             "data": "C",
-            "guid": "7e7662a6-d5db-4c8a-b32f-a726e7e4fe86"
+            "guid": "d069ffa8-737a-4d5d-a48d-58649ef04dae"
           },
           "id": 2,
           "scope_entry": null,
@@ -159,11 +159,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 68,
+              "end_line": 68,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/trivial_map_elimination_test.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -172,7 +172,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "022673aa-bdd3-4d5b-b15a-d745798847c2"
+            "guid": "30b12de3-7468-45d8-8927-c9284430d1c8"
           },
           "id": 3,
           "scope_entry": null,
@@ -188,11 +188,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 68,
+              "end_line": 68,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/trivial_map_elimination_test.py"
             },
             "label": "MAP",
             "in_connectors": {
@@ -201,7 +201,7 @@
             "out_connectors": {
               "__out": null
             },
-            "guid": "a8f0f90c-dfc5-4276-bdc4-c09533700d11"
+            "guid": "8c358fbb-165a-43f4-b6ad-e9d56e830ebd"
           },
           "id": 4,
           "scope_entry": "3",
@@ -217,7 +217,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "fcc4fddb-4c6f-49e8-afa5-6a78cc18d598"
+            "guid": "1b9f1daf-0933-43e6-b571-3fe28485a899"
           },
           "id": 5,
           "scope_entry": "3",
@@ -245,7 +245,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1573c76b-b6ac-45e4-8302-60a7f7f9ec94",
+                "guid": "cc0c00d4-c3f5-419a-b0c7-ab7b25e840ae",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -288,7 +288,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "ba32f94c-0c7d-40c6-99b8-1d683ab7dd92",
+                "guid": "c871766e-2bc3-431a-8841-80fbd5a4d9be",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -331,7 +331,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1573c76b-b6ac-45e4-8302-60a7f7f9ec94",
+                "guid": "cc0c00d4-c3f5-419a-b0c7-ab7b25e840ae",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -374,7 +374,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "45cdc7b2-2511-4053-b5d7-03f487aa2128",
+                "guid": "25553392-a69c-4797-a447-a38bbfdd4d39",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -417,7 +417,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "45cdc7b2-2511-4053-b5d7-03f487aa2128",
+                "guid": "25553392-a69c-4797-a447-a38bbfdd4d39",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -442,7 +442,7 @@
         }
       ],
       "attributes": {
-        "guid": "5ddbe416-d10a-45b4-8da8-076067b80d36"
+        "guid": "a13c6394-8efc-4f55-9441-0cba43cb381c"
       }
     }
   ],

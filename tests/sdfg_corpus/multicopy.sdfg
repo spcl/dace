@@ -73,8 +73,8 @@
         "language": "CPP"
       }
     },
-    "guid": "852e5415-f223-4551-bd75-21c870e2d743",
-    "hash": "6fe3d22eb8184501556bf2468705471765f5531066c32aa7aa745ae48c2fcf90"
+    "guid": "3d3ea732-c502-4b98-acc2-c332f34e0de3",
+    "hash": "bad62c0c2060d66024b76469967cf46e7b0ddbe57285fe28d53046f50f9f76fd"
   },
   "nodes": [
     {
@@ -96,14 +96,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/multicopy_test.py"
             },
             "data": "A",
-            "guid": "8f6f4fae-79b7-4441-b1d7-dd7cf63fcdd6"
+            "guid": "6fdaa84d-5eb8-4147-a193-487a844e3a8a"
           },
           "id": 0,
           "scope_entry": null,
@@ -115,14 +115,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 14,
+              "end_line": 14,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/multicopy_test.py"
             },
             "data": "B",
-            "guid": "c17f6366-61c1-441b-8945-34b5e70b2f3d"
+            "guid": "46304b19-a59a-456e-8b44-a6dcb6c221be"
           },
           "id": 1,
           "scope_entry": null,
@@ -134,14 +134,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 15,
+              "end_line": 15,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/multicopy_test.py"
             },
             "data": "C",
-            "guid": "7aabb944-c9d2-4cd9-bd7d-a6e4b2de28c5"
+            "guid": "215ce646-f10a-4385-8786-51f6edbf4ab8"
           },
           "id": 2,
           "scope_entry": null,
@@ -169,7 +169,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "29c09326-71ab-4f7c-83fb-d68972f8a5e4",
+                "guid": "9bd3c535-3c0e-4189-b5e8-ba6ea5080ccf",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -212,7 +212,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "347fbd2a-ffb5-4a84-95f9-37800fe7d531",
+                "guid": "86b15458-e21b-45cd-a934-77ff0782b786",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -237,7 +237,7 @@
         }
       ],
       "attributes": {
-        "guid": "74ba6cde-0339-4b79-9cf8-50a4843ba9f0"
+        "guid": "ee6ba822-1221-4a01-b656-7e4114797d46"
       }
     }
   ],

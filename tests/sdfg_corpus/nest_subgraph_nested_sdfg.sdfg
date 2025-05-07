@@ -35,8 +35,8 @@
         "language": "CPP"
       }
     },
-    "guid": "228d2e67-edb7-4eb9-8add-97321e9f8697",
-    "hash": "88454e13aac446defe3549beeb222ead4c772a091f92432e856cf72d144914a7"
+    "guid": "489230e0-3e89-4d2f-977e-56948f54508a",
+    "hash": "bf0fec0cee075aeb60d45a93a477ea5a59f583b67ea3f7b78bc3aa96e2a5979e"
   },
   "nodes": [
     {
@@ -50,7 +50,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "4a043884-658b-47d6-b7aa-5f193e848dbb"
+        "guid": "6c804d68-7945-4ced-b210-efea841be704"
       }
     },
     {
@@ -75,10 +75,10 @@
               "end_line": 65,
               "start_column": 12,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/nest_subgraph_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/nest_subgraph_test.py"
             },
             "data": "a",
-            "guid": "de3d9d61-a47a-4fb1-b781-cad99404f6b8"
+            "guid": "704a246f-467f-4444-a30f-b5cc394346fb"
           },
           "id": 0,
           "scope_entry": null,
@@ -98,13 +98,13 @@
               "end_line": 65,
               "start_column": 12,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/nest_subgraph_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/nest_subgraph_test.py"
             },
             "label": "assign_65_8",
             "out_connectors": {
               "__out": null
             },
-            "guid": "b293f195-9207-4ed3-931c-9764849e832a"
+            "guid": "2ae31b33-5223-4dee-9f94-364a551c6198"
           },
           "id": 1,
           "scope_entry": null,
@@ -132,7 +132,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "c0ea04c1-d932-487c-9e0f-45aa0d0cb103",
+                "guid": "be00dccf-9666-4656-acdb-fce691103872",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -157,7 +157,7 @@
         }
       ],
       "attributes": {
-        "guid": "25bc1902-d81a-4be1-86b5-9220b8f180ff"
+        "guid": "fe7a885d-1103-4d34-b01d-faa21398c1fe"
       }
     }
   ],
@@ -168,7 +168,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "7be6db0a-12d9-428d-afd1-cfb44051ac09"
+            "guid": "9f114af0-a54f-41a1-b7b8-f59297b89ecf"
           },
           "label": ""
         }

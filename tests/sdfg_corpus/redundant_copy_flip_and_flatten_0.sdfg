@@ -105,15 +105,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 440,
-      "end_line": 443,
+      "start_line": 436,
+      "end_line": 439,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_copy_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "dde36264-6123-4623-a68e-fa83d1852df3",
-    "hash": "8dadfa65120eb6f6969c3b8f65b4b2be6e14613bbcdc1f60e82a13090683166e"
+    "guid": "4ed269fa-ccd5-4fc2-a2e0-c97832961dd0",
+    "hash": "a3df3a4120a51e9d2c502e0de808092079abae39abfd2614bd6829617ad55326"
   },
   "nodes": [
     {
@@ -127,14 +127,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "392faba5-1fe7-4df6-9bde-cab3fff90553",
+        "guid": "a28fc03d-0f2f-4ba5-a802-105b1d57232b",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "call_442",
+      "label": "call_438",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -177,11 +177,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 442,
-              "end_line": 442,
+              "start_line": 438,
+              "end_line": 438,
               "start_column": 21,
               "end_column": 21,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_copy_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "in_connectors": {
               "IN_a": null
@@ -189,7 +189,7 @@
             "out_connectors": {
               "OUT_a": null
             },
-            "guid": "3f6ff7e7-e6ef-4d37-b928-8b629706cd14"
+            "guid": "50bed7a5-99dd-40a3-9c56-c87296afc841"
           },
           "id": 0,
           "scope_entry": null,
@@ -205,11 +205,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 442,
-              "end_line": 442,
+              "start_line": 438,
+              "end_line": 438,
               "start_column": 21,
               "end_column": 21,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_copy_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "label": "_numpy_flip_",
             "in_connectors": {
@@ -218,7 +218,7 @@
             "out_connectors": {
               "__out": null
             },
-            "guid": "e42a9a97-5955-469c-8e7b-2d034349f806"
+            "guid": "6e6f0b2b-6369-48a3-b11b-1f34d5dfd7b9"
           },
           "id": 1,
           "scope_entry": "0",
@@ -234,7 +234,7 @@
             "out_connectors": {
               "OUT___tmp0": null
             },
-            "guid": "0a288ff5-1442-4460-9df1-dbd2208e607b"
+            "guid": "ff4bd04a-2cf5-46f6-9a23-63a532c9dacd"
           },
           "id": 2,
           "scope_entry": "0",
@@ -246,14 +246,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 442,
-              "end_line": 442,
+              "start_line": 438,
+              "end_line": 438,
               "start_column": 21,
               "end_column": 21,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_copy_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "a",
-            "guid": "535d03dd-f5e4-4bde-bd67-29158298b991"
+            "guid": "b4aed45a-17fa-443a-9949-6fbd687cecef"
           },
           "id": 3,
           "scope_entry": null,
@@ -265,14 +265,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 442,
-              "end_line": 442,
+              "start_line": 438,
+              "end_line": 438,
               "start_column": 21,
               "end_column": 21,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_copy_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "tmp",
-            "guid": "833c7e54-410b-40d3-b62a-df590f150812"
+            "guid": "c7ea87f5-7f4a-4ac9-b456-4d3d309ca0cb"
           },
           "id": 4,
           "scope_entry": null,
@@ -306,7 +306,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "de9bf234-de33-43d9-b048-9fb3a740ddab",
+                "guid": "3410f7c7-2997-4a00-9cb9-73688f91bccc",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -361,7 +361,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "32878936-d5bd-4b22-b320-12851e2e2514",
+                "guid": "acf66c90-f89f-4670-ba31-adc7ff38f181",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -416,7 +416,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "de9bf234-de33-43d9-b048-9fb3a740ddab",
+                "guid": "3410f7c7-2997-4a00-9cb9-73688f91bccc",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -471,7 +471,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "32878936-d5bd-4b22-b320-12851e2e2514",
+                "guid": "acf66c90-f89f-4670-ba31-adc7ff38f181",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -502,14 +502,14 @@
         }
       ],
       "attributes": {
-        "guid": "fa0b5300-9a92-4309-b5cf-4210692527bf",
+        "guid": "eb120dda-30bb-4641-92cc-13677fe4d700",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "call_443",
+      "label": "call_439",
       "id": 2,
       "collapsed": false,
       "scope_dict": {
@@ -518,14 +518,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "f8e463dc-52ac-4df5-8dba-c38dfcc13d89",
+        "guid": "967e0a84-0ba6-49d1-adaf-61e0211f494a",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "assign_443_4",
+      "label": "assign_439_4",
       "id": 3,
       "collapsed": false,
       "scope_dict": {
@@ -542,17 +542,17 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 443,
-              "end_line": 443,
+              "start_line": 439,
+              "end_line": 439,
               "start_column": 29,
               "end_column": 29,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_copy_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "__tmp0_0",
             "in_connectors": {
               "views": null
             },
-            "guid": "312fd68a-01ab-45d1-ba50-eefa1ba90289"
+            "guid": "4935a07a-a5d8-4dfb-b104-18b91ca52db3"
           },
           "id": 0,
           "scope_entry": null,
@@ -564,14 +564,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 443,
-              "end_line": 443,
+              "start_line": 439,
+              "end_line": 439,
               "start_column": 29,
               "end_column": 29,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_copy_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "b",
-            "guid": "7add7844-e802-4ea2-9b5c-8eea2e91d0b1"
+            "guid": "3c0d09cf-14cb-41fd-95e0-0ee208eed7c6"
           },
           "id": 1,
           "scope_entry": null,
@@ -583,14 +583,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1291,
+              "end_line": 1291,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/frontend/python/newast.py"
             },
             "data": "tmp",
-            "guid": "5f89ae59-5f5e-4b8b-9d85-47423cbcf3b1"
+            "guid": "7aeab5d7-9f8f-474c-98e3-20266477d9ba"
           },
           "id": 2,
           "scope_entry": null,
@@ -629,7 +629,7 @@
                 },
                 "data": "b",
                 "debuginfo": null,
-                "guid": "b8136c8c-1843-485c-af50-31bf42ea2af3",
+                "guid": "6016b312-745b-4b96-8ecf-9790b6786e12",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -699,7 +699,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "874c2842-42a3-4e4a-8f20-3ddfe82648af",
+                "guid": "efa6750c-0e53-41d8-8d69-94ea440bee46",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -740,7 +740,7 @@
         }
       ],
       "attributes": {
-        "guid": "c81d4447-fdce-45c6-a000-d125acca51dc",
+        "guid": "b5ed17f1-4cce-4357-b458-a30720ee6673",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -753,7 +753,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "67729c77-a583-4cc8-a3b1-8e5f49fc5ef6"
+            "guid": "4bb4a153-de94-4d4d-b194-344ec56054da"
           },
           "label": ""
         }
@@ -767,7 +767,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "f9381f56-5469-40b8-a0b4-39c00d99197b"
+            "guid": "dd1f306a-e912-47d9-bda6-21e5012dfcfb"
           },
           "label": ""
         }
@@ -781,7 +781,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "f8adca88-fd4e-46f5-b410-d1442703fd4c"
+            "guid": "36203c5b-5510-4414-8120-1334982f6c22"
           },
           "label": ""
         }

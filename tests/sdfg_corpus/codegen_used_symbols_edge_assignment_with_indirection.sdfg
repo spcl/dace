@@ -82,8 +82,8 @@
         "language": "CPP"
       }
     },
-    "guid": "be14ebea-eac9-4983-a991-9cfe753c16f1",
-    "hash": "2a69e779a4f9bec5c84dce75c77b6dadbb51a933e924ff5775958beeaf8c1150"
+    "guid": "7518c121-3a5c-4ecc-857e-5dd79949673f",
+    "hash": "b12808668f92eac104c1a9e8e94c4a4d2dd3bdf40a85c4542846beefa3c45751"
   },
   "nodes": [
     {
@@ -97,7 +97,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "8a8938a6-885e-4cb2-a22e-2d5dd5586c67"
+        "guid": "234c0a28-8448-42d3-9201-5668c1016d33"
       }
     },
     {
@@ -118,14 +118,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 102,
+              "end_line": 102,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/codegen_used_symbols_test.py"
             },
             "data": "_field",
-            "guid": "630489f2-536b-4442-b075-23a8d21fa0ec"
+            "guid": "14c96e4f-e4a0-48f6-ab28-98648f315133"
           },
           "id": 0,
           "scope_entry": null,
@@ -137,14 +137,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 103,
+              "end_line": 103,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/codegen_used_symbols_test.py"
             },
             "data": "_out",
-            "guid": "c815b44f-1a3e-4715-88a6-2b6232698225"
+            "guid": "c7dfb608-8544-4217-ad30-995e6823f2df"
           },
           "id": 1,
           "scope_entry": null,
@@ -184,7 +184,7 @@
                 "data": "_out",
                 "wcr": "(lambda x, y: (x + y))",
                 "debuginfo": null,
-                "guid": "5d001fe4-e8e7-4f13-9ee7-e8868406711f",
+                "guid": "38fe93d6-2ade-4cff-b711-8652a0fad339",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -219,7 +219,7 @@
         }
       ],
       "attributes": {
-        "guid": "760c8a74-934e-4ca6-8e77-3259e8541c7c"
+        "guid": "95153c5a-6d9d-4099-b111-7b76c6ba46db"
       }
     }
   ],
@@ -233,7 +233,7 @@
             "assignments": {
               "_field_idx": "_table[__indirect_idx, __neighbor_idx]"
             },
-            "guid": "d3eff595-6d16-437c-b173-f2264dab4d18"
+            "guid": "8f906b31-106f-4ae9-b179-b21e6ed2c6c2"
           },
           "label": "_field_idx=_table[__indirect_idx, __neighbor_idx]"
         }

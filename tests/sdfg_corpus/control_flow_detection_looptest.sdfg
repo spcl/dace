@@ -2,9 +2,6 @@
   "type": "SDFG",
   "attributes": {
     "name": "control_flow_detection_looptest",
-    "arg_names": [
-      "A"
-    ],
     "_arrays": {
       "A": {
         "type": "Array",
@@ -12,21 +9,17 @@
           "strides": [
             "1"
           ],
-          "total_size": "N",
+          "total_size": "20",
           "offset": [
             "0"
           ],
           "dtype": "float64",
           "shape": [
-            "N"
+            "20"
           ],
           "debuginfo": null
         }
       }
-    },
-    "symbols": {
-      "N": "int32",
-      "i": "int64"
     },
     "global_code": {
       "frame": {
@@ -46,22 +39,13 @@
         "language": "CPP"
       }
     },
-    "debuginfo": {
-      "type": "DebugInfo",
-      "start_line": 11,
-      "end_line": 14,
-      "start_column": 0,
-      "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/codegen/control_flow_detection_test.py"
-    },
-    "using_explicit_control_flow": true,
-    "guid": "c3c2c624-df3f-4e14-ad79-3150378c5688",
-    "hash": "3322f91a7854ddca610b4b1dad8673b6964e7ea3825c38f61f58b5f4bf93d375"
+    "guid": "a69826d2-5a08-4618-b549-10ff375b511f",
+    "hash": "8a9c93d7a1bd8897204a213b0785bb359bf12f1154c28aeefc834688f3139fd9"
   },
   "nodes": [
     {
       "type": "SDFGState",
-      "label": "init",
+      "label": "block",
       "id": 0,
       "collapsed": false,
       "scope_dict": {
@@ -70,241 +54,209 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "cec234ba-9753-4ccb-aa8b-e4943139f499",
-        "executions": "1",
-        "dynamic_executions": false
+        "guid": "9a2ab34d-8cde-48c2-9aaa-76187ea183cf"
       }
     },
     {
-      "type": "LoopRegion",
+      "type": "SDFGState",
+      "label": "block_0",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
       "attributes": {
-        "update_statement": {
-          "string_data": "i = (i + 1)",
-          "language": "Python"
-        },
-        "init_statement": {
-          "string_data": "i = 0",
-          "language": "Python"
-        },
-        "loop_condition": {
-          "string_data": "(i < N)",
-          "language": "Python"
-        },
-        "loop_variable": "i",
-        "guid": "b5637e10-973b-4119-920f-11beb9f8a01d",
-        "executions": "1",
-        "dynamic_executions": false
+        "guid": "655a3ee3-5cd3-4a62-967c-f982a686867d"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "block_1",
+      "id": 2,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1,
+          2
+        ]
       },
       "nodes": [
         {
-          "type": "SDFGState",
-          "label": "for_13_13",
-          "id": 0,
-          "collapsed": false,
-          "scope_dict": {
-            "-1": []
-          },
-          "nodes": [],
-          "edges": [],
+          "type": "AccessNode",
+          "label": "A",
           "attributes": {
-            "guid": "4e64178c-2c9c-4642-874c-4a51cb35234b"
-          }
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 40,
+              "end_line": 40,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/codegen/control_flow_detection_test.py"
+            },
+            "data": "A",
+            "guid": "fcefd949-edb6-4da2-9288-72fce6ff5d34"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
         },
         {
-          "type": "SDFGState",
-          "label": "augassign_14_8",
-          "id": 1,
-          "collapsed": false,
-          "scope_dict": {
-            "-1": [
-              0,
-              1,
-              2
-            ]
-          },
-          "nodes": [
-            {
-              "type": "AccessNode",
-              "label": "A",
-              "attributes": {
-                "debuginfo": {
-                  "type": "DebugInfo",
-                  "start_line": 14,
-                  "end_line": 14,
-                  "start_column": 10,
-                  "end_column": 10,
-                  "filename": "/home/beates/Desktop/dace/tests/codegen/control_flow_detection_test.py"
-                },
-                "data": "A",
-                "guid": "dd844829-a081-4fb1-a8a8-4d49883585ac"
-              },
-              "id": 0,
-              "scope_entry": null,
-              "scope_exit": null
-            },
-            {
-              "type": "AccessNode",
-              "label": "A",
-              "attributes": {
-                "debuginfo": {
-                  "type": "DebugInfo",
-                  "start_line": 14,
-                  "end_line": 14,
-                  "start_column": 10,
-                  "end_column": 10,
-                  "filename": "/home/beates/Desktop/dace/tests/codegen/control_flow_detection_test.py"
-                },
-                "data": "A",
-                "guid": "4157f880-a61b-4f4a-908c-dd2e01e80916"
-              },
-              "id": 1,
-              "scope_entry": null,
-              "scope_exit": null
-            },
-            {
-              "type": "Tasklet",
-              "label": "augassign_14_8",
-              "attributes": {
-                "code": {
-                  "string_data": "__out = (__in1 + 5)",
-                  "language": "Python"
-                },
-                "debuginfo": {
-                  "type": "DebugInfo",
-                  "start_line": 14,
-                  "end_line": 14,
-                  "start_column": 10,
-                  "end_column": 10,
-                  "filename": "/home/beates/Desktop/dace/tests/codegen/control_flow_detection_test.py"
-                },
-                "label": "augassign_14_8",
-                "in_connectors": {
-                  "__in1": null
-                },
-                "out_connectors": {
-                  "__out": null
-                },
-                "guid": "24b0b2b4-9a92-4ab3-8e12-bfc84947681a"
-              },
-              "id": 2,
-              "scope_entry": null,
-              "scope_exit": null
-            }
-          ],
-          "edges": [
-            {
-              "type": "MultiConnectorEdge",
-              "attributes": {
-                "data": {
-                  "type": "Memlet",
-                  "attributes": {
-                    "volume": "1",
-                    "subset": {
-                      "type": "Range",
-                      "ranges": [
-                        {
-                          "start": "i",
-                          "end": "i",
-                          "step": "1",
-                          "tile": "1"
-                        }
-                      ]
-                    },
-                    "data": "A",
-                    "debuginfo": null,
-                    "guid": "47c0632d-6e3b-43dc-941c-4372582242e4",
-                    "src_subset": {
-                      "type": "Range",
-                      "ranges": [
-                        {
-                          "start": "i",
-                          "end": "i",
-                          "step": "1",
-                          "tile": "1"
-                        }
-                      ]
-                    },
-                    "dst_subset": null,
-                    "is_data_src": true,
-                    "num_accesses": "1"
-                  }
-                }
-              },
-              "src": "0",
-              "dst": "2",
-              "dst_connector": "__in1",
-              "src_connector": null
-            },
-            {
-              "type": "MultiConnectorEdge",
-              "attributes": {
-                "data": {
-                  "type": "Memlet",
-                  "attributes": {
-                    "volume": "1",
-                    "subset": {
-                      "type": "Range",
-                      "ranges": [
-                        {
-                          "start": "i",
-                          "end": "i",
-                          "step": "1",
-                          "tile": "1"
-                        }
-                      ]
-                    },
-                    "data": "A",
-                    "debuginfo": null,
-                    "guid": "4c855dbe-0dfa-4850-9243-d5f892a43b8f",
-                    "src_subset": null,
-                    "dst_subset": {
-                      "type": "Range",
-                      "ranges": [
-                        {
-                          "start": "i",
-                          "end": "i",
-                          "step": "1",
-                          "tile": "1"
-                        }
-                      ]
-                    },
-                    "is_data_src": false,
-                    "num_accesses": "1"
-                  }
-                }
-              },
-              "src": "2",
-              "dst": "1",
-              "dst_connector": null,
-              "src_connector": "__out"
-            }
-          ],
+          "type": "Tasklet",
+          "label": "add",
           "attributes": {
-            "guid": "f99404aa-7685-47ff-b5ed-4cdeaefa8af7"
-          }
+            "code": {
+              "string_data": "out = (a + 5)",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 41,
+              "end_line": 41,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/codegen/control_flow_detection_test.py"
+            },
+            "label": "add",
+            "in_connectors": {
+              "a": null
+            },
+            "out_connectors": {
+              "out": null
+            },
+            "guid": "2240b88b-8aee-4760-a172-2b18763fb97f"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 42,
+              "end_line": 42,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/codegen/control_flow_detection_test.py"
+            },
+            "data": "A",
+            "guid": "92a1d48f-43a1-4237-b580-ae6ac5b32318"
+          },
+          "id": 2,
+          "scope_entry": null,
+          "scope_exit": null
         }
       ],
       "edges": [
         {
-          "type": "Edge",
+          "type": "MultiConnectorEdge",
           "attributes": {
             "data": {
-              "type": "InterstateEdge",
+              "type": "Memlet",
               "attributes": {
-                "guid": "8753cd6e-1009-4a1b-a858-06e0029294c5"
-              },
-              "label": ""
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "j",
+                      "end": "j",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "581de9cd-f8c4-4bc4-8285-3065360c935e",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "j",
+                      "end": "j",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "1"
+              }
             }
           },
           "src": "0",
-          "dst": "1"
+          "dst": "1",
+          "dst_connector": "a",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "j",
+                      "end": "j",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "A",
+                "debuginfo": null,
+                "guid": "6a29f770-f290-4116-b020-d91bbb511f79",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "j",
+                      "end": "j",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "2",
+          "dst_connector": null,
+          "src_connector": "out"
         }
       ],
+      "attributes": {
+        "guid": "f6969f2f-2989-435a-8b28-bf347a39ee78"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "block_2",
+      "id": 3,
       "collapsed": false,
-      "label": "for_13",
-      "id": 1,
-      "cfg_list_id": 1,
-      "start_block": 0
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "08c0b9b0-baaa-4514-883e-730ae04747d2"
+      }
     }
   ],
   "edges": [
@@ -314,12 +266,71 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "c046dae9-71db-491e-8a94-08d45a08679c"
+            "assignments": {
+              "i": "0"
+            },
+            "guid": "eed64bba-1858-4f4e-834a-e1d3c734ff2c"
           },
-          "label": ""
+          "label": "i=0"
         }
       },
       "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "assignments": {
+              "j": "i"
+            },
+            "condition": {
+              "string_data": "(i < 20)",
+              "language": "Python"
+            },
+            "guid": "596a3242-e739-446c-8070-1beb8a05cccf"
+          },
+          "label": "(i < 20); j=i"
+        }
+      },
+      "src": "1",
+      "dst": "2"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "condition": {
+              "string_data": "(i >= 20)",
+              "language": "Python"
+            },
+            "guid": "5361ac8d-0fe3-4ba1-8d4e-f4d8815175db"
+          },
+          "label": "(i >= 20)"
+        }
+      },
+      "src": "1",
+      "dst": "3"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "assignments": {
+              "i": "i + 1"
+            },
+            "guid": "dd109d7f-59cb-4a33-b3a5-3534b3839f86"
+          },
+          "label": "i=i + 1"
+        }
+      },
+      "src": "2",
       "dst": "1"
     }
   ],
@@ -327,6 +338,6 @@
   "label": "",
   "id": null,
   "cfg_list_id": 0,
-  "start_block": 0,
+  "start_block": null,
   "dace_version": "1.0.0"
 }

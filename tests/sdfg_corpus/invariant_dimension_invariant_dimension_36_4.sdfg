@@ -94,8 +94,8 @@
         "language": "CPP"
       }
     },
-    "guid": "9c2b640e-0620-4529-aeb4-b35955ed6614",
-    "hash": "4e71907bbbb2866f0aa9ca28873953ff55b7fae97ff08923817dcc079448bd8c"
+    "guid": "ed6dc87f-d813-45ef-94dc-4e4ddd6a0ee7",
+    "hash": "eebe2456a6e131140a63f3bf60cf07e799d78655f27476b5fb711b655e9d4157"
   },
   "nodes": [
     {
@@ -109,7 +109,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "5a2c2ff3-29e8-4ae2-a57a-7e54d1405e2a",
+        "guid": "38544947-47f5-4261-b3c9-03f163b713bf",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -130,7 +130,7 @@
           "language": "Python"
         },
         "loop_variable": "z",
-        "guid": "071d3c13-5588-4285-a722-1b6dd75447bf",
+        "guid": "cc0dce0b-c624-4a8f-8004-52737f55c8c2",
         "executions": "1",
         "dynamic_executions": false
       },
@@ -146,7 +146,7 @@
           "nodes": [],
           "edges": [],
           "attributes": {
-            "guid": "7fe90e18-53b9-45ab-9048-17ee7377c5a9"
+            "guid": "0995c400-64e6-4aba-8d23-a1815b64ce29"
           }
         },
         {
@@ -178,7 +178,7 @@
                   "end_line": 44,
                   "start_column": 12,
                   "end_column": 16,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
                 },
                 "label": "invariant_dimension_test_invariant_dimension_38",
                 "in_connectors": {
@@ -189,7 +189,7 @@
                 "out_connectors": {
                   "out": null
                 },
-                "guid": "5a3598b7-a2c7-4b0c-ac0c-317ddb7acd3c"
+                "guid": "c4c37b65-6c9a-4584-bcdf-993b12762068"
               },
               "id": 0,
               "scope_entry": null,
@@ -205,10 +205,10 @@
                   "end_line": 38,
                   "start_column": 12,
                   "end_column": 12,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
                 },
                 "data": "__tmp_39_23",
-                "guid": "534c39c9-ee2a-4ed6-8a68-2bfcee6c5c33"
+                "guid": "48a8cac8-25d3-4cd0-a249-f795391dade3"
               },
               "id": 1,
               "scope_entry": null,
@@ -224,10 +224,10 @@
                   "end_line": 38,
                   "start_column": 12,
                   "end_column": 12,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
                 },
                 "data": "__tmp_40_23",
-                "guid": "b73bc90b-1ccf-4003-8665-d6b176eac25d"
+                "guid": "51505cf8-dd53-43a0-ab10-03b616b7fa6f"
               },
               "id": 2,
               "scope_entry": null,
@@ -243,10 +243,10 @@
                   "end_line": 38,
                   "start_column": 12,
                   "end_column": 12,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
                 },
                 "data": "__tmp_41_23",
-                "guid": "7f05df93-0258-4754-b9b8-94cbc30ec185"
+                "guid": "fa919178-2066-411e-b373-1f30931c86f7"
               },
               "id": 3,
               "scope_entry": null,
@@ -262,10 +262,10 @@
                   "end_line": 38,
                   "start_column": 12,
                   "end_column": 12,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/invariant_dimension_test.py"
                 },
                 "data": "__tmp_42_23",
-                "guid": "43b36fe8-2abd-4218-8c0d-a22d5f9be3af"
+                "guid": "bd191a0a-616d-4b83-bd4a-f38bebcdf9aa"
               },
               "id": 4,
               "scope_entry": null,
@@ -293,7 +293,7 @@
                     },
                     "data": "__tmp_39_23",
                     "debuginfo": null,
-                    "guid": "b205ac48-a0a0-4508-8830-31ae6d92beed",
+                    "guid": "1b2e6821-dedd-4c1c-bef4-565183f68705",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -336,7 +336,7 @@
                     },
                     "data": "__tmp_40_23",
                     "debuginfo": null,
-                    "guid": "f5c2d2fb-eee8-4f0b-9331-c7d085c71f5d",
+                    "guid": "37c278e0-16fd-47ae-99a3-e4422f444f6e",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -379,7 +379,7 @@
                     },
                     "data": "__tmp_41_23",
                     "debuginfo": null,
-                    "guid": "9dd41ca6-86de-4a2f-b13e-aed8d06ffd51",
+                    "guid": "561d2dba-0d4d-4505-92e5-f972889c6550",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -422,7 +422,7 @@
                     },
                     "data": "__tmp_42_23",
                     "debuginfo": null,
-                    "guid": "e43019e6-821d-46f1-bd22-1f0de4fe2ac4",
+                    "guid": "cf1b3115-4216-46a5-b687-903eb7327e72",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -447,7 +447,7 @@
             }
           ],
           "attributes": {
-            "guid": "9671350d-48a8-4800-9601-e771592cfc13"
+            "guid": "48b0de21-e316-4bef-9cea-0d0f32d3a678"
           }
         }
       ],
@@ -458,7 +458,7 @@
             "data": {
               "type": "InterstateEdge",
               "attributes": {
-                "guid": "d0a40adf-d807-4ed3-9213-df9ece35429c"
+                "guid": "c3c01215-f5e8-4e78-9486-9fa05e7fdcd5"
               },
               "label": ""
             }
@@ -481,7 +481,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "ff8f9fd6-cfda-45c8-afd2-a8737d8cd35f"
+            "guid": "9fd6e54f-01ac-4152-956d-f1d60b651efa"
           },
           "label": ""
         }

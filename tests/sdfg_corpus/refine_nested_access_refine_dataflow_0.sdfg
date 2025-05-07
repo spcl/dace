@@ -80,8 +80,8 @@
         "language": "CPP"
       }
     },
-    "guid": "0ab57a8e-2d9a-413f-bc39-e6e12359b656",
-    "hash": "ac63ef9af72ce7e550e618a9d5a4af9d71060200904b5e69f845ebea57e83432"
+    "guid": "87a1cf7b-5da5-4c8a-afad-19b6d69d0f77",
+    "hash": "811b986f1597305165d3c9b1126646978c61b40237b1ef69155836c63400f295"
   },
   "nodes": [
     {
@@ -108,14 +108,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 62,
+              "end_line": 62,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
             },
             "data": "A",
-            "guid": "b68afdd1-1893-4379-8323-3d96746556bc"
+            "guid": "ba93889f-6691-4017-b692-800280ac2d3b"
           },
           "id": 0,
           "scope_entry": null,
@@ -127,14 +127,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 63,
+              "end_line": 63,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
             },
             "data": "B",
-            "guid": "3ac35fcb-a435-4f05-b3a1-200400175849"
+            "guid": "6ba48b4c-5bf7-433a-82e8-26f414ec4714"
           },
           "id": 1,
           "scope_entry": null,
@@ -146,14 +146,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 64,
+              "end_line": 64,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
             },
             "data": "select",
-            "guid": "cc543ac2-eb45-4db1-81b5-a2b4e97fc3ff"
+            "guid": "711aef44-61c3-4c9d-a317-57872e02f76c"
           },
           "id": 2,
           "scope_entry": null,
@@ -187,11 +187,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 65,
+              "end_line": 65,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -201,7 +201,7 @@
               "OUT_A": null,
               "OUT_select": null
             },
-            "guid": "84674cf4-d658-49f6-81e2-9ee9ee49520e"
+            "guid": "7f0f77b6-0783-4926-8b72-76e8f0f8d19b"
           },
           "id": 3,
           "scope_entry": null,
@@ -217,7 +217,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "b3956338-afc1-4993-a301-fcd4ea9a6c9f"
+            "guid": "8f5dcf84-984e-4b2a-8705-198f1dc4d775"
           },
           "id": 4,
           "scope_entry": "3",
@@ -355,10 +355,10 @@
                   "end_line": 54,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                 },
                 "using_explicit_control_flow": true,
-                "guid": "c884e981-716b-4d76-8ad1-79b49f15639b"
+                "guid": "674dca59-3f44-4fba-be7f-cbc90cc72cd5"
               },
               "nodes": [
                 {
@@ -372,7 +372,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "73fbbb39-0ae8-4323-a3c9-ba432f8ddd4a",
+                    "guid": "b8095873-7c80-4955-8534-53fb5db72b1d",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -380,7 +380,7 @@
                 {
                   "type": "ControlFlowRegion",
                   "attributes": {
-                    "guid": "7ec26f4d-a393-4777-aea2-527ebf27a085",
+                    "guid": "4e9ba4bd-5266-4723-9db2-059aa9985dd1",
                     "executions": "1",
                     "dynamic_executions": false
                   },
@@ -396,7 +396,7 @@
                       "nodes": [],
                       "edges": [],
                       "attributes": {
-                        "guid": "ad22ae1f-4e9c-48d7-b3c3-a5416cdcc432"
+                        "guid": "f88aae25-3812-49f6-8636-65b328008cc4"
                       }
                     },
                     {
@@ -421,10 +421,10 @@
                               "end_line": 51,
                               "start_column": 17,
                               "end_column": 17,
-                              "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                              "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                             },
                             "data": "select",
-                            "guid": "652a95b7-8e4e-4ace-b7ac-160b0d85d663"
+                            "guid": "2ca665e0-d558-495d-9a68-9a1a0e749078"
                           },
                           "id": 0,
                           "scope_entry": null,
@@ -440,10 +440,10 @@
                               "end_line": 51,
                               "start_column": 17,
                               "end_column": 17,
-                              "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                              "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                             },
                             "data": "__tmp0",
-                            "guid": "bf00e72e-e2f2-4e9b-94b0-97fa38b46e98"
+                            "guid": "4dd4f35b-37d8-4612-80fd-7b05d4590bf4"
                           },
                           "id": 1,
                           "scope_entry": null,
@@ -488,7 +488,7 @@
                                 },
                                 "data": "select",
                                 "debuginfo": null,
-                                "guid": "80e6438b-d351-4533-ae6e-8075d873428b",
+                                "guid": "e7625768-fb91-49be-aa38-176d44e5f4aa",
                                 "src_subset": {
                                   "type": "Range",
                                   "ranges": [
@@ -529,7 +529,7 @@
                         }
                       ],
                       "attributes": {
-                        "guid": "f1a23846-4f8e-4260-8b7c-b1f0a9791f4d"
+                        "guid": "32ba77a9-3a8e-49b2-b598-301c2573ce1a"
                       }
                     }
                   ],
@@ -540,7 +540,7 @@
                         "data": {
                           "type": "InterstateEdge",
                           "attributes": {
-                            "guid": "ab304707-d8b8-4783-9e16-bcdfc43bdd12"
+                            "guid": "79dfeabe-16c1-40f8-a3bc-fe1f06245d49"
                           },
                           "label": ""
                         }
@@ -558,7 +558,7 @@
                 {
                   "type": "ConditionalBlock",
                   "attributes": {
-                    "guid": "d0f8fe4f-6224-411a-8b02-9d90067b3184",
+                    "guid": "bdbf6564-41f0-439f-ab8f-2cf05e65cf58",
                     "executions": "1",
                     "dynamic_executions": false
                   },
@@ -566,7 +566,7 @@
                     {
                       "type": "ControlFlowRegion",
                       "attributes": {
-                        "guid": "16acd126-2d08-444c-ac1e-9adf0238ec5b"
+                        "guid": "9657214c-f12b-40d6-8afa-1f1687a83076"
                       },
                       "nodes": [
                         {
@@ -580,7 +580,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "3f3ea15f-1570-4c05-b839-ca7815fa4536"
+                            "guid": "b7b3a6ad-b6b3-43cd-aee8-e48748a57ff7"
                           }
                         },
                         {
@@ -605,10 +605,10 @@
                                   "end_line": 52,
                                   "start_column": 23,
                                   "end_column": 23,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "A",
-                                "guid": "0f9ccdd2-d66c-4f38-af87-fd96f6e6738e"
+                                "guid": "d163d390-9e3e-4ae1-a2f6-9f7a69c34c43"
                               },
                               "id": 0,
                               "scope_entry": null,
@@ -624,10 +624,10 @@
                                   "end_line": 52,
                                   "start_column": 23,
                                   "end_column": 23,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "__tmp1",
-                                "guid": "86f8d5d3-7a40-467f-9187-0023098f186f"
+                                "guid": "054615d0-8430-4224-813b-4d596f907fef"
                               },
                               "id": 1,
                               "scope_entry": null,
@@ -672,7 +672,7 @@
                                     },
                                     "data": "A",
                                     "debuginfo": null,
-                                    "guid": "d0a3f85f-f951-4b44-b885-26ceda51756d",
+                                    "guid": "dcc24f1b-7ed6-4b69-a373-98421c75f322",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -713,7 +713,7 @@
                             }
                           ],
                           "attributes": {
-                            "guid": "e5ba2313-8b3b-4cb1-b01b-37f1e0108318"
+                            "guid": "9e94747c-5161-4c1d-be6f-e4222fe6bf26"
                           }
                         },
                         {
@@ -739,10 +739,10 @@
                                   "end_line": 52,
                                   "start_column": 13,
                                   "end_column": 13,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "__tmp1",
-                                "guid": "a3983199-1fc5-4e9c-a5d4-7977fc64bbe9"
+                                "guid": "a39f77a9-e512-4650-8be0-04f6af886d30"
                               },
                               "id": 0,
                               "scope_entry": null,
@@ -758,10 +758,10 @@
                                   "end_line": 52,
                                   "start_column": 13,
                                   "end_column": 13,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "B",
-                                "guid": "1a612fe6-76fa-4f14-b8e8-f8a6cde8d576"
+                                "guid": "569b92c5-84d5-40b4-9649-9153c368d6b6"
                               },
                               "id": 1,
                               "scope_entry": null,
@@ -781,7 +781,7 @@
                                   "end_line": 52,
                                   "start_column": 13,
                                   "end_column": 13,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "label": "assign_52_8",
                                 "in_connectors": {
@@ -790,7 +790,7 @@
                                 "out_connectors": {
                                   "__out": null
                                 },
-                                "guid": "0169b8a8-ceff-4d62-a2b9-ea20480964be"
+                                "guid": "44112c54-4a5c-4ab4-99a2-7ada7fed080f"
                               },
                               "id": 2,
                               "scope_entry": null,
@@ -818,7 +818,7 @@
                                     },
                                     "data": "__tmp1",
                                     "debuginfo": null,
-                                    "guid": "dfddcfdd-7c93-4c39-a7da-1ba3cf89970b",
+                                    "guid": "7d3b0727-fb6d-442f-8e3a-560c366e246c",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -867,7 +867,7 @@
                                     },
                                     "data": "B",
                                     "debuginfo": null,
-                                    "guid": "e55b45e6-f84b-45f4-9078-a0842d18a236",
+                                    "guid": "61a9fd9d-406c-4ab3-967a-4c52b76cf2e5",
                                     "src_subset": null,
                                     "dst_subset": {
                                       "type": "Range",
@@ -898,7 +898,7 @@
                             }
                           ],
                           "attributes": {
-                            "guid": "1234a9a0-f1fc-47a2-856e-75147707101f"
+                            "guid": "67165109-c399-4bcc-9714-5d028b37ff5b"
                           }
                         }
                       ],
@@ -909,7 +909,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "b15c02c8-91f4-49ff-9408-a2d788f497ee"
+                                "guid": "04c8c7d3-d81b-4289-ac95-b52688d6aa8f"
                               },
                               "label": ""
                             }
@@ -923,7 +923,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "c3bc4785-7f7c-414f-ba0c-fb7dbbaab24e"
+                                "guid": "7fd5257c-4aa1-461a-9917-393bb5d20f8f"
                               },
                               "label": ""
                             }
@@ -941,7 +941,7 @@
                     {
                       "type": "ControlFlowRegion",
                       "attributes": {
-                        "guid": "896a0e83-b601-49be-9201-99aa84a6a73e"
+                        "guid": "de245f89-875a-4d8d-9e8c-73f06a6f9894"
                       },
                       "nodes": [
                         {
@@ -955,7 +955,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "1773b727-dfb8-4e65-8a4d-9e46bd8ee110"
+                            "guid": "797d6aed-59bc-4b2b-8fe3-47603adae940"
                           }
                         },
                         {
@@ -980,10 +980,10 @@
                                   "end_line": 54,
                                   "start_column": 23,
                                   "end_column": 23,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "A",
-                                "guid": "d6fa7454-9730-47d2-a3f6-203a8569fe59"
+                                "guid": "a3b6c175-9d70-4c91-a153-39fb56c96676"
                               },
                               "id": 0,
                               "scope_entry": null,
@@ -999,10 +999,10 @@
                                   "end_line": 54,
                                   "start_column": 23,
                                   "end_column": 23,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "__tmp2",
-                                "guid": "e2d88dbe-c1d7-453d-b722-b58850781db3"
+                                "guid": "ae2ba24c-83b9-412d-a0a5-a6bdef1a66db"
                               },
                               "id": 1,
                               "scope_entry": null,
@@ -1047,7 +1047,7 @@
                                     },
                                     "data": "A",
                                     "debuginfo": null,
-                                    "guid": "85cde0d6-34a5-4a9a-8284-95af806f27f6",
+                                    "guid": "ee26a75b-0aa1-4ab9-bbed-042a02a9b9e1",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -1088,7 +1088,7 @@
                             }
                           ],
                           "attributes": {
-                            "guid": "89d3b0f5-3bef-4608-8b97-be567b167cc8"
+                            "guid": "df1294ff-22aa-4266-ad08-86fc509d60a5"
                           }
                         },
                         {
@@ -1114,10 +1114,10 @@
                                   "end_line": 54,
                                   "start_column": 13,
                                   "end_column": 13,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "__tmp2",
-                                "guid": "91c12e11-f880-4520-9f02-c340f4844bb9"
+                                "guid": "21b64b81-baee-4bdb-8bfe-7c998c34b73e"
                               },
                               "id": 0,
                               "scope_entry": null,
@@ -1133,10 +1133,10 @@
                                   "end_line": 54,
                                   "start_column": 13,
                                   "end_column": 13,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "data": "B",
-                                "guid": "4afa4a30-62b6-48c1-9a8d-0d81589599e8"
+                                "guid": "d8acff04-c1ef-48fe-9dfa-df241a2ed2e5"
                               },
                               "id": 1,
                               "scope_entry": null,
@@ -1156,7 +1156,7 @@
                                   "end_line": 54,
                                   "start_column": 13,
                                   "end_column": 13,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                 },
                                 "label": "assign_54_8",
                                 "in_connectors": {
@@ -1165,7 +1165,7 @@
                                 "out_connectors": {
                                   "__out": null
                                 },
-                                "guid": "b2e43dda-3715-4f90-bdc8-5b41c2256842"
+                                "guid": "e192153b-862f-4c02-b8a6-ebf97b5068d0"
                               },
                               "id": 2,
                               "scope_entry": null,
@@ -1193,7 +1193,7 @@
                                     },
                                     "data": "__tmp2",
                                     "debuginfo": null,
-                                    "guid": "60517087-395e-452b-97d3-8cb083a9bd52",
+                                    "guid": "5f920830-b0dc-4700-9821-d0b54c0ee92f",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -1242,7 +1242,7 @@
                                     },
                                     "data": "B",
                                     "debuginfo": null,
-                                    "guid": "b7439200-fd68-4fa9-873d-ed34b7570f7f",
+                                    "guid": "d51b6eb6-e55b-4cc6-a9c4-19f698795895",
                                     "src_subset": null,
                                     "dst_subset": {
                                       "type": "Range",
@@ -1273,7 +1273,7 @@
                             }
                           ],
                           "attributes": {
-                            "guid": "cb63f9cd-d6b5-4636-a99c-ea3e8407ddda"
+                            "guid": "db93aef9-d29d-4c05-9c6f-ff4782f713ba"
                           }
                         }
                       ],
@@ -1284,7 +1284,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "b1e26e5c-a76d-411e-a53b-1095632b5cab"
+                                "guid": "b38c0aeb-3f1f-47fa-95f0-0d7d64c47627"
                               },
                               "label": ""
                             }
@@ -1298,7 +1298,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "b8d9e36e-ba44-4402-bb00-15d66ec3d136"
+                                "guid": "65313e8c-b4b6-4d24-a39c-3c8c54d23469"
                               },
                               "label": ""
                             }
@@ -1329,7 +1329,7 @@
                       {
                         "type": "ControlFlowRegion",
                         "attributes": {
-                          "guid": "16acd126-2d08-444c-ac1e-9adf0238ec5b"
+                          "guid": "9657214c-f12b-40d6-8afa-1f1687a83076"
                         },
                         "nodes": [
                           {
@@ -1343,7 +1343,7 @@
                             "nodes": [],
                             "edges": [],
                             "attributes": {
-                              "guid": "3f3ea15f-1570-4c05-b839-ca7815fa4536"
+                              "guid": "b7b3a6ad-b6b3-43cd-aee8-e48748a57ff7"
                             }
                           },
                           {
@@ -1368,10 +1368,10 @@
                                     "end_line": 52,
                                     "start_column": 23,
                                     "end_column": 23,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "A",
-                                  "guid": "0f9ccdd2-d66c-4f38-af87-fd96f6e6738e"
+                                  "guid": "d163d390-9e3e-4ae1-a2f6-9f7a69c34c43"
                                 },
                                 "id": 0,
                                 "scope_entry": null,
@@ -1387,10 +1387,10 @@
                                     "end_line": 52,
                                     "start_column": 23,
                                     "end_column": 23,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "__tmp1",
-                                  "guid": "86f8d5d3-7a40-467f-9187-0023098f186f"
+                                  "guid": "054615d0-8430-4224-813b-4d596f907fef"
                                 },
                                 "id": 1,
                                 "scope_entry": null,
@@ -1435,7 +1435,7 @@
                                       },
                                       "data": "A",
                                       "debuginfo": null,
-                                      "guid": "d0a3f85f-f951-4b44-b885-26ceda51756d",
+                                      "guid": "dcc24f1b-7ed6-4b69-a373-98421c75f322",
                                       "src_subset": {
                                         "type": "Range",
                                         "ranges": [
@@ -1476,7 +1476,7 @@
                               }
                             ],
                             "attributes": {
-                              "guid": "e5ba2313-8b3b-4cb1-b01b-37f1e0108318"
+                              "guid": "9e94747c-5161-4c1d-be6f-e4222fe6bf26"
                             }
                           },
                           {
@@ -1502,10 +1502,10 @@
                                     "end_line": 52,
                                     "start_column": 13,
                                     "end_column": 13,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "__tmp1",
-                                  "guid": "a3983199-1fc5-4e9c-a5d4-7977fc64bbe9"
+                                  "guid": "a39f77a9-e512-4650-8be0-04f6af886d30"
                                 },
                                 "id": 0,
                                 "scope_entry": null,
@@ -1521,10 +1521,10 @@
                                     "end_line": 52,
                                     "start_column": 13,
                                     "end_column": 13,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "B",
-                                  "guid": "1a612fe6-76fa-4f14-b8e8-f8a6cde8d576"
+                                  "guid": "569b92c5-84d5-40b4-9649-9153c368d6b6"
                                 },
                                 "id": 1,
                                 "scope_entry": null,
@@ -1544,7 +1544,7 @@
                                     "end_line": 52,
                                     "start_column": 13,
                                     "end_column": 13,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "label": "assign_52_8",
                                   "in_connectors": {
@@ -1553,7 +1553,7 @@
                                   "out_connectors": {
                                     "__out": null
                                   },
-                                  "guid": "0169b8a8-ceff-4d62-a2b9-ea20480964be"
+                                  "guid": "44112c54-4a5c-4ab4-99a2-7ada7fed080f"
                                 },
                                 "id": 2,
                                 "scope_entry": null,
@@ -1581,7 +1581,7 @@
                                       },
                                       "data": "__tmp1",
                                       "debuginfo": null,
-                                      "guid": "dfddcfdd-7c93-4c39-a7da-1ba3cf89970b",
+                                      "guid": "7d3b0727-fb6d-442f-8e3a-560c366e246c",
                                       "src_subset": {
                                         "type": "Range",
                                         "ranges": [
@@ -1630,7 +1630,7 @@
                                       },
                                       "data": "B",
                                       "debuginfo": null,
-                                      "guid": "e55b45e6-f84b-45f4-9078-a0842d18a236",
+                                      "guid": "61a9fd9d-406c-4ab3-967a-4c52b76cf2e5",
                                       "src_subset": null,
                                       "dst_subset": {
                                         "type": "Range",
@@ -1661,7 +1661,7 @@
                               }
                             ],
                             "attributes": {
-                              "guid": "1234a9a0-f1fc-47a2-856e-75147707101f"
+                              "guid": "67165109-c399-4bcc-9714-5d028b37ff5b"
                             }
                           }
                         ],
@@ -1672,7 +1672,7 @@
                               "data": {
                                 "type": "InterstateEdge",
                                 "attributes": {
-                                  "guid": "b15c02c8-91f4-49ff-9408-a2d788f497ee"
+                                  "guid": "04c8c7d3-d81b-4289-ac95-b52688d6aa8f"
                                 },
                                 "label": ""
                               }
@@ -1686,7 +1686,7 @@
                               "data": {
                                 "type": "InterstateEdge",
                                 "attributes": {
-                                  "guid": "c3bc4785-7f7c-414f-ba0c-fb7dbbaab24e"
+                                  "guid": "7fd5257c-4aa1-461a-9917-393bb5d20f8f"
                                 },
                                 "label": ""
                               }
@@ -1707,7 +1707,7 @@
                       {
                         "type": "ControlFlowRegion",
                         "attributes": {
-                          "guid": "896a0e83-b601-49be-9201-99aa84a6a73e"
+                          "guid": "de245f89-875a-4d8d-9e8c-73f06a6f9894"
                         },
                         "nodes": [
                           {
@@ -1721,7 +1721,7 @@
                             "nodes": [],
                             "edges": [],
                             "attributes": {
-                              "guid": "1773b727-dfb8-4e65-8a4d-9e46bd8ee110"
+                              "guid": "797d6aed-59bc-4b2b-8fe3-47603adae940"
                             }
                           },
                           {
@@ -1746,10 +1746,10 @@
                                     "end_line": 54,
                                     "start_column": 23,
                                     "end_column": 23,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "A",
-                                  "guid": "d6fa7454-9730-47d2-a3f6-203a8569fe59"
+                                  "guid": "a3b6c175-9d70-4c91-a153-39fb56c96676"
                                 },
                                 "id": 0,
                                 "scope_entry": null,
@@ -1765,10 +1765,10 @@
                                     "end_line": 54,
                                     "start_column": 23,
                                     "end_column": 23,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "__tmp2",
-                                  "guid": "e2d88dbe-c1d7-453d-b722-b58850781db3"
+                                  "guid": "ae2ba24c-83b9-412d-a0a5-a6bdef1a66db"
                                 },
                                 "id": 1,
                                 "scope_entry": null,
@@ -1813,7 +1813,7 @@
                                       },
                                       "data": "A",
                                       "debuginfo": null,
-                                      "guid": "85cde0d6-34a5-4a9a-8284-95af806f27f6",
+                                      "guid": "ee26a75b-0aa1-4ab9-bbed-042a02a9b9e1",
                                       "src_subset": {
                                         "type": "Range",
                                         "ranges": [
@@ -1854,7 +1854,7 @@
                               }
                             ],
                             "attributes": {
-                              "guid": "89d3b0f5-3bef-4608-8b97-be567b167cc8"
+                              "guid": "df1294ff-22aa-4266-ad08-86fc509d60a5"
                             }
                           },
                           {
@@ -1880,10 +1880,10 @@
                                     "end_line": 54,
                                     "start_column": 13,
                                     "end_column": 13,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "__tmp2",
-                                  "guid": "91c12e11-f880-4520-9f02-c340f4844bb9"
+                                  "guid": "21b64b81-baee-4bdb-8bfe-7c998c34b73e"
                                 },
                                 "id": 0,
                                 "scope_entry": null,
@@ -1899,10 +1899,10 @@
                                     "end_line": 54,
                                     "start_column": 13,
                                     "end_column": 13,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "data": "B",
-                                  "guid": "4afa4a30-62b6-48c1-9a8d-0d81589599e8"
+                                  "guid": "d8acff04-c1ef-48fe-9dfa-df241a2ed2e5"
                                 },
                                 "id": 1,
                                 "scope_entry": null,
@@ -1922,7 +1922,7 @@
                                     "end_line": 54,
                                     "start_column": 13,
                                     "end_column": 13,
-                                    "filename": "/home/beates/Desktop/dace/tests/transformations/refine_nested_access_test.py"
+                                    "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
                                   },
                                   "label": "assign_54_8",
                                   "in_connectors": {
@@ -1931,7 +1931,7 @@
                                   "out_connectors": {
                                     "__out": null
                                   },
-                                  "guid": "b2e43dda-3715-4f90-bdc8-5b41c2256842"
+                                  "guid": "e192153b-862f-4c02-b8a6-ebf97b5068d0"
                                 },
                                 "id": 2,
                                 "scope_entry": null,
@@ -1959,7 +1959,7 @@
                                       },
                                       "data": "__tmp2",
                                       "debuginfo": null,
-                                      "guid": "60517087-395e-452b-97d3-8cb083a9bd52",
+                                      "guid": "5f920830-b0dc-4700-9821-d0b54c0ee92f",
                                       "src_subset": {
                                         "type": "Range",
                                         "ranges": [
@@ -2008,7 +2008,7 @@
                                       },
                                       "data": "B",
                                       "debuginfo": null,
-                                      "guid": "b7439200-fd68-4fa9-873d-ed34b7570f7f",
+                                      "guid": "d51b6eb6-e55b-4cc6-a9c4-19f698795895",
                                       "src_subset": null,
                                       "dst_subset": {
                                         "type": "Range",
@@ -2039,7 +2039,7 @@
                               }
                             ],
                             "attributes": {
-                              "guid": "cb63f9cd-d6b5-4636-a99c-ea3e8407ddda"
+                              "guid": "db93aef9-d29d-4c05-9c6f-ff4782f713ba"
                             }
                           }
                         ],
@@ -2050,7 +2050,7 @@
                               "data": {
                                 "type": "InterstateEdge",
                                 "attributes": {
-                                  "guid": "b1e26e5c-a76d-411e-a53b-1095632b5cab"
+                                  "guid": "b38c0aeb-3f1f-47fa-95f0-0d7d64c47627"
                                 },
                                 "label": ""
                               }
@@ -2064,7 +2064,7 @@
                               "data": {
                                 "type": "InterstateEdge",
                                 "attributes": {
-                                  "guid": "b8d9e36e-ba44-4402-bb00-15d66ec3d136"
+                                  "guid": "65313e8c-b4b6-4d24-a39c-3c8c54d23469"
                                 },
                                 "label": ""
                               }
@@ -2090,7 +2090,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "0fc3d35e-6b25-45be-b92a-ee6f1f662a58"
+                        "guid": "821729e7-7ff7-4811-a616-3ad3814f4554"
                       },
                       "label": ""
                     }
@@ -2104,7 +2104,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "077e86f4-8521-44db-9c59-32eb63a2db65"
+                        "guid": "d175e77b-d98c-4982-9b9c-cce4eab633dc"
                       },
                       "label": ""
                     }
@@ -2125,11 +2125,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 66,
+              "end_line": 66,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/refine_nested_access_test.py"
             },
             "label": "refine_nested_access_test_inner_sdfg",
             "in_connectors": {
@@ -2139,7 +2139,7 @@
             "out_connectors": {
               "B": null
             },
-            "guid": "a6315a16-2682-4682-bc16-03210963a7b4"
+            "guid": "32b7f2c9-634f-4ae1-8956-1b198996991f"
           },
           "id": 5,
           "scope_entry": "3",
@@ -2173,7 +2173,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "f541cdc8-54b6-491b-9d3b-ff145d049512",
+                "guid": "f8c784ed-2602-4fb9-b43b-f50b159b68b9",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2228,7 +2228,7 @@
                 },
                 "data": "select",
                 "debuginfo": null,
-                "guid": "c13d1942-b603-45cc-b33d-fe6a9b35fcf8",
+                "guid": "36af4608-59b3-4159-8d46-62271d6c950a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2283,7 +2283,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "e08592cb-2d27-4bb2-a7f2-dadff8931672",
+                "guid": "92e288ce-15ed-4c36-a806-ba8b98447f01",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -2338,7 +2338,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "f541cdc8-54b6-491b-9d3b-ff145d049512",
+                "guid": "f8c784ed-2602-4fb9-b43b-f50b159b68b9",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2393,7 +2393,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "e08592cb-2d27-4bb2-a7f2-dadff8931672",
+                "guid": "92e288ce-15ed-4c36-a806-ba8b98447f01",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -2448,7 +2448,7 @@
                 },
                 "data": "select",
                 "debuginfo": null,
-                "guid": "c13d1942-b603-45cc-b33d-fe6a9b35fcf8",
+                "guid": "36af4608-59b3-4159-8d46-62271d6c950a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2479,7 +2479,7 @@
         }
       ],
       "attributes": {
-        "guid": "3f62de05-3618-42a0-a140-bdc99d92664f"
+        "guid": "cce44ef4-f7ad-4431-ada1-3e6054cfa166"
       }
     }
   ],

@@ -1,0 +1,209 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "nesting_nester2",
+    "arg_names": [
+      "c"
+    ],
+    "_arrays": {
+      "c": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "N"
+          ],
+          "total_size": "4*N + 1",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "5"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "N": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "debuginfo": {
+      "type": "DebugInfo",
+      "start_line": 171,
+      "end_line": 172,
+      "start_column": 0,
+      "end_column": 0,
+      "filename": "/scratch/bates/dace/tests/schedule_tree/nesting_test.py"
+    },
+    "using_explicit_control_flow": true,
+    "guid": "0b188ff5-4bbf-47d8-8dc2-2962b4506d3a",
+    "hash": "c1ac53aec6c11f3345504afebbea7f172ad28dd6650f543141d294a903d53c5a"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "f7b439e5-7aea-4173-b8f4-a96155776452",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "assign_172_4",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "c",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 172,
+              "end_line": 172,
+              "start_column": 6,
+              "end_column": 6,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/nesting_test.py"
+            },
+            "data": "c",
+            "guid": "013b61bf-b187-4e96-a5e5-c5e9e9c78afb"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "Tasklet",
+          "label": "assign_172_4",
+          "attributes": {
+            "code": {
+              "string_data": "__out = 1",
+              "language": "Python"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 172,
+              "end_line": 172,
+              "start_column": 6,
+              "end_column": 6,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/nesting_test.py"
+            },
+            "label": "assign_172_4",
+            "out_connectors": {
+              "__out": null
+            },
+            "guid": "0937a096-2088-47ed-bd2e-e94859052fdb"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "2",
+                      "end": "2",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "c",
+                "debuginfo": null,
+                "guid": "0618a53e-fed6-47e4-9067-a7da03aaebdd",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "2",
+                      "end": "2",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "0",
+          "dst_connector": null,
+          "src_connector": "__out"
+        }
+      ],
+      "attributes": {
+        "guid": "ecf5eade-5070-4751-9b4b-c33b9c669a6a",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "85d189d0-586d-4b2a-8d46-cb84a8a4dcb1"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 2,
+  "start_block": 0
+}

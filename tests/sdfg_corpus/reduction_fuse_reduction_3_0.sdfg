@@ -132,11 +132,11 @@
       "end_line": 30,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "97d99b17-edcc-4fef-8239-859042d05644",
-    "hash": "9f16e3cdd5862ff3a31056db0b08087537e08c2243a68b27eb923c054e1361e0"
+    "guid": "23ed7497-eb08-4077-8e2e-719315f14bca",
+    "hash": "ad526cc6a3af147d76f1846d5ea2c43490a78c47cc61e66273d9eac7cfa8226c"
   },
   "nodes": [
     {
@@ -150,7 +150,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "fe7e64c4-4e34-4ce1-a2f2-e2618e8faa57",
+        "guid": "763dde34-950b-4794-a784-6330634f32f6",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -166,7 +166,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "264c5ad6-5db2-488b-84fd-eebe4a0b7088",
+        "guid": "d53db595-c5ff-49b5-9452-6a77e56c20c7",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -194,10 +194,10 @@
               "end_line": 22,
               "start_column": 73,
               "end_column": 73,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "data": "A",
-            "guid": "f6d5b16c-a47b-4dd2-9458-f7b015e489cc"
+            "guid": "ca5aea0b-91de-4e60-b761-30084a4fc9de"
           },
           "id": 0,
           "scope_entry": null,
@@ -219,10 +219,10 @@
               "end_line": 22,
               "start_column": 73,
               "end_column": 73,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "label": "Reduce",
-            "guid": "e100b075-ed4f-4c16-97ea-36b280ca2765"
+            "guid": "697e659d-1963-46bc-80e4-3b2a66526d66"
           },
           "id": 1,
           "scope_entry": null,
@@ -239,10 +239,10 @@
               "end_line": 22,
               "start_column": 73,
               "end_column": 73,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "data": "tmp",
-            "guid": "b6f89c9b-9803-441a-922e-254fa13cb662"
+            "guid": "18244b1e-baf3-476b-b4d7-2f788e6ee742"
           },
           "id": 2,
           "scope_entry": null,
@@ -276,7 +276,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "e7cf65a6-c22f-46e6-a6d2-4f107635b230",
+                "guid": "e20e4a06-bdfe-4ca4-a8be-fab8b0136dcc",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -325,7 +325,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "0439aabe-1c16-4053-b1d3-c65ba8293ea6",
+                "guid": "5f17f0e4-a5f7-4376-84a9-d44071855ee6",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -350,7 +350,7 @@
         }
       ],
       "attributes": {
-        "guid": "6606b353-0830-43d1-a88d-e461cf35be66",
+        "guid": "8db96b74-f617-45b9-933c-cc7c680f4d4b",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -378,10 +378,10 @@
               "end_line": 23,
               "start_column": 63,
               "end_column": 63,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "data": "B",
-            "guid": "f264058e-0e1f-4f00-b2f1-9d7d1b78c430"
+            "guid": "909ec3af-ff58-4285-9a94-67d01375328b"
           },
           "id": 0,
           "scope_entry": null,
@@ -403,10 +403,10 @@
               "end_line": 23,
               "start_column": 63,
               "end_column": 63,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "label": "Reduce",
-            "guid": "c9ae5c15-c7c9-4241-82cd-64df6a68845a"
+            "guid": "545951fc-dbdc-4633-83a5-658bd936ae15"
           },
           "id": 1,
           "scope_entry": null,
@@ -423,10 +423,10 @@
               "end_line": 23,
               "start_column": 63,
               "end_column": 63,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "data": "tmp2",
-            "guid": "9112e18f-f2cc-489d-a732-88a43cbaca47"
+            "guid": "11b4e570-25b0-42b5-aaa6-5867ba7505b2"
           },
           "id": 2,
           "scope_entry": null,
@@ -460,7 +460,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "3e5e3b08-10c5-48b7-b7a6-fd952d817770",
+                "guid": "2f6cbf64-9872-4305-8a98-a4aecc0bafb5",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -509,7 +509,7 @@
                 },
                 "data": "tmp2",
                 "debuginfo": null,
-                "guid": "75c74d18-4106-4c24-a285-fb1222d393d4",
+                "guid": "78ef2b84-9805-4ac9-81d0-be48cfa43111",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -534,7 +534,7 @@
         }
       ],
       "attributes": {
-        "guid": "d1c69253-93ff-4d07-803e-2a2918971275",
+        "guid": "ccb30d35-af08-427d-a7de-70839fcc7089",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -582,7 +582,7 @@
               "end_line": 24,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "in_connectors": {
               "IN___tmp0": null,
@@ -592,7 +592,7 @@
               "OUT___tmp0": null,
               "OUT___tmp1": null
             },
-            "guid": "2fa0ebd2-e7a8-4105-95af-a692d1533b2e"
+            "guid": "2226a1b8-18f6-40cc-9417-7b14bc57246a"
           },
           "id": 0,
           "scope_entry": null,
@@ -608,7 +608,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "8e59948e-79b2-474e-9b34-3850af6b61e3"
+            "guid": "339996b4-a8a1-4702-a0c5-d87cc32c191b"
           },
           "id": 1,
           "scope_entry": "0",
@@ -693,7 +693,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "abf15a54-852a-40ad-8911-d11761af28c5"
+                "guid": "54b14255-e294-4046-9d6f-ea9c79964409"
               },
               "nodes": [
                 {
@@ -707,7 +707,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "41a4750f-c516-4122-9ff2-5402aac6ee05",
+                    "guid": "326f7886-c193-4920-8c59-f9a674e6cdec",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -740,7 +740,7 @@
                           "end_line": 30,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
                         },
                         "label": "reduction_fuse_test_reduction_test_3_25",
                         "in_connectors": {
@@ -750,7 +750,7 @@
                         "out_connectors": {
                           "out1": null
                         },
-                        "guid": "ebbfb2a2-831d-43aa-81b3-2305d575e56e"
+                        "guid": "af4601d9-5263-49b4-89d5-e29827d0c6d3"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -766,10 +766,10 @@
                           "end_line": 25,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
                         },
                         "data": "__tmp_26_19",
-                        "guid": "2560820c-6aed-4a6e-b75d-a16acfd7e218"
+                        "guid": "de5213a5-9ed4-4a2c-a48b-cb37159be0c6"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -785,10 +785,10 @@
                           "end_line": 25,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
                         },
                         "data": "__tmp_27_19",
-                        "guid": "e8c9cbbc-6342-42c6-b544-6d92d9083ed9"
+                        "guid": "35b9b6d6-8e26-4c3f-a237-b7467c1cfe3f"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -804,10 +804,10 @@
                           "end_line": 25,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
                         },
                         "data": "__tmp_28_20",
-                        "guid": "99a9b421-1497-49fe-a790-2655b96c6987"
+                        "guid": "130cd978-993b-4d1e-94d4-9097ccf2c6a5"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -835,7 +835,7 @@
                             },
                             "data": "__tmp_26_19",
                             "debuginfo": null,
-                            "guid": "6a218896-d176-4398-b00b-0462311b5c4e",
+                            "guid": "e0638735-f460-4aa2-842f-e3f05288537e",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -878,7 +878,7 @@
                             },
                             "data": "__tmp_27_19",
                             "debuginfo": null,
-                            "guid": "d121c300-8724-49bc-bbd2-2059b4b152c8",
+                            "guid": "43ca6e39-ace8-46ab-8369-367c08019e0d",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -921,7 +921,7 @@
                             },
                             "data": "__tmp_28_20",
                             "debuginfo": null,
-                            "guid": "e861d43a-9b8c-4c18-8fdf-fe6748d41372",
+                            "guid": "d1f0e484-76f9-4faa-a780-65102052a9f2",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -946,7 +946,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "d5a4845a-f68d-49d0-8d68-172b60d0af5f",
+                    "guid": "8a4c5625-e64b-4d45-8977-aa67c1a9bb9f",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -959,7 +959,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "816f67e9-0c07-43c6-976a-1ca50cc6259a"
+                        "guid": "7fba77bf-c568-4984-8bd0-df0595edc848"
                       },
                       "label": ""
                     }
@@ -980,7 +980,7 @@
               "end_line": 24,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "label": "reduction_fuse_test_reduction_test_3_24_4",
             "in_connectors": {
@@ -990,7 +990,7 @@
             "out_connectors": {
               "__tmp_28_20": null
             },
-            "guid": "29acbff2-bf4f-4857-9bd1-c331b44c1fdc"
+            "guid": "3174b18a-9455-4ccc-9866-dcfa18b782fb"
           },
           "id": 2,
           "scope_entry": "0",
@@ -1006,10 +1006,10 @@
               "end_line": 24,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "data": "tmp",
-            "guid": "5b68335e-ad2c-4b69-ad5e-59ccb53a5b91"
+            "guid": "6dcb3bd6-1092-48dd-8237-d328aed912e2"
           },
           "id": 3,
           "scope_entry": null,
@@ -1025,10 +1025,10 @@
               "end_line": 24,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "data": "tmp2",
-            "guid": "d51ae062-8169-410b-b2a0-eedfd8cd3ae8"
+            "guid": "8012062d-2497-46cf-b3cf-be8b937ada4f"
           },
           "id": 4,
           "scope_entry": null,
@@ -1044,10 +1044,10 @@
               "end_line": 24,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/reduction_fuse_test.py"
             },
             "data": "C",
-            "guid": "ebf847fc-d2d2-4553-aa2a-4c4928ffbc81"
+            "guid": "eec0eef0-95cf-4398-9546-9a92219799c6"
           },
           "id": 5,
           "scope_entry": null,
@@ -1075,7 +1075,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "7891d6a4-2e08-419a-9530-4463d27db242",
+                "guid": "e3a0f46a-79f9-448c-8502-27edc37cb8f6",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1118,7 +1118,7 @@
                 },
                 "data": "tmp2",
                 "debuginfo": null,
-                "guid": "6854c731-ac50-446c-b98a-9768cd92b397",
+                "guid": "c2df192b-08df-49cd-8883-2d4933d83b7b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1161,7 +1161,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "9ca718b1-8440-4d7a-ba08-f0725d5ca29f",
+                "guid": "7200feae-7a69-4858-bc49-b570750924da",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1204,7 +1204,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "7891d6a4-2e08-419a-9530-4463d27db242",
+                "guid": "e3a0f46a-79f9-448c-8502-27edc37cb8f6",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1247,7 +1247,7 @@
                 },
                 "data": "tmp2",
                 "debuginfo": null,
-                "guid": "6854c731-ac50-446c-b98a-9768cd92b397",
+                "guid": "c2df192b-08df-49cd-8883-2d4933d83b7b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1290,7 +1290,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "9ca718b1-8440-4d7a-ba08-f0725d5ca29f",
+                "guid": "7200feae-7a69-4858-bc49-b570750924da",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1315,7 +1315,7 @@
         }
       ],
       "attributes": {
-        "guid": "d91da1d1-0bae-42ca-b20e-b563b2891194",
+        "guid": "a724066d-032d-4614-86de-7aa67a72d665",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1328,7 +1328,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "a6ceb5ca-e228-49d0-ba9a-e34b8f23c416"
+            "guid": "f80d2bc4-a31f-4dcb-89b0-40e9836a88f2"
           },
           "label": ""
         }
@@ -1342,7 +1342,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "70dd7980-ce14-4609-961e-cfbcfd85abfa"
+            "guid": "c860adb9-ac74-4c40-8059-d5fdac999819"
           },
           "label": ""
         }
@@ -1356,7 +1356,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "5754b0d5-b093-4df0-8013-1c283dae51bf"
+            "guid": "ea94a89b-dab6-46cf-b26c-cf628f483545"
           },
           "label": ""
         }
@@ -1370,7 +1370,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "a43eef92-185b-4307-bf65-94c6aa2d2f51"
+            "guid": "95d284bc-f76d-4f81-8ca8-b7fed34d4869"
           },
           "label": ""
         }

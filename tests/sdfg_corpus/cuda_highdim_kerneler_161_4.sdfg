@@ -1,0 +1,602 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "cuda_highdim_kerneler_161_4",
+    "_arrays": {
+      "__tmp_163_12_w_out_of_1_1": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1024",
+            "1"
+          ],
+          "total_size": "1026",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "2",
+            "2"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64",
+      "j": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "3e5ea0be-3a2c-423d-af09-31eabd67ed94",
+    "hash": "f4a63f2ee376dd13d518da823ff86763875e2a004def09be7b88117525fb77bb"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "a2226812-6ea5-4495-9640-5e357f299f06",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "MapState",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          3
+        ],
+        "0": [
+          1,
+          2
+        ]
+      },
+      "nodes": [
+        {
+          "type": "MapEntry",
+          "label": "tests_cuda_highdim_kernel_test_tester_161_4_162[bi=0:2, bj=0:2]",
+          "attributes": {
+            "label": "tests_cuda_highdim_kernel_test_tester_161_4_162",
+            "params": [
+              "bi",
+              "bj"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "1",
+                  "step": "1",
+                  "tile": "1"
+                },
+                {
+                  "start": "0",
+                  "end": "1",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "schedule": "GPU_ThreadBlock",
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 162,
+              "end_line": 162,
+              "start_column": 8,
+              "end_column": 8,
+              "filename": "/scratch/bates/dace/tests/cuda_highdim_kernel_test.py"
+            },
+            "guid": "bd0c9a3f-5bc1-452a-9ccf-ddc27ed74bf7"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": "1"
+        },
+        {
+          "type": "MapExit",
+          "label": "tests_cuda_highdim_kernel_test_tester_161_4_162[bi=0:2, bj=0:2]",
+          "attributes": {
+            "in_connectors": {
+              "IN___tmp_163_12_w_out_of_1_1": null
+            },
+            "out_connectors": {
+              "OUT___tmp_163_12_w_out_of_1_1": null
+            },
+            "guid": "4873a1bb-2076-4c0f-976a-3d9dfb66ba71"
+          },
+          "id": 1,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "NestedSDFG",
+          "label": "tests_cuda_highdim_kernel_test_tester_161_4_162_8",
+          "attributes": {
+            "sdfg": {
+              "type": "SDFG",
+              "attributes": {
+                "name": "tests_cuda_highdim_kernel_test_tester_161_4_162_8",
+                "_arrays": {
+                  "__tmp_163_12_w": {
+                    "type": "Scalar",
+                    "attributes": {
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  }
+                },
+                "symbols": {
+                  "bi": "int64",
+                  "bj": "int64",
+                  "i": "int64",
+                  "j": "int64"
+                },
+                "global_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "init_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "exit_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "guid": "d4da4ad5-21fc-4554-9b78-d734f7a1341c"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "init",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "f0ebd780-ad02-4664-b91d-9ad7ff46e8ba",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "BinOp_163",
+                  "id": 1,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "b56d8327-d1c5-47c1-ad0d-be4c7067f9eb",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "BinOp_163_0",
+                  "id": 2,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "81058aff-6b26-4ff4-913b-5e6f1589c7f4",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "assign_163_12",
+                  "id": 3,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0,
+                      1
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_163_12_w",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 163,
+                          "end_line": 163,
+                          "start_column": 26,
+                          "end_column": 26,
+                          "filename": "/scratch/bates/dace/tests/cuda_highdim_kernel_test.py"
+                        },
+                        "data": "__tmp_163_12_w",
+                        "guid": "433af5d3-3384-48f3-b464-48131886a7aa"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "Tasklet",
+                      "label": "assign_163_12",
+                      "attributes": {
+                        "code": {
+                          "string_data": "__out = 1",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 163,
+                          "end_line": 163,
+                          "start_column": 26,
+                          "end_column": 26,
+                          "filename": "/scratch/bates/dace/tests/cuda_highdim_kernel_test.py"
+                        },
+                        "label": "assign_163_12",
+                        "out_connectors": {
+                          "__out": null
+                        },
+                        "guid": "50a937ed-853d-45ce-9452-dbe425311d66"
+                      },
+                      "id": 1,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "type": "MultiConnectorEdge",
+                      "attributes": {
+                        "data": {
+                          "type": "Memlet",
+                          "attributes": {
+                            "volume": "1",
+                            "subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "data": "__tmp_163_12_w",
+                            "debuginfo": null,
+                            "guid": "4d99fe7a-fc36-4a46-9ad6-c313bf063ecb",
+                            "src_subset": null,
+                            "dst_subset": {
+                              "type": "Range",
+                              "ranges": [
+                                {
+                                  "start": "0",
+                                  "end": "0",
+                                  "step": "1",
+                                  "tile": "1"
+                                }
+                              ]
+                            },
+                            "is_data_src": false,
+                            "num_accesses": "1"
+                          }
+                        }
+                      },
+                      "src": "1",
+                      "dst": "0",
+                      "dst_connector": null,
+                      "src_connector": "__out"
+                    }
+                  ],
+                  "attributes": {
+                    "guid": "22026fe0-240b-4aff-95a5-fc95a6264046",
+                    "executions": "1",
+                    "dynamic_executions": false
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "4fa7c2ef-31fe-4b58-b2f9-9a137844413e"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "fc0017cd-7a3e-4d94-a39a-7cb64dbc86bc"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "1",
+                  "dst": "2"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "guid": "29fced69-675e-4514-ac1c-4cb592692a0f"
+                      },
+                      "label": ""
+                    }
+                  },
+                  "src": "2",
+                  "dst": "3"
+                }
+              ],
+              "collapsed": false,
+              "label": "",
+              "id": null,
+              "cfg_list_id": 2,
+              "start_block": 0
+            },
+            "symbol_mapping": {
+              "bi": "bi",
+              "bj": "bj",
+              "i": "i",
+              "j": "j"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 162,
+              "end_line": 162,
+              "start_column": 8,
+              "end_column": 8,
+              "filename": "/scratch/bates/dace/tests/cuda_highdim_kernel_test.py"
+            },
+            "label": "tests_cuda_highdim_kernel_test_tester_161_4_162_8",
+            "out_connectors": {
+              "__tmp_163_12_w": null
+            },
+            "guid": "c55cbd38-3b0c-494a-b523-9efec07a0be4"
+          },
+          "id": 2,
+          "scope_entry": "0",
+          "scope_exit": "1"
+        },
+        {
+          "type": "AccessNode",
+          "label": "__tmp_163_12_w_out_of_1_1",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 162,
+              "end_line": 162,
+              "start_column": 8,
+              "end_column": 8,
+              "filename": "/scratch/bates/dace/tests/cuda_highdim_kernel_test.py"
+            },
+            "data": "__tmp_163_12_w_out_of_1_1",
+            "guid": "b9a85f1b-a0a5-433d-af4a-4cf4d5c07a5e"
+          },
+          "id": 3,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "debuginfo": null,
+                "guid": "49d771a1-09a3-42ea-bbca-730f4829010a",
+                "src_subset": null,
+                "dst_subset": null,
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": null,
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "4",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "1",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "__tmp_163_12_w_out_of_1_1",
+                "debuginfo": null,
+                "guid": "fdd30413-b823-4e20-9a32-7b68d0ebfcf6",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "1",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "0",
+                      "end": "1",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "4"
+              }
+            }
+          },
+          "src": "1",
+          "dst": "3",
+          "dst_connector": null,
+          "src_connector": "OUT___tmp_163_12_w_out_of_1_1"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "bi",
+                      "end": "bi",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "bj",
+                      "end": "bj",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "__tmp_163_12_w_out_of_1_1",
+                "debuginfo": null,
+                "guid": "fdd30413-b823-4e20-9a32-7b68d0ebfcf6",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "bi",
+                      "end": "bi",
+                      "step": "1",
+                      "tile": "1"
+                    },
+                    {
+                      "start": "bj",
+                      "end": "bj",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "1",
+          "dst_connector": "IN___tmp_163_12_w_out_of_1_1",
+          "src_connector": "__tmp_163_12_w"
+        }
+      ],
+      "attributes": {
+        "guid": "562980ca-5809-45ea-98d1-dd165144bcb4",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "ae9b07d8-5192-41e7-b770-d3eafccd6ab5"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": 0
+}

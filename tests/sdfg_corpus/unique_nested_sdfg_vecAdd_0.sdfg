@@ -76,8 +76,8 @@
         "language": "CPP"
       }
     },
-    "guid": "e0f97bbd-4ba0-479e-a5eb-fbd610ba9857",
-    "hash": "d7453d77dcf91d5d4b9ae7601fd26521a3ac3adf90458f3d7d1233cae7e5f759"
+    "guid": "a2ec3c6f-38c4-4761-90b0-eee819731aee",
+    "hash": "57d3af8ea4f42364aec9d1d9bed6a831b24b177eedc0f4c414f9aa7c00faafcd"
   },
   "nodes": [
     {
@@ -104,14 +104,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 41,
+              "end_line": 41,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "x",
-            "guid": "e1b4c3b7-7d9f-4f27-80f1-9bed4e81c0e2"
+            "guid": "e0a73c5d-40a2-4bfa-bdb5-ac2fc45db414"
           },
           "id": 0,
           "scope_entry": null,
@@ -123,14 +123,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 42,
+              "end_line": 42,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "y",
-            "guid": "55aa42d6-67bb-4a2e-a069-6ad76232d742"
+            "guid": "55b0c314-4f7a-4bf0-abb0-832c5bd955c6"
           },
           "id": 1,
           "scope_entry": null,
@@ -142,14 +142,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 43,
+              "end_line": 43,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "z",
-            "guid": "3821636d-9039-4cc8-a4b3-b5d15491146d"
+            "guid": "f90fee45-6590-4357-92ff-a38e7eba6365"
           },
           "id": 2,
           "scope_entry": null,
@@ -176,11 +176,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 48,
+              "end_line": 48,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "in_connectors": {
               "IN_x": null,
@@ -190,7 +190,7 @@
               "OUT_x": null,
               "OUT_y": null
             },
-            "guid": "e000b456-3308-4327-9be2-04e687a6006a"
+            "guid": "b091fc6c-5418-4aff-a4bb-86255d19fe3b"
           },
           "id": 3,
           "scope_entry": null,
@@ -206,7 +206,7 @@
             "out_connectors": {
               "OUT_z": null
             },
-            "guid": "81caba4e-81d3-4511-9d1e-9ab5ffdfa895"
+            "guid": "ee5cd786-1159-4a85-9964-2208c3e8de68"
           },
           "id": 4,
           "scope_entry": "3",
@@ -222,11 +222,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 50,
+              "end_line": 50,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "label": "vecAdd_task",
             "in_connectors": {
@@ -236,7 +236,7 @@
             "out_connectors": {
               "z_con": null
             },
-            "guid": "eff0501b-9ba5-494e-90ad-03c5fbfc9181"
+            "guid": "628f333c-692c-46b7-95de-121af3fc61b7"
           },
           "id": 5,
           "scope_entry": "3",
@@ -264,7 +264,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "6385eba7-4d15-47b7-aa82-618654042395",
+                "guid": "4ddca730-020e-430c-92a7-b24f097d7976",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -307,7 +307,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "4ec898b3-34f9-4012-b6b5-c0a412fbf6ae",
+                "guid": "ed2f3193-4f4d-4227-a5d1-e1134d0c6744",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -350,7 +350,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "6385eba7-4d15-47b7-aa82-618654042395",
+                "guid": "4ddca730-020e-430c-92a7-b24f097d7976",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -393,7 +393,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "4ec898b3-34f9-4012-b6b5-c0a412fbf6ae",
+                "guid": "ed2f3193-4f4d-4227-a5d1-e1134d0c6744",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -436,7 +436,7 @@
                 },
                 "data": "z",
                 "debuginfo": null,
-                "guid": "d17bef53-196d-485c-867a-6d7b8ae4356a",
+                "guid": "6a4d223f-190d-4736-bef0-7014fc1c6735",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -479,7 +479,7 @@
                 },
                 "data": "z",
                 "debuginfo": null,
-                "guid": "d17bef53-196d-485c-867a-6d7b8ae4356a",
+                "guid": "6a4d223f-190d-4736-bef0-7014fc1c6735",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -504,7 +504,7 @@
         }
       ],
       "attributes": {
-        "guid": "9e43b2f2-8b3c-450c-9191-3f154734b627"
+        "guid": "45823288-2a16-4175-b2f7-b4fb390c6b44"
       }
     }
   ],

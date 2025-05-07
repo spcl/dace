@@ -1,0 +1,437 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "loops_nested_map_for_for_loop_244_4",
+    "_arrays": {
+      "__tmp_247_16_w": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "10",
+            "1"
+          ],
+          "total_size": "100",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "dtype": "int64",
+          "shape": [
+            "10",
+            "10"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64",
+      "j": "int64",
+      "k": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "e163002e-8cdd-487d-9b37-e1a7c859649b",
+    "hash": "03756b04c67bf9912b37f411346177f7f71c2f3dde2459b34f7740777e5f3d1f"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "80a1cbb1-c399-4a36-959b-3bfbf5009b8d",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "LoopRegion",
+      "attributes": {
+        "update_statement": {
+          "string_data": "j = (j + 1)",
+          "language": "Python"
+        },
+        "init_statement": {
+          "string_data": "j = 0",
+          "language": "Python"
+        },
+        "loop_condition": {
+          "string_data": "(j < 10)",
+          "language": "Python"
+        },
+        "loop_variable": "j",
+        "guid": "1d9977c1-4c99-458d-92b0-866407f8f4d3",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "for_245_245",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "9c16a4e3-4e12-4e9a-95d3-5605f30d3f05"
+          }
+        },
+        {
+          "type": "LoopRegion",
+          "attributes": {
+            "update_statement": {
+              "string_data": "k = (k + 1)",
+              "language": "Python"
+            },
+            "init_statement": {
+              "string_data": "k = 0",
+              "language": "Python"
+            },
+            "loop_condition": {
+              "string_data": "(k < 10)",
+              "language": "Python"
+            },
+            "loop_variable": "k",
+            "guid": "c59aa9d8-4f05-4eae-9d0d-9a6578fc1649"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "for_246_246",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "70c7de14-c158-4d9a-9591-f7d7ad41afcf"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "BinOp_247",
+              "id": 1,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "0ff68c70-2124-4fa7-b153-2478f648fd1b"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "BinOp_247_0",
+              "id": 2,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "7afe086c-46be-4101-9ae2-7efcdd21dbcd"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "BinOp_247_1",
+              "id": 3,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "9dca85e0-3adf-46e2-acff-4a6caae7c6f0"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "BinOp_247_2",
+              "id": 4,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "08bb2701-1ce5-49ea-9fc5-6e67727749f2"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "assign_247_16",
+              "id": 5,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp_247_16_w",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 247,
+                      "end_line": 247,
+                      "start_column": 24,
+                      "end_column": 24,
+                      "filename": "/scratch/bates/dace/tests/python_frontend/loops_test.py"
+                    },
+                    "data": "__tmp_247_16_w",
+                    "guid": "2d083341-9de1-4f62-8268-78c8456a131c"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "assign_247_16",
+                  "attributes": {
+                    "code": {
+                      "string_data": "__out = (((100 * i) + (10 * j)) + k)",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 247,
+                      "end_line": 247,
+                      "start_column": 24,
+                      "end_column": 24,
+                      "filename": "/scratch/bates/dace/tests/python_frontend/loops_test.py"
+                    },
+                    "label": "assign_247_16",
+                    "out_connectors": {
+                      "__out": null
+                    },
+                    "guid": "31e59468-0515-4767-af35-40a42dee7c8b"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "j",
+                              "end": "j",
+                              "step": "1",
+                              "tile": "1"
+                            },
+                            {
+                              "start": "k",
+                              "end": "k",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp_247_16_w",
+                        "debuginfo": null,
+                        "guid": "5e89cac1-d131-423f-a3cc-064da185dca3",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "j",
+                              "end": "j",
+                              "step": "1",
+                              "tile": "1"
+                            },
+                            {
+                              "start": "k",
+                              "end": "k",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "1",
+                  "dst": "0",
+                  "dst_connector": null,
+                  "src_connector": "__out"
+                }
+              ],
+              "attributes": {
+                "guid": "bc411414-5b9d-4fc3-8c44-f46fa1e4fe41"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "186a780f-44f7-491f-920c-838889aabe99"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "0",
+              "dst": "1"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "0d6bade7-208f-4c64-9fe0-6615769bfd64"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "1",
+              "dst": "2"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "988a9091-edaa-4a9d-a435-9a8642f2031e"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "2",
+              "dst": "3"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "87f58109-8456-4a31-b2bd-7fd9dd34dbbb"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "3",
+              "dst": "4"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "dc7f7cd0-c48f-4c68-a092-cb4ee2974741"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "4",
+              "dst": "5"
+            }
+          ],
+          "collapsed": false,
+          "label": "for_246",
+          "id": 1,
+          "cfg_list_id": 3,
+          "start_block": 0
+        }
+      ],
+      "edges": [
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "f977d6ad-2310-48f4-bbf8-aa18cb2c4b0c"
+              },
+              "label": ""
+            }
+          },
+          "src": "0",
+          "dst": "1"
+        }
+      ],
+      "collapsed": false,
+      "label": "for_245",
+      "id": 1,
+      "cfg_list_id": 2,
+      "start_block": 0
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "bb627171-0bb3-4710-b4c3-1c36793a0aa2"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": 0
+}

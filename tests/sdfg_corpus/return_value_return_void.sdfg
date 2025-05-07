@@ -48,11 +48,11 @@
       "end_line": 65,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/python_frontend/return_value_test.py"
+      "filename": "/scratch/bates/dace/tests/python_frontend/return_value_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "6e958b1e-e893-4a96-9000-ad7764bada14",
-    "hash": "9a8379900445bd0222b4e6329e580684ae385ab4d598520a79d931610ea0f8fc"
+    "guid": "ea0d10a6-8b5f-4f10-bdf8-0b41b0fb95b0",
+    "hash": "d3e2fffd584a925fdeab43066735488cd16a8b9aae40a4888cde799b3bc184eb"
   },
   "nodes": [
     {
@@ -66,7 +66,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "80332cbc-a5b8-4292-bf94-63e196fe6bdd",
+        "guid": "600f0c5d-6511-4b25-b82c-e83774120fa4",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -113,7 +113,7 @@
               "end_line": 63,
               "start_column": 12,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/return_value_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/return_value_test.py"
             },
             "in_connectors": {
               "IN_a": null
@@ -121,7 +121,7 @@
             "out_connectors": {
               "OUT_a": null
             },
-            "guid": "a64d8b86-e300-46f0-9b50-ceb0c8151c1e"
+            "guid": "f96acd74-ec61-4d3d-bd29-10ce747805f3"
           },
           "id": 0,
           "scope_entry": null,
@@ -141,7 +141,7 @@
               "end_line": 63,
               "start_column": 12,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/return_value_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/return_value_test.py"
             },
             "label": "augassign_63_4",
             "in_connectors": {
@@ -150,7 +150,7 @@
             "out_connectors": {
               "__out": null
             },
-            "guid": "fc9acc55-4212-4758-94ae-69b2e271e216"
+            "guid": "bc839b67-963a-4365-8b4d-09337b3c4108"
           },
           "id": 1,
           "scope_entry": "0",
@@ -166,7 +166,7 @@
             "out_connectors": {
               "OUT_a": null
             },
-            "guid": "8e493809-6a3f-43d5-8891-4bf11d8e666f"
+            "guid": "01d9f68f-a2e9-46d3-9eb2-40be8de48b1c"
           },
           "id": 2,
           "scope_entry": "0",
@@ -178,14 +178,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1907,
+              "end_line": 1907,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "a",
-            "guid": "d26e3c4e-b38c-40f3-8c39-adcb609f575d"
+            "guid": "6f598b2f-fe1d-49b6-947d-f3894789bc8f"
           },
           "id": 3,
           "scope_entry": null,
@@ -197,14 +197,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1912,
+              "end_line": 1912,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "a",
-            "guid": "8d18e42b-9779-4715-8b1a-3cff750c2be0"
+            "guid": "c01280fc-7091-486e-a0e5-179dbb06339e"
           },
           "id": 4,
           "scope_entry": null,
@@ -232,7 +232,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "ade52b20-bdf8-4c4a-a9bb-5d7251d00a83",
+                "guid": "d8a78f24-ed50-436a-a312-97b115624bd3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -275,7 +275,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "0c59e219-d740-4d06-9f97-228bb8866bc8",
+                "guid": "737985f6-e689-46b8-bbd4-9433e7788493",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -318,7 +318,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "ade52b20-bdf8-4c4a-a9bb-5d7251d00a83",
+                "guid": "d8a78f24-ed50-436a-a312-97b115624bd3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -361,7 +361,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "0c59e219-d740-4d06-9f97-228bb8866bc8",
+                "guid": "737985f6-e689-46b8-bbd4-9433e7788493",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -386,7 +386,7 @@
         }
       ],
       "attributes": {
-        "guid": "9fd0a1df-3687-4952-a08d-9de1526c2f98",
+        "guid": "f623b813-8d78-4a44-84cb-defb07540ed6",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -397,7 +397,7 @@
       "label": "return_return_value_test_return_void_64",
       "id": 2,
       "attributes": {
-        "guid": "86cd67d2-ca4e-49f7-b27f-48ce1e140fe2",
+        "guid": "cc11e962-b769-445d-aa0f-3be84434977d",
         "executions": "1",
         "dynamic_executions": false
       },
@@ -412,7 +412,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "b85a9e77-08a9-413e-a791-25f0c2136696"
+            "guid": "b670af9e-300d-4b37-ad5e-c473156c1e6d"
           },
           "label": ""
         }
@@ -426,7 +426,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "f540b7e3-4243-46dd-bcde-692467ac13ac"
+            "guid": "e6600b80-7a3d-4f99-a0ed-bc8d40874300"
           },
           "label": ""
         }

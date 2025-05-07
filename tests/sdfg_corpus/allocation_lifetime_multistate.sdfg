@@ -78,8 +78,8 @@
         "language": "CPP"
       }
     },
-    "guid": "40c8f1e8-9c09-45dc-a1f7-1174ba802ab7",
-    "hash": "c9a30606d3f15a98ef5faaba76ecabe14ca44627d458aa7197d6b9197ef3c59a"
+    "guid": "c4f667da-168e-4633-ad9f-e7bd26285d17",
+    "hash": "adf3301db541b01c58cf5e88311f2ebaaf6be44dfad713d8f1a14a7c2409588b"
   },
   "nodes": [
     {
@@ -93,7 +93,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "d8738233-4b17-4e85-a396-96b12716a88d"
+        "guid": "2f484fe7-6ed6-4b03-93c9-1c46d4362347"
       }
     },
     {
@@ -107,7 +107,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "fcc57734-b236-451a-a3bd-1231b576da03"
+        "guid": "0f2083fe-c283-4c44-a1c0-eaea6ad43009"
       }
     },
     {
@@ -128,14 +128,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 298,
+              "end_line": 298,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "tmp",
-            "guid": "b1da0e30-98cc-48ab-99d9-6b1eeb04ad06"
+            "guid": "17827aad-09ec-4dbf-bbd9-768b123c4583"
           },
           "id": 0,
           "scope_entry": null,
@@ -147,14 +147,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 299,
+              "end_line": 299,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "B",
-            "guid": "add8f824-d907-4753-ac21-4631cf4091fd"
+            "guid": "afe88572-6da5-4c69-8650-fe58ce4b6332"
           },
           "id": 1,
           "scope_entry": null,
@@ -182,7 +182,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "6e8744cd-b9ad-4b53-811e-3863df1287ce",
+                "guid": "d3b5bd8c-c11e-4dc1-ab1f-cf88e9d8ceda",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -207,7 +207,7 @@
         }
       ],
       "attributes": {
-        "guid": "7f564032-ca27-4e9d-bdaf-39b6de35a14c"
+        "guid": "dc1d6c0e-3e43-4ba9-9e79-df0aa5fc2c80"
       }
     },
     {
@@ -221,7 +221,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "33cd0315-a83c-4071-9677-c48a0cc80f38"
+        "guid": "260147c9-ced4-483c-844b-d957fecffb48"
       }
     },
     {
@@ -242,14 +242,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 294,
+              "end_line": 294,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "A",
-            "guid": "caf6b8c4-9ebe-427c-a6b3-2a12dbb40038"
+            "guid": "4e26a34d-2ed4-459a-a72a-a832190dc540"
           },
           "id": 0,
           "scope_entry": null,
@@ -261,14 +261,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 295,
+              "end_line": 295,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "tmp",
-            "guid": "b2417b30-45d4-4289-b2bf-fce86212620c"
+            "guid": "403fd615-16dc-4605-b230-ecd34ce6aad0"
           },
           "id": 1,
           "scope_entry": null,
@@ -296,7 +296,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "996b5935-f287-4845-96c4-4d86ac4a2e4d",
+                "guid": "11c27158-aac5-46f3-b63b-2a221db40bf8",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -321,7 +321,7 @@
         }
       ],
       "attributes": {
-        "guid": "cce1a9f7-8472-49d2-b95f-d023f8d70afb"
+        "guid": "bb8491c4-542b-4ff7-bfe4-dc7549f5840d"
       }
     }
   ],
@@ -335,7 +335,7 @@
             "assignments": {
               "i": "0"
             },
-            "guid": "b0e8489d-8398-44d5-8d09-2cff31d0c0be"
+            "guid": "56a876d1-b226-4e84-b330-855a3bfd1434"
           },
           "label": "i=0"
         }
@@ -353,7 +353,7 @@
               "string_data": "(not (i < 5))",
               "language": "Python"
             },
-            "guid": "ca050eb9-87d8-426d-83f4-00e50a76dd08"
+            "guid": "9d54c64f-e4e4-41ec-8f5e-8d03f15f837b"
           },
           "label": "(not (i < 5))"
         }
@@ -370,7 +370,7 @@
             "assignments": {
               "i": "i + 1"
             },
-            "guid": "1fba6f62-48d3-4bd2-8924-41f1a7556df5"
+            "guid": "7ad52296-1ee6-45f7-94d5-961f36bec323"
           },
           "label": "i=i + 1"
         }
@@ -388,7 +388,7 @@
               "string_data": "(i < 5)",
               "language": "Python"
             },
-            "guid": "86441b9f-6ed3-403e-a129-120353d78bc7"
+            "guid": "ea055ae7-5edf-4530-a96f-bd5274d0b29f"
           },
           "label": "(i < 5)"
         }
@@ -402,7 +402,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "82c38188-6c8c-4444-ab85-0567233e13eb"
+            "guid": "65525bfe-bf72-4b03-b5d7-642bc252af41"
           },
           "label": ""
         }

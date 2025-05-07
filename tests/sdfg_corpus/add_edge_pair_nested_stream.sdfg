@@ -52,8 +52,8 @@
         "language": "CPP"
       }
     },
-    "guid": "20e97153-bef2-401d-8e92-13bac113752b",
-    "hash": "887e88fea0f367ff7e0c15967489952b73b08368edc54b0e47335faba7253583"
+    "guid": "62ae87d4-a000-4efe-bb2a-37932ec033dc",
+    "hash": "b4265ef6d49db3bd41d6ea66e67e5f7cd49dd068ab47681ee5e127fdf88006d1"
   },
   "nodes": [
     {
@@ -75,14 +75,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 21,
+              "end_line": 21,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_stream_test.py"
             },
             "data": "SB",
-            "guid": "f0899df8-95ad-41b1-9cc6-694adb23dad8"
+            "guid": "e2f72ead-081f-4ed4-b65e-3d3cc04d51dc"
           },
           "id": 0,
           "scope_entry": null,
@@ -94,14 +94,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 22,
+              "end_line": 22,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_stream_test.py"
             },
             "data": "B",
-            "guid": "1c273453-06da-4aa6-8056-a5d67f7c08ee"
+            "guid": "dca1d31c-b048-49e4-9602-241a5ab90ee0"
           },
           "id": 1,
           "scope_entry": null,
@@ -148,7 +148,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "f2fa9486-d71c-4cee-8b7f-6b0bd4220f8c"
+                "guid": "37f336a8-9e8f-4a4f-8160-71f83877616a"
               },
               "nodes": [
                 {
@@ -173,17 +173,17 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 10,
+                          "end_line": 10,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_stream_test.py"
                         },
                         "label": "task",
                         "out_connectors": {
                           "o": null
                         },
-                        "guid": "30fbee2f-506f-4e26-aa14-a64cc391d688"
+                        "guid": "807d3d5e-d859-456c-8372-7a388b7a6cbe"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -195,14 +195,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 11,
+                          "end_line": 11,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_stream_test.py"
                         },
                         "data": "nout",
-                        "guid": "cbac04d2-13df-4f89-9a10-c646b022fbd4"
+                        "guid": "12ca15b0-1ca4-4a9f-b686-0d35aa6b8b98"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -230,7 +230,7 @@
                             },
                             "data": "nout",
                             "debuginfo": null,
-                            "guid": "182e9f16-b5fe-4514-95a0-4de2344de9c3",
+                            "guid": "33175fd9-d910-4cf4-b551-cdfc8a1ac1b4",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -255,7 +255,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "82e88f24-27ee-4176-beaa-85604136cd15"
+                    "guid": "23eed6e3-753c-4568-97a9-bc5ee881c1ab"
                   }
                 }
               ],
@@ -268,17 +268,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 23,
+              "end_line": 23,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_stream_test.py"
             },
             "label": "nested",
             "out_connectors": {
               "nout": null
             },
-            "guid": "676af019-8734-4610-98b1-620bc99533ee"
+            "guid": "5e9aa3ce-9ed1-4bc1-859c-91c6891475c0"
           },
           "id": 2,
           "scope_entry": null,
@@ -306,7 +306,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "9f44ef71-97f6-4fb5-93b7-cc4c28842c88",
+                "guid": "7cbefa20-188e-4b09-aae3-f636abce73ae",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -349,7 +349,7 @@
                 },
                 "data": "SB",
                 "debuginfo": null,
-                "guid": "cd365328-8660-4266-a84f-de794944f90b",
+                "guid": "de6aa965-5a4d-4fd8-b4f1-36fd73886f27",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -374,7 +374,7 @@
         }
       ],
       "attributes": {
-        "guid": "af900e75-ec9e-4e38-8c35-370b95c0dd4e"
+        "guid": "2178e71c-d746-43e2-acaf-01caae13691e"
       }
     }
   ],

@@ -39,8 +39,8 @@
         "language": "CPP"
       }
     },
-    "guid": "a9284242-12ae-4d46-9166-d4cfc8ea8daa",
-    "hash": "d11ab480174ad1827b88d1f084fab8c3c5866077a3bfe6cc7089c5cb53a9ef5f"
+    "guid": "422ab323-1970-46cf-9b87-2728a6f6aea9",
+    "hash": "d920ac73863510cd80a924d72e3b86c73b9775006984a9731576a117aa046d51"
   },
   "nodes": [
     {
@@ -65,17 +65,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 8,
+              "end_line": 8,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/call_sdfg_test.py"
             },
             "label": "p",
             "in_connectors": {
               "i": null
             },
-            "guid": "c33f9a44-0ef1-4046-93f8-82c1da03533b"
+            "guid": "f540b13e-2884-4ab5-8837-9d02b8dc4cff"
           },
           "id": 0,
           "scope_entry": null,
@@ -87,14 +87,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 9,
+              "end_line": 9,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/call_sdfg_test.py"
             },
             "data": "inp",
-            "guid": "df9e8cf7-5a19-46b3-9b74-37f19cd59049"
+            "guid": "17c8d54a-1f9d-49d7-8409-a6ef3920126e"
           },
           "id": 1,
           "scope_entry": null,
@@ -122,7 +122,7 @@
                 },
                 "data": "inp",
                 "debuginfo": null,
-                "guid": "c290bf6a-488c-427d-9173-ec33dc0bbb87",
+                "guid": "38fbc03a-70c3-4f06-a093-0012c8568756",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -147,7 +147,7 @@
         }
       ],
       "attributes": {
-        "guid": "a3240dbc-c132-4442-bdc3-96215dcaa8ea"
+        "guid": "f2a6f9cf-5bd1-472f-9d0a-ea93e79ce086"
       }
     }
   ],

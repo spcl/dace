@@ -80,8 +80,8 @@
         "language": "CPP"
       }
     },
-    "guid": "c03f1179-55d3-4333-afca-828c8df0ee6f",
-    "hash": "24d4b1bc717f352f6e2f7edb8c95dc9bb16900785ac3de0864e90db468c20fd9"
+    "guid": "aeba9f14-3d25-487f-856d-eb47902918d0",
+    "hash": "5b7c228e137b49e062aee02a6afa6a75604ca8d40745f00fb254a885dea5690e"
   },
   "nodes": [
     {
@@ -108,17 +108,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 315,
+              "end_line": 315,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "label": "something",
             "out_connectors": {
               "out": null
             },
-            "guid": "6442b0e9-ab3d-4e49-80f6-7a46c78bc56b"
+            "guid": "a76db0be-d261-4d65-8e0d-18bde1b6e1e3"
           },
           "id": 0,
           "scope_entry": null,
@@ -130,14 +130,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 316,
+              "end_line": 316,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "v",
-            "guid": "348e0c8e-b02f-4acb-895e-8644d6eb9452"
+            "guid": "6356e76d-413a-4bff-80eb-871459d7bb8a"
           },
           "id": 1,
           "scope_entry": null,
@@ -149,14 +149,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 317,
+              "end_line": 317,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "tmp",
-            "guid": "ee984fd9-50b4-48b2-a5a4-25925b44ab57"
+            "guid": "949a0666-5dd6-40fb-8c7d-80671f627a65"
           },
           "id": 2,
           "scope_entry": null,
@@ -168,14 +168,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 318,
+              "end_line": 318,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "A",
-            "guid": "eddb18a1-129e-4d6e-8cc6-87e2cd73b12f"
+            "guid": "94996836-30b4-4843-8a99-16f36852eefd"
           },
           "id": 3,
           "scope_entry": null,
@@ -203,7 +203,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "e39fe4af-8ce6-438d-a324-60cf79e46026",
+                "guid": "f48f4a8f-f4b3-4e4c-bef5-1d660e710abf",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -246,7 +246,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "ee5f473c-68be-4948-b2a7-8da68741013b",
+                "guid": "7bd0e84a-3a38-422d-a626-2635454c5064",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -295,7 +295,7 @@
                 },
                 "data": "v",
                 "debuginfo": null,
-                "guid": "430b41b2-f9c6-44b0-87fe-e83f9b301a71",
+                "guid": "86f50736-ce7b-4bcd-be31-2685bbf22c6b",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -326,7 +326,7 @@
         }
       ],
       "attributes": {
-        "guid": "d9e30630-b6c2-408b-8cf0-c0f3819e0f5c"
+        "guid": "cce61388-542f-4626-b6cb-da464e12c129"
       }
     }
   ],

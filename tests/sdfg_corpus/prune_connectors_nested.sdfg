@@ -1,0 +1,589 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "prune_connectors_nested",
+    "_arrays": {
+      "a": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "b": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "cond": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "bool",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "out": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "488c09ae-fec7-4c03-9e04-512a47586fe8",
+    "hash": "610a408a17fa72443f318e04c970a24267f374ab36d058d2be8bf58323d66b02"
+  },
+  "nodes": [
+    {
+      "type": "ConditionalBlock",
+      "attributes": {
+        "guid": "7db316eb-3973-4c7e-ba68-eb2f2c8f3af5"
+      },
+      "nodes": [
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "c074c88f-34e7-4749-bce1-59661cfe14bd"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "true_branch",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "a",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 449,
+                      "end_line": 449,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                    },
+                    "data": "a",
+                    "guid": "06e31213-4acb-4080-b2e5-53e7addabae1"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "out",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 449,
+                      "end_line": 449,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                    },
+                    "data": "out",
+                    "guid": "f7967591-7c1a-4f4e-93b7-a9da9dd056ea"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "out",
+                        "debuginfo": null,
+                        "guid": "3dbd61ac-fa4c-47f7-910d-cc80fda9e42b",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": null
+                }
+              ],
+              "attributes": {
+                "guid": "dfac98de-e347-4212-b1f9-456d00c3ca94"
+              }
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "then_body",
+          "id": 0,
+          "cfg_list_id": 3,
+          "start_block": 0
+        },
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "bf09b836-b506-4d71-85e1-4090a1977fe2"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "false_branch",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "b",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 454,
+                      "end_line": 454,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                    },
+                    "data": "b",
+                    "guid": "c3cd46f8-c576-48df-aa7e-3914481c7a02"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "out",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 454,
+                      "end_line": 454,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                    },
+                    "data": "out",
+                    "guid": "c922b035-e8c1-4ff1-95fa-c2ccda25b943"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "out",
+                        "debuginfo": null,
+                        "guid": "2c064a74-29a4-4efc-ac9c-b937e6783311",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": null
+                }
+              ],
+              "attributes": {
+                "guid": "14bd1cba-1830-4c71-be4b-b177dbe29577"
+              }
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "else_body",
+          "id": 1,
+          "cfg_list_id": 4,
+          "start_block": 0
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "if",
+      "id": 0,
+      "cfg_list_id": 2,
+      "start_block": null,
+      "branches": [
+        [
+          {
+            "string_data": "cond",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "c074c88f-34e7-4749-bce1-59661cfe14bd"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "true_branch",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "a",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 449,
+                        "end_line": 449,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                      },
+                      "data": "a",
+                      "guid": "06e31213-4acb-4080-b2e5-53e7addabae1"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "out",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 449,
+                        "end_line": 449,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                      },
+                      "data": "out",
+                      "guid": "f7967591-7c1a-4f4e-93b7-a9da9dd056ea"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "out",
+                          "debuginfo": null,
+                          "guid": "3dbd61ac-fa4c-47f7-910d-cc80fda9e42b",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": null
+                  }
+                ],
+                "attributes": {
+                  "guid": "dfac98de-e347-4212-b1f9-456d00c3ca94"
+                }
+              }
+            ],
+            "edges": [],
+            "collapsed": false,
+            "label": "then_body",
+            "id": null,
+            "cfg_list_id": 3,
+            "start_block": 0
+          }
+        ],
+        [
+          {
+            "string_data": "(not cond)",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "bf09b836-b506-4d71-85e1-4090a1977fe2"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "false_branch",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "b",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 454,
+                        "end_line": 454,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                      },
+                      "data": "b",
+                      "guid": "c3cd46f8-c576-48df-aa7e-3914481c7a02"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "out",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 454,
+                        "end_line": 454,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
+                      },
+                      "data": "out",
+                      "guid": "c922b035-e8c1-4ff1-95fa-c2ccda25b943"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "out",
+                          "debuginfo": null,
+                          "guid": "2c064a74-29a4-4efc-ac9c-b937e6783311",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": null
+                  }
+                ],
+                "attributes": {
+                  "guid": "14bd1cba-1830-4c71-be4b-b177dbe29577"
+                }
+              }
+            ],
+            "edges": [],
+            "collapsed": false,
+            "label": "else_body",
+            "id": null,
+            "cfg_list_id": 4,
+            "start_block": 0
+          }
+        ]
+      ]
+    },
+    {
+      "type": "SDFGState",
+      "label": "entry",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "f996499b-9339-41d9-961f-d88e598f9094"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "fd31bfe7-f49c-4945-ab85-1d1e4e08eed2"
+          },
+          "label": ""
+        }
+      },
+      "src": "1",
+      "dst": "0"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": 1
+}

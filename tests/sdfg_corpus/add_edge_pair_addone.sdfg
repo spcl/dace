@@ -170,8 +170,8 @@
         "language": "CPP"
       }
     },
-    "guid": "d3a4239d-5906-49b1-a988-bd6d9f303d10",
-    "hash": "7cfa09b969f05c40b9863b7b1a5c9f1a67febb7de44fc0d1b02c3a122bffa033"
+    "guid": "c0135942-b602-4928-b1f8-53a97a76de3b",
+    "hash": "97ab4565007d4e0484e8812cbdc2891522a71d54b4d5bba2d3a5fbef28f3fcb9"
   },
   "nodes": [
     {
@@ -212,11 +212,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 21,
+              "end_line": 21,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/struct_test.py"
             },
             "in_connectors": {
               "IN_sparsemats_in": null
@@ -224,7 +224,7 @@
             "out_connectors": {
               "OUT_sparsemats_in": null
             },
-            "guid": "a51f234e-94ec-40c2-8e15-edf9c590c4b1"
+            "guid": "3eb2525a-490e-425b-b17c-7b3d8a47358b"
           },
           "id": 0,
           "scope_entry": null,
@@ -240,7 +240,7 @@
             "out_connectors": {
               "OUT_sparsemats_out": null
             },
-            "guid": "9c6fa777-f8ee-47e5-8676-f4ce94bf75a9"
+            "guid": "95df98e8-bf1c-4ab0-ae70-59f8cacb48e7"
           },
           "id": 1,
           "scope_entry": "0",
@@ -256,11 +256,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 22,
+              "end_line": 22,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/struct_test.py"
             },
             "label": "addone",
             "in_connectors": {
@@ -329,7 +329,7 @@
                 }
               }
             },
-            "guid": "f154c491-4122-4ca5-96d9-46f5f0225407"
+            "guid": "eb2bd79e-5c74-41a8-8c51-8ff63a851372"
           },
           "id": 2,
           "scope_entry": "0",
@@ -341,14 +341,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 29,
+              "end_line": 29,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/struct_test.py"
             },
             "data": "sparsemats_in",
-            "guid": "564ae558-ba7f-49aa-92b9-e54d49981bbf"
+            "guid": "7ff4dc34-a4b3-4a4e-a930-05aaec094d3c"
           },
           "id": 3,
           "scope_entry": null,
@@ -360,14 +360,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 30,
+              "end_line": 30,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/struct_test.py"
             },
             "data": "sparsemats_out",
-            "guid": "f7ec8247-03cf-4d98-ba05-08aab802b9fc"
+            "guid": "56ac9185-2287-4cef-9b4d-2a65ae07e92c"
           },
           "id": 4,
           "scope_entry": null,
@@ -395,7 +395,7 @@
                 },
                 "data": "sparsemats_in",
                 "debuginfo": null,
-                "guid": "f8cff06c-be82-4c8d-b7f7-bed349c60848",
+                "guid": "c6620e05-5ce2-4a0b-8463-8ab39c57262e",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -438,7 +438,7 @@
                 },
                 "data": "sparsemats_in",
                 "debuginfo": null,
-                "guid": "f8cff06c-be82-4c8d-b7f7-bed349c60848",
+                "guid": "c6620e05-5ce2-4a0b-8463-8ab39c57262e",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -481,7 +481,7 @@
                 },
                 "data": "sparsemats_out",
                 "debuginfo": null,
-                "guid": "fd662fa7-5e69-4414-9218-cbb65e452729",
+                "guid": "063253fc-c40f-48d4-8f23-6068e9ab9e9a",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -524,7 +524,7 @@
                 },
                 "data": "sparsemats_out",
                 "debuginfo": null,
-                "guid": "fd662fa7-5e69-4414-9218-cbb65e452729",
+                "guid": "063253fc-c40f-48d4-8f23-6068e9ab9e9a",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -549,7 +549,7 @@
         }
       ],
       "attributes": {
-        "guid": "2484879d-f896-49c3-a7b7-e18c9c4062e1"
+        "guid": "fbb43627-e32f-43a5-827b-259b1ec32481"
       }
     }
   ],

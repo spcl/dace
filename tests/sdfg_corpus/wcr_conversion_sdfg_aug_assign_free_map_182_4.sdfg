@@ -73,8 +73,8 @@
         "language": "CPP"
       }
     },
-    "guid": "307545f3-d069-4084-8e3f-fb23a4178177",
-    "hash": "f91ba79eb550ab5b87185a97c2daec4b60ad8ddb0e7ab477ba249ba27c67a2f5"
+    "guid": "703cbe2e-c309-45a5-964e-73832dec1ea9",
+    "hash": "0d555dab98c39cf5af1a3074d83dba725f52c75fec3ac24159b0abdcf84b0c41"
   },
   "nodes": [
     {
@@ -88,7 +88,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "f5596ee0-24d9-4735-86ef-e453e08ceb3a",
+        "guid": "80cf62b4-4366-463f-9b9c-9cfd2599189b",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -121,7 +121,7 @@
               "end_line": 187,
               "start_column": 8,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "label": "wcr_conversion_test_sdfg_aug_assign_free_map_183",
             "in_connectors": {
@@ -131,7 +131,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "564b7e9a-fcec-47d2-928c-ebb4398bee3c"
+            "guid": "9595c51f-9125-4c36-b013-da028f85e8e2"
           },
           "id": 0,
           "scope_entry": null,
@@ -147,10 +147,10 @@
               "end_line": 183,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "__tmp_184_17",
-            "guid": "a3c0e04c-b3ee-4710-91e2-69ac3a44fa86"
+            "guid": "2c017e4f-99c5-4722-998f-9cc4344a40fb"
           },
           "id": 1,
           "scope_entry": null,
@@ -166,10 +166,10 @@
               "end_line": 183,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "__tmp_185_17",
-            "guid": "62936b32-9c89-4570-ad32-e42350230fc2"
+            "guid": "1b3d315e-8ac6-4f14-88fa-0e99e9d3f64a"
           },
           "id": 2,
           "scope_entry": null,
@@ -185,10 +185,10 @@
               "end_line": 183,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "__tmp_186_17",
-            "guid": "6ada7776-8c72-427d-a688-43e7ea6cdef8"
+            "guid": "40a663fa-b346-4bcf-9829-2b6c1e3ea61f"
           },
           "id": 3,
           "scope_entry": null,
@@ -216,7 +216,7 @@
                 },
                 "data": "__tmp_184_17",
                 "debuginfo": null,
-                "guid": "e15b1cea-03ad-4322-9029-b0a71ae5519d",
+                "guid": "7f6290f5-adcb-432e-9980-25def272bef2",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -259,7 +259,7 @@
                 },
                 "data": "__tmp_185_17",
                 "debuginfo": null,
-                "guid": "b71ef179-8266-4511-8f55-13e5c9d8adb0",
+                "guid": "8b663b25-4d68-41b7-95e6-f2a79a96468d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -302,7 +302,7 @@
                 },
                 "data": "__tmp_186_17",
                 "debuginfo": null,
-                "guid": "75d0b0a2-ee81-47ad-81d4-1a29d17eaa5c",
+                "guid": "84743565-e948-4a42-9050-b018d3a6ffb4",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -327,7 +327,7 @@
         }
       ],
       "attributes": {
-        "guid": "441b08bf-47b3-4030-9ec6-7ab0f903e045",
+        "guid": "9f1f0708-a819-4b2d-a1d9-c90c50ba1e62",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -340,7 +340,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "b4106d16-5d69-4c02-b596-ea33e6459db1"
+            "guid": "20199570-04a2-4b3e-ba66-f65d80fcfe20"
           },
           "label": ""
         }

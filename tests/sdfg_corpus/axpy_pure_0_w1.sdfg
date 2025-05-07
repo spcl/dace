@@ -68,8 +68,8 @@
         "language": "CPP"
       }
     },
-    "guid": "0ad1b98f-b11e-4a72-b3fc-fa22d07163f6",
-    "hash": "8b5b3ff614509a05d3008fe38dd7401ecfaa3784744af18f6899fa5f20559162"
+    "guid": "6614ce7b-303a-4d6e-bc94-5617df73ebfd",
+    "hash": "8e73c16964fb14206da142c442ede624774aae1126dba7c9766258e355dc7377"
   },
   "nodes": [
     {
@@ -92,14 +92,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 81,
+              "end_line": 81,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/axpy_test.py"
             },
             "data": "x",
-            "guid": "72a3d86e-ce37-4589-a34d-d2c0f0092610"
+            "guid": "60dce711-6c0a-420a-9207-0fd4b32dc631"
           },
           "id": 0,
           "scope_entry": null,
@@ -111,14 +111,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 82,
+              "end_line": 82,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/axpy_test.py"
             },
             "data": "y",
-            "guid": "23dd1de5-915f-4ac8-82b0-c9bae1f6fbf8"
+            "guid": "6fa6f903-6040-4e33-9c40-5ee88d1ba653"
           },
           "id": 1,
           "scope_entry": null,
@@ -130,14 +130,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 83,
+              "end_line": 83,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/axpy_test.py"
             },
             "data": "y",
-            "guid": "ba085d98-3d81-4bd9-9d99-0fe084e2a1e1"
+            "guid": "fb159909-9d49-4524-aa83-bcd1d445bd93"
           },
           "id": 2,
           "scope_entry": null,
@@ -157,7 +157,7 @@
             "out_connectors": {
               "_res": null
             },
-            "guid": "b27f16e7-4a81-46ac-bb7c-a8d1c13ccf78"
+            "guid": "8b7a9f6f-5866-4c10-a7ce-7326fa5a89f1"
           },
           "id": 3,
           "scope_entry": null,
@@ -186,7 +186,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "309cff22-1bd6-4abd-a41a-5d4ab3995f4e",
+                "guid": "992d575b-c04c-47b7-87dc-9717badff84b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -229,7 +229,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "79c3fdc1-131e-4dba-89dc-dfe0c681b8b3",
+                "guid": "8269a0dd-4b9e-46a1-a10d-dcb42186cbb6",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -272,7 +272,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "3947fe10-9881-4387-a3cb-5db724291ba3",
+                "guid": "f3e8b4b4-357e-4b61-9bcf-e577b5e39327",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -297,7 +297,7 @@
         }
       ],
       "attributes": {
-        "guid": "70ff69c2-6801-43d3-aca8-5719bb0a44b2"
+        "guid": "6ab3f6e5-c98a-482d-bc24-f9976730c721"
       }
     }
   ],

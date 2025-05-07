@@ -143,11 +143,11 @@
       "end_line": 306,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "b43ce090-979f-40b8-bb3e-4223b15a577c",
-    "hash": "459e3c32f0063bbf14912c73eb2f7f7861c96f71c8853a433b222293d4cf815a"
+    "guid": "6056e58d-ad14-4f4b-a715-8b8b51af8daa",
+    "hash": "486385a91ddd2e122e78d6d5afc9effbfecb339a179d57c5077e3e47d4c594d3"
   },
   "nodes": [
     {
@@ -161,7 +161,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "1bcd97f2-ee8e-4155-bb57-77ad18ada227",
+        "guid": "d303046d-dfe9-4fd7-a14a-db14b4eab868",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -177,7 +177,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "c9d34dd3-5e8d-48a4-ab9d-2763de392a55",
+        "guid": "d3a4319f-5296-40ac-8b96-96a82c48828d",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -185,7 +185,7 @@
     {
       "type": "ControlFlowRegion",
       "attributes": {
-        "guid": "67940d6d-2a1b-40de-aa80-cca7dced1da8",
+        "guid": "8168ad22-864c-4920-a314-286bdbad15a8",
         "executions": "1",
         "dynamic_executions": false
       },
@@ -201,7 +201,7 @@
           "nodes": [],
           "edges": [],
           "attributes": {
-            "guid": "4c4654db-738c-49a6-a285-2789b4a09350"
+            "guid": "d321df6c-f59a-430c-8675-4a4955319dd9"
           }
         },
         {
@@ -226,10 +226,10 @@
                   "end_line": 301,
                   "start_column": 9,
                   "end_column": 9,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                 },
                 "data": "B",
-                "guid": "82868eb6-22a7-4bbd-8fd3-ac3ddf43ae86"
+                "guid": "b1d53971-acfd-419b-9dc6-18b6e4cc6368"
               },
               "id": 0,
               "scope_entry": null,
@@ -245,10 +245,10 @@
                   "end_line": 301,
                   "start_column": 9,
                   "end_column": 9,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                 },
                 "data": "__tmp1",
-                "guid": "e46fd744-347b-478a-a392-d3e53a12f449"
+                "guid": "361e129e-f148-4893-917a-8f291398b9eb"
               },
               "id": 1,
               "scope_entry": null,
@@ -287,7 +287,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "a3b1417f-8663-4806-b612-6987b513f90b",
+                    "guid": "36c6f0c9-d414-410d-8ebb-a6bf15278a3b",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -322,7 +322,7 @@
             }
           ],
           "attributes": {
-            "guid": "c152bd03-0128-40c7-8727-04e9cfa4e8ac"
+            "guid": "6a209cef-6603-4a50-b53b-fd4bbd1d6e4e"
           }
         },
         {
@@ -348,10 +348,10 @@
                   "end_line": 301,
                   "start_column": 14,
                   "end_column": 14,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                 },
                 "data": "__tmp1",
-                "guid": "ede8a9e5-349d-4bed-873e-8529c7027242"
+                "guid": "9e3e8f40-a2f7-4580-ae06-e7b842b5e5c6"
               },
               "id": 0,
               "scope_entry": null,
@@ -371,7 +371,7 @@
                   "end_line": 301,
                   "start_column": 14,
                   "end_column": 14,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                 },
                 "label": "_Lt_",
                 "in_connectors": {
@@ -380,7 +380,7 @@
                 "out_connectors": {
                   "__out": null
                 },
-                "guid": "e2be22c0-28b9-401e-8f53-2667f2222c3b"
+                "guid": "d1acaae6-d800-4a34-b402-93acf58778f0"
               },
               "id": 1,
               "scope_entry": null,
@@ -396,10 +396,10 @@
                   "end_line": 301,
                   "start_column": 14,
                   "end_column": 14,
-                  "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                  "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                 },
                 "data": "__tmp2",
-                "guid": "959a41a7-8514-422c-88a5-49ba40bb5058"
+                "guid": "c700229e-7f00-42e9-b45b-119fe8481378"
               },
               "id": 2,
               "scope_entry": null,
@@ -427,7 +427,7 @@
                     },
                     "data": "__tmp1",
                     "debuginfo": null,
-                    "guid": "cbccec93-25b7-4ecf-b4ea-9ee16205cc58",
+                    "guid": "bfc96a46-82e4-4ab8-8ad5-95843fdc2006",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -470,7 +470,7 @@
                     },
                     "data": "__tmp2",
                     "debuginfo": null,
-                    "guid": "8627b6a3-7b13-42a2-bbda-38e1692e348c",
+                    "guid": "7c23ce6c-ebfa-4f14-9141-f85aaa406087",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -495,7 +495,7 @@
             }
           ],
           "attributes": {
-            "guid": "85838611-7a8a-4737-95fb-001b62f27406"
+            "guid": "9f586bf7-31d3-40cd-bcef-ddf675ebae29"
           }
         }
       ],
@@ -506,7 +506,7 @@
             "data": {
               "type": "InterstateEdge",
               "attributes": {
-                "guid": "2bdb012c-5aa7-4368-a284-04c2fc65fc29"
+                "guid": "d5817116-8e1c-41cc-9db9-40a5c35594c2"
               },
               "label": ""
             }
@@ -520,7 +520,7 @@
             "data": {
               "type": "InterstateEdge",
               "attributes": {
-                "guid": "63dc57ca-2def-43ef-afb8-7d8f39bdb065"
+                "guid": "a499fd04-8c12-4fa6-bb34-e40dba363d54"
               },
               "label": ""
             }
@@ -538,7 +538,7 @@
     {
       "type": "ConditionalBlock",
       "attributes": {
-        "guid": "03101037-eaf9-4135-bf32-6a436a1cb2e1",
+        "guid": "a29b31d6-7548-4c43-9858-71b774f79f91",
         "executions": "1",
         "dynamic_executions": false
       },
@@ -546,7 +546,7 @@
         {
           "type": "ControlFlowRegion",
           "attributes": {
-            "guid": "206c9a8e-f19a-4840-9422-735e175b1188"
+            "guid": "e57cdf19-6c50-422d-9844-81828623a269"
           },
           "nodes": [
             {
@@ -560,7 +560,7 @@
               "nodes": [],
               "edges": [],
               "attributes": {
-                "guid": "0a83043b-6c9d-486d-b15a-18a8d1f02cca"
+                "guid": "40f6071a-e11a-4baf-b071-563dd18de76d"
               }
             },
             {
@@ -585,10 +585,10 @@
                       "end_line": 302,
                       "start_column": 16,
                       "end_column": 16,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "A",
-                    "guid": "6227a4b0-1285-450d-9bcf-0fe8c25c9d14"
+                    "guid": "95262f42-e8d2-4e43-8059-6092eb4afd2b"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -604,10 +604,10 @@
                       "end_line": 302,
                       "start_column": 16,
                       "end_column": 16,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp3",
-                    "guid": "869ebc3d-3601-443c-8ddb-c27472128241"
+                    "guid": "a7d78891-1470-40a4-8e37-f501dc607006"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -646,7 +646,7 @@
                         },
                         "data": "A",
                         "debuginfo": null,
-                        "guid": "5faca645-a9ed-4606-a169-0faaa8fe1a0d",
+                        "guid": "24fca128-07b3-462c-9dcb-e446055e4a97",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -681,7 +681,7 @@
                 }
               ],
               "attributes": {
-                "guid": "d1c12641-31a2-4fbf-83ad-3cec7f6358e3"
+                "guid": "e2265031-a274-4551-b34e-289e475f975e"
               }
             },
             {
@@ -707,10 +707,10 @@
                       "end_line": 302,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp3",
-                    "guid": "209d6f71-726d-4595-a863-0384e62c6852"
+                    "guid": "6cded543-0679-4312-9142-d17e05451c86"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -730,7 +730,7 @@
                       "end_line": 302,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "label": "_Sub_",
                     "in_connectors": {
@@ -739,7 +739,7 @@
                     "out_connectors": {
                       "__out": null
                     },
-                    "guid": "af5fa802-d89d-4d1f-b3cc-d0107226e014"
+                    "guid": "2766fa23-79a4-4272-bfc8-4b22c8d97bdd"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -755,10 +755,10 @@
                       "end_line": 302,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp4",
-                    "guid": "a09af73f-d29f-4715-8f75-c8dcfddc3126"
+                    "guid": "ca014bf0-eb36-4661-98d6-c95b930ba603"
                   },
                   "id": 2,
                   "scope_entry": null,
@@ -786,7 +786,7 @@
                         },
                         "data": "__tmp3",
                         "debuginfo": null,
-                        "guid": "295dff2c-b517-4519-8db9-02e017d43368",
+                        "guid": "f4233646-4a0f-4cd3-9420-043abed90f0f",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -829,7 +829,7 @@
                         },
                         "data": "__tmp4",
                         "debuginfo": null,
-                        "guid": "6d8a302b-8207-4ba4-8340-a73ac0cdecfd",
+                        "guid": "a0463a0d-98f8-4a63-ac4b-72ae063ab18a",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -854,7 +854,7 @@
                 }
               ],
               "attributes": {
-                "guid": "cbf6a408-e6b0-4349-aa60-6f7aa22bbebd"
+                "guid": "1c3fc3bf-1f90-4f1e-a2d6-85a034efd583"
               }
             },
             {
@@ -880,10 +880,10 @@
                       "end_line": 302,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp4",
-                    "guid": "f306f33a-8cfc-4acc-be53-b1f5ccaf9675"
+                    "guid": "2b4a103a-c517-407a-a571-912cbc83317a"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -899,10 +899,10 @@
                       "end_line": 302,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "tmp",
-                    "guid": "7ce862f7-2aad-4b83-ac3f-1f846acca659"
+                    "guid": "e8cf7f65-aa10-40c2-948b-f280479352fe"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -922,7 +922,7 @@
                       "end_line": 302,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "label": "assign_302_8",
                     "in_connectors": {
@@ -931,7 +931,7 @@
                     "out_connectors": {
                       "__out": null
                     },
-                    "guid": "8a21b0c3-3be2-4c51-8f1a-d666e876c4f6"
+                    "guid": "667abbd1-ab4d-4504-a172-fc08d8537cfc"
                   },
                   "id": 2,
                   "scope_entry": null,
@@ -959,7 +959,7 @@
                         },
                         "data": "__tmp4",
                         "debuginfo": null,
-                        "guid": "dbd64584-bd93-4ed1-83a9-556edefe7acf",
+                        "guid": "6cef7dd5-5db7-4179-bbbb-0bab3f973911",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1002,7 +1002,7 @@
                         },
                         "data": "tmp",
                         "debuginfo": null,
-                        "guid": "41fa570e-53fc-4ea9-8915-cdc525370c77",
+                        "guid": "b1e6d004-082b-4590-b7a0-c5da0dc11d7c",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -1027,7 +1027,7 @@
                 }
               ],
               "attributes": {
-                "guid": "36189d2b-06fb-42fc-8dfe-1e8048141ba9"
+                "guid": "5460bab9-9fcf-4b66-859f-1eafe60ae045"
               }
             },
             {
@@ -1053,10 +1053,10 @@
                       "end_line": 303,
                       "start_column": 10,
                       "end_column": 10,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "tmp",
-                    "guid": "083b25d6-4505-43ab-a27c-65a94d78a34d"
+                    "guid": "ada38016-aa88-4f09-ad76-9f401333554a"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -1072,10 +1072,10 @@
                       "end_line": 303,
                       "start_column": 10,
                       "end_column": 10,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "B",
-                    "guid": "87622695-a5b2-4805-b65a-1e3eec249cb9"
+                    "guid": "100812c4-ebd7-46ca-b408-1775aacefff5"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -1095,7 +1095,7 @@
                       "end_line": 303,
                       "start_column": 10,
                       "end_column": 10,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "label": "assign_303_8",
                     "in_connectors": {
@@ -1104,7 +1104,7 @@
                     "out_connectors": {
                       "__out": null
                     },
-                    "guid": "7a53ad9d-e0e9-4d13-8db6-1a2dc4b9b5e1"
+                    "guid": "af39db9d-7152-4b1b-8e57-53d5adae7f10"
                   },
                   "id": 2,
                   "scope_entry": null,
@@ -1132,7 +1132,7 @@
                         },
                         "data": "tmp",
                         "debuginfo": null,
-                        "guid": "f2fc6d8d-cf30-4e04-b74a-be99d624913d",
+                        "guid": "f330c3b6-9e28-4bc6-9874-b0b30195f0ea",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1175,7 +1175,7 @@
                         },
                         "data": "B",
                         "debuginfo": null,
-                        "guid": "6e480dbd-abb8-4198-85af-044b20ef5e19",
+                        "guid": "fa33d44d-a9f6-4d17-b9f0-991b68c0561c",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -1200,7 +1200,7 @@
                 }
               ],
               "attributes": {
-                "guid": "bec2172a-2cd9-46aa-b210-980db9a31fe7"
+                "guid": "a288829c-a1b5-4bda-8f92-2096c461594e"
               }
             }
           ],
@@ -1211,7 +1211,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "35d13f95-7f3c-47c2-8000-583df765a486"
+                    "guid": "ed3b250b-0a7f-4230-a1c5-e4bafea9e14c"
                   },
                   "label": ""
                 }
@@ -1225,7 +1225,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "8c462c0e-d994-4688-a018-531845250b1f"
+                    "guid": "f61b120f-52c7-4fe9-9e69-60ef6b3bc38d"
                   },
                   "label": ""
                 }
@@ -1239,7 +1239,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "958175bb-391a-4266-b7cb-d136cd9d0729"
+                    "guid": "77558f95-3fce-4070-b4b3-d20b3e71191f"
                   },
                   "label": ""
                 }
@@ -1253,7 +1253,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "bd0a678d-4d73-4c34-af28-043b7c891108"
+                    "guid": "36bd8033-cc4a-498b-b25c-4d75cc85f4e2"
                   },
                   "label": ""
                 }
@@ -1271,7 +1271,7 @@
         {
           "type": "ControlFlowRegion",
           "attributes": {
-            "guid": "1183ab50-fc54-43ff-a3c1-a68da5ae0b5a"
+            "guid": "a5dc8e93-ab3a-453b-b802-95abc37ab756"
           },
           "nodes": [
             {
@@ -1285,7 +1285,7 @@
               "nodes": [],
               "edges": [],
               "attributes": {
-                "guid": "ea080878-d7d7-4b50-aec9-3e48fb0259fd"
+                "guid": "eac0fe09-5c42-498c-b40a-6b3a38a1ddae"
               }
             },
             {
@@ -1310,10 +1310,10 @@
                       "end_line": 305,
                       "start_column": 16,
                       "end_column": 16,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "A",
-                    "guid": "2e29f5a4-7208-42c4-b1b4-055887231012"
+                    "guid": "a1e6fad0-ebc5-47c1-ad52-ebd08d2f1380"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -1329,10 +1329,10 @@
                       "end_line": 305,
                       "start_column": 16,
                       "end_column": 16,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp5",
-                    "guid": "e070dd84-18e7-4cce-a72b-515bcdaef810"
+                    "guid": "51a6b5b4-b9a9-4433-987d-6b17ead821cf"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -1371,7 +1371,7 @@
                         },
                         "data": "A",
                         "debuginfo": null,
-                        "guid": "ace28ee4-aba1-4092-91c1-357d5acf2e46",
+                        "guid": "20da915d-ad40-42e4-8da7-ea13b5cf2119",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1406,7 +1406,7 @@
                 }
               ],
               "attributes": {
-                "guid": "ce192a12-acaf-4993-872b-797530641201"
+                "guid": "fa8b78e2-e3c4-4ed4-bc71-d0a2f97e1e8e"
               }
             },
             {
@@ -1432,10 +1432,10 @@
                       "end_line": 305,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp5",
-                    "guid": "a2c57b48-6e76-4030-b092-de449ade38f6"
+                    "guid": "1c507180-027c-49ae-927b-ebf90648c121"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -1455,7 +1455,7 @@
                       "end_line": 305,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "label": "_Add_",
                     "in_connectors": {
@@ -1464,7 +1464,7 @@
                     "out_connectors": {
                       "__out": null
                     },
-                    "guid": "bdbc40e9-2d21-49a2-9785-82cead9fc334"
+                    "guid": "96574d59-3050-4b0f-8c3a-9cf91407349a"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -1480,10 +1480,10 @@
                       "end_line": 305,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp6",
-                    "guid": "13575399-e1eb-4ef3-b4cb-fd003261045f"
+                    "guid": "2548049d-b7e7-4ae4-a245-c303e76c65c9"
                   },
                   "id": 2,
                   "scope_entry": null,
@@ -1511,7 +1511,7 @@
                         },
                         "data": "__tmp5",
                         "debuginfo": null,
-                        "guid": "0c56cf86-9f26-46fb-a5da-702c4b511b2a",
+                        "guid": "67838eb7-81d1-4f09-a03c-17a138374131",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1554,7 +1554,7 @@
                         },
                         "data": "__tmp6",
                         "debuginfo": null,
-                        "guid": "536c253a-79c3-4436-a5e8-5bad0287145e",
+                        "guid": "6718e0fd-5e57-481c-8ba1-001d4eaa34ea",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -1579,7 +1579,7 @@
                 }
               ],
               "attributes": {
-                "guid": "61735b2d-57e4-4f53-9330-ec3d9eb7f46f"
+                "guid": "01e7069a-d815-4a76-9f0f-a3f928ebefc6"
               }
             },
             {
@@ -1605,10 +1605,10 @@
                       "end_line": 305,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "__tmp6",
-                    "guid": "53c0bc50-743d-4b83-b664-fba8e57718a2"
+                    "guid": "c5eda840-3925-4b58-bb57-c641d891e361"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -1624,10 +1624,10 @@
                       "end_line": 305,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "tmp",
-                    "guid": "acdc7ae7-a651-43d5-a3ac-44442e41ab2a"
+                    "guid": "0483ff89-9b89-4723-b5f2-ef2f27d15ea8"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -1647,7 +1647,7 @@
                       "end_line": 305,
                       "start_column": 21,
                       "end_column": 21,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "label": "assign_305_8",
                     "in_connectors": {
@@ -1656,7 +1656,7 @@
                     "out_connectors": {
                       "__out": null
                     },
-                    "guid": "d291b0d3-74b5-4df7-bd99-b5eeda9c537a"
+                    "guid": "2f536b9c-02c8-49b1-85d3-a82ae5a27c8e"
                   },
                   "id": 2,
                   "scope_entry": null,
@@ -1684,7 +1684,7 @@
                         },
                         "data": "__tmp6",
                         "debuginfo": null,
-                        "guid": "091ef9f0-15a2-47aa-9201-966c1846db55",
+                        "guid": "071713a9-4d54-4cf7-bf26-8cffb1f7c784",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1727,7 +1727,7 @@
                         },
                         "data": "tmp",
                         "debuginfo": null,
-                        "guid": "cfc190a4-747d-4150-abe7-0cff28a1b621",
+                        "guid": "07e9e67d-7940-4d3d-885f-729fee4fdd5f",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -1752,7 +1752,7 @@
                 }
               ],
               "attributes": {
-                "guid": "bf8dbb04-08d2-4958-9d72-4043e2893315"
+                "guid": "b20be326-a47c-4510-a1be-91c6e6f63ffe"
               }
             },
             {
@@ -1778,10 +1778,10 @@
                       "end_line": 306,
                       "start_column": 10,
                       "end_column": 10,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "tmp",
-                    "guid": "c0257f56-0fe2-429a-bdec-df70a6967290"
+                    "guid": "7506d800-6ed9-44f0-a8eb-2df5f87a637a"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -1797,10 +1797,10 @@
                       "end_line": 306,
                       "start_column": 10,
                       "end_column": 10,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "data": "B",
-                    "guid": "2dad21bf-8e7a-450c-b44e-e2e6657e51b2"
+                    "guid": "7165b573-cc70-47b8-a9f6-9c045f3eaabc"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -1820,7 +1820,7 @@
                       "end_line": 306,
                       "start_column": 10,
                       "end_column": 10,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                     },
                     "label": "assign_306_8",
                     "in_connectors": {
@@ -1829,7 +1829,7 @@
                     "out_connectors": {
                       "__out": null
                     },
-                    "guid": "ad1e4819-3e60-4a37-933a-8d7fa8af0d07"
+                    "guid": "878093d0-11da-46ad-a504-2b850a47e8e9"
                   },
                   "id": 2,
                   "scope_entry": null,
@@ -1857,7 +1857,7 @@
                         },
                         "data": "tmp",
                         "debuginfo": null,
-                        "guid": "89204758-bddd-46e2-bb66-30fe8db60f5c",
+                        "guid": "bd6928b9-0099-41ed-8a62-8f6e2c6f2c22",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1900,7 +1900,7 @@
                         },
                         "data": "B",
                         "debuginfo": null,
-                        "guid": "ba4364f9-ada0-43b6-a76a-2fdfd786cbe8",
+                        "guid": "fa0f0c6a-7482-4133-974b-e09603fad688",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -1925,7 +1925,7 @@
                 }
               ],
               "attributes": {
-                "guid": "ea4cfaff-6c2c-46b5-862b-c598f413723a"
+                "guid": "9e56d4d0-b3d8-4da4-82e2-e568b3516cf5"
               }
             }
           ],
@@ -1936,7 +1936,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "f1ad365e-7eaa-49e1-a6a7-ff7778bae50d"
+                    "guid": "30da79c4-0fb7-4dd1-b4cc-d398bace3f57"
                   },
                   "label": ""
                 }
@@ -1950,7 +1950,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "baf0a6b5-4de9-45e6-a972-bf35e250c410"
+                    "guid": "b9c0566e-1ece-4ae6-a0ba-480117d77dc8"
                   },
                   "label": ""
                 }
@@ -1964,7 +1964,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "c9b8ec3b-b564-4246-8c41-a97675b57996"
+                    "guid": "1c19dc16-7ebf-4565-bb90-2fede8aefe8f"
                   },
                   "label": ""
                 }
@@ -1978,7 +1978,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "6d0aac2b-6d8d-415f-ac8a-723a0a571dfb"
+                    "guid": "be66f439-56bb-42cc-9483-9957b8e0311b"
                   },
                   "label": ""
                 }
@@ -2009,7 +2009,7 @@
           {
             "type": "ControlFlowRegion",
             "attributes": {
-              "guid": "206c9a8e-f19a-4840-9422-735e175b1188"
+              "guid": "e57cdf19-6c50-422d-9844-81828623a269"
             },
             "nodes": [
               {
@@ -2023,7 +2023,7 @@
                 "nodes": [],
                 "edges": [],
                 "attributes": {
-                  "guid": "0a83043b-6c9d-486d-b15a-18a8d1f02cca"
+                  "guid": "40f6071a-e11a-4baf-b071-563dd18de76d"
                 }
               },
               {
@@ -2048,10 +2048,10 @@
                         "end_line": 302,
                         "start_column": 16,
                         "end_column": 16,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "A",
-                      "guid": "6227a4b0-1285-450d-9bcf-0fe8c25c9d14"
+                      "guid": "95262f42-e8d2-4e43-8059-6092eb4afd2b"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -2067,10 +2067,10 @@
                         "end_line": 302,
                         "start_column": 16,
                         "end_column": 16,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp3",
-                      "guid": "869ebc3d-3601-443c-8ddb-c27472128241"
+                      "guid": "a7d78891-1470-40a4-8e37-f501dc607006"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -2109,7 +2109,7 @@
                           },
                           "data": "A",
                           "debuginfo": null,
-                          "guid": "5faca645-a9ed-4606-a169-0faaa8fe1a0d",
+                          "guid": "24fca128-07b3-462c-9dcb-e446055e4a97",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -2144,7 +2144,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "d1c12641-31a2-4fbf-83ad-3cec7f6358e3"
+                  "guid": "e2265031-a274-4551-b34e-289e475f975e"
                 }
               },
               {
@@ -2170,10 +2170,10 @@
                         "end_line": 302,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp3",
-                      "guid": "209d6f71-726d-4595-a863-0384e62c6852"
+                      "guid": "6cded543-0679-4312-9142-d17e05451c86"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -2193,7 +2193,7 @@
                         "end_line": 302,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "label": "_Sub_",
                       "in_connectors": {
@@ -2202,7 +2202,7 @@
                       "out_connectors": {
                         "__out": null
                       },
-                      "guid": "af5fa802-d89d-4d1f-b3cc-d0107226e014"
+                      "guid": "2766fa23-79a4-4272-bfc8-4b22c8d97bdd"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -2218,10 +2218,10 @@
                         "end_line": 302,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp4",
-                      "guid": "a09af73f-d29f-4715-8f75-c8dcfddc3126"
+                      "guid": "ca014bf0-eb36-4661-98d6-c95b930ba603"
                     },
                     "id": 2,
                     "scope_entry": null,
@@ -2249,7 +2249,7 @@
                           },
                           "data": "__tmp3",
                           "debuginfo": null,
-                          "guid": "295dff2c-b517-4519-8db9-02e017d43368",
+                          "guid": "f4233646-4a0f-4cd3-9420-043abed90f0f",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -2292,7 +2292,7 @@
                           },
                           "data": "__tmp4",
                           "debuginfo": null,
-                          "guid": "6d8a302b-8207-4ba4-8340-a73ac0cdecfd",
+                          "guid": "a0463a0d-98f8-4a63-ac4b-72ae063ab18a",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -2317,7 +2317,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "cbf6a408-e6b0-4349-aa60-6f7aa22bbebd"
+                  "guid": "1c3fc3bf-1f90-4f1e-a2d6-85a034efd583"
                 }
               },
               {
@@ -2343,10 +2343,10 @@
                         "end_line": 302,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp4",
-                      "guid": "f306f33a-8cfc-4acc-be53-b1f5ccaf9675"
+                      "guid": "2b4a103a-c517-407a-a571-912cbc83317a"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -2362,10 +2362,10 @@
                         "end_line": 302,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "tmp",
-                      "guid": "7ce862f7-2aad-4b83-ac3f-1f846acca659"
+                      "guid": "e8cf7f65-aa10-40c2-948b-f280479352fe"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -2385,7 +2385,7 @@
                         "end_line": 302,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "label": "assign_302_8",
                       "in_connectors": {
@@ -2394,7 +2394,7 @@
                       "out_connectors": {
                         "__out": null
                       },
-                      "guid": "8a21b0c3-3be2-4c51-8f1a-d666e876c4f6"
+                      "guid": "667abbd1-ab4d-4504-a172-fc08d8537cfc"
                     },
                     "id": 2,
                     "scope_entry": null,
@@ -2422,7 +2422,7 @@
                           },
                           "data": "__tmp4",
                           "debuginfo": null,
-                          "guid": "dbd64584-bd93-4ed1-83a9-556edefe7acf",
+                          "guid": "6cef7dd5-5db7-4179-bbbb-0bab3f973911",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -2465,7 +2465,7 @@
                           },
                           "data": "tmp",
                           "debuginfo": null,
-                          "guid": "41fa570e-53fc-4ea9-8915-cdc525370c77",
+                          "guid": "b1e6d004-082b-4590-b7a0-c5da0dc11d7c",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -2490,7 +2490,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "36189d2b-06fb-42fc-8dfe-1e8048141ba9"
+                  "guid": "5460bab9-9fcf-4b66-859f-1eafe60ae045"
                 }
               },
               {
@@ -2516,10 +2516,10 @@
                         "end_line": 303,
                         "start_column": 10,
                         "end_column": 10,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "tmp",
-                      "guid": "083b25d6-4505-43ab-a27c-65a94d78a34d"
+                      "guid": "ada38016-aa88-4f09-ad76-9f401333554a"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -2535,10 +2535,10 @@
                         "end_line": 303,
                         "start_column": 10,
                         "end_column": 10,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "B",
-                      "guid": "87622695-a5b2-4805-b65a-1e3eec249cb9"
+                      "guid": "100812c4-ebd7-46ca-b408-1775aacefff5"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -2558,7 +2558,7 @@
                         "end_line": 303,
                         "start_column": 10,
                         "end_column": 10,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "label": "assign_303_8",
                       "in_connectors": {
@@ -2567,7 +2567,7 @@
                       "out_connectors": {
                         "__out": null
                       },
-                      "guid": "7a53ad9d-e0e9-4d13-8db6-1a2dc4b9b5e1"
+                      "guid": "af39db9d-7152-4b1b-8e57-53d5adae7f10"
                     },
                     "id": 2,
                     "scope_entry": null,
@@ -2595,7 +2595,7 @@
                           },
                           "data": "tmp",
                           "debuginfo": null,
-                          "guid": "f2fc6d8d-cf30-4e04-b74a-be99d624913d",
+                          "guid": "f330c3b6-9e28-4bc6-9874-b0b30195f0ea",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -2638,7 +2638,7 @@
                           },
                           "data": "B",
                           "debuginfo": null,
-                          "guid": "6e480dbd-abb8-4198-85af-044b20ef5e19",
+                          "guid": "fa33d44d-a9f6-4d17-b9f0-991b68c0561c",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -2663,7 +2663,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "bec2172a-2cd9-46aa-b210-980db9a31fe7"
+                  "guid": "a288829c-a1b5-4bda-8f92-2096c461594e"
                 }
               }
             ],
@@ -2674,7 +2674,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "35d13f95-7f3c-47c2-8000-583df765a486"
+                      "guid": "ed3b250b-0a7f-4230-a1c5-e4bafea9e14c"
                     },
                     "label": ""
                   }
@@ -2688,7 +2688,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "8c462c0e-d994-4688-a018-531845250b1f"
+                      "guid": "f61b120f-52c7-4fe9-9e69-60ef6b3bc38d"
                     },
                     "label": ""
                   }
@@ -2702,7 +2702,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "958175bb-391a-4266-b7cb-d136cd9d0729"
+                      "guid": "77558f95-3fce-4070-b4b3-d20b3e71191f"
                     },
                     "label": ""
                   }
@@ -2716,7 +2716,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "bd0a678d-4d73-4c34-af28-043b7c891108"
+                      "guid": "36bd8033-cc4a-498b-b25c-4d75cc85f4e2"
                     },
                     "label": ""
                   }
@@ -2737,7 +2737,7 @@
           {
             "type": "ControlFlowRegion",
             "attributes": {
-              "guid": "1183ab50-fc54-43ff-a3c1-a68da5ae0b5a"
+              "guid": "a5dc8e93-ab3a-453b-b802-95abc37ab756"
             },
             "nodes": [
               {
@@ -2751,7 +2751,7 @@
                 "nodes": [],
                 "edges": [],
                 "attributes": {
-                  "guid": "ea080878-d7d7-4b50-aec9-3e48fb0259fd"
+                  "guid": "eac0fe09-5c42-498c-b40a-6b3a38a1ddae"
                 }
               },
               {
@@ -2776,10 +2776,10 @@
                         "end_line": 305,
                         "start_column": 16,
                         "end_column": 16,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "A",
-                      "guid": "2e29f5a4-7208-42c4-b1b4-055887231012"
+                      "guid": "a1e6fad0-ebc5-47c1-ad52-ebd08d2f1380"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -2795,10 +2795,10 @@
                         "end_line": 305,
                         "start_column": 16,
                         "end_column": 16,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp5",
-                      "guid": "e070dd84-18e7-4cce-a72b-515bcdaef810"
+                      "guid": "51a6b5b4-b9a9-4433-987d-6b17ead821cf"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -2837,7 +2837,7 @@
                           },
                           "data": "A",
                           "debuginfo": null,
-                          "guid": "ace28ee4-aba1-4092-91c1-357d5acf2e46",
+                          "guid": "20da915d-ad40-42e4-8da7-ea13b5cf2119",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -2872,7 +2872,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "ce192a12-acaf-4993-872b-797530641201"
+                  "guid": "fa8b78e2-e3c4-4ed4-bc71-d0a2f97e1e8e"
                 }
               },
               {
@@ -2898,10 +2898,10 @@
                         "end_line": 305,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp5",
-                      "guid": "a2c57b48-6e76-4030-b092-de449ade38f6"
+                      "guid": "1c507180-027c-49ae-927b-ebf90648c121"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -2921,7 +2921,7 @@
                         "end_line": 305,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "label": "_Add_",
                       "in_connectors": {
@@ -2930,7 +2930,7 @@
                       "out_connectors": {
                         "__out": null
                       },
-                      "guid": "bdbc40e9-2d21-49a2-9785-82cead9fc334"
+                      "guid": "96574d59-3050-4b0f-8c3a-9cf91407349a"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -2946,10 +2946,10 @@
                         "end_line": 305,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp6",
-                      "guid": "13575399-e1eb-4ef3-b4cb-fd003261045f"
+                      "guid": "2548049d-b7e7-4ae4-a245-c303e76c65c9"
                     },
                     "id": 2,
                     "scope_entry": null,
@@ -2977,7 +2977,7 @@
                           },
                           "data": "__tmp5",
                           "debuginfo": null,
-                          "guid": "0c56cf86-9f26-46fb-a5da-702c4b511b2a",
+                          "guid": "67838eb7-81d1-4f09-a03c-17a138374131",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -3020,7 +3020,7 @@
                           },
                           "data": "__tmp6",
                           "debuginfo": null,
-                          "guid": "536c253a-79c3-4436-a5e8-5bad0287145e",
+                          "guid": "6718e0fd-5e57-481c-8ba1-001d4eaa34ea",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -3045,7 +3045,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "61735b2d-57e4-4f53-9330-ec3d9eb7f46f"
+                  "guid": "01e7069a-d815-4a76-9f0f-a3f928ebefc6"
                 }
               },
               {
@@ -3071,10 +3071,10 @@
                         "end_line": 305,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "__tmp6",
-                      "guid": "53c0bc50-743d-4b83-b664-fba8e57718a2"
+                      "guid": "c5eda840-3925-4b58-bb57-c641d891e361"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -3090,10 +3090,10 @@
                         "end_line": 305,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "tmp",
-                      "guid": "acdc7ae7-a651-43d5-a3ac-44442e41ab2a"
+                      "guid": "0483ff89-9b89-4723-b5f2-ef2f27d15ea8"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -3113,7 +3113,7 @@
                         "end_line": 305,
                         "start_column": 21,
                         "end_column": 21,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "label": "assign_305_8",
                       "in_connectors": {
@@ -3122,7 +3122,7 @@
                       "out_connectors": {
                         "__out": null
                       },
-                      "guid": "d291b0d3-74b5-4df7-bd99-b5eeda9c537a"
+                      "guid": "2f536b9c-02c8-49b1-85d3-a82ae5a27c8e"
                     },
                     "id": 2,
                     "scope_entry": null,
@@ -3150,7 +3150,7 @@
                           },
                           "data": "__tmp6",
                           "debuginfo": null,
-                          "guid": "091ef9f0-15a2-47aa-9201-966c1846db55",
+                          "guid": "071713a9-4d54-4cf7-bf26-8cffb1f7c784",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -3193,7 +3193,7 @@
                           },
                           "data": "tmp",
                           "debuginfo": null,
-                          "guid": "cfc190a4-747d-4150-abe7-0cff28a1b621",
+                          "guid": "07e9e67d-7940-4d3d-885f-729fee4fdd5f",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -3218,7 +3218,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "bf8dbb04-08d2-4958-9d72-4043e2893315"
+                  "guid": "b20be326-a47c-4510-a1be-91c6e6f63ffe"
                 }
               },
               {
@@ -3244,10 +3244,10 @@
                         "end_line": 306,
                         "start_column": 10,
                         "end_column": 10,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "tmp",
-                      "guid": "c0257f56-0fe2-429a-bdec-df70a6967290"
+                      "guid": "7506d800-6ed9-44f0-a8eb-2df5f87a637a"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -3263,10 +3263,10 @@
                         "end_line": 306,
                         "start_column": 10,
                         "end_column": 10,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "data": "B",
-                      "guid": "2dad21bf-8e7a-450c-b44e-e2e6657e51b2"
+                      "guid": "7165b573-cc70-47b8-a9f6-9c045f3eaabc"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -3286,7 +3286,7 @@
                         "end_line": 306,
                         "start_column": 10,
                         "end_column": 10,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/tasklet_fusion_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/tasklet_fusion_test.py"
                       },
                       "label": "assign_306_8",
                       "in_connectors": {
@@ -3295,7 +3295,7 @@
                       "out_connectors": {
                         "__out": null
                       },
-                      "guid": "ad1e4819-3e60-4a37-933a-8d7fa8af0d07"
+                      "guid": "878093d0-11da-46ad-a504-2b850a47e8e9"
                     },
                     "id": 2,
                     "scope_entry": null,
@@ -3323,7 +3323,7 @@
                           },
                           "data": "tmp",
                           "debuginfo": null,
-                          "guid": "89204758-bddd-46e2-bb66-30fe8db60f5c",
+                          "guid": "bd6928b9-0099-41ed-8a62-8f6e2c6f2c22",
                           "src_subset": {
                             "type": "Range",
                             "ranges": [
@@ -3366,7 +3366,7 @@
                           },
                           "data": "B",
                           "debuginfo": null,
-                          "guid": "ba4364f9-ada0-43b6-a76a-2fdfd786cbe8",
+                          "guid": "fa0f0c6a-7482-4133-974b-e09603fad688",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -3391,7 +3391,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "ea4cfaff-6c2c-46b5-862b-c598f413723a"
+                  "guid": "9e56d4d0-b3d8-4da4-82e2-e568b3516cf5"
                 }
               }
             ],
@@ -3402,7 +3402,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "f1ad365e-7eaa-49e1-a6a7-ff7778bae50d"
+                      "guid": "30da79c4-0fb7-4dd1-b4cc-d398bace3f57"
                     },
                     "label": ""
                   }
@@ -3416,7 +3416,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "baf0a6b5-4de9-45e6-a972-bf35e250c410"
+                      "guid": "b9c0566e-1ece-4ae6-a0ba-480117d77dc8"
                     },
                     "label": ""
                   }
@@ -3430,7 +3430,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "c9b8ec3b-b564-4246-8c41-a97675b57996"
+                      "guid": "1c19dc16-7ebf-4565-bb90-2fede8aefe8f"
                     },
                     "label": ""
                   }
@@ -3444,7 +3444,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "6d0aac2b-6d8d-415f-ac8a-723a0a571dfb"
+                      "guid": "be66f439-56bb-42cc-9483-9957b8e0311b"
                     },
                     "label": ""
                   }
@@ -3470,7 +3470,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "d447c2a1-f4bc-40ef-be9f-559d665bb438"
+            "guid": "73b9bdf7-ae17-47c1-b6e1-bbefb84d509a"
           },
           "label": ""
         }
@@ -3484,7 +3484,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "dda300d8-2ddc-4f07-96dc-abe6c9d0848a"
+            "guid": "857fe275-a066-4fe0-a253-b8ddec690aac"
           },
           "label": ""
         }
@@ -3498,7 +3498,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "c98a94ee-ea33-480c-a07e-04735f54c9bd"
+            "guid": "204680bf-6d89-4c64-ad51-c117450d330e"
           },
           "label": ""
         }

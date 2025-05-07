@@ -58,8 +58,8 @@
         "language": "CPP"
       }
     },
-    "guid": "d2d95cb9-1953-4bb2-ad73-9479fd23fd84",
-    "hash": "9d3e84ad8c4f8140b70f5ffce97b73f12f881df751786c4b0fcf8168e5cc3b5d"
+    "guid": "db51c12e-2f7d-4b23-b151-2051f52a42d0",
+    "hash": "bd875037c64fa762bc6ed4ae97cabb3b32114b5d1b926621c313a5408f073b60"
   },
   "nodes": [
     {
@@ -80,14 +80,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 426,
+              "end_line": 426,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "A",
-            "guid": "e906c4ae-ac76-4335-9344-16ba2700cc70"
+            "guid": "00bdd451-181d-4fd7-936f-028a12179ba5"
           },
           "id": 0,
           "scope_entry": null,
@@ -99,14 +99,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 426,
+              "end_line": 426,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "tmp",
-            "guid": "9bf5bcc4-6477-468c-b043-67d7d9c73421"
+            "guid": "32405538-3418-4f35-8dc4-7685d6db3cb4"
           },
           "id": 1,
           "scope_entry": null,
@@ -134,7 +134,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "a8115b3f-3255-4398-ac83-95708060f6c7",
+                "guid": "172d4303-f04f-412a-8f9f-86834efc2826",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -159,7 +159,7 @@
         }
       ],
       "attributes": {
-        "guid": "f59779ca-e01d-444d-9fa0-21bd69bfa052"
+        "guid": "8f530589-23be-4321-ba8a-162dc0d2431a"
       }
     }
   ],

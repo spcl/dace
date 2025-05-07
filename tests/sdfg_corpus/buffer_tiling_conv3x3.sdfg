@@ -94,14 +94,14 @@
     "debuginfo": {
       "type": "DebugInfo",
       "start_line": 12,
-      "end_line": 21,
+      "end_line": 22,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+      "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "622c31ee-9c2d-47ce-99f2-59d85a7206f1",
-    "hash": "15ebd2675d803ae35d402e5c83665e66e5cf23c409512de0ac5cc437408431d2"
+    "guid": "6044f6c3-b6bc-4724-8690-ebb81946daa3",
+    "hash": "666e850b88087163a8f47a7b6e8ef850655e87184771bf7f3436b739ee7ed902"
   },
   "nodes": [
     {
@@ -115,14 +115,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "8817e8b8-5340-4998-810c-2925b0bb73ed",
+        "guid": "df84501d-a95e-473c-89a2-ebce7b59b909",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "s15_4",
+      "label": "s16_4",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -166,11 +166,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 15,
-              "end_line": 15,
+              "start_line": 16,
+              "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+              "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -180,7 +180,7 @@
               "OUT_A": null,
               "OUT_weights": null
             },
-            "guid": "c14836ce-2973-422a-93c2-89d02bf8994c"
+            "guid": "a9eee1ef-bf17-4bfa-b7fc-149e0e3b3f40"
           },
           "id": 0,
           "scope_entry": null,
@@ -196,7 +196,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "e3fd29a0-7968-44d4-b445-9139738e724d"
+            "guid": "bafd35ea-3bf6-4111-9940-db133095d9b5"
           },
           "id": 1,
           "scope_entry": "0",
@@ -204,14 +204,14 @@
         },
         {
           "type": "NestedSDFG",
-          "label": "conv3x3_body_15_4",
+          "label": "conv3x3_body_16_4",
           "attributes": {
             "sdfg": {
               "type": "SDFG",
               "attributes": {
-                "name": "conv3x3_body_15_4",
+                "name": "conv3x3_body_16_4",
                 "_arrays": {
-                  "__tmp_16_15": {
+                  "__tmp_17_15": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -231,7 +231,7 @@
                       "debuginfo": null
                     }
                   },
-                  "__tmp_17_13": {
+                  "__tmp_18_13": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -251,7 +251,7 @@
                       "debuginfo": null
                     }
                   },
-                  "__tmp_18_15": {
+                  "__tmp_19_15": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -291,7 +291,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "80df1706-ed46-49ed-9380-c2aea8906051"
+                "guid": "18fd6539-6128-41df-96bf-864f7f4ffd41"
               },
               "nodes": [
                 {
@@ -305,14 +305,14 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "d00c5966-4109-4312-be3c-ea7a698f4b44",
+                    "guid": "a97b5120-e113-4683-97d5-2d9993c46c5f",
                     "executions": "1",
                     "dynamic_executions": false
                   }
                 },
                 {
                   "type": "SDFGState",
-                  "label": "s15_4",
+                  "label": "s16_4",
                   "id": 1,
                   "collapsed": false,
                   "scope_dict": {
@@ -334,11 +334,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 15,
-                          "end_line": 19,
+                          "start_line": 16,
+                          "end_line": 20,
                           "start_column": 4,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+                          "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
                         },
                         "label": "conv3x3",
                         "in_connectors": {
@@ -348,7 +348,7 @@
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "6123f4cb-4667-4552-8a6e-56a8ed7fef30"
+                        "guid": "12aa5fa8-c5bf-4f4e-b8e6-16dd0653b5b1"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -356,18 +356,18 @@
                     },
                     {
                       "type": "AccessNode",
-                      "label": "__tmp_16_15",
+                      "label": "__tmp_17_15",
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 15,
-                          "end_line": 15,
+                          "start_line": 16,
+                          "end_line": 16,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+                          "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
                         },
-                        "data": "__tmp_16_15",
-                        "guid": "6806eaab-2479-436d-94fb-d79bca13f83d"
+                        "data": "__tmp_17_15",
+                        "guid": "286ff411-c2d0-4e63-a85a-2ed31660fdd5"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -375,18 +375,18 @@
                     },
                     {
                       "type": "AccessNode",
-                      "label": "__tmp_17_13",
+                      "label": "__tmp_18_13",
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 15,
-                          "end_line": 15,
+                          "start_line": 16,
+                          "end_line": 16,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+                          "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
                         },
-                        "data": "__tmp_17_13",
-                        "guid": "ba9eac19-a615-4bb8-afee-e5235e315dae"
+                        "data": "__tmp_18_13",
+                        "guid": "96444739-6185-48e6-a014-a875abe80389"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -394,18 +394,18 @@
                     },
                     {
                       "type": "AccessNode",
-                      "label": "__tmp_18_15",
+                      "label": "__tmp_19_15",
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 15,
-                          "end_line": 15,
+                          "start_line": 16,
+                          "end_line": 16,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+                          "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
                         },
-                        "data": "__tmp_18_15",
-                        "guid": "11e577f5-eaf6-401a-9f95-e6dbcb276ad2"
+                        "data": "__tmp_19_15",
+                        "guid": "bde2ba2f-3832-4d23-8b3f-8ebb8cba2da7"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -437,9 +437,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_16_15",
+                            "data": "__tmp_17_15",
                             "debuginfo": null,
-                            "guid": "5b4deefd-e826-4a61-8131-cfdd14f266fd",
+                            "guid": "c9c94a8a-84b1-47c5-8c52-7b87fbd2cec4",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -492,9 +492,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_17_13",
+                            "data": "__tmp_18_13",
                             "debuginfo": null,
-                            "guid": "a9028d9b-5808-4b1c-98ac-d59be838444e",
+                            "guid": "2f244fa0-f532-4d5a-ab57-18c4d78ff803",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -541,9 +541,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_18_15",
+                            "data": "__tmp_19_15",
                             "debuginfo": null,
-                            "guid": "2640f9ea-457f-4827-ac58-ed1e6e90a779",
+                            "guid": "edfc5ca1-8624-4fb9-8a10-779a4fedc668",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -568,7 +568,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "37d07915-f221-4a82-8ec6-14dc56defcb2",
+                    "guid": "4e6ad349-4f07-47bd-ab6a-476868b3a8c4",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -581,7 +581,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "22018813-ad5d-4433-b553-d20f7a17ee87"
+                        "guid": "08c3af3d-38cf-452b-989c-0d5e08df34d2"
                       },
                       "label": ""
                     }
@@ -602,21 +602,21 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 15,
-              "end_line": 15,
+              "start_line": 16,
+              "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+              "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
             },
-            "label": "conv3x3_body_15_4",
+            "label": "conv3x3_body_16_4",
             "in_connectors": {
-              "__tmp_16_15": null,
-              "__tmp_17_13": null
+              "__tmp_17_15": null,
+              "__tmp_18_13": null
             },
             "out_connectors": {
-              "__tmp_18_15": null
+              "__tmp_19_15": null
             },
-            "guid": "57c9da96-7263-49e1-b26e-6f9871adc9f4"
+            "guid": "9df9fcf7-1c4f-4f07-a437-6c85295add69"
           },
           "id": 2,
           "scope_entry": "0",
@@ -628,14 +628,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 15,
-              "end_line": 15,
+              "start_line": 16,
+              "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+              "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
             },
             "data": "__tmp1",
-            "guid": "9c01292b-a9d5-48d5-a5ee-37e337c609d4"
+            "guid": "686fcdcd-5934-471a-8f9f-fba0490c5896"
           },
           "id": 3,
           "scope_entry": null,
@@ -647,14 +647,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 15,
-              "end_line": 15,
+              "start_line": 16,
+              "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+              "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
             },
             "data": "weights",
-            "guid": "73deb00d-cc41-4217-ab32-f8e612e6db49"
+            "guid": "01fab6e3-47af-4e19-aee0-5594efff9242"
           },
           "id": 4,
           "scope_entry": null,
@@ -666,14 +666,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 15,
-              "end_line": 15,
+              "start_line": 16,
+              "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/buffer_tiling_test.py"
+              "filename": "/scratch/bates/dace/tests/buffer_tiling_test.py"
             },
             "data": "__tmp2",
-            "guid": "81da1bdf-385c-467f-b535-32c7770f20ea"
+            "guid": "0b99100c-bd40-4fde-86dd-04eb53dcd07e"
           },
           "id": 5,
           "scope_entry": null,
@@ -707,7 +707,7 @@
                 },
                 "data": "__tmp1",
                 "debuginfo": null,
-                "guid": "49e54613-01fd-4810-8784-a2995adf5f1a",
+                "guid": "df32a40f-206d-446c-98d6-8798cd99231a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -762,7 +762,7 @@
                 },
                 "data": "weights",
                 "debuginfo": null,
-                "guid": "9afea3b6-1c65-4936-a5d9-67fd2898ff4c",
+                "guid": "4abfc9b3-b720-49f7-83d1-ad3d237efbe7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -817,7 +817,7 @@
                 },
                 "data": "__tmp1",
                 "debuginfo": null,
-                "guid": "49e54613-01fd-4810-8784-a2995adf5f1a",
+                "guid": "df32a40f-206d-446c-98d6-8798cd99231a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -843,7 +843,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_16_15",
+          "dst_connector": "__tmp_17_15",
           "src_connector": "OUT_A"
         },
         {
@@ -872,7 +872,7 @@
                 },
                 "data": "__tmp2",
                 "debuginfo": null,
-                "guid": "b6e81dfe-1c83-48d3-a2bc-b4e74ec9fc46",
+                "guid": "6f5e89c9-6dc8-4503-bcf9-ab7ad857dba9",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -927,7 +927,7 @@
                 },
                 "data": "weights",
                 "debuginfo": null,
-                "guid": "9afea3b6-1c65-4936-a5d9-67fd2898ff4c",
+                "guid": "4abfc9b3-b720-49f7-83d1-ad3d237efbe7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -953,7 +953,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_17_13",
+          "dst_connector": "__tmp_18_13",
           "src_connector": "OUT_weights"
         },
         {
@@ -982,7 +982,7 @@
                 },
                 "data": "__tmp2",
                 "debuginfo": null,
-                "guid": "b6e81dfe-1c83-48d3-a2bc-b4e74ec9fc46",
+                "guid": "6f5e89c9-6dc8-4503-bcf9-ab7ad857dba9",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1009,11 +1009,11 @@
           "src": "2",
           "dst": "1",
           "dst_connector": "IN_B",
-          "src_connector": "__tmp_18_15"
+          "src_connector": "__tmp_19_15"
         }
       ],
       "attributes": {
-        "guid": "539424b7-91cf-433e-9a62-7ddc49399298",
+        "guid": "bcbd2645-13ed-40ba-a872-e1b69fd3f3eb",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1026,7 +1026,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "1c773dc0-4f48-491b-88af-db891997e2e9"
+            "guid": "3c9cb983-9d6e-4b75-bc97-6b413971ac9f"
           },
           "label": ""
         }

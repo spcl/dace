@@ -58,8 +58,8 @@
         "language": "CPP"
       }
     },
-    "guid": "1e556cba-ed70-490c-bc3b-8dfcab1ade6e",
-    "hash": "904f0fdc0b611d39f6ac90dff61217aa8efc604cacd49c6bf82869546b72d3b3"
+    "guid": "e324df73-9d77-4676-a4c3-e78d4fff94cc",
+    "hash": "7173140080d4eac628c88fd58ac597913cec55c70d51c46befffde3ff7721a3b"
   },
   "nodes": [
     {
@@ -86,14 +86,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "a",
-            "guid": "51efdeff-556e-4282-b913-7f883f3b8e65"
+            "guid": "e978b702-0256-4945-ab4b-347edeea1046"
           },
           "id": 0,
           "scope_entry": null,
@@ -105,14 +105,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "b",
-            "guid": "01c8d450-6197-4915-9fa9-ccec8757d999"
+            "guid": "8250053e-2cd1-4270-8afa-798b322eb570"
           },
           "id": 1,
           "scope_entry": null,
@@ -139,11 +139,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 73,
+              "end_line": 73,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
             },
             "in_connectors": {
               "IN_a": null
@@ -151,7 +151,7 @@
             "out_connectors": {
               "OUT_a": null
             },
-            "guid": "4af1bed9-18d7-42ae-b94b-8f47c471ad98"
+            "guid": "0e90a3c3-8ae9-4343-929d-38e634427e51"
           },
           "id": 2,
           "scope_entry": null,
@@ -167,7 +167,7 @@
             "out_connectors": {
               "OUT_b": null
             },
-            "guid": "97492357-d9b1-4af8-9692-fbfe6aa1f8ac"
+            "guid": "7049b2ad-1be0-4eca-800b-07a01df19c6e"
           },
           "id": 3,
           "scope_entry": "2",
@@ -183,11 +183,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 74,
+              "end_line": 74,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
             },
             "label": "mytasklet",
             "in_connectors": {
@@ -196,7 +196,7 @@
             "out_connectors": {
               "bb": null
             },
-            "guid": "6be26c04-aa7a-44b8-8db6-a6f42787bbd1"
+            "guid": "4aa37b38-f0b5-425d-9cdd-12375e876ae3"
           },
           "id": 4,
           "scope_entry": "2",
@@ -212,11 +212,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 76,
+              "end_line": 76,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
             },
             "label": "mytasklet2",
             "in_connectors": {
@@ -225,7 +225,7 @@
             "out_connectors": {
               "dd": null
             },
-            "guid": "5760f24c-5f1b-4df1-adf3-444b97d4bc04"
+            "guid": "4ac80eb0-ad39-4edf-8335-918c2be26c57"
           },
           "id": 5,
           "scope_entry": "2",
@@ -253,7 +253,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "a9daf5c5-ef7d-4594-9f10-7062c9bc4d30",
+                "guid": "99d5e29c-b5c6-42db-aa13-a3d5ad6d53a3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -296,7 +296,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "a9daf5c5-ef7d-4594-9f10-7062c9bc4d30",
+                "guid": "99d5e29c-b5c6-42db-aa13-a3d5ad6d53a3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -339,7 +339,7 @@
                 },
                 "data": "b",
                 "debuginfo": null,
-                "guid": "7e42898e-6285-458c-ba2a-e0aff4f7eeac",
+                "guid": "f170a82e-6308-44d7-acb0-b5a854c6a70e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -370,7 +370,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "118d3e06-7b42-41f8-ae36-90dad73c1082",
+                "guid": "e2d956ff-b39b-4113-822c-577fa05de05e",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -403,7 +403,7 @@
                 },
                 "data": "b",
                 "debuginfo": null,
-                "guid": "7e42898e-6285-458c-ba2a-e0aff4f7eeac",
+                "guid": "f170a82e-6308-44d7-acb0-b5a854c6a70e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -428,7 +428,7 @@
         }
       ],
       "attributes": {
-        "guid": "59943951-f159-4362-85fd-229290bcd4ff"
+        "guid": "9c01b34f-29f1-4ea5-9975-a82074a866c8"
       }
     }
   ],

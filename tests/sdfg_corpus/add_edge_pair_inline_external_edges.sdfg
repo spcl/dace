@@ -56,8 +56,8 @@
         "language": "CPP"
       }
     },
-    "guid": "7fc88d47-1be8-473b-85ad-3ecb30397870",
-    "hash": "a875e5968defe2061636c45932c06ccf28d87cb0af04a1d5849c9ef062269d9e"
+    "guid": "cedcde20-c8e2-46e3-b49b-d6146ce0135c",
+    "hash": "84a9b1bb7b569017986aced6e3bc476c28254861e7f1d4546de8556d84bbc294"
   },
   "nodes": [
     {
@@ -84,14 +84,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 10,
+              "end_line": 10,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
             },
             "data": "L",
-            "guid": "d5b9a1cd-eb0d-49f6-8345-1e462aa38a08"
+            "guid": "dcb45f94-96b0-4686-afaf-f0d3f801ee45"
           },
           "id": 0,
           "scope_entry": null,
@@ -103,14 +103,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 11,
+              "end_line": 11,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
             },
             "data": "L",
-            "guid": "98310e35-961d-49b4-907d-b016004eb026"
+            "guid": "e7652600-b38a-4c19-96f3-8d397b7ff670"
           },
           "id": 1,
           "scope_entry": null,
@@ -122,14 +122,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 12,
+              "end_line": 12,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
             },
             "data": "M",
-            "guid": "ddc1565e-08ee-43e9-9447-c3b4f1fd6caa"
+            "guid": "f7b08ef5-3e62-4384-bf52-691c1b3c81fe"
           },
           "id": 2,
           "scope_entry": null,
@@ -156,11 +156,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 14,
+              "end_line": 14,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
             },
             "in_connectors": {
               "IN_L": null
@@ -168,7 +168,7 @@
             "out_connectors": {
               "OUT_L": null
             },
-            "guid": "2ccae75e-06cd-455a-8216-821fd3f72031"
+            "guid": "d1089a8c-a373-4f09-aa53-b131a9838c36"
           },
           "id": 3,
           "scope_entry": null,
@@ -186,7 +186,7 @@
               "OUT_L": null,
               "OUT_M": null
             },
-            "guid": "7ea282e5-a281-4310-b680-c8654d1d73f9"
+            "guid": "2b6be4ea-a282-4f56-8de2-10c7cef53f4b"
           },
           "id": 4,
           "scope_entry": "3",
@@ -254,7 +254,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "c36d76fb-3ef4-47ee-9475-907287a2128f"
+                "guid": "59e6a824-6e6f-4eff-b0ef-dc0b134450a5"
               },
               "nodes": [
                 {
@@ -281,17 +281,17 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 21,
+                          "end_line": 21,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
                         },
                         "label": "init_local",
                         "out_connectors": {
                           "l": null
                         },
-                        "guid": "b651a794-0e7b-4875-830f-6614b6de6942"
+                        "guid": "0204ba2b-bc03-4f5c-8c45-8f1d2e6899a9"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -303,14 +303,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 22,
+                          "end_line": 22,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
                         },
                         "data": "local",
-                        "guid": "1d2bc653-432c-4907-925d-a546480d20be"
+                        "guid": "c84ed8f1-f275-4e36-824c-532ef078b830"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -322,14 +322,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 23,
+                          "end_line": 23,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
                         },
                         "data": "m",
-                        "guid": "2d91595e-27ba-4d0a-bd57-279cbe849d31"
+                        "guid": "b7a2d0aa-3d5f-4b38-ad9c-757464b5a264"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -345,11 +345,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 25,
+                          "end_line": 25,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
                         },
                         "label": "set_m",
                         "in_connectors": {
@@ -358,7 +358,7 @@
                         "out_connectors": {
                           "mm": null
                         },
-                        "guid": "83259bf1-db2c-4c71-b71c-a93030462c9c"
+                        "guid": "9c0262fd-263b-4aa0-8002-15be13285a0d"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -386,7 +386,7 @@
                             },
                             "data": "local",
                             "debuginfo": null,
-                            "guid": "e824bd47-9da1-4c25-be03-1aa208520682",
+                            "guid": "fd531958-048c-4784-8291-d897d5ea2fb5",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -429,7 +429,7 @@
                             },
                             "data": "local",
                             "debuginfo": null,
-                            "guid": "97cc2045-2b0c-465e-bb97-b5fb1ceffe1b",
+                            "guid": "8c70db23-d77f-4e44-9954-b6abcb6f3d71",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -472,7 +472,7 @@
                             },
                             "data": "m",
                             "debuginfo": null,
-                            "guid": "683c4853-f583-41ef-b264-bc0b6dd29bf5",
+                            "guid": "22576744-7169-4667-a254-c6035384cf6d",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -497,7 +497,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "6a95fe0e-6d49-494f-aff3-39f997177ff6"
+                    "guid": "3bb714b6-cb25-43cb-8938-5f594c755252"
                   }
                 }
               ],
@@ -510,11 +510,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 30,
+              "end_line": 30,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/inline_external_edges_test.py"
             },
             "label": "nested_iee_test",
             "in_connectors": {
@@ -524,7 +524,7 @@
               "local": null,
               "m": null
             },
-            "guid": "e8352b13-1a7f-40d5-8168-82d5ced8227a"
+            "guid": "d401adb7-28b9-40ea-849c-05a117be0409"
           },
           "id": 5,
           "scope_entry": "3",
@@ -552,7 +552,7 @@
                 },
                 "data": "L",
                 "debuginfo": null,
-                "guid": "6267227a-c4de-483a-be8f-4d1e0406bdce",
+                "guid": "55f04793-a55e-4ab3-a3cf-86273741dde7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -595,7 +595,7 @@
                 },
                 "data": "L",
                 "debuginfo": null,
-                "guid": "d2980375-7dd2-43c4-b9c7-685a29cd2934",
+                "guid": "0ee452bc-e618-4ebf-88fb-101c51f9dbc3",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -638,7 +638,7 @@
                 },
                 "data": "L",
                 "debuginfo": null,
-                "guid": "6267227a-c4de-483a-be8f-4d1e0406bdce",
+                "guid": "55f04793-a55e-4ab3-a3cf-86273741dde7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -681,7 +681,7 @@
                 },
                 "data": "M",
                 "debuginfo": null,
-                "guid": "1f49aa8c-9fc4-4e0b-b959-00d2009fa5df",
+                "guid": "6196dc95-cb6e-441c-b6b5-c172dad6dd73",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -724,7 +724,7 @@
                 },
                 "data": "L",
                 "debuginfo": null,
-                "guid": "d2980375-7dd2-43c4-b9c7-685a29cd2934",
+                "guid": "0ee452bc-e618-4ebf-88fb-101c51f9dbc3",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -767,7 +767,7 @@
                 },
                 "data": "M",
                 "debuginfo": null,
-                "guid": "1f49aa8c-9fc4-4e0b-b959-00d2009fa5df",
+                "guid": "6196dc95-cb6e-441c-b6b5-c172dad6dd73",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -792,7 +792,7 @@
         }
       ],
       "attributes": {
-        "guid": "6df9b48f-e187-435c-bc06-ea9373e809a5"
+        "guid": "a819be82-cdcd-4115-a0e9-09990d986cd1"
       }
     }
   ],

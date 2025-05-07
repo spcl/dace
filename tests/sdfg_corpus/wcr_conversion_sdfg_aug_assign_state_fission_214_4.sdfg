@@ -56,8 +56,8 @@
         "language": "CPP"
       }
     },
-    "guid": "7463ec00-70b6-4ca4-8729-89d2e6c004e8",
-    "hash": "5fd6df189978e0b347ad12e4beae346edc793b383c9cc575af66f9943b02d297"
+    "guid": "7643fa96-b79a-49b8-a6a7-cbae98fc2387",
+    "hash": "77140c647dc7700274815152b084d61d5de7b948544830691867aafe841fcafe"
   },
   "nodes": [
     {
@@ -71,7 +71,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "cbcfa762-d39f-46b8-9eee-82f33e68c66e",
+        "guid": "f62d22dc-64bc-4add-aa65-493dd8c362df",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -103,7 +103,7 @@
               "end_line": 218,
               "start_column": 8,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "label": "wcr_conversion_test_sdfg_aug_assign_state_fission_215",
             "in_connectors": {
@@ -112,7 +112,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "05586bd5-18e4-4caa-89a0-07e7d0b2c0d4"
+            "guid": "dabcb52d-db70-484c-aa82-a6cc272ae26e"
           },
           "id": 0,
           "scope_entry": null,
@@ -128,10 +128,10 @@
               "end_line": 215,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "__tmp_216_17",
-            "guid": "4b694e96-8d2e-4d8a-a6b0-71d28e92a6e6"
+            "guid": "1f8dd195-0469-40d1-944b-7a4d2209c3cc"
           },
           "id": 1,
           "scope_entry": null,
@@ -147,10 +147,10 @@
               "end_line": 215,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "__tmp_217_17",
-            "guid": "c65a4ba6-dd43-45df-b56e-8b3a26496856"
+            "guid": "31edd0bc-4547-4bf9-b741-cea395b5cb3d"
           },
           "id": 2,
           "scope_entry": null,
@@ -178,7 +178,7 @@
                 },
                 "data": "__tmp_216_17",
                 "debuginfo": null,
-                "guid": "037ae486-dfa8-4a07-b893-6e35770ee077",
+                "guid": "7291fa98-ed7f-4e48-b465-0637522d8732",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -221,7 +221,7 @@
                 },
                 "data": "__tmp_217_17",
                 "debuginfo": null,
-                "guid": "ddf4e648-ba32-4ba8-82b6-3a697392a37b",
+                "guid": "c21aaa66-95a3-4e5a-806a-c788ccb774d1",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -246,7 +246,7 @@
         }
       ],
       "attributes": {
-        "guid": "fdfa69db-f713-4245-baae-a6ce9089586a",
+        "guid": "877342d3-4068-4efb-9f5a-78e3cc793668",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -259,7 +259,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "da6e7d9f-e590-4ce5-99e2-8353f7a16afe"
+            "guid": "5ad881fd-683f-4942-8bb6-c3931736dfc3"
           },
           "label": ""
         }

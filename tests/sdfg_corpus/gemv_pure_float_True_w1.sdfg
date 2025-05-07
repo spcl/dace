@@ -88,8 +88,8 @@
         "language": "CPP"
       }
     },
-    "guid": "9990838e-d0fc-47f9-8db6-077993e2c33e",
-    "hash": "387b5dfbc4159ad85f8d8814f9023fe9ac56914b6852658ada428f4c2bafc33c"
+    "guid": "96d78e80-1cff-4cdb-bac4-2397e3e7188b",
+    "hash": "f06964f13b40b1a656ac74aa0aded3bf8e101a0ca4886e7de9fcf7fd946d2f67"
   },
   "nodes": [
     {
@@ -112,14 +112,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 33,
+              "end_line": 33,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/gemv_test.py"
             },
             "data": "A",
-            "guid": "7b115544-1d6b-41e5-b207-453335c8006c"
+            "guid": "73c11def-a0dd-47f8-88b4-e426400e2900"
           },
           "id": 0,
           "scope_entry": null,
@@ -131,14 +131,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/gemv_test.py"
             },
             "data": "x",
-            "guid": "b6c6a43f-4d57-4d4f-84c3-4004118e6d05"
+            "guid": "91a78051-b85b-49f1-a804-250ed897766e"
           },
           "id": 1,
           "scope_entry": null,
@@ -150,14 +150,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/gemv_test.py"
             },
             "data": "y",
-            "guid": "ea42989a-f924-4ce8-a566-c2897d7a513a"
+            "guid": "c008cfb7-8567-4d1f-9764-7d66aa92b698"
           },
           "id": 2,
           "scope_entry": null,
@@ -178,7 +178,7 @@
             "out_connectors": {
               "_y": null
             },
-            "guid": "b0c21ad3-d224-4251-a56b-01eacb6e9e9b"
+            "guid": "7917f3bf-c87c-4d84-b2f1-892ac1496dc0"
           },
           "id": 3,
           "scope_entry": null,
@@ -213,7 +213,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "d1e71153-6848-4832-af57-61571f377689",
+                "guid": "e2e23185-5483-4f08-bbca-a7e0ae756af3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -262,7 +262,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "58e700df-c1ee-403e-98a6-b8ea6fb71961",
+                "guid": "7e7c56e6-6b06-46fd-b7ab-2ff52e39f700",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -305,7 +305,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "ba22dbde-34b8-4299-8d07-d93c8382dd07",
+                "guid": "05bdf38d-c912-40a8-8d7b-73e2531e3de7",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -330,7 +330,7 @@
         }
       ],
       "attributes": {
-        "guid": "5f108c63-d644-4cd7-9f7d-cb01f0b8feb5"
+        "guid": "c15f63c5-fe81-47ac-9e1b-fae613c32973"
       }
     }
   ],

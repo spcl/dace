@@ -39,8 +39,8 @@
         "language": "CPP"
       }
     },
-    "guid": "6919eaeb-20ea-475b-8954-2b3e29ef9889",
-    "hash": "8b3b9b87308a58d042ae5aa5d124165206899ca9275bc100bcd4adbde3b36a99"
+    "guid": "2ea256e8-9bb6-4412-b34a-0defbab5d16d",
+    "hash": "83bb12fcf2a117354f2756d96721c322dde9d23d1bf3eea6271519483db2a3ac"
   },
   "nodes": [
     {
@@ -65,17 +65,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 430,
+              "end_line": 430,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "label": "doit",
             "out_connectors": {
               "o": null
             },
-            "guid": "97cb3877-7f1c-4d64-a762-46ccc8af5f8d"
+            "guid": "52184212-2326-4968-ac6c-7a1c4da62223"
           },
           "id": 0,
           "scope_entry": null,
@@ -87,14 +87,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 431,
+              "end_line": 431,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "pers",
-            "guid": "9ed97f7d-b772-4005-9abc-a4d1d6ec69ee"
+            "guid": "41e1dd24-091c-45a2-b5c9-5d8a1e83538d"
           },
           "id": 1,
           "scope_entry": null,
@@ -122,7 +122,7 @@
                 },
                 "data": "pers",
                 "debuginfo": null,
-                "guid": "42e932c1-0811-46a6-b36a-3de544bb8817",
+                "guid": "51af6833-2314-43f1-be59-d106f69071b2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -147,7 +147,7 @@
         }
       ],
       "attributes": {
-        "guid": "1a2fa83b-3909-472d-a06d-7e8d8096c0e8"
+        "guid": "405141e4-0afc-4921-9756-4507cff20f62"
       }
     }
   ],

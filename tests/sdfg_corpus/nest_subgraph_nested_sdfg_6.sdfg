@@ -3,6 +3,15 @@
   "attributes": {
     "name": "nest_subgraph_nested_sdfg",
     "_arrays": {
+      "_did_ret_from_nsdfg_1": {
+        "type": "Scalar",
+        "attributes": {
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
       "i": {
         "type": "Scalar",
         "attributes": {
@@ -30,15 +39,6 @@
           ],
           "debuginfo": null
         }
-      },
-      "_did_ret_from_nsdfg_1": {
-        "type": "Scalar",
-        "attributes": {
-          "shape": [
-            "1"
-          ],
-          "debuginfo": null
-        }
       }
     },
     "global_code": {
@@ -59,14 +59,14 @@
         "language": "CPP"
       }
     },
-    "guid": "ebe48790-3c21-42f4-85ce-25035c4ccdf9",
-    "hash": "b052ba6c39cdf757360ed38c7499f3e5df95228896273240251731ffc89b0b4a"
+    "guid": "aa2a164f-8acb-4642-94d1-74c869a57277",
+    "hash": "c4b204414882cc5b7249918aac4fc3906f57ad74bbae179b2f1ae0679019bf89"
   },
   "nodes": [
     {
       "type": "ConditionalBlock",
       "attributes": {
-        "guid": "e27615d1-0d85-4052-baf7-49f63baa9d5f",
+        "guid": "6169a579-8f69-4d1c-8b90-6dbf622f84a7",
         "executions": "1",
         "dynamic_executions": false
       },
@@ -74,7 +74,7 @@
         {
           "type": "ControlFlowRegion",
           "attributes": {
-            "guid": "a3d298ee-4a25-447f-bcf9-7412c3403785"
+            "guid": "df091923-d292-405d-9e01-996c65be9347"
           },
           "nodes": [
             {
@@ -88,7 +88,7 @@
               "nodes": [],
               "edges": [],
               "attributes": {
-                "guid": "bd63ad35-9b07-4995-94d4-30e5bb09a1fd"
+                "guid": "febfb7c4-4cbb-490e-acbd-e1cbc064c75e"
               }
             },
             {
@@ -113,10 +113,10 @@
                       "end_line": 182,
                       "start_column": 15,
                       "end_column": 15,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/nest_subgraph_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/nest_subgraph_test.py"
                     },
                     "data": "__return",
-                    "guid": "d2f719e8-d5d8-4942-94f9-99a9c9b149f4"
+                    "guid": "5c923010-e88d-45e1-99fb-5167fa6ededa"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -136,13 +136,13 @@
                       "end_line": 182,
                       "start_column": 15,
                       "end_column": 15,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/nest_subgraph_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/nest_subgraph_test.py"
                     },
                     "label": "assign_182_8",
                     "out_connectors": {
                       "__out": null
                     },
-                    "guid": "9ee3cbef-8c82-489e-ad94-6f5d1534688c"
+                    "guid": "60a05a11-86c9-454a-9508-b88d25530a88"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -170,7 +170,7 @@
                         },
                         "data": "__return",
                         "debuginfo": null,
-                        "guid": "ee51c31a-603c-4a31-ad67-09678d05c38f",
+                        "guid": "4bd91d78-6c5d-4e20-9e2b-764005caa476",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -195,7 +195,7 @@
                 }
               ],
               "attributes": {
-                "guid": "bce3afc8-120c-43d0-8bc2-d9a2e5aa7b4c"
+                "guid": "acc997c7-b135-4f31-9f6b-6f163ca40423"
               }
             },
             {
@@ -204,7 +204,7 @@
               "label": "return_if_181_body_182",
               "id": 2,
               "attributes": {
-                "guid": "4e10b8bb-88dd-411f-81eb-086028043bef"
+                "guid": "1e38ccd4-5f12-40d0-aebc-29c6c0b74165"
               },
               "nodes": [],
               "edges": []
@@ -231,17 +231,17 @@
                     },
                     "debuginfo": {
                       "type": "DebugInfo",
-                      "start_line": 1,
-                      "end_line": 1,
+                      "start_line": 183,
+                      "end_line": 183,
                       "start_column": 0,
                       "end_column": 0,
-                      "filename": "skipped"
+                      "filename": "/scratch/bates/dace/dace/transformation/helpers.py"
                     },
                     "label": "__did_ret_set",
                     "out_connectors": {
                       "out": null
                     },
-                    "guid": "ca35c0ea-66a3-4aff-b101-c49a495d1b9c"
+                    "guid": "771836b7-4d4b-488a-9250-1a921d4742e7"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -253,14 +253,14 @@
                   "attributes": {
                     "debuginfo": {
                       "type": "DebugInfo",
-                      "start_line": 1,
-                      "end_line": 1,
+                      "start_line": 184,
+                      "end_line": 184,
                       "start_column": 0,
                       "end_column": 0,
-                      "filename": "skipped"
+                      "filename": "/scratch/bates/dace/dace/transformation/helpers.py"
                     },
                     "data": "_did_ret_from_nsdfg_1",
-                    "guid": "e2fdc783-f188-4d93-b84c-a769d042e9e3"
+                    "guid": "f55b9461-7a75-4d65-80a5-7834fb0fa914"
                   },
                   "id": 1,
                   "scope_entry": null,
@@ -288,7 +288,7 @@
                         },
                         "data": "_did_ret_from_nsdfg_1",
                         "debuginfo": null,
-                        "guid": "36309253-2310-4f6c-ae23-9256e461d7da",
+                        "guid": "37f76173-8572-4659-bbcd-504d5efa2fc8",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -313,7 +313,7 @@
                 }
               ],
               "attributes": {
-                "guid": "7456f637-e2ea-44f0-a0dd-e221c31fb89f"
+                "guid": "504f398e-70c4-4c84-8c4a-4fb28ec20fdb"
               }
             }
           ],
@@ -324,7 +324,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "c9abbc88-c616-46af-9592-e2ddc5ee0832"
+                    "guid": "ae7ce0b8-82f6-4425-9584-c8ad164fe927"
                   },
                   "label": ""
                 }
@@ -338,7 +338,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "dba0e7c0-ed18-45ee-8b57-0d1140ed7c23"
+                    "guid": "b443f0dd-2aef-479b-a694-254fdd8b052f"
                   },
                   "label": ""
                 }
@@ -352,7 +352,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "4672bbd8-cab1-4443-bd93-6d1b13efb47f"
+                    "guid": "b2bcfd37-0d7d-4439-9a2e-bfe2c671d327"
                   },
                   "label": ""
                 }
@@ -383,7 +383,7 @@
           {
             "type": "ControlFlowRegion",
             "attributes": {
-              "guid": "a3d298ee-4a25-447f-bcf9-7412c3403785"
+              "guid": "df091923-d292-405d-9e01-996c65be9347"
             },
             "nodes": [
               {
@@ -397,7 +397,7 @@
                 "nodes": [],
                 "edges": [],
                 "attributes": {
-                  "guid": "bd63ad35-9b07-4995-94d4-30e5bb09a1fd"
+                  "guid": "febfb7c4-4cbb-490e-acbd-e1cbc064c75e"
                 }
               },
               {
@@ -422,10 +422,10 @@
                         "end_line": 182,
                         "start_column": 15,
                         "end_column": 15,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/nest_subgraph_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/nest_subgraph_test.py"
                       },
                       "data": "__return",
-                      "guid": "d2f719e8-d5d8-4942-94f9-99a9c9b149f4"
+                      "guid": "5c923010-e88d-45e1-99fb-5167fa6ededa"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -445,13 +445,13 @@
                         "end_line": 182,
                         "start_column": 15,
                         "end_column": 15,
-                        "filename": "/home/beates/Desktop/dace/tests/transformations/nest_subgraph_test.py"
+                        "filename": "/scratch/bates/dace/tests/transformations/nest_subgraph_test.py"
                       },
                       "label": "assign_182_8",
                       "out_connectors": {
                         "__out": null
                       },
-                      "guid": "9ee3cbef-8c82-489e-ad94-6f5d1534688c"
+                      "guid": "60a05a11-86c9-454a-9508-b88d25530a88"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -479,7 +479,7 @@
                           },
                           "data": "__return",
                           "debuginfo": null,
-                          "guid": "ee51c31a-603c-4a31-ad67-09678d05c38f",
+                          "guid": "4bd91d78-6c5d-4e20-9e2b-764005caa476",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -504,7 +504,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "bce3afc8-120c-43d0-8bc2-d9a2e5aa7b4c"
+                  "guid": "acc997c7-b135-4f31-9f6b-6f163ca40423"
                 }
               },
               {
@@ -513,7 +513,7 @@
                 "label": "return_if_181_body_182",
                 "id": 2,
                 "attributes": {
-                  "guid": "4e10b8bb-88dd-411f-81eb-086028043bef"
+                  "guid": "1e38ccd4-5f12-40d0-aebc-29c6c0b74165"
                 },
                 "nodes": [],
                 "edges": []
@@ -540,17 +540,17 @@
                       },
                       "debuginfo": {
                         "type": "DebugInfo",
-                        "start_line": 1,
-                        "end_line": 1,
+                        "start_line": 183,
+                        "end_line": 183,
                         "start_column": 0,
                         "end_column": 0,
-                        "filename": "skipped"
+                        "filename": "/scratch/bates/dace/dace/transformation/helpers.py"
                       },
                       "label": "__did_ret_set",
                       "out_connectors": {
                         "out": null
                       },
-                      "guid": "ca35c0ea-66a3-4aff-b101-c49a495d1b9c"
+                      "guid": "771836b7-4d4b-488a-9250-1a921d4742e7"
                     },
                     "id": 0,
                     "scope_entry": null,
@@ -562,14 +562,14 @@
                     "attributes": {
                       "debuginfo": {
                         "type": "DebugInfo",
-                        "start_line": 1,
-                        "end_line": 1,
+                        "start_line": 184,
+                        "end_line": 184,
                         "start_column": 0,
                         "end_column": 0,
-                        "filename": "skipped"
+                        "filename": "/scratch/bates/dace/dace/transformation/helpers.py"
                       },
                       "data": "_did_ret_from_nsdfg_1",
-                      "guid": "e2fdc783-f188-4d93-b84c-a769d042e9e3"
+                      "guid": "f55b9461-7a75-4d65-80a5-7834fb0fa914"
                     },
                     "id": 1,
                     "scope_entry": null,
@@ -597,7 +597,7 @@
                           },
                           "data": "_did_ret_from_nsdfg_1",
                           "debuginfo": null,
-                          "guid": "36309253-2310-4f6c-ae23-9256e461d7da",
+                          "guid": "37f76173-8572-4659-bbcd-504d5efa2fc8",
                           "src_subset": null,
                           "dst_subset": {
                             "type": "Range",
@@ -622,7 +622,7 @@
                   }
                 ],
                 "attributes": {
-                  "guid": "7456f637-e2ea-44f0-a0dd-e221c31fb89f"
+                  "guid": "504f398e-70c4-4c84-8c4a-4fb28ec20fdb"
                 }
               }
             ],
@@ -633,7 +633,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "c9abbc88-c616-46af-9592-e2ddc5ee0832"
+                      "guid": "ae7ce0b8-82f6-4425-9584-c8ad164fe927"
                     },
                     "label": ""
                   }
@@ -647,7 +647,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "dba0e7c0-ed18-45ee-8b57-0d1140ed7c23"
+                      "guid": "b443f0dd-2aef-479b-a694-254fdd8b052f"
                     },
                     "label": ""
                   }
@@ -661,7 +661,7 @@
                   "data": {
                     "type": "InterstateEdge",
                     "attributes": {
-                      "guid": "4672bbd8-cab1-4443-bd93-6d1b13efb47f"
+                      "guid": "b2bcfd37-0d7d-4439-9a2e-bfe2c671d327"
                     },
                     "label": ""
                   }

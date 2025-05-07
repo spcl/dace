@@ -107,7 +107,7 @@
       }
     },
     "symbols": {
-      "m": "int64",
+      "m": "int32",
       "n": "int32"
     },
     "global_code": {
@@ -128,8 +128,8 @@
         "language": "CPP"
       }
     },
-    "guid": "f13c506f-b320-476f-a43f-8fcb1ea900b9",
-    "hash": "79bff64633c7075085a055dbe5bf5fedfc76dc1798bd4070b580985d6f3fcf4b"
+    "guid": "48efd7d1-7306-4b75-9b18-8607f778a457",
+    "hash": "b7f858c27605dbe8083ab8debf715f3964ff277b5cc9ecc61556994898127774"
   },
   "nodes": [
     {
@@ -152,14 +152,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 246,
+              "end_line": 246,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "x",
-            "guid": "4b2cacae-bf95-4b09-8b47-36581da4ee7e"
+            "guid": "7e0f1558-883a-45d5-8505-3cbc35c8f982"
           },
           "id": 0,
           "scope_entry": null,
@@ -171,14 +171,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 247,
+              "end_line": 247,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "y",
-            "guid": "652d2cda-cf80-429d-a438-680590ae8f63"
+            "guid": "e2b43885-1111-4c53-8380-4663ff92b4e4"
           },
           "id": 1,
           "scope_entry": null,
@@ -190,14 +190,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 248,
+              "end_line": 248,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "z",
-            "guid": "f12aaebf-3938-4ab8-a153-003a4542627a"
+            "guid": "14498777-96bb-4210-a962-6aa07a781b73"
           },
           "id": 2,
           "scope_entry": null,
@@ -285,7 +285,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "456fb450-06cb-4737-9333-7bd831a58bf4"
+                "guid": "9dc84095-8126-4911-972e-6b3c064e585d"
               },
               "nodes": [
                 {
@@ -308,14 +308,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 98,
+                          "end_line": 98,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "data": "x",
-                        "guid": "23a5cded-1622-4463-ac46-d274aa2f5b12"
+                        "guid": "76948765-db70-4e12-a02a-4ca6cf4d2c4a"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -327,14 +327,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 99,
+                          "end_line": 99,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "data": "y",
-                        "guid": "f53d3277-45d6-4e74-b775-f1af954589b0"
+                        "guid": "4bd123dc-376b-4f90-821e-5959b81023f6"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -346,14 +346,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 100,
+                          "end_line": 100,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "data": "z",
-                        "guid": "82e1482d-ec53-42eb-9529-429ec03f1edf"
+                        "guid": "abce99f0-a180-419d-9f66-4113f44ae5da"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -441,7 +441,7 @@
                                 "language": "CPP"
                               }
                             },
-                            "guid": "9bca974b-fad5-4236-9131-c6a1a8db0b10"
+                            "guid": "da441848-affc-4c26-9a63-0faaa4628d0e"
                           },
                           "nodes": [
                             {
@@ -468,14 +468,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 41,
+                                      "end_line": 41,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "data": "x",
-                                    "guid": "8a753f01-8583-4849-a702-29c613d085bb"
+                                    "guid": "783d4c84-659f-4834-adaf-4643971f8ee4"
                                   },
                                   "id": 0,
                                   "scope_entry": null,
@@ -487,14 +487,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 42,
+                                      "end_line": 42,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "data": "y",
-                                    "guid": "f553fd81-538d-4c12-84ff-8a6205141be1"
+                                    "guid": "69eca31d-d81f-40f4-9ed2-0fbfb365b975"
                                   },
                                   "id": 1,
                                   "scope_entry": null,
@@ -506,14 +506,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 43,
+                                      "end_line": 43,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "data": "z",
-                                    "guid": "004048b5-e081-44e8-b15c-c9e7b3294048"
+                                    "guid": "7e213595-e110-4918-b621-c8613e7b97cf"
                                   },
                                   "id": 2,
                                   "scope_entry": null,
@@ -540,11 +540,11 @@
                                     },
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 48,
+                                      "end_line": 48,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "in_connectors": {
                                       "IN_x": null,
@@ -554,7 +554,7 @@
                                       "OUT_x": null,
                                       "OUT_y": null
                                     },
-                                    "guid": "15e897df-c439-4b51-82bd-bc38ffb58360"
+                                    "guid": "4bb685ec-2b98-4297-972b-4f532a5ee398"
                                   },
                                   "id": 3,
                                   "scope_entry": null,
@@ -570,7 +570,7 @@
                                     "out_connectors": {
                                       "OUT_z": null
                                     },
-                                    "guid": "3b8c2a31-241e-41fa-99d4-9df13b199003"
+                                    "guid": "d5c26494-6d8f-4b80-aa1c-85ab62e6997f"
                                   },
                                   "id": 4,
                                   "scope_entry": "3",
@@ -586,11 +586,11 @@
                                     },
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 50,
+                                      "end_line": 50,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "label": "vecAdd_task",
                                     "in_connectors": {
@@ -600,7 +600,7 @@
                                     "out_connectors": {
                                       "z_con": null
                                     },
-                                    "guid": "03f40b0b-f0b4-4573-98e9-7f60705cc359"
+                                    "guid": "811785f1-a68a-4487-a98a-c0a3b390413e"
                                   },
                                   "id": 5,
                                   "scope_entry": "3",
@@ -628,7 +628,7 @@
                                         },
                                         "data": "x",
                                         "debuginfo": null,
-                                        "guid": "d0a56553-8e04-4867-98eb-7b29bcc3785a",
+                                        "guid": "281257d9-2484-4497-810e-09af3373de2c",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -671,7 +671,7 @@
                                         },
                                         "data": "y",
                                         "debuginfo": null,
-                                        "guid": "bfc890d4-3bff-4a74-9efc-56e867d72291",
+                                        "guid": "8354082d-464f-4752-acb2-140e25c4a204",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -714,7 +714,7 @@
                                         },
                                         "data": "x",
                                         "debuginfo": null,
-                                        "guid": "d0a56553-8e04-4867-98eb-7b29bcc3785a",
+                                        "guid": "281257d9-2484-4497-810e-09af3373de2c",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -757,7 +757,7 @@
                                         },
                                         "data": "y",
                                         "debuginfo": null,
-                                        "guid": "bfc890d4-3bff-4a74-9efc-56e867d72291",
+                                        "guid": "8354082d-464f-4752-acb2-140e25c4a204",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -800,7 +800,7 @@
                                         },
                                         "data": "z",
                                         "debuginfo": null,
-                                        "guid": "f6235f1f-0b9a-43f2-8740-953991ad0634",
+                                        "guid": "6734ac6b-8126-426b-ad4d-efac9aef5508",
                                         "src_subset": null,
                                         "dst_subset": {
                                           "type": "Range",
@@ -843,7 +843,7 @@
                                         },
                                         "data": "z",
                                         "debuginfo": null,
-                                        "guid": "f6235f1f-0b9a-43f2-8740-953991ad0634",
+                                        "guid": "6734ac6b-8126-426b-ad4d-efac9aef5508",
                                         "src_subset": null,
                                         "dst_subset": {
                                           "type": "Range",
@@ -868,7 +868,7 @@
                                 }
                               ],
                               "attributes": {
-                                "guid": "bd994b15-3abf-4f20-bbc9-3d29b5c15e36"
+                                "guid": "5e67146f-37f4-4604-8e79-a5786a0d4d5a"
                               }
                             }
                           ],
@@ -884,11 +884,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 111,
+                          "end_line": 111,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "label": "vecAdd_nested",
                         "in_connectors": {
@@ -898,7 +898,7 @@
                         "out_connectors": {
                           "z": null
                         },
-                        "guid": "29d41dcf-080d-42e2-9fe5-f8b72067070c"
+                        "guid": "fd0152f1-7310-4cc8-8fb8-7e3bb1230286"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -926,7 +926,7 @@
                             },
                             "data": "x",
                             "debuginfo": null,
-                            "guid": "fd73bea7-b0e6-4a86-9835-5fd4f3e9f609",
+                            "guid": "b8f94ea0-72dc-44d9-b33b-8bf86ab5eabb",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -969,7 +969,7 @@
                             },
                             "data": "y",
                             "debuginfo": null,
-                            "guid": "61bd6049-7add-4dfb-9621-624b6bdb8552",
+                            "guid": "78ecca48-d1d1-4765-8ce2-58a7b031780a",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -1012,7 +1012,7 @@
                             },
                             "data": "z",
                             "debuginfo": null,
-                            "guid": "0129aaba-562a-42e3-99b2-74f5f4640fe2",
+                            "guid": "197a4c4d-e6db-4e66-9a56-1fdb54aa4266",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -1037,7 +1037,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "80f54b1d-11f0-4d8b-83ee-98bf2ac37c23"
+                    "guid": "bd563e0f-c022-4c70-8c73-b1a8ef0451ac"
                   }
                 }
               ],
@@ -1053,11 +1053,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 251,
+              "end_line": 251,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "label": "vecAdd",
             "in_connectors": {
@@ -1067,7 +1067,7 @@
             "out_connectors": {
               "z": null
             },
-            "guid": "eae15751-3e08-446e-b670-eaf4e1e258a9"
+            "guid": "e24edfb2-d608-4abc-8f67-50868840692d"
           },
           "id": 3,
           "scope_entry": null,
@@ -1095,7 +1095,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "35d7f834-b856-4c59-bdcd-46ddcf48aff0",
+                "guid": "65d1414b-5281-4578-8b29-5bbd60b927a1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1138,7 +1138,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "d3264056-d040-4e09-8e85-57f575a15dcd",
+                "guid": "f27420fd-091b-4341-ac77-3cefa7f2b700",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1181,7 +1181,7 @@
                 },
                 "data": "z",
                 "debuginfo": null,
-                "guid": "3ceead12-45f9-4079-8084-9b52b5556cd0",
+                "guid": "8d22c6c3-e337-4302-ac2c-54726575ab71",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1206,7 +1206,7 @@
         }
       ],
       "attributes": {
-        "guid": "f8739104-a541-44b4-b495-a83ae069c715"
+        "guid": "2e4d2be3-2884-4145-a50e-c970256ac9be"
       }
     },
     {
@@ -1229,14 +1229,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 265,
+              "end_line": 265,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "v",
-            "guid": "ecf9cce1-0831-4974-bd92-294558c2964b"
+            "guid": "5e7ce9ba-a664-499f-9357-1d3eeeae5c79"
           },
           "id": 0,
           "scope_entry": null,
@@ -1248,14 +1248,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 266,
+              "end_line": 266,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "w",
-            "guid": "4c9349e2-be0d-4d91-87cb-69ff00623ad2"
+            "guid": "dd773bfd-b139-4967-8142-8a6ac8fd7134"
           },
           "id": 1,
           "scope_entry": null,
@@ -1267,14 +1267,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 267,
+              "end_line": 267,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "data": "u",
-            "guid": "4c12847e-41b0-494f-bd94-ec0fa2c46897"
+            "guid": "e8e63606-0aa6-46ff-86e2-bc9384d83849"
           },
           "id": 2,
           "scope_entry": null,
@@ -1362,7 +1362,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "7c4c8adf-aa52-4c4f-9bbf-3e529b46f158"
+                "guid": "f68c1519-bcd5-4d0b-b20f-aa0e021c6fd5"
               },
               "nodes": [
                 {
@@ -1385,14 +1385,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 98,
+                          "end_line": 98,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "data": "x",
-                        "guid": "bdf48e84-7ad6-48ec-b30c-0b2e871af75e"
+                        "guid": "b616e904-6315-4df7-b5f7-8d7e131b54a5"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -1404,14 +1404,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 99,
+                          "end_line": 99,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "data": "y",
-                        "guid": "c7a2243b-0f9e-4ee7-a602-72e01a6249b7"
+                        "guid": "65d89c50-2a77-4170-869b-cd0dbb0c5a3e"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -1423,14 +1423,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 100,
+                          "end_line": 100,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "data": "z",
-                        "guid": "2b883d87-09ac-4943-9101-5e7388fcf080"
+                        "guid": "c4e97680-c5d6-4530-a1a5-b4637d4f1ba8"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -1518,7 +1518,7 @@
                                 "language": "CPP"
                               }
                             },
-                            "guid": "7e00a294-34a2-402c-bd37-fa075e603c74"
+                            "guid": "89fe85d1-9cb0-4a76-94c0-7e7bf772470a"
                           },
                           "nodes": [
                             {
@@ -1545,14 +1545,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 41,
+                                      "end_line": 41,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "data": "x",
-                                    "guid": "a139d4f4-eaaf-46c4-b55b-5d10f92b56dc"
+                                    "guid": "9d0f37f2-e5d5-4d49-b64b-cee0f5bc5e2e"
                                   },
                                   "id": 0,
                                   "scope_entry": null,
@@ -1564,14 +1564,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 42,
+                                      "end_line": 42,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "data": "y",
-                                    "guid": "360c8430-234a-4a13-9e0c-5faf488dcb8c"
+                                    "guid": "23575cd3-8e9a-45de-b608-02929f52a49c"
                                   },
                                   "id": 1,
                                   "scope_entry": null,
@@ -1583,14 +1583,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 43,
+                                      "end_line": 43,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "data": "z",
-                                    "guid": "31dc3b47-6bcf-4747-a159-5ec422eb965d"
+                                    "guid": "ecd84a13-9811-4802-b766-ce6936f0ef36"
                                   },
                                   "id": 2,
                                   "scope_entry": null,
@@ -1617,11 +1617,11 @@
                                     },
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 48,
+                                      "end_line": 48,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "in_connectors": {
                                       "IN_x": null,
@@ -1631,7 +1631,7 @@
                                       "OUT_x": null,
                                       "OUT_y": null
                                     },
-                                    "guid": "510d0236-5364-4696-a539-55c9eb67210c"
+                                    "guid": "8d6938ea-b73a-4498-a8d8-f806da9aa657"
                                   },
                                   "id": 3,
                                   "scope_entry": null,
@@ -1647,7 +1647,7 @@
                                     "out_connectors": {
                                       "OUT_z": null
                                     },
-                                    "guid": "2a3608d9-1323-4621-b37d-5cb6e44da91c"
+                                    "guid": "8b459f4a-e543-49e3-a047-6dbadf3a1112"
                                   },
                                   "id": 4,
                                   "scope_entry": "3",
@@ -1663,11 +1663,11 @@
                                     },
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 1,
-                                      "end_line": 1,
+                                      "start_line": 50,
+                                      "end_line": 50,
                                       "start_column": 0,
                                       "end_column": 0,
-                                      "filename": "skipped"
+                                      "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                                     },
                                     "label": "vecAdd_task",
                                     "in_connectors": {
@@ -1677,7 +1677,7 @@
                                     "out_connectors": {
                                       "z_con": null
                                     },
-                                    "guid": "72816c84-0b9b-45e0-b2e0-3e7c90819d5e"
+                                    "guid": "33073787-ba7f-470b-be4e-ff6b933a66b2"
                                   },
                                   "id": 5,
                                   "scope_entry": "3",
@@ -1705,7 +1705,7 @@
                                         },
                                         "data": "x",
                                         "debuginfo": null,
-                                        "guid": "dfb0bdb7-a4d0-4daa-a74d-ba6a010951c4",
+                                        "guid": "6cdaaf84-f70c-47b8-8b07-01daa6faed8d",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -1748,7 +1748,7 @@
                                         },
                                         "data": "y",
                                         "debuginfo": null,
-                                        "guid": "2987ae72-01a9-48ec-b155-abdc424e8557",
+                                        "guid": "352158aa-a102-40f3-90fc-da268ad0f480",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -1791,7 +1791,7 @@
                                         },
                                         "data": "x",
                                         "debuginfo": null,
-                                        "guid": "dfb0bdb7-a4d0-4daa-a74d-ba6a010951c4",
+                                        "guid": "6cdaaf84-f70c-47b8-8b07-01daa6faed8d",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -1834,7 +1834,7 @@
                                         },
                                         "data": "y",
                                         "debuginfo": null,
-                                        "guid": "2987ae72-01a9-48ec-b155-abdc424e8557",
+                                        "guid": "352158aa-a102-40f3-90fc-da268ad0f480",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -1877,7 +1877,7 @@
                                         },
                                         "data": "z",
                                         "debuginfo": null,
-                                        "guid": "1f8f8030-aef4-44fc-90f6-11e4276f34d2",
+                                        "guid": "8aa0f6d4-2c6d-4ade-bf24-cd2190950184",
                                         "src_subset": null,
                                         "dst_subset": {
                                           "type": "Range",
@@ -1920,7 +1920,7 @@
                                         },
                                         "data": "z",
                                         "debuginfo": null,
-                                        "guid": "1f8f8030-aef4-44fc-90f6-11e4276f34d2",
+                                        "guid": "8aa0f6d4-2c6d-4ade-bf24-cd2190950184",
                                         "src_subset": null,
                                         "dst_subset": {
                                           "type": "Range",
@@ -1945,7 +1945,7 @@
                                 }
                               ],
                               "attributes": {
-                                "guid": "7689bed6-62a5-4916-8881-51975a7bf566"
+                                "guid": "87a5f7a7-6aa8-4e8c-a807-9f4aa22f49e2"
                               }
                             }
                           ],
@@ -1961,11 +1961,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 111,
+                          "end_line": 111,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
                         },
                         "label": "vecAdd_nested",
                         "in_connectors": {
@@ -1975,7 +1975,7 @@
                         "out_connectors": {
                           "z": null
                         },
-                        "guid": "0a6261f3-85ac-48eb-b603-6f95ca54e9bb"
+                        "guid": "996d2849-4750-432a-bad3-a30362b82aaf"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -2003,7 +2003,7 @@
                             },
                             "data": "x",
                             "debuginfo": null,
-                            "guid": "c4947bdb-40ba-4da0-88f7-c5e2ecedde24",
+                            "guid": "cd44b641-2130-472c-9026-8ce1ca3da2f0",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2046,7 +2046,7 @@
                             },
                             "data": "y",
                             "debuginfo": null,
-                            "guid": "ceded1fd-f213-4738-a0b3-427661abb8b7",
+                            "guid": "24d889c7-27bc-4b78-bb03-5613fd312fa2",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2089,7 +2089,7 @@
                             },
                             "data": "z",
                             "debuginfo": null,
-                            "guid": "77820907-b703-4826-8959-196f04d7258b",
+                            "guid": "9c477927-7895-48ef-b4aa-232fc3706e65",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -2114,7 +2114,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "3b6f3535-9167-4c29-a245-b7f5eb2135c9"
+                    "guid": "83fafa85-28b6-4cc4-a660-c66b4bf84c84"
                   }
                 }
               ],
@@ -2130,11 +2130,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 269,
+              "end_line": 269,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/unique_nested_sdfg_test.py"
             },
             "label": "vecAdd",
             "in_connectors": {
@@ -2144,7 +2144,7 @@
             "out_connectors": {
               "z": null
             },
-            "guid": "a82595b0-695c-4f9d-b143-9036e6580b6d"
+            "guid": "a3052ca9-85ee-4ef1-975f-65787ab150f5"
           },
           "id": 3,
           "scope_entry": null,
@@ -2172,7 +2172,7 @@
                 },
                 "data": "v",
                 "debuginfo": null,
-                "guid": "77a3e8e4-9d08-49e8-80f6-3bba957ffbfe",
+                "guid": "64a77398-d568-483f-b217-8f0d793a5dbe",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2215,7 +2215,7 @@
                 },
                 "data": "w",
                 "debuginfo": null,
-                "guid": "c3f94a75-4843-41dc-b61f-9e33c5d47ff5",
+                "guid": "cd541029-ab37-4c1f-814c-a272297c0d57",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2258,7 +2258,7 @@
                 },
                 "data": "u",
                 "debuginfo": null,
-                "guid": "e1706edd-ed09-47a6-8157-fcd55e73fada",
+                "guid": "81596511-5843-4570-bfb3-f6e2786d6734",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -2283,7 +2283,7 @@
         }
       ],
       "attributes": {
-        "guid": "a8abe56f-5b47-489f-8b0c-8f965af54eec"
+        "guid": "8c9b33b6-8975-41b7-a3ef-a568d7a44d18"
       }
     }
   ],
@@ -2294,7 +2294,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "2ca8224d-82fa-42c2-9579-f24d93aa4c10"
+            "guid": "f693f546-93a6-4f35-8c37-94d4ef6d4c60"
           },
           "label": ""
         }

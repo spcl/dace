@@ -62,15 +62,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 53,
-      "end_line": 56,
+      "start_line": 57,
+      "end_line": 60,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/python_frontend/program_cache_test.py"
+      "filename": "/scratch/bates/dace/tests/python_frontend/program_cache_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "228ecddf-9e57-47e5-bc51-0b6b2269e5de",
-    "hash": "be74ba8415413a5583c2887bd3c14dd7dbcabfc669cdc17117ab2ab03f34fd5b"
+    "guid": "36d44c6c-300c-43de-9f45-1bb208fac751",
+    "hash": "03e206b956b819d7fcfa6dcfa21adf29d8617e487755e608fe51624c4b3688d4"
   },
   "nodes": [
     {
@@ -84,14 +84,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "e66d9d30-575f-4c09-a325-bdff3e9d4605",
+        "guid": "17e9f3cf-7931-457b-9dda-c906c043d62d",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "augassign_55_4",
+      "label": "augassign_59_4",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -108,9 +108,9 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "augassign_55_4_map[__i0=0:30]",
+          "label": "augassign_59_4_map[__i0=0:30]",
           "attributes": {
-            "label": "augassign_55_4_map",
+            "label": "augassign_59_4_map",
             "params": [
               "__i0"
             ],
@@ -127,11 +127,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 55,
-              "end_line": 55,
+              "start_line": 59,
+              "end_line": 59,
               "start_column": 9,
               "end_column": 9,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/program_cache_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/program_cache_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -139,7 +139,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "7a105afc-80f0-4af7-b639-667c98f8edfd"
+            "guid": "56bbe1f9-1163-4def-b9e5-cf49e5a84ac9"
           },
           "id": 0,
           "scope_entry": null,
@@ -147,7 +147,7 @@
         },
         {
           "type": "Tasklet",
-          "label": "augassign_55_4",
+          "label": "augassign_59_4",
           "attributes": {
             "code": {
               "string_data": "__out = (__in1 * 5)",
@@ -155,20 +155,20 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 55,
-              "end_line": 55,
+              "start_line": 59,
+              "end_line": 59,
               "start_column": 9,
               "end_column": 9,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/program_cache_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/program_cache_test.py"
             },
-            "label": "augassign_55_4",
+            "label": "augassign_59_4",
             "in_connectors": {
               "__in1": null
             },
             "out_connectors": {
               "__out": null
             },
-            "guid": "4ee68d2f-374a-4556-97af-9022ff8a7db5"
+            "guid": "f15c5585-7619-4e4b-93b9-94948f6c2c2d"
           },
           "id": 1,
           "scope_entry": "0",
@@ -176,7 +176,7 @@
         },
         {
           "type": "MapExit",
-          "label": "augassign_55_4_map[__i0=0:30]",
+          "label": "augassign_59_4_map[__i0=0:30]",
           "attributes": {
             "in_connectors": {
               "IN_A": null
@@ -184,7 +184,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "fe58ae4a-822f-4bc8-a254-2eee5b8d6a03"
+            "guid": "1089c74b-a699-495a-82d5-456024803223"
           },
           "id": 2,
           "scope_entry": "0",
@@ -196,14 +196,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1907,
+              "end_line": 1907,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "A",
-            "guid": "50606fff-f3d6-47f7-b203-999ceb1e4240"
+            "guid": "5734030a-9ce7-45d8-8276-48a66d8e9fee"
           },
           "id": 3,
           "scope_entry": null,
@@ -215,14 +215,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1912,
+              "end_line": 1912,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "A",
-            "guid": "1c35e7de-0134-4622-bc03-d816fee592f9"
+            "guid": "0a77f93d-1422-455f-b1c6-58cb2a9654c3"
           },
           "id": 4,
           "scope_entry": null,
@@ -250,7 +250,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "77e115ac-88d1-43c3-a84d-0689798d34c0",
+                "guid": "9499bedf-8a64-4f46-8499-48365507a25a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -293,7 +293,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "2755c8cb-d295-4173-a449-d11021f0b291",
+                "guid": "65b06623-d081-444b-b8e0-f3021d1f8913",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -336,7 +336,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "77e115ac-88d1-43c3-a84d-0689798d34c0",
+                "guid": "9499bedf-8a64-4f46-8499-48365507a25a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -379,7 +379,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "2755c8cb-d295-4173-a449-d11021f0b291",
+                "guid": "65b06623-d081-444b-b8e0-f3021d1f8913",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -404,14 +404,14 @@
         }
       ],
       "attributes": {
-        "guid": "0605c29d-597b-4637-9797-b718107aee49",
+        "guid": "f070ed1a-468b-4471-8350-93012eaef8be",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "augassign_56_4",
+      "label": "augassign_60_4",
       "id": 2,
       "collapsed": false,
       "scope_dict": {
@@ -428,9 +428,9 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "augassign_56_4_map[__i0=0:20]",
+          "label": "augassign_60_4_map[__i0=0:20]",
           "attributes": {
-            "label": "augassign_56_4_map",
+            "label": "augassign_60_4_map",
             "params": [
               "__i0"
             ],
@@ -447,11 +447,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 56,
-              "end_line": 56,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 9,
               "end_column": 9,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/program_cache_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/program_cache_test.py"
             },
             "in_connectors": {
               "IN_C": null
@@ -459,7 +459,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "5b986b4b-c8e5-44c5-8426-ac00986a40c3"
+            "guid": "f968f855-b544-4d6e-922e-a63cec0d83d4"
           },
           "id": 0,
           "scope_entry": null,
@@ -467,7 +467,7 @@
         },
         {
           "type": "Tasklet",
-          "label": "augassign_56_4",
+          "label": "augassign_60_4",
           "attributes": {
             "code": {
               "string_data": "__out = (__in1 * 2)",
@@ -475,20 +475,20 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 56,
-              "end_line": 56,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 9,
               "end_column": 9,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/program_cache_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/program_cache_test.py"
             },
-            "label": "augassign_56_4",
+            "label": "augassign_60_4",
             "in_connectors": {
               "__in1": null
             },
             "out_connectors": {
               "__out": null
             },
-            "guid": "5b360492-4ead-43d2-83e4-13af6406b190"
+            "guid": "b3893582-8f24-4593-bdb2-cbd6e1de2e7a"
           },
           "id": 1,
           "scope_entry": "0",
@@ -496,7 +496,7 @@
         },
         {
           "type": "MapExit",
-          "label": "augassign_56_4_map[__i0=0:20]",
+          "label": "augassign_60_4_map[__i0=0:20]",
           "attributes": {
             "in_connectors": {
               "IN_C": null
@@ -504,7 +504,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "1a37d928-cc65-4cb8-abc9-bb94668ff36d"
+            "guid": "2bad5a1d-cc67-4e52-9bd8-8718461bb209"
           },
           "id": 2,
           "scope_entry": "0",
@@ -516,14 +516,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1907,
+              "end_line": 1907,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "C",
-            "guid": "7fbd0e61-5b84-4e62-864c-6f23cb4b74d2"
+            "guid": "ca2030ad-dda5-40d3-8e7d-6a795e0dd48d"
           },
           "id": 3,
           "scope_entry": null,
@@ -535,14 +535,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1912,
+              "end_line": 1912,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "C",
-            "guid": "6e3269ea-145a-47a6-be97-127df62ecf56"
+            "guid": "19d95e24-3fb4-4c63-985f-95dad31b09b5"
           },
           "id": 4,
           "scope_entry": null,
@@ -570,7 +570,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "53efab63-1dd4-4546-8059-94c25d10e513",
+                "guid": "1a9f28fc-383e-4551-9b02-08e0c8c7ea48",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -613,7 +613,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "e73f7bbd-142e-432b-83e1-25ee2eb8d8a9",
+                "guid": "2e12383c-654b-4190-b9b5-6614a7b8dc9c",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -656,7 +656,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "53efab63-1dd4-4546-8059-94c25d10e513",
+                "guid": "1a9f28fc-383e-4551-9b02-08e0c8c7ea48",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -699,7 +699,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "e73f7bbd-142e-432b-83e1-25ee2eb8d8a9",
+                "guid": "2e12383c-654b-4190-b9b5-6614a7b8dc9c",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -724,7 +724,7 @@
         }
       ],
       "attributes": {
-        "guid": "4781b2e8-8e2c-4e52-8d98-de9b192b62bb",
+        "guid": "5b019114-828a-4fd4-8fc3-16c63e4f8afb",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -737,7 +737,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "b5a37681-c71b-4715-aa05-4e0fe4feeea2"
+            "guid": "49130138-e9eb-4097-8630-4d04c13e13cf"
           },
           "label": ""
         }
@@ -751,7 +751,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "0a1047ea-64b0-4d34-ab2d-88539a4ed5f0"
+            "guid": "872c1964-48b7-4428-8775-8621ddd6f9d0"
           },
           "label": ""
         }

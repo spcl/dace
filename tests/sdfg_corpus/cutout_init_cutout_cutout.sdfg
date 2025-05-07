@@ -1,0 +1,49 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "cutout_init_cutout_cutout",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "2743da9c-bc14-4e90-9c69-edbbf471100e",
+    "hash": "cb8d439823b1cc46677bf5ca7a826b8851f8a1d57ad22d8a30438d180ce681f8"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "f329df47-7421-4815-b08e-f2cea9d7f18b"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

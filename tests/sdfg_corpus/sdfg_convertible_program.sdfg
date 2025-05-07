@@ -44,15 +44,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 17,
-      "end_line": 19,
+      "start_line": 18,
+      "end_line": 20,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/python_frontend/sdfg_convertible_test.py"
+      "filename": "/scratch/bates/dace/tests/python_frontend/sdfg_convertible_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "c87587ba-1d13-40fa-a78d-587f2321c82f",
-    "hash": "21dcd397d7448b9a5aa3cefaf2145073c2aa9bdc470dd817c25586a0f5e52f0b"
+    "guid": "4e49c4be-c7c8-4731-be54-2745690d9d0c",
+    "hash": "6ff08e9e46f68cd30ea3aa1427a289edc66af305ec73222384c1076d302aa002"
   },
   "nodes": [
     {
@@ -66,7 +66,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "0ba91e78-3415-4c57-996e-5d6546a71346",
+        "guid": "be307b82-36f1-45ab-9a7a-2a11026eb527",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -78,7 +78,7 @@
           "__tmp1": "arr"
         },
         "debuginfo": null,
-        "guid": "6c754836-4b41-4555-a131-544277eb0848",
+        "guid": "58e5581a-f632-4a45-aa57-ba99c003ec8a",
         "executions": "1",
         "dynamic_executions": false
       },
@@ -94,12 +94,12 @@
           "nodes": [],
           "edges": [],
           "attributes": {
-            "guid": "b201b402-362a-427f-bf86-e20f89f85c70"
+            "guid": "93e34340-4eed-4bae-81f5-e8377767cd9d"
           }
         },
         {
           "type": "SDFGState",
-          "label": "call_sdfg_convertible_test_convertible_19",
+          "label": "call_sdfg_convertible_test_convertible_20",
           "id": 1,
           "collapsed": false,
           "scope_dict": {
@@ -159,14 +159,14 @@
                     },
                     "debuginfo": {
                       "type": "DebugInfo",
-                      "start_line": 11,
-                      "end_line": 13,
+                      "start_line": 12,
+                      "end_line": 14,
                       "start_column": 0,
                       "end_column": 0,
-                      "filename": "/home/beates/Desktop/dace/tests/python_frontend/sdfg_convertible_test.py"
+                      "filename": "/scratch/bates/dace/tests/python_frontend/sdfg_convertible_test.py"
                     },
                     "using_explicit_control_flow": true,
-                    "guid": "c9df6410-8377-483e-8fce-9d5ec80a6fd9"
+                    "guid": "100ab3e0-be3b-4899-b7fc-2cf13a853ad4"
                   },
                   "nodes": [
                     {
@@ -180,14 +180,14 @@
                       "nodes": [],
                       "edges": [],
                       "attributes": {
-                        "guid": "64de5da5-eb3a-4b73-9aec-c16684705c1d",
+                        "guid": "7222baf7-d35d-4254-ab75-70114798ee58",
                         "executions": "1",
                         "dynamic_executions": false
                       }
                     },
                     {
                       "type": "SDFGState",
-                      "label": "assign_13_4",
+                      "label": "assign_14_4",
                       "id": 1,
                       "collapsed": false,
                       "scope_dict": {
@@ -203,9 +203,9 @@
                       "nodes": [
                         {
                           "type": "MapEntry",
-                          "label": "assign_13_4_map[__i0=2:8]",
+                          "label": "assign_14_4_map[__i0=2:8]",
                           "attributes": {
-                            "label": "assign_13_4_map",
+                            "label": "assign_14_4_map",
                             "params": [
                               "__i0"
                             ],
@@ -222,13 +222,13 @@
                             },
                             "debuginfo": {
                               "type": "DebugInfo",
-                              "start_line": 13,
-                              "end_line": 13,
+                              "start_line": 14,
+                              "end_line": 14,
                               "start_column": 19,
                               "end_column": 19,
-                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/sdfg_convertible_test.py"
+                              "filename": "/scratch/bates/dace/tests/python_frontend/sdfg_convertible_test.py"
                             },
-                            "guid": "fd79b02e-ba6c-49ee-9cdd-cf53a0eaa68d"
+                            "guid": "bfe4ec49-ee9f-4215-868b-671b4e506014"
                           },
                           "id": 0,
                           "scope_entry": null,
@@ -236,7 +236,7 @@
                         },
                         {
                           "type": "Tasklet",
-                          "label": "assign_13_4",
+                          "label": "assign_14_4",
                           "attributes": {
                             "code": {
                               "string_data": "__out = 7.0",
@@ -244,17 +244,17 @@
                             },
                             "debuginfo": {
                               "type": "DebugInfo",
-                              "start_line": 13,
-                              "end_line": 13,
+                              "start_line": 14,
+                              "end_line": 14,
                               "start_column": 19,
                               "end_column": 19,
-                              "filename": "/home/beates/Desktop/dace/tests/python_frontend/sdfg_convertible_test.py"
+                              "filename": "/scratch/bates/dace/tests/python_frontend/sdfg_convertible_test.py"
                             },
-                            "label": "assign_13_4",
+                            "label": "assign_14_4",
                             "out_connectors": {
                               "__out": null
                             },
-                            "guid": "e8e38fe5-5d38-4e72-9e9c-b56ad328e175"
+                            "guid": "9ce836b1-00d4-4c0b-806e-7b7d1be9a3ac"
                           },
                           "id": 1,
                           "scope_entry": "0",
@@ -262,7 +262,7 @@
                         },
                         {
                           "type": "MapExit",
-                          "label": "assign_13_4_map[__i0=2:8]",
+                          "label": "assign_14_4_map[__i0=2:8]",
                           "attributes": {
                             "in_connectors": {
                               "IN_arr": null
@@ -270,7 +270,7 @@
                             "out_connectors": {
                               "OUT_arr": null
                             },
-                            "guid": "94e02ece-8af2-4064-b6d5-8ca0752d2a3c"
+                            "guid": "8a9200eb-049c-43e5-85bc-ead85698bfaa"
                           },
                           "id": 2,
                           "scope_entry": "0",
@@ -282,14 +282,14 @@
                           "attributes": {
                             "debuginfo": {
                               "type": "DebugInfo",
-                              "start_line": 1,
-                              "end_line": 1,
+                              "start_line": 1912,
+                              "end_line": 1912,
                               "start_column": 0,
                               "end_column": 0,
-                              "filename": "skipped"
+                              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
                             },
                             "data": "__tmp1",
-                            "guid": "03f1ea79-ee54-4be4-ac19-39a65d2a0deb"
+                            "guid": "fc00b408-0bb1-4964-b042-e304a049279a"
                           },
                           "id": 3,
                           "scope_entry": null,
@@ -305,7 +305,7 @@
                               "attributes": {
                                 "volume": "1",
                                 "debuginfo": null,
-                                "guid": "5b8e356d-a07e-4537-bc52-2046336bb129",
+                                "guid": "e5dc306d-182e-4541-afdf-c3f32bd57e5f",
                                 "src_subset": null,
                                 "dst_subset": null,
                                 "is_data_src": false,
@@ -338,7 +338,7 @@
                                 },
                                 "data": "__tmp1",
                                 "debuginfo": null,
-                                "guid": "2c4ac1d8-b8ca-4628-86ba-eeab1e5c63bc",
+                                "guid": "72254d51-5712-4c0e-9f9a-e9edf3cc701d",
                                 "src_subset": null,
                                 "dst_subset": {
                                   "type": "Range",
@@ -381,7 +381,7 @@
                                 },
                                 "data": "__tmp1",
                                 "debuginfo": null,
-                                "guid": "2c4ac1d8-b8ca-4628-86ba-eeab1e5c63bc",
+                                "guid": "72254d51-5712-4c0e-9f9a-e9edf3cc701d",
                                 "src_subset": null,
                                 "dst_subset": {
                                   "type": "Range",
@@ -406,7 +406,7 @@
                         }
                       ],
                       "attributes": {
-                        "guid": "f79ac0ed-a889-40a1-9546-00760538be4e",
+                        "guid": "b304dec8-cf50-4362-996d-3b888e13b8ba",
                         "executions": "1",
                         "dynamic_executions": false
                       }
@@ -419,7 +419,7 @@
                         "data": {
                           "type": "InterstateEdge",
                           "attributes": {
-                            "guid": "8407b1b6-e338-4e9f-adcb-c38681a3aa8c"
+                            "guid": "3ad5bd62-7b89-4d4a-a5ac-4123c0ada8bf"
                           },
                           "label": ""
                         }
@@ -436,17 +436,17 @@
                 },
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 19,
-                  "end_line": 19,
+                  "start_line": 20,
+                  "end_line": 20,
                   "start_column": 22,
                   "end_column": 22,
-                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/sdfg_convertible_test.py"
+                  "filename": "/scratch/bates/dace/tests/python_frontend/sdfg_convertible_test.py"
                 },
                 "label": "sdfg_convertible_test_convertible",
                 "out_connectors": {
                   "__tmp1": null
                 },
-                "guid": "8bffeed3-8a4e-4861-be6b-420af071acd8"
+                "guid": "15836244-7b1f-429b-8d85-5666661fda1c"
               },
               "id": 0,
               "scope_entry": null,
@@ -458,14 +458,14 @@
               "attributes": {
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 19,
-                  "end_line": 19,
+                  "start_line": 20,
+                  "end_line": 20,
                   "start_column": 22,
                   "end_column": 22,
-                  "filename": "/home/beates/Desktop/dace/tests/python_frontend/sdfg_convertible_test.py"
+                  "filename": "/scratch/bates/dace/tests/python_frontend/sdfg_convertible_test.py"
                 },
                 "data": "arr",
-                "guid": "5063043f-a26d-4f0b-933b-40098216a2eb"
+                "guid": "43d61b9c-67cb-4f44-a8c4-ed9d8a39259b"
               },
               "id": 1,
               "scope_entry": null,
@@ -493,7 +493,7 @@
                     },
                     "data": "arr",
                     "debuginfo": null,
-                    "guid": "b6000a32-4426-4bb1-83e5-23a59ca69757",
+                    "guid": "a2527e83-b1a9-4582-b95b-9a8f51945f56",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -518,7 +518,7 @@
             }
           ],
           "attributes": {
-            "guid": "6ad6c0e9-e390-454a-b3b0-615926eb3432"
+            "guid": "a8eedbc6-89b8-4f95-bd13-48c5d88b5a89"
           }
         }
       ],
@@ -529,7 +529,7 @@
             "data": {
               "type": "InterstateEdge",
               "attributes": {
-                "guid": "62dece33-8a1b-4eeb-bc16-195d3539811a"
+                "guid": "8bccb1d1-a368-4f13-8c9b-549e746210cb"
               },
               "label": ""
             }
@@ -539,7 +539,7 @@
         }
       ],
       "collapsed": false,
-      "label": "sdfg_convertible_test_convertible_19",
+      "label": "sdfg_convertible_test_convertible_20",
       "id": 1,
       "cfg_list_id": 1,
       "start_block": 0
@@ -552,7 +552,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "2188522d-446e-4b30-8c1c-2efd2a5a82ce"
+            "guid": "9930dfeb-6268-4325-8712-f58920e86d09"
           },
           "label": ""
         }

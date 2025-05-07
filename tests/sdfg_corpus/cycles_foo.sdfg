@@ -1,0 +1,160 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "cycles_foo",
+    "_arrays": {
+      "bla": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "10",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "10"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "08dc631f-6ba8-4a08-98d3-dca9f11b64de",
+    "hash": "77614e01f6f210d1b4d253ba60530ef3fb1e0673b4a8700005f182e24712b84d"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "block",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {},
+      "nodes": [
+        {
+          "type": "MapEntry",
+          "label": "map_3[i=0:9]",
+          "attributes": {
+            "label": "map_3",
+            "params": [
+              "i"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "8",
+                  "step": "1",
+                  "tile": "1"
+                }
+              ]
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 25,
+              "end_line": 25,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/sdfg/cycles_test.py"
+            },
+            "in_connectors": {
+              "IN_0": null
+            },
+            "out_connectors": {
+              "OUT_0": null
+            },
+            "guid": "99253656-de2e-4089-a282-0f756ee989e6"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "MapExit",
+          "label": "map_3[i=0:9]",
+          "attributes": {
+            "guid": "c8f01263-9030-4fc7-96c7-3efc5466b889"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "9",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "bla",
+                "debuginfo": null,
+                "guid": "9813f420-debc-49c1-83a9-2a955ce92a00",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": null,
+                "num_accesses": "9"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "0",
+          "dst_connector": "IN_0",
+          "src_connector": "OUT_0"
+        }
+      ],
+      "attributes": {
+        "guid": "0ad5f60b-0289-45be-add9-b0c97ba95d65"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

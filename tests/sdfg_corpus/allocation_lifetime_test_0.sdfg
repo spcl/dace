@@ -45,8 +45,8 @@
         "language": "CPP"
       }
     },
-    "guid": "7cfd4be5-530e-455f-a3a1-a94eae810055",
-    "hash": "12b2a8a8a4765d659011808382b7d6b561495a4a7ddf9be5f7576015aa901be8"
+    "guid": "3ca5baed-c45a-4405-b56e-ea2cbbae1146",
+    "hash": "53cc0b2493eb8f76a3dd34a88aeae0ab7686b85ae546011352fa9c1c30e7b4aa"
   },
   "nodes": [
     {
@@ -60,7 +60,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "764dea85-f945-412b-bdef-843a1b7db836"
+        "guid": "4193a37c-8033-4b7f-9695-6f3ee8a7849e"
       }
     },
     {
@@ -74,7 +74,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "78c944a1-b794-49df-ae78-60bfce964f87"
+        "guid": "ac6bfdd9-a126-4fc8-8fce-f99ab5ae329b"
       }
     },
     {
@@ -99,17 +99,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 479,
+              "end_line": 479,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "label": "br1",
             "out_connectors": {
               "out": null
             },
-            "guid": "b3a7a5a9-84c7-4f9f-aea8-16f2d2dbae2b"
+            "guid": "42f0ab66-8ed2-4bbf-af32-f2f7c73cee1e"
           },
           "id": 0,
           "scope_entry": null,
@@ -121,14 +121,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 490,
+              "end_line": 490,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "A",
-            "guid": "b30925be-f523-47a0-9304-5559958c116f"
+            "guid": "1ee13ebf-31d4-430f-b3cc-05a19bfff08c"
           },
           "id": 1,
           "scope_entry": null,
@@ -156,7 +156,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "f83eddec-5111-41d6-a382-c84863c8b655",
+                "guid": "94c02abd-c83a-4bd9-909c-52ae0265298e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -181,7 +181,7 @@
         }
       ],
       "attributes": {
-        "guid": "4fab1b07-117c-4c42-ade4-1e496770d1a7"
+        "guid": "cc4be80d-beed-44e6-9011-8cbc76e805ae"
       }
     },
     {
@@ -202,14 +202,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 498,
+              "end_line": 498,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "A",
-            "guid": "e004aee0-fe7a-4698-8b53-fce660a0acf0"
+            "guid": "9e2f1c8c-8757-4f95-9e39-996c28ec8a62"
           },
           "id": 0,
           "scope_entry": null,
@@ -221,18 +221,18 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 499,
+              "end_line": 499,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "side_effects": true,
             "label": "nothing",
             "in_connectors": {
               "inp": null
             },
-            "guid": "945cd889-1932-4dd6-8b1b-0f8166d7064f"
+            "guid": "212a6112-5feb-43c7-a190-b8f0c369e4f9"
           },
           "id": 1,
           "scope_entry": null,
@@ -260,7 +260,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "cb99082b-6000-472b-93bf-4b092e58850d",
+                "guid": "d1e51b38-6f17-4977-a0e3-c5d75c26fd2c",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -285,7 +285,7 @@
         }
       ],
       "attributes": {
-        "guid": "a6231f70-1dec-41b8-9b88-e2a4111fca12"
+        "guid": "6c7ec716-defe-4bb6-84ac-a64a3e8501af"
       }
     },
     {
@@ -310,17 +310,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 484,
+              "end_line": 484,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "label": "br2",
             "out_connectors": {
               "out": null
             },
-            "guid": "99a8ab56-37c3-436f-874d-d1a7b5e34d2e"
+            "guid": "ca4861bd-4e00-445d-9cab-878c982e5c80"
           },
           "id": 0,
           "scope_entry": null,
@@ -332,14 +332,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 494,
+              "end_line": 494,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "A",
-            "guid": "646833ba-55a5-4a08-89d4-ea3ed26db6ae"
+            "guid": "f1eb746c-a281-498d-81f6-4972279649d3"
           },
           "id": 1,
           "scope_entry": null,
@@ -367,7 +367,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "f9b59b3a-da24-4af4-8634-5ca040662d48",
+                "guid": "b38d1eed-13e0-482c-a812-9ecfa36e0431",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -392,7 +392,7 @@
         }
       ],
       "attributes": {
-        "guid": "c1fb710c-4956-4d49-8b3b-d3992cac8782"
+        "guid": "5d74e1a4-980d-4adc-9834-0b6a4e16258b"
       }
     },
     {
@@ -413,14 +413,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 501,
+              "end_line": 501,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "A",
-            "guid": "5c180316-aa66-4cc3-a32b-1358f59da0ee"
+            "guid": "d2ba5094-f638-4ed6-9e6a-11f0a8c79420"
           },
           "id": 0,
           "scope_entry": null,
@@ -432,18 +432,18 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 502,
+              "end_line": 502,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "side_effects": true,
             "label": "nothing",
             "in_connectors": {
               "inp": null
             },
-            "guid": "b90712c5-63f5-47c5-b0af-bbcd298c6388"
+            "guid": "c9dc9866-6fee-4d3d-8b2a-1a9081b8f997"
           },
           "id": 1,
           "scope_entry": null,
@@ -471,7 +471,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "7903651c-d6b3-4947-a720-e3db71652522",
+                "guid": "f1b38845-cfb1-4bff-854d-80668a282a6a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -496,7 +496,7 @@
         }
       ],
       "attributes": {
-        "guid": "7c7d11ba-5cb2-45c6-887e-018accd845e0"
+        "guid": "af75d954-29cc-4f95-85ca-aec02d86dcb8"
       }
     },
     {
@@ -510,7 +510,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "4865a6aa-cfff-405b-bc63-6f9be18d1221"
+        "guid": "e8918119-9a80-452d-8bc4-95a18abb23c8"
       }
     }
   ],
@@ -521,7 +521,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "0824c6d5-abbe-45ae-beb3-ac2f0c9bff50"
+            "guid": "a8b15a25-40e8-49e2-963b-18576208287a"
           },
           "label": ""
         }
@@ -535,7 +535,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "8f232778-c0b8-4c17-84f0-f01153fe890f"
+            "guid": "2149ded5-2030-4991-a7b8-25294fa3cf50"
           },
           "label": ""
         }
@@ -552,7 +552,7 @@
             "assignments": {
               "N": "2"
             },
-            "guid": "22924882-f297-4ec6-b869-c64969b3aa8e"
+            "guid": "bc9cebf6-0d13-428c-b76b-2bae0939781e"
           },
           "label": "N=2"
         }
@@ -570,7 +570,7 @@
               "string_data": "(cnd != 0)",
               "language": "Python"
             },
-            "guid": "ec80735d-0fe4-4dda-b0ff-ee43edb2e5b5"
+            "guid": "5d5296a9-9a1a-4e61-81fb-dbf9a7a2f5a4"
           },
           "label": "(cnd != 0)"
         }
@@ -588,7 +588,7 @@
               "string_data": "(cnd == 0)",
               "language": "Python"
             },
-            "guid": "865bb2e5-4dca-4a65-8e27-04b8f0f3166f"
+            "guid": "4155490b-3ae2-4020-92ea-7dbf14381478"
           },
           "label": "(cnd == 0)"
         }
@@ -602,7 +602,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "04d81712-0c96-4814-b3ff-ac94bc17179a"
+            "guid": "7369caad-cc04-49df-8cc7-8eefef403523"
           },
           "label": ""
         }
@@ -616,7 +616,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "fff3b034-b584-4626-a5f6-f424309db4ff"
+            "guid": "ab891be2-10d2-4d41-9d35-f4b2e8dd9e0b"
           },
           "label": ""
         }

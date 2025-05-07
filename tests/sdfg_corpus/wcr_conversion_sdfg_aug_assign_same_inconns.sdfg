@@ -44,15 +44,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 251,
-      "end_line": 259,
+      "start_line": 252,
+      "end_line": 260,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "3ba68038-b6f9-4e4c-92fa-8ed12840633a",
-    "hash": "463c64d2b65f4bd70203016553b1213a6a913ba97948cdcaf70034df7debaa31"
+    "guid": "b4f751f5-2b2b-441c-9458-ff50726b5068",
+    "hash": "66c0e9fdb16ee0f996dfd867dba9316a05f9ee03f1827a3dfbcec3660632d64e"
   },
   "nodes": [
     {
@@ -66,7 +66,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "1128578d-5a11-468d-8dff-47fa051a5cbd",
+        "guid": "a23ca54e-39f7-4fab-804b-58bdc62bbe4a",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -91,9 +91,9 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_253[i=0:31]",
+          "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254[i=0:31]",
           "attributes": {
-            "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_253",
+            "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254",
             "params": [
               "i"
             ],
@@ -110,11 +110,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 253,
-              "end_line": 253,
+              "start_line": 254,
+              "end_line": 254,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "in_connectors": {
               "IN_1": null,
@@ -124,7 +124,7 @@
               "OUT_1": null,
               "OUT_A": null
             },
-            "guid": "28674d71-efbe-4947-a1cb-8fa7e0e6c891"
+            "guid": "df6a8b2f-3d94-4e89-b7f3-4a9848ab7700"
           },
           "id": 0,
           "scope_entry": null,
@@ -132,7 +132,7 @@
         },
         {
           "type": "MapExit",
-          "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_253[i=0:31]",
+          "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254[i=0:31]",
           "attributes": {
             "in_connectors": {
               "IN_A": null
@@ -140,7 +140,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "8c682cf5-8335-4b1d-8ecf-f9b913728f57"
+            "guid": "24223de8-e6d0-4dec-9290-59937b093f97"
           },
           "id": 1,
           "scope_entry": "0",
@@ -148,30 +148,13 @@
         },
         {
           "type": "NestedSDFG",
-          "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_253_4",
+          "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254_4",
           "attributes": {
             "sdfg": {
               "type": "SDFG",
               "attributes": {
-                "name": "wcr_conversion_test_sdfg_aug_assign_same_inconns_253_4",
+                "name": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254_4",
                 "_arrays": {
-                  "__tmp_255_17": {
-                    "type": "Array",
-                    "attributes": {
-                      "strides": [
-                        "1"
-                      ],
-                      "total_size": "1",
-                      "offset": [
-                        "0"
-                      ],
-                      "dtype": "float64",
-                      "shape": [
-                        "1"
-                      ],
-                      "debuginfo": null
-                    }
-                  },
                   "__tmp_256_17": {
                     "type": "Array",
                     "attributes": {
@@ -190,6 +173,23 @@
                     }
                   },
                   "__tmp_257_17": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp_258_17": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -225,7 +225,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "39e2cac9-32e0-418b-9003-1bb23906e3e3"
+                "guid": "5ee771d9-a63a-436d-a3cf-0809668639fe"
               },
               "nodes": [
                 {
@@ -239,14 +239,14 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "135a71b0-89f6-460e-a3a5-1aaf03c156c5",
+                    "guid": "38167014-e135-4328-a40e-cfc4d27eafcf",
                     "executions": "1",
                     "dynamic_executions": false
                   }
                 },
                 {
                   "type": "SDFGState",
-                  "label": "with_254",
+                  "label": "with_255",
                   "id": 1,
                   "collapsed": false,
                   "scope_dict": {
@@ -260,7 +260,7 @@
                   "nodes": [
                     {
                       "type": "Tasklet",
-                      "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254",
+                      "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_255",
                       "attributes": {
                         "code": {
                           "string_data": "c = (a * b)",
@@ -268,13 +268,13 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 254,
-                          "end_line": 259,
+                          "start_line": 255,
+                          "end_line": 260,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
                         },
-                        "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254",
+                        "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_255",
                         "in_connectors": {
                           "a": null,
                           "b": null
@@ -282,28 +282,9 @@
                         "out_connectors": {
                           "c": null
                         },
-                        "guid": "da31cb9d-8b98-4c93-ab0d-61c86abd79c3"
+                        "guid": "79dfffb6-ba75-4695-98b7-3d677123d7b9"
                       },
                       "id": 0,
-                      "scope_entry": null,
-                      "scope_exit": null
-                    },
-                    {
-                      "type": "AccessNode",
-                      "label": "__tmp_255_17",
-                      "attributes": {
-                        "debuginfo": {
-                          "type": "DebugInfo",
-                          "start_line": 254,
-                          "end_line": 254,
-                          "start_column": 8,
-                          "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
-                        },
-                        "data": "__tmp_255_17",
-                        "guid": "c4c1a588-91cc-41a6-8e43-082019b803af"
-                      },
-                      "id": 1,
                       "scope_entry": null,
                       "scope_exit": null
                     },
@@ -313,16 +294,16 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 254,
-                          "end_line": 254,
+                          "start_line": 255,
+                          "end_line": 255,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
                         },
                         "data": "__tmp_256_17",
-                        "guid": "ff567879-a6b3-425c-8fe2-e6b645ae91b6"
+                        "guid": "5e52cf0e-cea5-43ef-8830-3670d005dcd9"
                       },
-                      "id": 2,
+                      "id": 1,
                       "scope_entry": null,
                       "scope_exit": null
                     },
@@ -332,14 +313,33 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 254,
-                          "end_line": 254,
+                          "start_line": 255,
+                          "end_line": 255,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
                         },
                         "data": "__tmp_257_17",
-                        "guid": "a09c3e9b-ee58-4533-a3c7-9304890d1f30"
+                        "guid": "85e53dc4-f8fc-4420-ae40-dda8991d8e97"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_258_17",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 255,
+                          "end_line": 255,
+                          "start_column": 8,
+                          "end_column": 8,
+                          "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
+                        },
+                        "data": "__tmp_258_17",
+                        "guid": "75cd0a52-8c8b-440b-ab9e-ebf62f7f4fca"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -365,9 +365,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_255_17",
+                            "data": "__tmp_256_17",
                             "debuginfo": null,
-                            "guid": "4ededecc-06bc-47f6-a70a-ab699d89956d",
+                            "guid": "3a51bd74-18f2-40a8-8ee6-3b05844fa7f6",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -408,9 +408,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_256_17",
+                            "data": "__tmp_257_17",
                             "debuginfo": null,
-                            "guid": "6d57a9b3-c7a9-4a54-a7cc-17b89bf82b17",
+                            "guid": "a3a7720b-86eb-49d0-ad98-8aadcdf7d331",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -451,9 +451,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_257_17",
+                            "data": "__tmp_258_17",
                             "debuginfo": null,
-                            "guid": "2229dce0-d89c-4769-9f0b-1550a65f6e03",
+                            "guid": "7a9c54de-8050-4e15-bcfd-88d85fef4c5a",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -478,7 +478,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "0f214e80-a755-4272-b4b1-7f04e7ff12d5",
+                    "guid": "608a4733-9420-4560-bc45-4ef7ffd45b6c",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -491,7 +491,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "e7b788b0-640b-4276-aa62-9f92928e89f0"
+                        "guid": "7f849c45-94d5-4b90-b978-4d64d82c0bc1"
                       },
                       "label": ""
                     }
@@ -508,21 +508,21 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 253,
-              "end_line": 253,
+              "start_line": 254,
+              "end_line": 254,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
-            "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_253_4",
+            "label": "wcr_conversion_test_sdfg_aug_assign_same_inconns_254_4",
             "in_connectors": {
-              "__tmp_255_17": null,
-              "__tmp_256_17": null
-            },
-            "out_connectors": {
+              "__tmp_256_17": null,
               "__tmp_257_17": null
             },
-            "guid": "de0154dc-f6a5-4088-b7b9-917d2f369402"
+            "out_connectors": {
+              "__tmp_258_17": null
+            },
+            "guid": "517b53df-474f-4ba5-a6ca-3fce3545e1fd"
           },
           "id": 2,
           "scope_entry": "0",
@@ -534,14 +534,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 253,
-              "end_line": 253,
+              "start_line": 254,
+              "end_line": 254,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "A",
-            "guid": "e71061df-4534-44b5-8d9d-84a33cc7edf4"
+            "guid": "230b43c3-3904-4b8e-a0c6-16a90ef7c28a"
           },
           "id": 3,
           "scope_entry": null,
@@ -553,14 +553,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 253,
-              "end_line": 253,
+              "start_line": 254,
+              "end_line": 254,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "A",
-            "guid": "9493a440-ada4-447e-af35-8f2186afe98b"
+            "guid": "e8d5de9f-6662-49ad-a49e-3a4409dffa29"
           },
           "id": 4,
           "scope_entry": null,
@@ -572,14 +572,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 253,
-              "end_line": 253,
+              "start_line": 254,
+              "end_line": 254,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/wcr_conversion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/wcr_conversion_test.py"
             },
             "data": "A",
-            "guid": "b4d43776-924b-4494-aee6-9106d6078646"
+            "guid": "c30f87a8-6b9f-4137-9dff-d12b98ffe64a"
           },
           "id": 5,
           "scope_entry": null,
@@ -607,7 +607,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1d0331e3-bd9c-4aa3-8150-b11167b9305b",
+                "guid": "d1208962-cabd-4027-a17b-29d0dcc20026",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -650,7 +650,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1d0331e3-bd9c-4aa3-8150-b11167b9305b",
+                "guid": "d1208962-cabd-4027-a17b-29d0dcc20026",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -693,7 +693,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "3b516fde-7b12-4edd-8ed0-9b912f251450",
+                "guid": "b3fb6268-84be-41f3-814c-18612478b98a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -713,7 +713,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_256_17",
+          "dst_connector": "__tmp_257_17",
           "src_connector": "OUT_1"
         },
         {
@@ -736,7 +736,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "d1a35a87-5c17-41ef-9b4f-b2fc46e1c118",
+                "guid": "ae49aea9-9406-463b-b62d-b4cb3dc8e199",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -779,7 +779,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1d0331e3-bd9c-4aa3-8150-b11167b9305b",
+                "guid": "d1208962-cabd-4027-a17b-29d0dcc20026",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -799,7 +799,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_255_17",
+          "dst_connector": "__tmp_256_17",
           "src_connector": "OUT_A"
         },
         {
@@ -822,7 +822,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "d1a35a87-5c17-41ef-9b4f-b2fc46e1c118",
+                "guid": "ae49aea9-9406-463b-b62d-b4cb3dc8e199",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -843,11 +843,11 @@
           "src": "2",
           "dst": "1",
           "dst_connector": "IN_A",
-          "src_connector": "__tmp_257_17"
+          "src_connector": "__tmp_258_17"
         }
       ],
       "attributes": {
-        "guid": "2d40d489-88ae-4b27-b60e-4c410c5f85f4",
+        "guid": "e8ea3a13-247c-4f29-a875-8b6995b2861a",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -860,7 +860,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "8332a090-6888-4b5d-9d10-5b7cbdb05fe2"
+            "guid": "cacb4776-7124-4a1f-ad76-9b6d60744a43"
           },
           "label": ""
         }

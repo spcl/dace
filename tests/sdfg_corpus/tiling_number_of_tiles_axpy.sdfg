@@ -77,14 +77,14 @@
     "debuginfo": {
       "type": "DebugInfo",
       "start_line": 9,
-      "end_line": 18,
+      "end_line": 19,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "8b337ca4-c223-4fc8-894c-fe4a1862abb1",
-    "hash": "5b5ac6ebf44eab3992769c9fe604368e9c2c75096d646ef635c367f5140de963"
+    "guid": "1feb1ba0-5df0-454a-8cef-d5e5852d2f57",
+    "hash": "8c33f8091537abc044687fe05e1668d07c0b156b0194b02a4f925cec1730b332"
   },
   "nodes": [
     {
@@ -98,14 +98,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "1fe1d9a6-9599-4daf-8dc3-830c235793e7",
+        "guid": "3d35805c-1a6e-4733-9533-4421a76a10fb",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "s12_4",
+      "label": "s13_4",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -143,11 +143,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 12,
-              "end_line": 12,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -159,7 +159,7 @@
               "OUT_X": null,
               "OUT_Y": null
             },
-            "guid": "f6d0a251-2cc8-4aa0-a887-177af43e557a"
+            "guid": "41fe1b87-4d5b-42c1-8a30-07eda2b9a8e5"
           },
           "id": 0,
           "scope_entry": null,
@@ -175,7 +175,7 @@
             "out_connectors": {
               "OUT_Y": null
             },
-            "guid": "148fd010-d3b7-4b50-88bf-4710cd08db8a"
+            "guid": "59389d91-1a3c-4931-bc97-3bc4a287cba5"
           },
           "id": 1,
           "scope_entry": "0",
@@ -183,33 +183,16 @@
         },
         {
           "type": "NestedSDFG",
-          "label": "multiplication_body_12_4",
+          "label": "multiplication_body_13_4",
           "attributes": {
             "sdfg": {
               "type": "SDFG",
               "attributes": {
-                "name": "multiplication_body_12_4",
+                "name": "multiplication_body_13_4",
                 "_arrays": {
-                  "__tmp_13_16": {
+                  "__tmp_14_16": {
                     "type": "Scalar",
                     "attributes": {
-                      "dtype": "float64",
-                      "shape": [
-                        "1"
-                      ],
-                      "debuginfo": null
-                    }
-                  },
-                  "__tmp_14_16": {
-                    "type": "Array",
-                    "attributes": {
-                      "strides": [
-                        "1"
-                      ],
-                      "total_size": "1",
-                      "offset": [
-                        "0"
-                      ],
                       "dtype": "float64",
                       "shape": [
                         "1"
@@ -234,7 +217,24 @@
                       "debuginfo": null
                     }
                   },
-                  "__tmp_16_15": {
+                  "__tmp_16_16": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float64",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp_17_15": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -270,7 +270,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "9a7176f6-0008-4e09-ae80-3dd55ec5c5a5"
+                "guid": "a86b2020-b3ec-4996-9312-5b2983c43ca4"
               },
               "nodes": [
                 {
@@ -284,14 +284,14 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "7ee11bae-a74d-43fe-bfc9-706b16bbc0dc",
+                    "guid": "f52f73eb-5f2d-4d34-9f5f-30b89717ad7f",
                     "executions": "1",
                     "dynamic_executions": false
                   }
                 },
                 {
                   "type": "SDFGState",
-                  "label": "s12_4",
+                  "label": "s13_4",
                   "id": 1,
                   "collapsed": false,
                   "scope_dict": {
@@ -314,11 +314,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 12,
-                          "end_line": 18,
+                          "start_line": 13,
+                          "end_line": 19,
                           "start_column": 4,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
                         },
                         "label": "multiplication",
                         "in_connectors": {
@@ -329,28 +329,9 @@
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "f0374b2b-aa40-45dc-88f5-050165c946fa"
+                        "guid": "7ac3961c-1e6e-4c22-a0ce-eaf06729b2be"
                       },
                       "id": 0,
-                      "scope_entry": null,
-                      "scope_exit": null
-                    },
-                    {
-                      "type": "AccessNode",
-                      "label": "__tmp_13_16",
-                      "attributes": {
-                        "debuginfo": {
-                          "type": "DebugInfo",
-                          "start_line": 12,
-                          "end_line": 12,
-                          "start_column": 4,
-                          "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
-                        },
-                        "data": "__tmp_13_16",
-                        "guid": "1bbcd531-1ac1-450b-b62d-e1f86c2b8d91"
-                      },
-                      "id": 1,
                       "scope_entry": null,
                       "scope_exit": null
                     },
@@ -360,16 +341,16 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 12,
-                          "end_line": 12,
+                          "start_line": 13,
+                          "end_line": 13,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
                         },
                         "data": "__tmp_14_16",
-                        "guid": "f47c9177-ea8d-4540-b45f-2b397bcefe81"
+                        "guid": "21aa036b-21c5-43a7-9da1-24c6ca82d225"
                       },
-                      "id": 2,
+                      "id": 1,
                       "scope_entry": null,
                       "scope_exit": null
                     },
@@ -379,14 +360,33 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 12,
-                          "end_line": 12,
+                          "start_line": 13,
+                          "end_line": 13,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
                         },
                         "data": "__tmp_15_16",
-                        "guid": "573d714e-0ed5-4d14-a712-03e25b70563b"
+                        "guid": "ae985ec3-ce6e-4ae1-b841-4628278e44c9"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_16_16",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 13,
+                          "end_line": 13,
+                          "start_column": 4,
+                          "end_column": 4,
+                          "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
+                        },
+                        "data": "__tmp_16_16",
+                        "guid": "66b3facd-50c4-4631-9bd5-296a5cd7cdfb"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -394,18 +394,18 @@
                     },
                     {
                       "type": "AccessNode",
-                      "label": "__tmp_16_15",
+                      "label": "__tmp_17_15",
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 12,
-                          "end_line": 12,
+                          "start_line": 13,
+                          "end_line": 13,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
                         },
-                        "data": "__tmp_16_15",
-                        "guid": "d726276e-db7b-4cb1-8a34-ca70afa6c372"
+                        "data": "__tmp_17_15",
+                        "guid": "293e22c9-eb3b-4fb4-ada2-ff78144a6b79"
                       },
                       "id": 4,
                       "scope_entry": null,
@@ -431,9 +431,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_13_16",
+                            "data": "__tmp_14_16",
                             "debuginfo": null,
-                            "guid": "47586a5d-3c7b-483c-9545-6020b3bb1a27",
+                            "guid": "e034de48-ef3d-4f7d-a9df-62b017603fad",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -474,9 +474,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_14_16",
+                            "data": "__tmp_15_16",
                             "debuginfo": null,
-                            "guid": "3a50b3d1-97ef-406d-a7de-097f707c7720",
+                            "guid": "f9f86d69-1d31-4dec-803a-54136989138c",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -517,9 +517,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_15_16",
+                            "data": "__tmp_16_16",
                             "debuginfo": null,
-                            "guid": "2a66f88b-c161-46da-8c91-2c93dfd8c7c1",
+                            "guid": "b9d0acf2-92c0-4a7e-b692-f419157a08bf",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -560,9 +560,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_16_15",
+                            "data": "__tmp_17_15",
                             "debuginfo": null,
-                            "guid": "30ea49c5-612b-4fbf-a4a8-d4ccc08a9d6a",
+                            "guid": "d351f61d-7447-43e7-a403-a3bedcb04b71",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -587,7 +587,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "95f74ab8-537a-48b2-8f07-4132759f39a8",
+                    "guid": "63f47d17-fce8-439d-94a0-1e1b72fd14d2",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -600,7 +600,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "bc7f2fb0-f302-40b8-a24b-48fa97f260ea"
+                        "guid": "a34c6a76-7545-4203-8b70-b396a40e32fb"
                       },
                       "label": ""
                     }
@@ -617,22 +617,22 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 12,
-              "end_line": 12,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
             },
-            "label": "multiplication_body_12_4",
+            "label": "multiplication_body_13_4",
             "in_connectors": {
-              "__tmp_13_16": null,
               "__tmp_14_16": null,
-              "__tmp_15_16": null
+              "__tmp_15_16": null,
+              "__tmp_16_16": null
             },
             "out_connectors": {
-              "__tmp_16_15": null
+              "__tmp_17_15": null
             },
-            "guid": "00b5908e-6b3a-4dc2-b66c-c37f933c56b7"
+            "guid": "cfd3ce61-5b32-4f05-b427-b2e8c22a6819"
           },
           "id": 2,
           "scope_entry": "0",
@@ -644,14 +644,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 12,
-              "end_line": 12,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
             },
             "data": "A",
-            "guid": "5a2e783c-478d-4682-baed-f7a01873c5ad"
+            "guid": "a8444a32-b8d5-4488-b77a-dd147ebd3e8e"
           },
           "id": 3,
           "scope_entry": null,
@@ -663,14 +663,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 12,
-              "end_line": 12,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
             },
             "data": "X",
-            "guid": "8452a222-548a-4579-8569-5db8088e89aa"
+            "guid": "0ac4fb28-19c5-4c17-9aaa-49775b6d6663"
           },
           "id": 4,
           "scope_entry": null,
@@ -682,14 +682,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 12,
-              "end_line": 12,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
             },
             "data": "Y",
-            "guid": "ed969c36-5185-4d32-8159-349064a91461"
+            "guid": "e7fb531b-9561-41f2-aea7-d95f3d0728e9"
           },
           "id": 5,
           "scope_entry": null,
@@ -701,14 +701,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 12,
-              "end_line": 12,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/tiling_number_of_tiles_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/tiling_number_of_tiles_test.py"
             },
             "data": "Y",
-            "guid": "f6ab9a74-0912-4c24-b720-1f474165fa0e"
+            "guid": "2562866c-2689-4c3e-8e63-7bac21594dce"
           },
           "id": 6,
           "scope_entry": null,
@@ -736,7 +736,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "d1c31e5b-a6da-49b9-96e1-e403cc3c1643",
+                "guid": "b2fb1da8-60ea-44c6-91b7-7649f4bdf5f7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -779,7 +779,7 @@
                 },
                 "data": "X",
                 "debuginfo": null,
-                "guid": "c32fa0d6-1a93-4956-aad0-451eb552e5ec",
+                "guid": "b94f77f8-3087-4bc8-8b21-560de05b9254",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -822,7 +822,7 @@
                 },
                 "data": "Y",
                 "debuginfo": null,
-                "guid": "7d1d057c-b4a1-4942-8272-832babb21423",
+                "guid": "85f11333-356a-4a1e-8e20-4ce222080782",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -865,7 +865,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "d1c31e5b-a6da-49b9-96e1-e403cc3c1643",
+                "guid": "b2fb1da8-60ea-44c6-91b7-7649f4bdf5f7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -885,7 +885,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_13_16",
+          "dst_connector": "__tmp_14_16",
           "src_connector": "OUT_A"
         },
         {
@@ -908,7 +908,7 @@
                 },
                 "data": "X",
                 "debuginfo": null,
-                "guid": "c32fa0d6-1a93-4956-aad0-451eb552e5ec",
+                "guid": "b94f77f8-3087-4bc8-8b21-560de05b9254",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -928,7 +928,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_14_16",
+          "dst_connector": "__tmp_15_16",
           "src_connector": "OUT_X"
         },
         {
@@ -951,7 +951,7 @@
                 },
                 "data": "Y",
                 "debuginfo": null,
-                "guid": "b8fbbfad-60c6-458c-b2c8-32f7e730ad01",
+                "guid": "6f22a8d1-ddeb-45aa-9a36-7a2fdc9428f2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -994,7 +994,7 @@
                 },
                 "data": "Y",
                 "debuginfo": null,
-                "guid": "7d1d057c-b4a1-4942-8272-832babb21423",
+                "guid": "85f11333-356a-4a1e-8e20-4ce222080782",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1014,7 +1014,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_15_16",
+          "dst_connector": "__tmp_16_16",
           "src_connector": "OUT_Y"
         },
         {
@@ -1037,7 +1037,7 @@
                 },
                 "data": "Y",
                 "debuginfo": null,
-                "guid": "b8fbbfad-60c6-458c-b2c8-32f7e730ad01",
+                "guid": "6f22a8d1-ddeb-45aa-9a36-7a2fdc9428f2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1058,11 +1058,11 @@
           "src": "2",
           "dst": "1",
           "dst_connector": "IN_Y",
-          "src_connector": "__tmp_16_15"
+          "src_connector": "__tmp_17_15"
         }
       ],
       "attributes": {
-        "guid": "2c1a5534-dafe-457c-aa36-21d81dac695c",
+        "guid": "d9101d44-3d59-43b2-91af-1ff34813d885",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1075,7 +1075,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "4dec0432-85a6-49db-ae3d-bd16d6df4a46"
+            "guid": "ece4e502-4bb6-484f-9b5b-93510d58b42f"
           },
           "label": ""
         }

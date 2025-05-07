@@ -1,0 +1,598 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "conditional_region_regular_if_else",
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "1",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float32",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int32"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "099fc88c-f0b6-409c-9316-1a7bd2b3335a",
+    "hash": "fd753ebfff648c1a4bde300929594ed10980a4f3c92a24658afcdfbfda862620"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "state0",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "defd8773-c0f5-46c6-8ef5-63465fb52315"
+      }
+    },
+    {
+      "type": "ConditionalBlock",
+      "attributes": {
+        "guid": "4d0feba4-aa1a-4c17-b9c9-1d692cd67c43"
+      },
+      "nodes": [
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "bf8ed08f-cd4a-4297-bb0b-fd9113daabdc"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "state1",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "A",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 73,
+                      "end_line": 73,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                    },
+                    "data": "A",
+                    "guid": "e5001489-01a2-4151-a7ab-6d26c3142c2c"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "t1",
+                  "attributes": {
+                    "code": {
+                      "string_data": "a = 100",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 74,
+                      "end_line": 74,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                    },
+                    "label": "t1",
+                    "out_connectors": {
+                      "a": null
+                    },
+                    "guid": "08e27434-28a7-4e94-a3fc-808a701df507"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "A",
+                        "debuginfo": null,
+                        "guid": "56c5bc48-930e-4b48-9fb8-d939d17cbcb2",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "1",
+                  "dst": "0",
+                  "dst_connector": null,
+                  "src_connector": "a"
+                }
+              ],
+              "attributes": {
+                "guid": "eb30ee73-eaae-4290-bac9-d92a164bf707"
+              }
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "if_body",
+          "id": 0,
+          "cfg_list_id": 2,
+          "start_block": 0
+        },
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "9e5a4cc9-ebdd-40ea-8acf-1823e4f5c624"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "state1",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "A",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 80,
+                      "end_line": 80,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                    },
+                    "data": "A",
+                    "guid": "f6328f4e-c11d-4969-ad24-b17f5d5cb349"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "Tasklet",
+                  "label": "t2",
+                  "attributes": {
+                    "code": {
+                      "string_data": "a = 200",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 81,
+                      "end_line": 81,
+                      "start_column": 0,
+                      "end_column": 0,
+                      "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                    },
+                    "label": "t2",
+                    "out_connectors": {
+                      "a": null
+                    },
+                    "guid": "07496267-2bc7-4b1f-b300-244eca1455a1"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "A",
+                        "debuginfo": null,
+                        "guid": "fa917c81-c5f5-4ac1-8851-67f48765a777",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "1",
+                  "dst": "0",
+                  "dst_connector": null,
+                  "src_connector": "a"
+                }
+              ],
+              "attributes": {
+                "guid": "89570c4d-17e5-4528-8404-7ffc696402bc"
+              }
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "else_body",
+          "id": 1,
+          "cfg_list_id": 3,
+          "start_block": 0
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "if1",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": null,
+      "branches": [
+        [
+          {
+            "string_data": "(i == 1)",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "bf8ed08f-cd4a-4297-bb0b-fd9113daabdc"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "state1",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "A",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 73,
+                        "end_line": 73,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                      },
+                      "data": "A",
+                      "guid": "e5001489-01a2-4151-a7ab-6d26c3142c2c"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "t1",
+                    "attributes": {
+                      "code": {
+                        "string_data": "a = 100",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 74,
+                        "end_line": 74,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                      },
+                      "label": "t1",
+                      "out_connectors": {
+                        "a": null
+                      },
+                      "guid": "08e27434-28a7-4e94-a3fc-808a701df507"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "A",
+                          "debuginfo": null,
+                          "guid": "56c5bc48-930e-4b48-9fb8-d939d17cbcb2",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "1",
+                    "dst": "0",
+                    "dst_connector": null,
+                    "src_connector": "a"
+                  }
+                ],
+                "attributes": {
+                  "guid": "eb30ee73-eaae-4290-bac9-d92a164bf707"
+                }
+              }
+            ],
+            "edges": [],
+            "collapsed": false,
+            "label": "if_body",
+            "id": null,
+            "cfg_list_id": 2,
+            "start_block": 0
+          }
+        ],
+        [
+          {
+            "string_data": "(i == 0)",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "9e5a4cc9-ebdd-40ea-8acf-1823e4f5c624"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "state1",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "A",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 80,
+                        "end_line": 80,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                      },
+                      "data": "A",
+                      "guid": "f6328f4e-c11d-4969-ad24-b17f5d5cb349"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "Tasklet",
+                    "label": "t2",
+                    "attributes": {
+                      "code": {
+                        "string_data": "a = 200",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 81,
+                        "end_line": 81,
+                        "start_column": 0,
+                        "end_column": 0,
+                        "filename": "/scratch/bates/dace/tests/sdfg/conditional_region_test.py"
+                      },
+                      "label": "t2",
+                      "out_connectors": {
+                        "a": null
+                      },
+                      "guid": "07496267-2bc7-4b1f-b300-244eca1455a1"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "A",
+                          "debuginfo": null,
+                          "guid": "fa917c81-c5f5-4ac1-8851-67f48765a777",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "1",
+                    "dst": "0",
+                    "dst_connector": null,
+                    "src_connector": "a"
+                  }
+                ],
+                "attributes": {
+                  "guid": "89570c4d-17e5-4528-8404-7ffc696402bc"
+                }
+              }
+            ],
+            "edges": [],
+            "collapsed": false,
+            "label": "else_body",
+            "id": null,
+            "cfg_list_id": 3,
+            "start_block": 0
+          }
+        ]
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "bdce5aa1-f718-4317-975a-2e60feadf4b7"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

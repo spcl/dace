@@ -84,11 +84,11 @@
       "end_line": 14,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_reshape_views_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/redundant_reshape_views_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "b4929705-0bf9-44f0-8398-46e4bc22a6e7",
-    "hash": "2a834702f2f4398a04d65ad0b7000831f6d0ff0d46733a20c12235d98b363715"
+    "guid": "3bf7de03-2469-4f4a-93d8-967f235af0cb",
+    "hash": "870710c7fc3fbe72e7a513ce58e2f5001e68d5f4a73fc98e0d71097b13ca8463"
   },
   "nodes": [
     {
@@ -102,7 +102,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "cb517210-01d7-4fc8-8efa-f9e81f94008b",
+        "guid": "1adec8aa-623f-4a37-9cca-12948f0def56",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -150,7 +150,7 @@
               "end_line": 14,
               "start_column": 15,
               "end_column": 15,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_reshape_views_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_reshape_views_test.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -160,7 +160,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "10af6562-f0cd-4dc9-958c-1148f756ef3d"
+            "guid": "5ea73e01-1197-4d77-ab92-5ec60e1f92e0"
           },
           "id": 0,
           "scope_entry": null,
@@ -180,7 +180,7 @@
               "end_line": 14,
               "start_column": 15,
               "end_column": 15,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_reshape_views_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_reshape_views_test.py"
             },
             "label": "_Add_",
             "in_connectors": {
@@ -190,7 +190,7 @@
             "out_connectors": {
               "__out": null
             },
-            "guid": "b28a8a87-5334-4a44-83bd-29f531868536"
+            "guid": "78f6624b-d4d0-463f-bf56-c67116db4986"
           },
           "id": 1,
           "scope_entry": "0",
@@ -206,7 +206,7 @@
             "out_connectors": {
               "OUT___tmp0": null
             },
-            "guid": "efe8a4d8-2fe5-4406-8bb7-fec329b816a4"
+            "guid": "9a4da4da-a615-4455-a75c-f8cbd23ae7db"
           },
           "id": 2,
           "scope_entry": "0",
@@ -222,10 +222,10 @@
               "end_line": 14,
               "start_column": 15,
               "end_column": 15,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_reshape_views_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_reshape_views_test.py"
             },
             "data": "__tmp1",
-            "guid": "3fd44e0b-621d-4b5a-91d5-a753e54c06b5"
+            "guid": "eed21b86-1d4b-44be-b34b-bfd58536eaa4"
           },
           "id": 3,
           "scope_entry": null,
@@ -241,10 +241,10 @@
               "end_line": 14,
               "start_column": 15,
               "end_column": 15,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_reshape_views_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_reshape_views_test.py"
             },
             "data": "__tmp2",
-            "guid": "c6273586-5b33-45ad-8349-49043aae193c"
+            "guid": "de965d41-e6a9-4415-b523-868b364d8cf4"
           },
           "id": 4,
           "scope_entry": null,
@@ -260,10 +260,10 @@
               "end_line": 14,
               "start_column": 15,
               "end_column": 15,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/redundant_reshape_views_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_reshape_views_test.py"
             },
             "data": "__return",
-            "guid": "48ef31f1-7c0f-4e47-a0d8-b69791c72e3f"
+            "guid": "80c3b503-cbfe-46ee-a11c-51bdd7f05aec"
           },
           "id": 5,
           "scope_entry": null,
@@ -291,7 +291,7 @@
                 },
                 "data": "__tmp1",
                 "debuginfo": null,
-                "guid": "5bd4e642-c59e-4649-8d23-4c31f0a72ce0",
+                "guid": "2b6cee05-5673-4e75-9ed7-a7b4339d3374",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -334,7 +334,7 @@
                 },
                 "data": "__tmp2",
                 "debuginfo": null,
-                "guid": "359c70a4-713c-4e33-8ab4-dcd331e57a9f",
+                "guid": "d471db54-736e-45b1-8011-dbdee9d3caac",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -377,7 +377,7 @@
                 },
                 "data": "__tmp1",
                 "debuginfo": null,
-                "guid": "5bd4e642-c59e-4649-8d23-4c31f0a72ce0",
+                "guid": "2b6cee05-5673-4e75-9ed7-a7b4339d3374",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -420,7 +420,7 @@
                 },
                 "data": "__tmp2",
                 "debuginfo": null,
-                "guid": "359c70a4-713c-4e33-8ab4-dcd331e57a9f",
+                "guid": "d471db54-736e-45b1-8011-dbdee9d3caac",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -463,7 +463,7 @@
                 },
                 "data": "__return",
                 "debuginfo": null,
-                "guid": "47bba641-6cdd-47ca-8949-2bdbad74559f",
+                "guid": "12118e30-b2c7-4922-89e4-ca496d4d7789",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -506,7 +506,7 @@
                 },
                 "data": "__return",
                 "debuginfo": null,
-                "guid": "47bba641-6cdd-47ca-8949-2bdbad74559f",
+                "guid": "12118e30-b2c7-4922-89e4-ca496d4d7789",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -531,7 +531,7 @@
         }
       ],
       "attributes": {
-        "guid": "dc40cc7f-5cf2-4904-ab8f-e4d8c138198c",
+        "guid": "3b015121-a14f-49af-b023-8ce7323ff2aa",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -544,7 +544,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "d502f5fe-147a-4ea2-9e5b-90ec2b4c9c3b"
+            "guid": "d44f581d-db50-4c09-9a0f-eaee15958862"
           },
           "label": ""
         }

@@ -70,8 +70,8 @@
         "language": "CPP"
       }
     },
-    "guid": "d8de5e26-66b9-40f1-ba34-a68bd421b283",
-    "hash": "cd26d4a3dd1d334828e67e2f122bc57e8aef9a77145059cec73f8604538105ca"
+    "guid": "268f9435-68d3-49bd-bd0f-bcac86e90bbb",
+    "hash": "30dc715d8965a3bc0585ee7c36f7a5244bf4c62f72a5e7c4240943ff7ecec31a"
   },
   "nodes": [
     {
@@ -95,14 +95,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 327,
+              "end_line": 327,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "data": "A",
-            "guid": "19c69b11-74ea-41b1-b5b0-889fc36f69ba"
+            "guid": "db87b3bf-90b9-4c90-ab6c-49ddc6e3ad0b"
           },
           "id": 0,
           "scope_entry": null,
@@ -118,11 +118,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 328,
+              "end_line": 328,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "label": "init_b",
             "in_connectors": {
@@ -131,7 +131,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "f861b618-125e-43bf-9480-07f360c432ca"
+            "guid": "cdd204f1-161d-4f14-a68c-48b917627e1f"
           },
           "id": 1,
           "scope_entry": null,
@@ -143,14 +143,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 329,
+              "end_line": 329,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "data": "B",
-            "guid": "c8a832fb-9d02-4123-9b4a-bf55b2853493"
+            "guid": "5068de3c-c0e5-4941-ad96-22720aadbe88"
           },
           "id": 2,
           "scope_entry": null,
@@ -166,11 +166,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 330,
+              "end_line": 330,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "label": "init_c",
             "in_connectors": {
@@ -179,7 +179,7 @@
             "out_connectors": {
               "c": null
             },
-            "guid": "e8996890-e40b-4efd-83f0-fedd49dcb248"
+            "guid": "92ca936c-dcd4-48a0-bd9e-ac44074976f2"
           },
           "id": 3,
           "scope_entry": null,
@@ -191,14 +191,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 331,
+              "end_line": 331,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "data": "C",
-            "guid": "736e3240-283f-43a2-9213-5d025b471362"
+            "guid": "ece953cb-9882-4f59-9fe4-e4e0b693cdfb"
           },
           "id": 4,
           "scope_entry": null,
@@ -226,7 +226,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "649e7779-3f87-46c7-9db1-82ec7cf27dd2",
+                "guid": "3df461df-97a9-4c42-81c4-412d19110a2f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -269,7 +269,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "9e786b44-cc58-4b47-9c94-a68ec56eb8aa",
+                "guid": "2e38c9d6-09f9-40ea-b472-255d01c6bce8",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -312,7 +312,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "d6e59332-bb9f-42f7-a845-00e26c04b379",
+                "guid": "96430704-a8eb-4eda-8491-c0b483858396",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -355,7 +355,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "11c7dae0-b0ed-46d6-97fb-cf64ca7543b9",
+                "guid": "9457b6c8-e78a-4da6-b59a-ff9a10e00fb2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -380,7 +380,7 @@
         }
       ],
       "attributes": {
-        "guid": "d20fd92e-2de4-424c-9067-4b3f5d2dc86e"
+        "guid": "e859b008-83d9-4407-a980-3458891a1df7"
       }
     },
     {
@@ -402,14 +402,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 338,
+              "end_line": 338,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "data": "B",
-            "guid": "080b17ea-c919-4a89-b514-ed4fdcc80e4e"
+            "guid": "72462ea1-eabe-4873-b444-48137d8ed0e1"
           },
           "id": 0,
           "scope_entry": null,
@@ -425,11 +425,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 339,
+              "end_line": 339,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "label": "update_b",
             "in_connectors": {
@@ -438,7 +438,7 @@
             "out_connectors": {
               "bout": null
             },
-            "guid": "14bb2dea-0c61-4c76-8380-bc45ced4e8f0"
+            "guid": "d16ce6ae-f106-49f6-b718-f37e4761dd9d"
           },
           "id": 1,
           "scope_entry": null,
@@ -450,14 +450,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 340,
+              "end_line": 340,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_test.py"
             },
             "data": "B",
-            "guid": "e67837c2-5b40-4992-bf92-696d131ea938"
+            "guid": "91e11e96-89df-4224-99e1-3669fa218d73"
           },
           "id": 2,
           "scope_entry": null,
@@ -485,7 +485,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "37a3af06-e34a-4824-93ec-266ce3a46622",
+                "guid": "8fafc5a5-71e3-4084-bc24-907e3972c61a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -528,7 +528,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "06e88f80-64fd-46e8-9434-b8f9a2230bfd",
+                "guid": "063803f1-cee0-46ec-8ed5-456ad0f53896",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -553,7 +553,7 @@
         }
       ],
       "attributes": {
-        "guid": "a43a3314-0670-4333-a847-cf67279bf26c"
+        "guid": "87ed5115-a162-4b94-bdfd-0a8e9254e647"
       }
     }
   ],
@@ -564,7 +564,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "130f6109-b1f2-49bf-86dc-8af6cf133fc6"
+            "guid": "c981c8bb-fc08-4cec-8982-686d8b951276"
           },
           "label": ""
         }

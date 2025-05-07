@@ -44,15 +44,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 118,
-      "end_line": 120,
+      "start_line": 119,
+      "end_line": 121,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/python_frontend/scope_test.py"
+      "filename": "/scratch/bates/dace/tests/python_frontend/scope_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "0996055c-532e-42ce-b85b-6db16f1e7acd",
-    "hash": "7d6a5e690a7b5b93e5004ac408142456bb0824e5211a8c1ad08a3046d36e0714"
+    "guid": "39d2d47b-5eac-463f-8a77-325c177294d4",
+    "hash": "b8fe5d74db150dd9a39cb309323a25f5b51e2a3b0603c915a4fcd69ab096cb93"
   },
   "nodes": [
     {
@@ -66,14 +66,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "98604c75-487b-4cc5-b58a-dd53b9a1b95f",
+        "guid": "cb1a39a9-5260-4d1a-a6f2-c990f928abd0",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "assign_120_4",
+      "label": "assign_121_4",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -89,9 +89,9 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "assign_120_4_map[__i0=0:3]",
+          "label": "assign_121_4_map[__i0=0:3]",
           "attributes": {
-            "label": "assign_120_4_map",
+            "label": "assign_121_4_map",
             "params": [
               "__i0"
             ],
@@ -108,13 +108,13 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 120,
-              "end_line": 120,
+              "start_line": 121,
+              "end_line": 121,
               "start_column": 12,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/scope_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/scope_test.py"
             },
-            "guid": "d5111a9c-38d8-4233-b23d-ecedfeba17a8"
+            "guid": "6ebb23df-dbf8-4563-9643-73dfd6f0cb37"
           },
           "id": 0,
           "scope_entry": null,
@@ -122,7 +122,7 @@
         },
         {
           "type": "Tasklet",
-          "label": "assign_120_4",
+          "label": "assign_121_4",
           "attributes": {
             "code": {
               "string_data": "__out = 7.0",
@@ -130,17 +130,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 120,
-              "end_line": 120,
+              "start_line": 121,
+              "end_line": 121,
               "start_column": 12,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/scope_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/scope_test.py"
             },
-            "label": "assign_120_4",
+            "label": "assign_121_4",
             "out_connectors": {
               "__out": null
             },
-            "guid": "e1e27832-1a6b-4073-a00b-9bfed5c937c6"
+            "guid": "aa126be4-c3f0-461a-b4a8-2291da19f903"
           },
           "id": 1,
           "scope_entry": "0",
@@ -148,7 +148,7 @@
         },
         {
           "type": "MapExit",
-          "label": "assign_120_4_map[__i0=0:3]",
+          "label": "assign_121_4_map[__i0=0:3]",
           "attributes": {
             "in_connectors": {
               "IN_new_sym": null
@@ -156,7 +156,7 @@
             "out_connectors": {
               "OUT_new_sym": null
             },
-            "guid": "2eb451f3-a9b5-49de-a589-86c7ec58cbc4"
+            "guid": "5279b698-654b-46b6-bf5d-98e205d86a86"
           },
           "id": 2,
           "scope_entry": "0",
@@ -168,14 +168,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1912,
+              "end_line": 1912,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "new_sym",
-            "guid": "9beb26b5-b96f-4800-9237-cfc16a4ec51b"
+            "guid": "7b5b8038-81a5-4d01-aab4-fc4633fb0a4f"
           },
           "id": 3,
           "scope_entry": null,
@@ -191,7 +191,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "ab7d0568-bca4-428b-b8f1-e37c16fd9ee7",
+                "guid": "b20906e8-9caa-4b10-99a5-f3cefbd6ae76",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -224,7 +224,7 @@
                 },
                 "data": "new_sym",
                 "debuginfo": null,
-                "guid": "f0ff2be6-2e55-48d3-86ee-c0eef7c903c4",
+                "guid": "136935e6-d0e0-46cd-bc9d-2fdb3893a6a2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -267,7 +267,7 @@
                 },
                 "data": "new_sym",
                 "debuginfo": null,
-                "guid": "f0ff2be6-2e55-48d3-86ee-c0eef7c903c4",
+                "guid": "136935e6-d0e0-46cd-bc9d-2fdb3893a6a2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -292,7 +292,7 @@
         }
       ],
       "attributes": {
-        "guid": "e248a423-0261-4267-a2a5-e66dc1b52163",
+        "guid": "2a228d40-c01f-4c5a-81c4-bae4010d0153",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -305,7 +305,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "137eebb1-ace1-45b6-a7f5-11400ce647dd"
+            "guid": "0ebfe805-b002-4ec0-bd0b-085b9f1fd106"
           },
           "label": ""
         }

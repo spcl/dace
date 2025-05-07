@@ -58,8 +58,8 @@
         "language": "CPP"
       }
     },
-    "guid": "52553696-5d8f-44ef-8648-e9e43ffa3ab1",
-    "hash": "abe03b2d3bea43d5f71d02f94b3c6c15b09690c01f3f58e29510f3bb25419749"
+    "guid": "94fc3a43-8d32-4857-bf16-b536d4ff9ea8",
+    "hash": "4b2a37b420ed34b6bee1f7880a34f7e7e725b777b2b1380fbe7d09f001ad5af1"
   },
   "nodes": [
     {
@@ -102,11 +102,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 73,
+              "end_line": 73,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/fission_offsets1_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -114,7 +114,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "73889ab0-4ebe-4c10-b164-77d8d33f8a4f"
+            "guid": "03151867-bc22-46d0-8196-46ceb1db6617"
           },
           "id": 0,
           "scope_entry": null,
@@ -130,7 +130,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "e830a459-a910-4615-b6b9-5d75f42a5524"
+            "guid": "2a3af48a-12cd-483f-9d67-afc745277072"
           },
           "id": 1,
           "scope_entry": "0",
@@ -146,11 +146,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 75,
+              "end_line": 75,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/fission_offsets1_test.py"
             },
             "label": "addone",
             "in_connectors": {
@@ -159,7 +159,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "16e000cd-05f1-42b6-ac2b-d660899c8ab7"
+            "guid": "763eb4c0-fa8b-450b-b96e-790fd5e9b55a"
           },
           "id": 2,
           "scope_entry": "0",
@@ -171,14 +171,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 76,
+              "end_line": 76,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/fission_offsets1_test.py"
             },
             "data": "interim",
-            "guid": "540225c9-9387-49d1-a71f-1ba091ca9249"
+            "guid": "7807410c-e009-491f-8528-346581b953e4"
           },
           "id": 3,
           "scope_entry": "0",
@@ -194,11 +194,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 77,
+              "end_line": 77,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/fission_offsets1_test.py"
             },
             "label": "addtwo",
             "in_connectors": {
@@ -207,7 +207,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "57dc0855-6ab2-472e-9d32-595b060b6783"
+            "guid": "ab2977c5-b5db-4774-9716-2fbffd164476"
           },
           "id": 4,
           "scope_entry": "0",
@@ -219,14 +219,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 79,
+              "end_line": 79,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/fission_offsets1_test.py"
             },
             "data": "A",
-            "guid": "6cc912eb-3cfb-46d6-b7e9-6ab4be74540a"
+            "guid": "839b08be-c2e0-4652-95ef-121fea7a6c0e"
           },
           "id": 5,
           "scope_entry": null,
@@ -238,14 +238,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 80,
+              "end_line": 80,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/fission_offsets1_test.py"
             },
             "data": "A",
-            "guid": "2c7dce3e-4c90-4064-bb9a-3f1fcc048dba"
+            "guid": "353be2f1-e733-476b-b229-c3757bd2659e"
           },
           "id": 6,
           "scope_entry": null,
@@ -273,7 +273,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "c0155591-e197-4440-b8b5-0bdbbf3b3c2d",
+                "guid": "0d2afb40-3684-41e8-9927-10a0bfda0bf4",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -316,7 +316,7 @@
                 },
                 "data": "interim",
                 "debuginfo": null,
-                "guid": "0837484c-cf27-48f3-9bb9-bc916608ae89",
+                "guid": "f881c7d6-1e7b-4079-838e-6bc100db6d1f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -359,7 +359,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "46469ee3-e061-4fee-9ed3-647acb13f0f4",
+                "guid": "9befb02b-9f0c-4b18-8884-1cd98204a496",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -402,7 +402,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "c0155591-e197-4440-b8b5-0bdbbf3b3c2d",
+                "guid": "0d2afb40-3684-41e8-9927-10a0bfda0bf4",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -445,7 +445,7 @@
                 },
                 "data": "interim",
                 "debuginfo": null,
-                "guid": "9abe24be-4b39-4810-a25a-7c244f325181",
+                "guid": "cdb7cb89-7609-4ca6-9c91-74b7acddb862",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -488,7 +488,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "46469ee3-e061-4fee-9ed3-647acb13f0f4",
+                "guid": "9befb02b-9f0c-4b18-8884-1cd98204a496",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -513,7 +513,7 @@
         }
       ],
       "attributes": {
-        "guid": "4bae6606-712c-4f18-b538-389e0421b655",
+        "guid": "f6e2fd69-7f05-45cf-bc81-c51453714381",
         "executions": "1",
         "dynamic_executions": false
       }

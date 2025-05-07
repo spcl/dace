@@ -1,0 +1,266 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "scopef",
+    "_arrays": {
+      "maybe_none": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float64",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__g_anotherarray": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "3",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "3"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__g_anarray": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "3",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "3"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__g_anotherarray_0": {
+        "type": "ArrayView",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "3",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "3"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "d5ff3049-0ef5-46fb-9ba9-02c0677b9f04",
+    "hash": "890414f09a1f7bed30e6483c3b2b8753f5ec29e81305c0d5836778d6cd8021e8"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "a2654463-ff85-41e8-b91e-152bb9b90d18"
+      }
+    },
+    {
+      "type": "ConditionalBlock",
+      "attributes": {
+        "guid": "3bc780d1-68d9-4daa-9215-3f1b450d99ec"
+      },
+      "nodes": [
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "8d4f1b60-9f82-4436-a599-126fb192da9e"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "if_127",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "150be4cb-16c4-441a-9a0b-f7fafeb4c551"
+              }
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "if_127_body",
+          "id": 0,
+          "cfg_list_id": 2,
+          "start_block": null
+        },
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "635bd554-0023-43bf-8ac4-f099cbbb22b0"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "else_127",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "b8001e1c-bf51-492c-a6d3-cd722e516b09"
+              }
+            }
+          ],
+          "edges": [],
+          "collapsed": false,
+          "label": "if_127_else_130",
+          "id": 1,
+          "cfg_list_id": 3,
+          "start_block": null
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "if_127",
+      "id": 1,
+      "cfg_list_id": 1,
+      "start_block": null,
+      "branches": [
+        [
+          {
+            "string_data": "(maybe_none is None)",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "8d4f1b60-9f82-4436-a599-126fb192da9e"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "if_127",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "150be4cb-16c4-441a-9a0b-f7fafeb4c551"
+                }
+              }
+            ],
+            "edges": [],
+            "collapsed": false,
+            "label": "if_127_body",
+            "id": null,
+            "cfg_list_id": 2,
+            "start_block": null
+          }
+        ],
+        [
+          null,
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "635bd554-0023-43bf-8ac4-f099cbbb22b0"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "else_127",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "b8001e1c-bf51-492c-a6d3-cd722e516b09"
+                }
+              }
+            ],
+            "edges": [],
+            "collapsed": false,
+            "label": "if_127_else_130",
+            "id": null,
+            "cfg_list_id": 3,
+            "start_block": null
+          }
+        ]
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "43e76139-f721-484f-ba9a-e4ff072c1fea"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

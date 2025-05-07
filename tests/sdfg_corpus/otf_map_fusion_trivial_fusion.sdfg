@@ -94,11 +94,11 @@
       "end_line": 105,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "3ad3cecf-d41c-4a81-b73a-456eeb39ae0c",
-    "hash": "89a9eb2df3da314041e61ea83e94c87e9917e72c49fdb31ed77e1fda62aef434"
+    "guid": "b9e44c49-81b0-4ace-aa1d-3a0e51fe7d7e",
+    "hash": "66b221346cae271d1f31216b8c136dd4f66a6b24e63be2661277a5405b30b66d"
   },
   "nodes": [
     {
@@ -112,7 +112,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "8fa49be2-eb6a-4603-a724-5f1bb2498bdf",
+        "guid": "873a9d33-20e5-4b08-bc88-186b876594f8",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -128,7 +128,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "7b64976e-26aa-4de1-945e-76c6031beaf6",
+        "guid": "ff7f8c94-568f-4591-9670-8a5bd53cc983",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -182,7 +182,7 @@
               "end_line": 93,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -190,7 +190,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "04fb4886-2aa3-4dad-81bb-40af59193043"
+            "guid": "13100409-36c0-47a9-a6a5-4a18ed20a99c"
           },
           "id": 0,
           "scope_entry": null,
@@ -206,7 +206,7 @@
             "out_connectors": {
               "OUT___tmp0": null
             },
-            "guid": "0c2d7daa-f0dd-41ec-b561-0b75f9636811"
+            "guid": "49e82623-173a-4c67-8765-811115a5a60d"
           },
           "id": 1,
           "scope_entry": "0",
@@ -274,7 +274,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "c89c2cf6-393e-40e5-a179-64ed7002cc06"
+                "guid": "738f9af7-9783-4e59-9f36-6b49d4db6d68"
               },
               "nodes": [
                 {
@@ -288,7 +288,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "30c85128-ade1-4139-bcb0-98ff84bdf881",
+                    "guid": "c164418b-c626-4080-9823-4b5e17aea87b",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -320,7 +320,7 @@
                           "end_line": 98,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
                         },
                         "label": "otf_map_fusion_test_trivial_fusion_94",
                         "in_connectors": {
@@ -329,7 +329,7 @@
                         "out_connectors": {
                           "b": null
                         },
-                        "guid": "b526bb12-1ced-4257-a11f-e58db5c258d1"
+                        "guid": "ccfb9cdb-df9e-48c0-93ff-54705a6abe22"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -345,10 +345,10 @@
                           "end_line": 94,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
                         },
                         "data": "__tmp_95_17",
-                        "guid": "0c04c112-19ce-46e3-962e-74d8f5ec29a1"
+                        "guid": "7dbafb2a-1151-438c-bab6-1853cdfae8f1"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -364,10 +364,10 @@
                           "end_line": 94,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
                         },
                         "data": "__tmp_96_17",
-                        "guid": "0e91649d-b7b5-4e8b-b1c7-cee4f869f36a"
+                        "guid": "7c4fe9bb-68c8-4d58-aa8b-51814d571d86"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -395,7 +395,7 @@
                             },
                             "data": "__tmp_95_17",
                             "debuginfo": null,
-                            "guid": "270e4a9d-58d7-49de-b97a-a8a308625200",
+                            "guid": "e9fc389c-37c4-4473-9bac-faf1e5a591a3",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -438,7 +438,7 @@
                             },
                             "data": "__tmp_96_17",
                             "debuginfo": null,
-                            "guid": "7427a102-0f3f-4f7e-9602-8cf7bd6c7d76",
+                            "guid": "170d80fe-b098-4c00-8f65-94aeca12c740",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -463,7 +463,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "11bae2fd-058d-4734-a0ee-78dde4ed3a75",
+                    "guid": "b19eba34-43a9-45e0-bd6c-e2a6f6713631",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -476,7 +476,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "f0c33513-cc86-4332-aa67-b896c62f023c"
+                        "guid": "cca288f4-4bc5-475d-b6a9-12e730979dbb"
                       },
                       "label": ""
                     }
@@ -497,7 +497,7 @@
               "end_line": 93,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "label": "otf_map_fusion_test_trivial_fusion_93_4",
             "in_connectors": {
@@ -506,7 +506,7 @@
             "out_connectors": {
               "__tmp_96_17": null
             },
-            "guid": "05164a58-c97d-4a7f-b270-f1c7d49cd009"
+            "guid": "f2d6f9cc-da8f-44b7-922c-f39cdc0b128e"
           },
           "id": 2,
           "scope_entry": "0",
@@ -522,10 +522,10 @@
               "end_line": 93,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "data": "A",
-            "guid": "294a3396-476e-4b6d-912e-7395de4571af"
+            "guid": "ea0e0a04-6d7c-47be-9c4e-19613a51b6d7"
           },
           "id": 3,
           "scope_entry": null,
@@ -541,10 +541,10 @@
               "end_line": 93,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "data": "tmp",
-            "guid": "e6f22dbb-b830-46f2-b0eb-1e2a4d522696"
+            "guid": "55c395c5-fbe9-451e-91ed-5626d08ce97d"
           },
           "id": 4,
           "scope_entry": null,
@@ -578,7 +578,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "ea20ea9d-5d51-428c-9a87-ff2e3b04d9ec",
+                "guid": "d31750a5-9008-4606-9b16-fa9319579fe1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -633,7 +633,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "ea20ea9d-5d51-428c-9a87-ff2e3b04d9ec",
+                "guid": "d31750a5-9008-4606-9b16-fa9319579fe1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -688,7 +688,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "250cfffb-35f5-4574-9f9b-0da2933a9e77",
+                "guid": "5ce15f00-4251-40b1-b485-b3bb59392234",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -743,7 +743,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "250cfffb-35f5-4574-9f9b-0da2933a9e77",
+                "guid": "5ce15f00-4251-40b1-b485-b3bb59392234",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -774,7 +774,7 @@
         }
       ],
       "attributes": {
-        "guid": "23e6dd09-96c6-4645-bc2c-c46b9f5d1751",
+        "guid": "d25debc6-1e7a-4212-941b-e0f61c60c84f",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -828,7 +828,7 @@
               "end_line": 100,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "in_connectors": {
               "IN___tmp0": null
@@ -836,7 +836,7 @@
             "out_connectors": {
               "OUT___tmp0": null
             },
-            "guid": "e4276c1f-165f-4e17-b160-1da74ef8ed58"
+            "guid": "f8ab5828-f6f5-4ba1-a9bb-53ed2a31f980"
           },
           "id": 0,
           "scope_entry": null,
@@ -852,7 +852,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "871b5bbf-45ae-456c-904c-ac0027cf129d"
+            "guid": "cf2404f1-537d-4986-9219-8ecfe5a78060"
           },
           "id": 1,
           "scope_entry": "0",
@@ -920,7 +920,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "a1dde1ec-0115-45be-ba24-50d12931db66"
+                "guid": "10e28f7e-006e-47f2-b032-ab766864ab0a"
               },
               "nodes": [
                 {
@@ -934,7 +934,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "cf57dd03-44bb-4bbd-ae5e-3a51ecd88002",
+                    "guid": "2a916f8d-d0f2-4899-8bb4-84f660fe0885",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -966,7 +966,7 @@
                           "end_line": 105,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
                         },
                         "label": "otf_map_fusion_test_trivial_fusion_101",
                         "in_connectors": {
@@ -975,7 +975,7 @@
                         "out_connectors": {
                           "b": null
                         },
-                        "guid": "40dcb728-45fd-4c43-a502-4180ba6bd223"
+                        "guid": "9ee22e61-c0f4-423d-b269-ed8c74e37391"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -991,10 +991,10 @@
                           "end_line": 101,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
                         },
                         "data": "__tmp_102_17",
-                        "guid": "3fe7c9e5-0f42-4a76-9650-8b8f02d9fa18"
+                        "guid": "66eb1841-de0c-41df-bfb3-6dd01e4662a6"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -1010,10 +1010,10 @@
                           "end_line": 101,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
                         },
                         "data": "__tmp_103_17",
-                        "guid": "8dadecd9-32d9-4af4-ba04-95a149d86a96"
+                        "guid": "c8922feb-9802-4698-90f1-2984f9113351"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -1041,7 +1041,7 @@
                             },
                             "data": "__tmp_102_17",
                             "debuginfo": null,
-                            "guid": "e8d6b7b6-007f-49e9-97f4-42cf0cbf9363",
+                            "guid": "c6cb3034-0d48-4b36-b94d-62a147dbfce5",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -1084,7 +1084,7 @@
                             },
                             "data": "__tmp_103_17",
                             "debuginfo": null,
-                            "guid": "2ae790ec-ff6c-40c9-9a40-ae5f1a349076",
+                            "guid": "8c2a5f5e-dbca-43ff-846b-034d600c4f3a",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -1109,7 +1109,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "d442c38d-5e24-4d0c-9e5c-a67526c87c08",
+                    "guid": "ff16660a-f8da-494a-a7aa-6f058dd9b9d0",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -1122,7 +1122,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "b5a3b8b7-1f00-4ed3-ad6c-6a392643d898"
+                        "guid": "f0aead61-9eaa-4d09-9382-dcbb2adc0281"
                       },
                       "label": ""
                     }
@@ -1143,7 +1143,7 @@
               "end_line": 100,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "label": "otf_map_fusion_test_trivial_fusion_100_4",
             "in_connectors": {
@@ -1152,7 +1152,7 @@
             "out_connectors": {
               "__tmp_103_17": null
             },
-            "guid": "4b16e914-3d1c-482a-9620-3e3b9e78d85a"
+            "guid": "5d66424a-2b85-43cf-ae11-9dcbcb1fa660"
           },
           "id": 2,
           "scope_entry": "0",
@@ -1168,10 +1168,10 @@
               "end_line": 100,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "data": "tmp",
-            "guid": "dfa3678e-f057-4859-a412-77cb5837edd4"
+            "guid": "9156b147-09e6-4610-8325-8d3c1a248825"
           },
           "id": 3,
           "scope_entry": null,
@@ -1187,10 +1187,10 @@
               "end_line": 100,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/otf_map_fusion_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/otf_map_fusion_test.py"
             },
             "data": "B",
-            "guid": "ed3a03d9-56fa-43d9-9514-b073b0b8527e"
+            "guid": "6ea3b4be-7358-475a-a184-6d82f6a7a0af"
           },
           "id": 4,
           "scope_entry": null,
@@ -1224,7 +1224,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "edbabb9a-f75b-4866-be33-e47847966b03",
+                "guid": "21d08f39-a0ad-4d06-92b6-03d9a80033ea",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1279,7 +1279,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "8fa1feef-5370-4c2c-af8d-bcd8b19f3e5a",
+                "guid": "90917535-136a-48d9-83a7-b5a048b1cca4",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1334,7 +1334,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "edbabb9a-f75b-4866-be33-e47847966b03",
+                "guid": "21d08f39-a0ad-4d06-92b6-03d9a80033ea",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1389,7 +1389,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "8fa1feef-5370-4c2c-af8d-bcd8b19f3e5a",
+                "guid": "90917535-136a-48d9-83a7-b5a048b1cca4",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1420,7 +1420,7 @@
         }
       ],
       "attributes": {
-        "guid": "893b7260-2cea-42c7-9bef-4332ffa28b20",
+        "guid": "894bfb40-27a4-42af-a5dd-0a20a1512d07",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1433,7 +1433,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "2f59fd82-4533-4b61-8d6e-b00cd0d87162"
+            "guid": "715ba97b-ac4a-41a7-b7a1-eb1cabb143a5"
           },
           "label": ""
         }
@@ -1447,7 +1447,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "8fb3e0b9-b71b-4522-bb20-1d0877431a3e"
+            "guid": "6430f67d-dbb4-4627-8f3a-bb3ab9ce280e"
           },
           "label": ""
         }
@@ -1461,7 +1461,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "771093d6-2a8f-4e8d-9b2b-561497b274ec"
+            "guid": "6b8cdad5-5ed6-487a-93d3-903c9a38a180"
           },
           "label": ""
         }

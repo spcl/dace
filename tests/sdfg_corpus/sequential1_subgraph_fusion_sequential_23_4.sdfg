@@ -56,8 +56,8 @@
         "language": "CPP"
       }
     },
-    "guid": "fa09f653-9f70-416b-a19a-a0f49b01875c",
-    "hash": "d913e1d92adddbf7df89d6b6fda363ff1c9ad0c3402b67a3622b52437eecb42b"
+    "guid": "5e754691-6976-4cc0-993f-efa0a43a79ad",
+    "hash": "4b6b18668501d9d46769620ccec8b32fd2d9e365a9d85a3eaa9f35e71c896ec5"
   },
   "nodes": [
     {
@@ -71,7 +71,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "7ee1640b-6358-46a3-8ea6-f3c72af37eb4",
+        "guid": "707c7734-341d-4ba2-b0ea-46b3208d0e94",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -103,7 +103,7 @@
               "end_line": 27,
               "start_column": 8,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential1_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/sequential1_test.py"
             },
             "label": "sequential1_test_subgraph_fusion_sequential_24",
             "in_connectors": {
@@ -112,7 +112,7 @@
             "out_connectors": {
               "out1": null
             },
-            "guid": "d4a54663-866f-4929-8da4-42c5a30a2460"
+            "guid": "6a3e46c1-1186-4572-9de1-340851e956a5"
           },
           "id": 0,
           "scope_entry": null,
@@ -128,10 +128,10 @@
               "end_line": 24,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential1_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/sequential1_test.py"
             },
             "data": "__tmp_25_19",
-            "guid": "9d7413d0-249b-4627-805e-3f2c00acdcb0"
+            "guid": "785435b0-50b0-4b47-9e29-5685c6a6e58c"
           },
           "id": 1,
           "scope_entry": null,
@@ -147,10 +147,10 @@
               "end_line": 24,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/sequential1_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/sequential1_test.py"
             },
             "data": "__tmp_26_20",
-            "guid": "ce3fff7e-4090-4949-9d02-1a6d007154f2"
+            "guid": "d4a1df8f-adcc-44ae-a04a-f665acc797f3"
           },
           "id": 2,
           "scope_entry": null,
@@ -178,7 +178,7 @@
                 },
                 "data": "__tmp_25_19",
                 "debuginfo": null,
-                "guid": "838761e4-2ab7-4428-9094-fa64f26d87e9",
+                "guid": "f37e7010-c7ef-4e7a-b02e-2a224d105128",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -221,7 +221,7 @@
                 },
                 "data": "__tmp_26_20",
                 "debuginfo": null,
-                "guid": "456ef56b-0c41-4532-a20b-59f0580fe78f",
+                "guid": "62c4366e-7342-474f-9ef2-f505951d5672",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -246,7 +246,7 @@
         }
       ],
       "attributes": {
-        "guid": "49925f31-cda0-4056-8416-0ea499a4d1bf",
+        "guid": "3121d606-970b-476b-bc0a-5db33467014e",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -259,7 +259,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "d1597603-0036-45c2-b3a2-4eade919eada"
+            "guid": "6a8fe3e4-6286-42ef-a2d1-92f07386937b"
           },
           "label": ""
         }

@@ -56,8 +56,8 @@
         "language": "CPP"
       }
     },
-    "guid": "5f7285af-53c4-4a35-816e-fb6bff46f3c4",
-    "hash": "26f7809fb773d74f6ac64c32219783cd0661a421dfacb4fcb1fce9d15b7eadf2"
+    "guid": "c489c04e-b33b-4778-a0b8-c9458f2b3d85",
+    "hash": "cc38b4df3f88c6e339dc830786ddeb33d664491e86f1218e414023260134a484"
   },
   "nodes": [
     {
@@ -71,7 +71,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "0bb92bdd-ccc6-485b-bff4-2e4e07a73993"
+        "guid": "72e08165-52f5-41c4-b8f1-ebb79fb347f0"
       }
     },
     {
@@ -85,7 +85,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "c36dd7a0-61ea-42a6-8f3d-375202f3f0bc"
+        "guid": "b4d8fdd9-f24e-4433-b276-2652dbf63fe5"
       }
     },
     {
@@ -106,14 +106,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_elimination_test.py"
             },
             "data": "A",
-            "guid": "67cce2b9-4d0c-42bb-97e1-85a982d25a9b"
+            "guid": "b13025bc-044d-49a5-989f-e3ca60c2cf15"
           },
           "id": 0,
           "scope_entry": null,
@@ -125,14 +125,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_elimination_test.py"
             },
             "data": "B",
-            "guid": "c8306612-fc93-4fef-80e7-313c7862b2e3"
+            "guid": "d0c4154e-94c3-454d-be0f-340249bcf7ba"
           },
           "id": 1,
           "scope_entry": null,
@@ -160,7 +160,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "653b5a75-b600-4677-bc17-af248b457723",
+                "guid": "ae9cab82-d522-4d82-8e07-5a9cb92857cb",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -185,7 +185,7 @@
         }
       ],
       "attributes": {
-        "guid": "c09fafac-ee1a-443f-a427-0276f6343d18"
+        "guid": "98e4094e-68cf-4750-a8fd-d07fafa5f3d7"
       }
     }
   ],
@@ -199,7 +199,7 @@
             "assignments": {
               "k": "1"
             },
-            "guid": "d3b0121c-4647-4464-99b0-82a0bdc075fe"
+            "guid": "d8137fef-8349-4e53-aed2-284c61b9e088"
           },
           "label": "k=1"
         }
@@ -216,7 +216,7 @@
             "assignments": {
               "k": "k + 1"
             },
-            "guid": "36886d9b-cda3-4cac-bb69-327619c4b5cb"
+            "guid": "151bb471-e486-4938-a94d-4d503214ce2d"
           },
           "label": "k=k + 1"
         }

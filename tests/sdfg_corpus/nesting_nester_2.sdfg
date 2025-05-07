@@ -1,0 +1,123 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "nesting_nester",
+    "_arrays": {
+      "A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "19",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "19"
+          ],
+          "debuginfo": null
+        }
+      },
+      "B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "15",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float64",
+          "shape": [
+            "15"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "m": "float64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "3fd8020c-4c81-42e9-9ac6-acf590960907",
+    "hash": "848f285d51a7862d525c2c894c269e1ff544469b071436483768d0810b7ad204"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "block",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "95f8cf3e-caee-422e-b9d5-aeaf3f508427"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "block_0",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "89c199d0-9a69-43eb-8c0f-f3810d761289"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "assignments": {
+              "m": "A[2]"
+            },
+            "condition": {
+              "string_data": "(B[1] > 0)",
+              "language": "Python"
+            },
+            "guid": "dbdf5e30-bc96-4e4f-8742-eda8ed485c28"
+          },
+          "label": "(B[1] > 0); m=A[2]"
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": null
+}

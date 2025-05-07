@@ -88,11 +88,11 @@
       "end_line": 20,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "bcb910b5-34b8-4f88-bd40-582dc213ca14",
-    "hash": "46a4a94592ad888eeff0b920755a8f7187d185ec86c8501cc41275406f05187f"
+    "guid": "bf511389-5976-4fa9-8a29-7c9b117429a5",
+    "hash": "acd7b1d183bdb48c53f4a8dd667efaa648cacc556202dd459275ab2803d0c76f"
   },
   "nodes": [
     {
@@ -106,7 +106,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "b5d539f6-598f-4105-b336-f0702ee15b7d",
+        "guid": "6b1f986a-1fe2-4cc2-9389-567541c73f90",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -153,7 +153,7 @@
               "end_line": 10,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -161,7 +161,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "affb04b5-7b29-411b-9f35-fa8037c215d3"
+            "guid": "2059d34f-df03-44b5-a71a-f4407074c24e"
           },
           "id": 0,
           "scope_entry": null,
@@ -177,7 +177,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "f24a1b1a-33b0-4f85-a258-a77ed9928b2f"
+            "guid": "a6b96e29-1208-4276-9ed5-829b1aa07886"
           },
           "id": 1,
           "scope_entry": "0",
@@ -245,7 +245,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "010bf77d-5ba9-47ff-bad8-09af9e867fc5"
+                "guid": "2468ced6-c7c2-46c1-ac32-cd0fb9e06a8f"
               },
               "nodes": [
                 {
@@ -259,7 +259,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "13f763cd-d553-431c-ac0f-c6efb1894658",
+                    "guid": "7ff66f84-8b75-4a92-a4f8-8127cc201a7f",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -291,7 +291,7 @@
                           "end_line": 14,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
                         },
                         "label": "state_fusion_node_merge_test_prog1_11",
                         "in_connectors": {
@@ -300,7 +300,7 @@
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "c11949bc-df09-4f19-8f57-c38b20a22a0d"
+                        "guid": "ec1f1646-7cb8-4fae-af8a-612016f4f527"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -316,10 +316,10 @@
                           "end_line": 11,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
                         },
                         "data": "__tmp_12_21",
-                        "guid": "aff0adb2-5abc-470c-8c4d-821bd45c4cd8"
+                        "guid": "2c76e62e-bf76-4b21-b54a-25bee9473567"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -335,10 +335,10 @@
                           "end_line": 11,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
                         },
                         "data": "__tmp_13_19",
-                        "guid": "5f96968c-a050-4f33-a7fd-f30d3101d70c"
+                        "guid": "df3c8c97-56b1-4d48-a374-2e19f135b376"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -366,7 +366,7 @@
                             },
                             "data": "__tmp_12_21",
                             "debuginfo": null,
-                            "guid": "b2c66bf0-52d9-488a-96e4-6472b7f44348",
+                            "guid": "bc7084cd-f1a4-4470-8d9e-1a12b154a6ab",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -409,7 +409,7 @@
                             },
                             "data": "__tmp_13_19",
                             "debuginfo": null,
-                            "guid": "f74fef5b-7a0e-4e38-bfbb-f340ed83a8bf",
+                            "guid": "fab1412d-62c7-4395-a550-6ea4901aac26",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -434,7 +434,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "063c1ab8-059f-4b2a-abdd-b9430c6b0ec7",
+                    "guid": "938cfdaa-1c96-44f2-b43a-1eb8589d1037",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -447,7 +447,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "132e6c35-664b-484c-92c4-d6354526dac6"
+                        "guid": "b729a258-08f7-4881-8edc-6f1dc23c0b87"
                       },
                       "label": ""
                     }
@@ -468,7 +468,7 @@
               "end_line": 10,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "label": "state_fusion_node_merge_test_prog1_10_4",
             "in_connectors": {
@@ -477,7 +477,7 @@
             "out_connectors": {
               "__tmp_13_19": null
             },
-            "guid": "a7c0793f-fbe6-4b68-a5a8-bf528ab32df6"
+            "guid": "df283d05-8f0c-4975-a47e-7f12556c88d8"
           },
           "id": 2,
           "scope_entry": "0",
@@ -493,10 +493,10 @@
               "end_line": 10,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "data": "A",
-            "guid": "39139f06-b090-48e1-942a-f013f5740ae0"
+            "guid": "a9cb56cf-cb3a-4d62-be4a-fb46f6c7362a"
           },
           "id": 3,
           "scope_entry": null,
@@ -512,10 +512,10 @@
               "end_line": 10,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "data": "A",
-            "guid": "ebd58588-29f4-4b45-927d-951c2157df49"
+            "guid": "8afd9b31-f91d-4e8b-90aa-a67bbfa85929"
           },
           "id": 4,
           "scope_entry": null,
@@ -543,7 +543,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "425148b6-b448-47e9-82b1-550dbdf6ecd4",
+                "guid": "5752fb45-4721-4c48-9d51-d689e0fe80d4",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -586,7 +586,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "91517aec-3d9b-40d2-890c-880825a0b963",
+                "guid": "8cbefbf0-7d8b-4568-9870-bae9abe5b2f1",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -629,7 +629,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "425148b6-b448-47e9-82b1-550dbdf6ecd4",
+                "guid": "5752fb45-4721-4c48-9d51-d689e0fe80d4",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -672,7 +672,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "91517aec-3d9b-40d2-890c-880825a0b963",
+                "guid": "8cbefbf0-7d8b-4568-9870-bae9abe5b2f1",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -697,7 +697,7 @@
         }
       ],
       "attributes": {
-        "guid": "90e2f530-0841-4335-9936-79a50b8f06e6",
+        "guid": "ef19d134-5968-4751-bad1-7c68e4085a5b",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -713,7 +713,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "f83ab55c-6f1b-4cd8-990b-77dbe4b4768a",
+        "guid": "ee3b0fe8-3c75-4cbe-afc4-babd2765e88b",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -741,13 +741,13 @@
               "end_line": 15,
               "start_column": 11,
               "end_column": 11,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "data": "A_0",
             "in_connectors": {
               "views": null
             },
-            "guid": "88d58731-bc3b-4bff-b4c9-855b702656aa"
+            "guid": "4862ddd0-5787-475d-895b-a93eb8000d10"
           },
           "id": 0,
           "scope_entry": null,
@@ -763,10 +763,10 @@
               "end_line": 15,
               "start_column": 11,
               "end_column": 11,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "data": "B",
-            "guid": "e2f2214c-fe5e-4e2e-bfd3-c83d64a45167"
+            "guid": "d822de12-559a-4afc-893f-d36ee19522d5"
           },
           "id": 1,
           "scope_entry": null,
@@ -778,14 +778,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1291,
+              "end_line": 1291,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/frontend/python/newast.py"
             },
             "data": "A",
-            "guid": "be336c4e-ddf3-4609-92c1-614f783ebeec"
+            "guid": "d4888988-8ece-4a50-aabc-64539ad1cdeb"
           },
           "id": 2,
           "scope_entry": null,
@@ -824,7 +824,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "a55ea182-b057-456c-a53c-eb7f4d078903",
+                "guid": "ccd94f74-19dc-4212-88da-a1ae741f2cb5",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -888,7 +888,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "b2739018-6c61-4f98-98e8-9d85d0b73e01",
+                "guid": "c170f384-37bf-4469-8ad2-5daf1cc0d620",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -923,7 +923,7 @@
         }
       ],
       "attributes": {
-        "guid": "37a5b685-53c1-418c-af7b-42840d9ee323",
+        "guid": "ba85ac73-f530-48d4-b4d8-d53cba45e725",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -970,7 +970,7 @@
               "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -978,7 +978,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "35ff12f5-2e16-4a18-b67a-1013e6125ae0"
+            "guid": "8421e391-8c7e-47db-a256-215d63630118"
           },
           "id": 0,
           "scope_entry": null,
@@ -994,7 +994,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "aa536566-315e-4353-ad48-4835c1c75a15"
+            "guid": "82eaad81-0ff6-4034-bc6e-45316dc7d90c"
           },
           "id": 1,
           "scope_entry": "0",
@@ -1062,7 +1062,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "69c95d0c-7e8e-4f79-92f3-ec9bf67aa887"
+                "guid": "7872fe06-fd4a-4d07-ab7d-c5578b37ea10"
               },
               "nodes": [
                 {
@@ -1076,7 +1076,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "98078dca-b742-4157-9956-2da4fa6abfb5",
+                    "guid": "debd2193-5a0a-483f-8069-7115c2484a9b",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -1108,7 +1108,7 @@
                           "end_line": 20,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
                         },
                         "label": "state_fusion_node_merge_test_prog1_17",
                         "in_connectors": {
@@ -1117,7 +1117,7 @@
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "18b209f8-80f9-42d6-82a2-7aa3f969c3df"
+                        "guid": "f46fb5c3-8c93-44e3-8e43-d27119d3cd3b"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -1133,10 +1133,10 @@
                           "end_line": 17,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
                         },
                         "data": "__tmp_18_21",
-                        "guid": "9ed5ee01-6fb7-400b-b44f-eee1f7678c34"
+                        "guid": "7f42ec8e-d76c-4497-a398-964ecaa1848b"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -1152,10 +1152,10 @@
                           "end_line": 17,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
                         },
                         "data": "__tmp_19_19",
-                        "guid": "c2c48373-90c7-4fe6-9994-53f545408346"
+                        "guid": "d2f7bde2-7482-477e-b28f-791cd9454537"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -1183,7 +1183,7 @@
                             },
                             "data": "__tmp_18_21",
                             "debuginfo": null,
-                            "guid": "0f862abf-b7a6-47a8-8d6e-04b1cb6baeff",
+                            "guid": "5219709d-29b6-4eeb-bf6a-d984db911f7d",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -1226,7 +1226,7 @@
                             },
                             "data": "__tmp_19_19",
                             "debuginfo": null,
-                            "guid": "02e003e0-4633-4a66-9e54-8746e84d3993",
+                            "guid": "ebe658ce-02d1-42a5-98a7-00a7b0bf9001",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -1251,7 +1251,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "d6c3c237-b346-4a64-ac9d-f3dec5a78817",
+                    "guid": "c6305360-ddf9-4eaf-87b0-6470d43ffa94",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -1264,7 +1264,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "19c4b525-2edd-4a01-b7dd-f1265000f103"
+                        "guid": "7750973b-ca0c-49f1-bd4b-31fa5eb3d757"
                       },
                       "label": ""
                     }
@@ -1285,7 +1285,7 @@
               "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "label": "state_fusion_node_merge_test_prog1_16_4",
             "in_connectors": {
@@ -1294,7 +1294,7 @@
             "out_connectors": {
               "__tmp_19_19": null
             },
-            "guid": "01189ce0-931f-4cfe-9be7-41de28d2f581"
+            "guid": "e8bbac5f-4bda-4b09-bebf-fda59bb0ef02"
           },
           "id": 2,
           "scope_entry": "0",
@@ -1310,10 +1310,10 @@
               "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "data": "A",
-            "guid": "d360208c-a85c-4b35-8ebb-13fe6024dc90"
+            "guid": "7eefbb05-fb64-477c-bbe8-fa8c177fb537"
           },
           "id": 3,
           "scope_entry": null,
@@ -1329,10 +1329,10 @@
               "end_line": 16,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_node_merge_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_node_merge_test.py"
             },
             "data": "A",
-            "guid": "d86d1855-f66b-4e67-9672-2628645d9121"
+            "guid": "de52f5e9-a478-4eec-8323-a5f3ce3d99b5"
           },
           "id": 4,
           "scope_entry": null,
@@ -1360,7 +1360,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "b01dbce0-afc9-4942-80bb-d93ccf90b1fb",
+                "guid": "6be6de73-23e0-4408-8e50-d91c7b1227d9",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1403,7 +1403,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1fa70985-4ad0-4fe7-8703-d2173ac528a4",
+                "guid": "73cf33ad-8d4e-45b2-bf5e-e80ceec7a520",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1446,7 +1446,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "b01dbce0-afc9-4942-80bb-d93ccf90b1fb",
+                "guid": "6be6de73-23e0-4408-8e50-d91c7b1227d9",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1489,7 +1489,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1fa70985-4ad0-4fe7-8703-d2173ac528a4",
+                "guid": "73cf33ad-8d4e-45b2-bf5e-e80ceec7a520",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1514,7 +1514,7 @@
         }
       ],
       "attributes": {
-        "guid": "cb071e28-388f-456c-a51a-b0eafa08d444",
+        "guid": "7a027c77-c28a-4992-9bac-3d866dc741eb",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1527,7 +1527,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "0c89433f-00e4-4460-aae0-ca664bef3da2"
+            "guid": "95e6ed98-8edb-44c5-98c1-905f92be7217"
           },
           "label": ""
         }
@@ -1541,7 +1541,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "8e09c83c-f08e-4eca-8b03-a8f0886d5cfe"
+            "guid": "7f5b8a92-5dd0-4b0c-88d6-b3cd18d98dfc"
           },
           "label": ""
         }
@@ -1555,7 +1555,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "4ba9dd66-e91f-4e92-9934-7f916aa3fafd"
+            "guid": "3ae9832e-9c53-426e-8365-8b097a3c92b3"
           },
           "label": ""
         }
@@ -1569,7 +1569,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "21d7e6b2-b55e-420c-9696-9a1e69ecfc87"
+            "guid": "c76a22f3-6ab7-4bc5-aea4-0599f0f48552"
           },
           "label": ""
         }

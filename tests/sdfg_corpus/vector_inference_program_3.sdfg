@@ -65,15 +65,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 134,
-      "end_line": 145,
+      "start_line": 139,
+      "end_line": 150,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "1a23032e-0fb1-4dfc-a29c-13a9c7e14c59",
-    "hash": "465f7b193483959f6760a8ee7e7d6bfb0ba0d20a7424c647da2c8c5f4286ca1c"
+    "guid": "38f0cb87-064f-4d98-b5ac-514be805ccda",
+    "hash": "fb319e8bc01cbb309d5ff642cb765e61c7958fa69f3e6d009b683c8f88a4845b"
   },
   "nodes": [
     {
@@ -87,7 +87,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "551d7fc5-14e8-4502-af87-3593b48bff22",
+        "guid": "a6e57649-1120-40ea-8a8f-d7321a401b0d",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -111,9 +111,9 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "vector_inference_test_program_136[i=0:N]",
+          "label": "vector_inference_test_program_141[i=0:N]",
           "attributes": {
-            "label": "vector_inference_test_program_136",
+            "label": "vector_inference_test_program_141",
             "params": [
               "i"
             ],
@@ -130,11 +130,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 136,
-              "end_line": 136,
+              "start_line": 141,
+              "end_line": 141,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -142,7 +142,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "3265a679-c0c0-4f43-b923-db91debd00bb"
+            "guid": "f3003930-978a-429d-911c-60c7bfb46017"
           },
           "id": 0,
           "scope_entry": null,
@@ -150,7 +150,7 @@
         },
         {
           "type": "MapExit",
-          "label": "vector_inference_test_program_136[i=0:N]",
+          "label": "vector_inference_test_program_141[i=0:N]",
           "attributes": {
             "in_connectors": {
               "IN_B": null
@@ -158,7 +158,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "b532d539-c2fe-4b1d-a012-ad27065ba2a3"
+            "guid": "fc346a5b-ef77-4aac-9124-5fada470abe5"
           },
           "id": 1,
           "scope_entry": "0",
@@ -166,14 +166,14 @@
         },
         {
           "type": "NestedSDFG",
-          "label": "vector_inference_test_program_136_4",
+          "label": "vector_inference_test_program_141_4",
           "attributes": {
             "sdfg": {
               "type": "SDFG",
               "attributes": {
-                "name": "vector_inference_test_program_136_4",
+                "name": "vector_inference_test_program_141_4",
                 "_arrays": {
-                  "__tmp_139_17": {
+                  "__tmp_144_17": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -190,7 +190,7 @@
                       "debuginfo": null
                     }
                   },
-                  "__tmp_144_17": {
+                  "__tmp_149_17": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -248,7 +248,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "265dfb88-5cbc-4818-a814-6594fe586880"
+                "guid": "124b5fd0-1d32-4cc9-b505-a144e84c18ab"
               },
               "nodes": [
                 {
@@ -262,14 +262,14 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "9e333d89-ebf8-4d54-ae37-77349b83856b",
+                    "guid": "2fde3674-be6a-41f1-be2b-58d27e3df917",
                     "executions": "1",
                     "dynamic_executions": false
                   }
                 },
                 {
                   "type": "SDFGState",
-                  "label": "call_137",
+                  "label": "call_142",
                   "id": 1,
                   "collapsed": false,
                   "scope_dict": {
@@ -278,14 +278,14 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "f4fdf555-55e4-4e68-a714-f1126d645d12",
+                    "guid": "f063a194-0953-4e76-b70a-d82de396942a",
                     "executions": "1",
                     "dynamic_executions": false
                   }
                 },
                 {
                   "type": "SDFGState",
-                  "label": "with_138",
+                  "label": "with_143",
                   "id": 2,
                   "collapsed": false,
                   "scope_dict": {
@@ -298,7 +298,7 @@
                   "nodes": [
                     {
                       "type": "Tasklet",
-                      "label": "vector_inference_test_program_138",
+                      "label": "vector_inference_test_program_143",
                       "attributes": {
                         "code": {
                           "string_data": "x_out = a",
@@ -306,20 +306,20 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 138,
-                          "end_line": 141,
+                          "start_line": 143,
+                          "end_line": 146,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
                         },
-                        "label": "vector_inference_test_program_138",
+                        "label": "vector_inference_test_program_143",
                         "in_connectors": {
                           "a": null
                         },
                         "out_connectors": {
                           "x_out": null
                         },
-                        "guid": "ec30437e-a02c-46c3-bfd0-233b15ee07ae"
+                        "guid": "f43264cc-77df-429d-adf7-5f3fcac06e71"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -327,18 +327,18 @@
                     },
                     {
                       "type": "AccessNode",
-                      "label": "__tmp_139_17",
+                      "label": "__tmp_144_17",
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 138,
-                          "end_line": 138,
+                          "start_line": 143,
+                          "end_line": 143,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
                         },
-                        "data": "__tmp_139_17",
-                        "guid": "ec7b58ba-e5fb-4c63-a4af-f59acdc97199"
+                        "data": "__tmp_144_17",
+                        "guid": "fa8b686a-59eb-4186-a3ed-39d54f23b7d2"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -350,14 +350,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 138,
-                          "end_line": 138,
+                          "start_line": 143,
+                          "end_line": 143,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
                         },
                         "data": "arr",
-                        "guid": "9e0fab38-ef87-420b-99dc-55cd59cdd07f"
+                        "guid": "0eb10667-5717-41e2-9b0a-c2dd289003c8"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -383,9 +383,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_139_17",
+                            "data": "__tmp_144_17",
                             "debuginfo": null,
-                            "guid": "312251d0-9e53-4c9d-891c-978ac321a0c2",
+                            "guid": "5115fb83-aecf-4087-852a-f0deedd4c6ae",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -423,7 +423,7 @@
                             },
                             "data": "arr",
                             "debuginfo": null,
-                            "guid": "a38b24b3-0605-4976-b2f7-bb95d80b1eac",
+                            "guid": "5d113822-af1e-4444-babb-0d982d606b0a",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Indices",
@@ -443,14 +443,14 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "96cc801f-8a20-45f3-bd41-5dc8e86ec37f",
+                    "guid": "a1489507-1093-4194-986b-a854cd874082",
                     "executions": "1",
                     "dynamic_executions": false
                   }
                 },
                 {
                   "type": "SDFGState",
-                  "label": "with_142",
+                  "label": "with_147",
                   "id": 3,
                   "collapsed": false,
                   "scope_dict": {
@@ -463,7 +463,7 @@
                   "nodes": [
                     {
                       "type": "Tasklet",
-                      "label": "vector_inference_test_program_142",
+                      "label": "vector_inference_test_program_147",
                       "attributes": {
                         "code": {
                           "string_data": "b = x_in",
@@ -471,20 +471,20 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 142,
-                          "end_line": 145,
+                          "start_line": 147,
+                          "end_line": 150,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
                         },
-                        "label": "vector_inference_test_program_142",
+                        "label": "vector_inference_test_program_147",
                         "in_connectors": {
                           "x_in": null
                         },
                         "out_connectors": {
                           "b": null
                         },
-                        "guid": "9c5a2366-da7f-48ce-a307-cabc1888ce16"
+                        "guid": "ffb44cac-44ab-46fb-bf9b-5e1998facaf4"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -496,14 +496,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 142,
-                          "end_line": 142,
+                          "start_line": 147,
+                          "end_line": 147,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
                         },
                         "data": "arr",
-                        "guid": "44de2291-728a-43a9-b504-885343bb4cc9"
+                        "guid": "e7b16e95-4c58-42c9-a617-697bd5bca6b5"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -511,18 +511,18 @@
                     },
                     {
                       "type": "AccessNode",
-                      "label": "__tmp_144_17",
+                      "label": "__tmp_149_17",
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 142,
-                          "end_line": 142,
+                          "start_line": 147,
+                          "end_line": 147,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
                         },
-                        "data": "__tmp_144_17",
-                        "guid": "51c28380-1047-491b-b0ba-02abe783abb5"
+                        "data": "__tmp_149_17",
+                        "guid": "0afd5845-b737-4730-9e70-dc97c353445e"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -545,7 +545,7 @@
                             },
                             "data": "arr",
                             "debuginfo": null,
-                            "guid": "2f6c489f-8b82-4087-b293-8c2f3ebc9c3d",
+                            "guid": "7e5ee856-5026-4385-ac19-6873767c5a2d",
                             "src_subset": {
                               "type": "Indices",
                               "indices": [
@@ -581,9 +581,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_144_17",
+                            "data": "__tmp_149_17",
                             "debuginfo": null,
-                            "guid": "13781123-bdeb-4d44-8574-f0b3ac4e9740",
+                            "guid": "25cffa4b-3147-496f-a3d4-daf5d0d63d8d",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -608,7 +608,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "7bbbf79d-fc91-4abf-977a-378c449b8c35",
+                    "guid": "efcfcd8a-834e-48d1-beee-a765e7ab9c19",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -621,7 +621,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "8b6ab95f-ecc0-4e30-96c8-44e78e94beda"
+                        "guid": "fed25ef1-0fa9-4010-b600-2449a2844df2"
                       },
                       "label": ""
                     }
@@ -635,7 +635,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "9f9db5e6-ee49-474a-bc4e-f50e3333bdef"
+                        "guid": "5fbd23dd-d9bd-47e4-b126-f17af81c6b3c"
                       },
                       "label": ""
                     }
@@ -649,7 +649,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "2f0efeb0-b5f0-4a4e-873d-f5bd5fee5608"
+                        "guid": "87029277-265b-4ff5-beca-fd4f81042934"
                       },
                       "label": ""
                     }
@@ -669,20 +669,20 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 136,
-              "end_line": 136,
+              "start_line": 141,
+              "end_line": 141,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
             },
-            "label": "vector_inference_test_program_136_4",
+            "label": "vector_inference_test_program_141_4",
             "in_connectors": {
-              "__tmp_139_17": null
-            },
-            "out_connectors": {
               "__tmp_144_17": null
             },
-            "guid": "9b6c8844-435b-4ac4-8829-851d9d60d589"
+            "out_connectors": {
+              "__tmp_149_17": null
+            },
+            "guid": "05f29ad0-1d9a-42b3-86a5-0d80fe41602d"
           },
           "id": 2,
           "scope_entry": "0",
@@ -694,14 +694,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 136,
-              "end_line": 136,
+              "start_line": 141,
+              "end_line": 141,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
             },
             "data": "A",
-            "guid": "9d6d5336-899e-4eb6-9771-f9a876418fcc"
+            "guid": "73433d62-9899-48e5-bec7-b6a1e77a65b9"
           },
           "id": 3,
           "scope_entry": null,
@@ -713,14 +713,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 136,
-              "end_line": 136,
+              "start_line": 141,
+              "end_line": 141,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/sve/vector_inference_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/sve/vector_inference_test.py"
             },
             "data": "B",
-            "guid": "57bca573-43e7-443d-a45c-55ff6096f9ea"
+            "guid": "b20372cc-57c1-4903-9b3c-433385965349"
           },
           "id": 4,
           "scope_entry": null,
@@ -748,7 +748,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "48af4129-1db1-471d-9d33-9e8c8053fbe9",
+                "guid": "ef158730-f8d8-4020-b9de-cad3ae291c98",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -791,7 +791,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "48af4129-1db1-471d-9d33-9e8c8053fbe9",
+                "guid": "ef158730-f8d8-4020-b9de-cad3ae291c98",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -811,7 +811,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_139_17",
+          "dst_connector": "__tmp_144_17",
           "src_connector": "OUT_A"
         },
         {
@@ -834,7 +834,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "b424d420-310d-467b-ad75-b35c22f8d80a",
+                "guid": "137a53d6-dae6-4a5c-bff8-5d2f1b27b58f",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -877,7 +877,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "b424d420-310d-467b-ad75-b35c22f8d80a",
+                "guid": "137a53d6-dae6-4a5c-bff8-5d2f1b27b58f",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -898,11 +898,11 @@
           "src": "2",
           "dst": "1",
           "dst_connector": "IN_B",
-          "src_connector": "__tmp_144_17"
+          "src_connector": "__tmp_149_17"
         }
       ],
       "attributes": {
-        "guid": "cfa686ea-e796-4ea2-9885-64fe7587a900",
+        "guid": "9c570610-05df-46c6-aeb6-6d45a09418a3",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -915,7 +915,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "eb643da3-84b4-4531-aa32-b198af406744"
+            "guid": "e0143016-5ea6-4706-9043-5d0b48dea165"
           },
           "label": ""
         }

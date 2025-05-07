@@ -88,8 +88,8 @@
         "language": "CPP"
       }
     },
-    "guid": "55a9f1c0-be4a-4677-a224-1e77c7fc9693",
-    "hash": "416e514a9e6f4c129a779f62bc17e1c9e29050d16b24d3480e0df093c04e3829"
+    "guid": "c65350a3-1322-40d9-a541-3ddbf510f037",
+    "hash": "657434818f6c8bc0321d9704fd277034c0fde340951aaad9ec5418c1cb764eb9"
   },
   "nodes": [
     {
@@ -116,14 +116,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 32,
+              "end_line": 32,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "data": "_x",
-            "guid": "97dc1968-9ca3-48fb-81d4-751785545677"
+            "guid": "1fd13bae-44f0-47af-8103-ba2a460b17ce"
           },
           "id": 0,
           "scope_entry": null,
@@ -135,14 +135,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 33,
+              "end_line": 33,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "data": "_y",
-            "guid": "978d6ced-9574-42d0-ba2b-5dda19bda851"
+            "guid": "797fc1a6-c66d-4e57-9df6-934c35bef671"
           },
           "id": 1,
           "scope_entry": null,
@@ -154,14 +154,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "data": "_res",
-            "guid": "46830239-cd07-49fa-b82c-246eb22edfa7"
+            "guid": "ee1a68fe-c98f-414f-bff0-82218c42300e"
           },
           "id": 2,
           "scope_entry": null,
@@ -188,11 +188,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 39,
+              "end_line": 39,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "in_connectors": {
               "IN__x": null,
@@ -202,7 +202,7 @@
               "OUT__x": null,
               "OUT__y": null
             },
-            "guid": "2cdd2308-9111-4066-a1bc-aae94df9468f"
+            "guid": "6cf32234-85c5-4f7e-b90f-c7366c2f6050"
           },
           "id": 3,
           "scope_entry": null,
@@ -218,7 +218,7 @@
             "out_connectors": {
               "OUT__res": null
             },
-            "guid": "aa4944c4-f172-4c37-85bd-30efc66d1cf7"
+            "guid": "02f6090a-465b-4039-a1fb-263be20c4a85"
           },
           "id": 4,
           "scope_entry": "3",
@@ -234,11 +234,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 41,
+              "end_line": 41,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "label": "vecAdd_task",
             "in_connectors": {
@@ -248,7 +248,7 @@
             "out_connectors": {
               "z_con": null
             },
-            "guid": "9ed50cb3-9aad-4d29-a0d3-7d0d5cc4bcdb"
+            "guid": "fffb90ac-420e-4a70-89f7-7a4f19367c7e"
           },
           "id": 5,
           "scope_entry": "3",
@@ -276,7 +276,7 @@
                 },
                 "data": "_x",
                 "debuginfo": null,
-                "guid": "29e76ab8-c22e-46cf-a528-6094dcf1cfa5",
+                "guid": "e932e83a-078d-49a6-ac80-5c12e5eb146a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -319,7 +319,7 @@
                 },
                 "data": "_y",
                 "debuginfo": null,
-                "guid": "7ee68203-5950-40ce-bb5b-b43175025e10",
+                "guid": "8097a117-bfc4-4c5a-9179-14abe22bdf5d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -362,7 +362,7 @@
                 },
                 "data": "_res",
                 "debuginfo": null,
-                "guid": "3ba36041-418a-4e73-a4fe-933767b213fe",
+                "guid": "d924b5af-be3d-4ae0-acb0-46af29268774",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -405,7 +405,7 @@
                 },
                 "data": "_x",
                 "debuginfo": null,
-                "guid": "29e76ab8-c22e-46cf-a528-6094dcf1cfa5",
+                "guid": "e932e83a-078d-49a6-ac80-5c12e5eb146a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -448,7 +448,7 @@
                 },
                 "data": "_y",
                 "debuginfo": null,
-                "guid": "7ee68203-5950-40ce-bb5b-b43175025e10",
+                "guid": "8097a117-bfc4-4c5a-9179-14abe22bdf5d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -491,7 +491,7 @@
                 },
                 "data": "_res",
                 "debuginfo": null,
-                "guid": "3ba36041-418a-4e73-a4fe-933767b213fe",
+                "guid": "d924b5af-be3d-4ae0-acb0-46af29268774",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -516,7 +516,7 @@
         }
       ],
       "attributes": {
-        "guid": "74952f6e-66cd-4725-aab7-722cd3d23a74"
+        "guid": "c3853985-c65a-4410-90ea-3b46408917e4"
       }
     }
   ],

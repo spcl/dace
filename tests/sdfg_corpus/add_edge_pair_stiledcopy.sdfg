@@ -145,8 +145,8 @@
         "language": "CPP"
       }
     },
-    "guid": "dae87abb-d2e8-47e9-83cd-361ba533225b",
-    "hash": "a61b1f41551766ce82c82300d9ca7ef7f4155d92919447b8c06cac110824c443"
+    "guid": "0e0d10d4-8a7b-4ef7-81a0-55ffc0350cab",
+    "hash": "ba8a39c9ba67ecae45892640e25490ebc90ad7a5a068bbb51a5124b5b97674ea"
   },
   "nodes": [
     {
@@ -171,14 +171,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "A",
-            "guid": "c232e5dd-8a5b-4ec1-ad02-5bda2243e63f"
+            "guid": "1e8c69eb-a9bf-4224-ad75-3ad88956c92d"
           },
           "id": 0,
           "scope_entry": null,
@@ -190,14 +190,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "B",
-            "guid": "df18f8f5-0718-4386-8e14-76673cd4c4c5"
+            "guid": "10bd6284-df5a-4699-a62e-e635a6645907"
           },
           "id": 1,
           "scope_entry": null,
@@ -209,14 +209,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "C",
-            "guid": "a671d199-8b84-4edc-aa27-017010d76af9"
+            "guid": "631eb79f-7eb3-44a2-aa24-284dff77d9bb"
           },
           "id": 2,
           "scope_entry": null,
@@ -228,14 +228,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "D",
-            "guid": "c61ef738-241e-4eca-8969-4030677b6719"
+            "guid": "5d5d6109-6fbd-4af0-b9e8-0a3da8a51071"
           },
           "id": 3,
           "scope_entry": null,
@@ -247,14 +247,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "E",
-            "guid": "279fefe6-1b09-4fea-9892-2f6485133df1"
+            "guid": "c7ebe9c8-fe0a-4981-8891-d7e8c562b509"
           },
           "id": 4,
           "scope_entry": null,
@@ -266,14 +266,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "F",
-            "guid": "6154d037-e0ba-4462-a3c7-1a796d7623e1"
+            "guid": "83fb54f2-9648-4152-9c6e-1d1b0a3dd0fb"
           },
           "id": 5,
           "scope_entry": null,
@@ -313,7 +313,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "c964fda1-7cf7-4621-bc1e-667ab62c061a",
+                "guid": "73b705a5-4381-49e7-97b0-7e1c28be80f2",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -380,7 +380,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "5550871a-ea18-446c-b82e-49a766bd1c49",
+                "guid": "fb1dfd50-ec97-4d52-aeb9-05ef30668696",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -441,7 +441,7 @@
                 },
                 "data": "D",
                 "debuginfo": null,
-                "guid": "3c956f20-db07-4808-9f8e-334bb0647ba2",
+                "guid": "c4013dd6-4ad6-46e7-b5c8-ebf96b270d3e",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -496,7 +496,7 @@
                 },
                 "data": "F",
                 "debuginfo": null,
-                "guid": "2d2c10b8-f80a-48ff-a86b-3a735e7bb14e",
+                "guid": "6b077158-cfc2-4420-a226-520562f341b3",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -527,7 +527,7 @@
         }
       ],
       "attributes": {
-        "guid": "8eb8515e-15bc-4152-b94b-9cb748296518"
+        "guid": "cbe7cab7-d26e-4510-a4be-7a0ebb147e1b"
       }
     }
   ],

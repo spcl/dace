@@ -78,8 +78,8 @@
         "language": "CPP"
       }
     },
-    "guid": "184ab38e-5a21-4907-a0c1-bc980b9d5c4b",
-    "hash": "16793e723b3db897a15342b7d18e76e807c79c9539b1f7962e97b8b379895dce"
+    "guid": "ecf67f39-7d2e-41ff-9c82-056f52c5b18d",
+    "hash": "3d9b692e046baaa21f96475cbc17b6d1dac68fd8cbcd357472e6260bbcd0df0a"
   },
   "nodes": [
     {
@@ -120,11 +120,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 64,
+              "end_line": 64,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/view_redundant_array_test.py"
             },
             "in_connectors": {
               "IN_I": null
@@ -132,7 +132,7 @@
             "out_connectors": {
               "OUT_I": null
             },
-            "guid": "060d2c7a-43d2-4f72-a6b4-3b31db3e0806"
+            "guid": "1b657fb5-9633-418a-8ec6-07d3d8f09325"
           },
           "id": 0,
           "scope_entry": null,
@@ -148,11 +148,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 64,
+              "end_line": 64,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/view_redundant_array_test.py"
             },
             "label": "add_one",
             "in_connectors": {
@@ -161,7 +161,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "4d0bb8c5-25b5-4052-80c0-ffce4addd08a"
+            "guid": "7eda7e2f-d061-4e0c-9517-4439b696fe9c"
           },
           "id": 1,
           "scope_entry": "0",
@@ -177,7 +177,7 @@
             "out_connectors": {
               "OUT_T": null
             },
-            "guid": "c7c0c485-05e1-4c6f-ae69-0d63cb390da7"
+            "guid": "61c4e89a-1862-4ea9-9f6a-cd7f45490e15"
           },
           "id": 2,
           "scope_entry": "0",
@@ -189,14 +189,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1907,
+              "end_line": 1907,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "I",
-            "guid": "26eb1206-b372-43b6-9d24-03adead9f9c4"
+            "guid": "946418a1-486f-4d03-9fb6-34ba2687a532"
           },
           "id": 3,
           "scope_entry": null,
@@ -208,14 +208,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1912,
+              "end_line": 1912,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "T",
-            "guid": "6976405b-cb1c-4f85-abec-3bc21593125d"
+            "guid": "07a3d161-694e-450e-8a5e-efdb140fef2b"
           },
           "id": 4,
           "scope_entry": null,
@@ -243,7 +243,7 @@
                 },
                 "data": "I",
                 "debuginfo": null,
-                "guid": "b2bfa64d-a83d-4970-8eb0-b1a7cd495ea3",
+                "guid": "93428996-43b7-43ce-a736-132bd1116667",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -286,7 +286,7 @@
                 },
                 "data": "I",
                 "debuginfo": null,
-                "guid": "b2bfa64d-a83d-4970-8eb0-b1a7cd495ea3",
+                "guid": "93428996-43b7-43ce-a736-132bd1116667",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -329,7 +329,7 @@
                 },
                 "data": "T",
                 "debuginfo": null,
-                "guid": "78791745-167e-4dde-9ebd-300d898f1692",
+                "guid": "ce8445b2-7d66-4ce4-86df-191f19e4f69c",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -372,7 +372,7 @@
                 },
                 "data": "T",
                 "debuginfo": null,
-                "guid": "78791745-167e-4dde-9ebd-300d898f1692",
+                "guid": "ce8445b2-7d66-4ce4-86df-191f19e4f69c",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -397,7 +397,7 @@
         }
       ],
       "attributes": {
-        "guid": "0b1661a1-21a6-4d42-84d3-a1916566ad04"
+        "guid": "9ddb2932-b5aa-4c9a-bebf-a4d7cc58233b"
       }
     },
     {
@@ -418,14 +418,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 71,
+              "end_line": 71,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/view_redundant_array_test.py"
             },
             "data": "T",
-            "guid": "85a3ba85-b46d-4ffe-9ada-866427f44cc5"
+            "guid": "c3c80951-ece2-4501-9110-b7e528e4f96f"
           },
           "id": 0,
           "scope_entry": null,
@@ -437,14 +437,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 71,
+              "end_line": 71,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/view_redundant_array_test.py"
             },
             "data": "O",
-            "guid": "c05c45fe-5d9a-4b2d-8e89-886eeedf5957"
+            "guid": "8373a655-d555-4b02-8f88-b319d7eef34d"
           },
           "id": 1,
           "scope_entry": null,
@@ -472,7 +472,7 @@
                 },
                 "data": "T",
                 "debuginfo": null,
-                "guid": "08f9e440-20a7-4551-bcff-dcb09f49b1f4",
+                "guid": "6fc4603a-637e-426e-a5c5-8b0055d1303d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -497,7 +497,7 @@
         }
       ],
       "attributes": {
-        "guid": "f5f6223f-78a6-480f-b5bf-514f0cdbff38"
+        "guid": "7b62f215-cc86-4338-9a78-b60d514071ca"
       }
     }
   ],
@@ -508,7 +508,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "79a21749-34cc-48fb-9185-5e5151bb772a"
+            "guid": "11fad0a2-a40b-4cb4-9982-f5b9359433b3"
           },
           "label": ""
         }

@@ -131,15 +131,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 54,
-      "end_line": 62,
+      "start_line": 55,
+      "end_line": 63,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/callback_test.py"
+      "filename": "/scratch/bates/dace/tests/callback_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "06657978-7af5-423d-88d3-0cf126dc2001",
-    "hash": "0415c1cb7911b3fda97ebdf260c19c8a43d1edf59da2694339162d84daa5358b"
+    "guid": "31516e35-75e2-4c1f-b9b3-6a1ff40d1c80",
+    "hash": "176685f5b51367ebb4af05323990852ba6464a0e3947bc70e7aef8e79b626f93"
   },
   "nodes": [
     {
@@ -153,14 +153,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "c09054b6-1eb2-4168-813a-27e9788c17b4",
+        "guid": "20348068-d0a9-467a-bd7a-fd8b2f25c21b",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "with_59",
+      "label": "with_60",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -173,7 +173,7 @@
       "nodes": [
         {
           "type": "Tasklet",
-          "label": "tests_callback_test_callback_59",
+          "label": "tests_callback_test_callback_60",
           "attributes": {
             "code": {
               "string_data": "arrfunc(out, inp)",
@@ -181,18 +181,18 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 59,
-              "end_line": 62,
+              "start_line": 60,
+              "end_line": 63,
               "start_column": 4,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/callback_test.py"
+              "filename": "/scratch/bates/dace/tests/callback_test.py"
             },
-            "label": "tests_callback_test_callback_59",
+            "label": "tests_callback_test_callback_60",
             "in_connectors": {
               "inp": null,
               "out": null
             },
-            "guid": "30edffc9-49ff-4349-9417-3478856a8c16"
+            "guid": "03a4c3c3-bb02-4102-81d4-41aeeec9e031"
           },
           "id": 0,
           "scope_entry": null,
@@ -204,14 +204,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 59,
-              "end_line": 59,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/callback_test.py"
+              "filename": "/scratch/bates/dace/tests/callback_test.py"
             },
             "data": "out_arr",
-            "guid": "acb780ea-45c2-46c2-879f-cc19d1c1a0c4"
+            "guid": "a857dc9e-e462-4170-822b-23d365d0da91"
           },
           "id": 1,
           "scope_entry": null,
@@ -223,14 +223,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 59,
-              "end_line": 59,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/callback_test.py"
+              "filename": "/scratch/bates/dace/tests/callback_test.py"
             },
             "data": "in_arr",
-            "guid": "8f149b60-ce2f-4d90-89be-1adb26aeb242"
+            "guid": "a84b78a9-7e00-4b0c-b82c-8c32587f3245"
           },
           "id": 2,
           "scope_entry": null,
@@ -270,7 +270,7 @@
                 },
                 "data": "in_arr",
                 "debuginfo": null,
-                "guid": "abfec147-3f0b-405e-99ad-3ac26accf10c",
+                "guid": "72ea16b7-d0c3-4280-81cf-e0a262e72796",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -337,7 +337,7 @@
                 },
                 "data": "out_arr",
                 "debuginfo": null,
-                "guid": "79bd83a4-a16c-44e2-8d26-58b42241516d",
+                "guid": "5a453e42-d931-4f12-b9fb-a68df6d60d79",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -374,7 +374,7 @@
         }
       ],
       "attributes": {
-        "guid": "d1bd614b-cc01-4305-8361-224d580e0e79",
+        "guid": "635872a6-131b-4b71-9a7c-3f96e43cb25f",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -387,7 +387,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "5ea09a50-3d80-4f61-beab-7c20f388caed"
+            "guid": "01d317d2-a25e-4313-90f8-a000c18508dc"
           },
           "label": ""
         }

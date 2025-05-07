@@ -39,8 +39,8 @@
         "language": "CPP"
       }
     },
-    "guid": "26cd3551-ebee-48d1-9bb2-12ca8ea20929",
-    "hash": "24a88d8beb350d07cb94bea4189a77ac29c77a88c825b6a074c96cb8cba98d05"
+    "guid": "640bb97a-70d0-4384-b976-84152319c830",
+    "hash": "1370656a2fe8fc9eb6072f86ba346edbe1557b583ead7ddb7f21b5b77a5aeaa5"
   },
   "nodes": [
     {
@@ -66,11 +66,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/const_access_test.py"
             },
             "label": "add",
             "in_connectors": {
@@ -79,7 +79,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "c3fe6718-d111-4a43-b499-473d211e9a12"
+            "guid": "d9cb11b9-adc6-49bd-b666-42f2f7bc8dce"
           },
           "id": 0,
           "scope_entry": null,
@@ -91,14 +91,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 14,
+              "end_line": 14,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/const_access_test.py"
             },
             "data": "a",
-            "guid": "226d4573-7b46-4e8a-a2b3-94203b52249c"
+            "guid": "91bdc525-cc43-481d-8625-b926201e7b5f"
           },
           "id": 1,
           "scope_entry": null,
@@ -110,14 +110,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 15,
+              "end_line": 15,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/const_access_test.py"
             },
             "data": "a",
-            "guid": "64731fc1-a28e-4aac-a17a-42b5b21386bf"
+            "guid": "7b04ff4b-9701-4548-8dd7-41f928baf20c"
           },
           "id": 2,
           "scope_entry": null,
@@ -145,7 +145,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "27f02c5a-a4d4-49c7-b972-e880fed0ce9b",
+                "guid": "05b180cb-d507-4968-89d6-13c87e6b6999",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -188,7 +188,7 @@
                 },
                 "data": "a",
                 "debuginfo": null,
-                "guid": "8c2d2e73-4919-425e-a844-8053e4d0e6b1",
+                "guid": "8fb07a25-1c19-439b-a084-8887b7bc7c19",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -213,7 +213,7 @@
         }
       ],
       "attributes": {
-        "guid": "f3f7f1f4-5588-4140-b481-c12e880508a8"
+        "guid": "19f5c86f-1e93-4b6b-b4bc-96c31df5fda0"
       }
     }
   ],

@@ -56,8 +56,8 @@
         "language": "CPP"
       }
     },
-    "guid": "4cad0d51-2429-4060-983a-443e301fcca9",
-    "hash": "df6ed629560b2e3169ede920ca35100d8c90103556acfd238be651b278570638"
+    "guid": "74e4b8bf-c70c-4ecb-8032-2f3bb825cb2f",
+    "hash": "326f64c53986183c4b61dc086913715672f8542c111d666a6d4eec84508a2ddf"
   },
   "nodes": [
     {
@@ -83,14 +83,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 10,
+              "end_line": 10,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/consolidate_edges_test.py"
             },
             "data": "A",
-            "guid": "17f8251e-223b-4968-964f-e71576cb997f"
+            "guid": "7d6f7ade-8389-4530-b168-a9813fb38c33"
           },
           "id": 0,
           "scope_entry": null,
@@ -117,11 +117,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 11,
+              "end_line": 11,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/consolidate_edges_test.py"
             },
             "in_connectors": {
               "IN_1": null,
@@ -133,7 +133,7 @@
               "OUT_2": null,
               "OUT_A": null
             },
-            "guid": "0d8fa406-0331-4d13-861d-91f797b9b531"
+            "guid": "8fa01483-dcc0-4147-b15d-ae3b3dc22d17"
           },
           "id": 1,
           "scope_entry": null,
@@ -149,7 +149,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "d45f8b70-3c30-4c1e-bc82-ef37e5736082"
+            "guid": "192353cd-2a8d-4da3-baea-40d746937f81"
           },
           "id": 2,
           "scope_entry": "1",
@@ -165,11 +165,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 12,
+              "end_line": 12,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/consolidate_edges_test.py"
             },
             "label": "op",
             "in_connectors": {
@@ -180,7 +180,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "90fbc7a6-0dd3-4ee5-978f-210228bb22cf"
+            "guid": "90f705ca-b449-4068-b591-f33634713d18"
           },
           "id": 3,
           "scope_entry": "1",
@@ -192,14 +192,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 13,
+              "end_line": 13,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/consolidate_edges_test.py"
             },
             "data": "B",
-            "guid": "d26003b9-b344-43ec-b199-b711912e376e"
+            "guid": "09e0dd61-b1e5-4779-a6bb-0692f60ee685"
           },
           "id": 4,
           "scope_entry": null,
@@ -227,7 +227,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "50ddb1ae-eff2-41a3-819f-5a44d76b1792",
+                "guid": "55766db8-4e9d-4baa-9f8a-3f71f23436ec",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -270,7 +270,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "50ddb1ae-eff2-41a3-819f-5a44d76b1792",
+                "guid": "55766db8-4e9d-4baa-9f8a-3f71f23436ec",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -313,7 +313,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "50ddb1ae-eff2-41a3-819f-5a44d76b1792",
+                "guid": "55766db8-4e9d-4baa-9f8a-3f71f23436ec",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -356,7 +356,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "fe775e71-cc43-4cd6-b7d1-850df71b8fc8",
+                "guid": "29c53141-c9f1-452a-8f15-bda992830c7f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -399,7 +399,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "dc20e691-cebe-4153-bf1d-a382783cdd3c",
+                "guid": "8caa87bb-aa90-4356-ba3e-2bff1d4a23e6",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -442,7 +442,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "50ddb1ae-eff2-41a3-819f-5a44d76b1792",
+                "guid": "55766db8-4e9d-4baa-9f8a-3f71f23436ec",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -485,7 +485,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "c44d0673-e52a-4508-a00a-228a6d551fd1",
+                "guid": "2fbb905a-acab-4d94-93f4-b16420580287",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -528,7 +528,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "c44d0673-e52a-4508-a00a-228a6d551fd1",
+                "guid": "2fbb905a-acab-4d94-93f4-b16420580287",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -553,7 +553,7 @@
         }
       ],
       "attributes": {
-        "guid": "83d07bc8-8aa9-4119-a52c-3bca1860fceb"
+        "guid": "89d2492b-6941-4039-bf64-ca4d69fcaae6"
       }
     }
   ],

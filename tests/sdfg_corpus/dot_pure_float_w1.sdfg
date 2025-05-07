@@ -84,8 +84,8 @@
         "language": "CPP"
       }
     },
-    "guid": "360e5a2a-98f3-4c7a-af92-5c2f701186e1",
-    "hash": "f974c248a14e648004ebb97f38941aa5cdb4fc754eb2c7d2ef3088df75be67de"
+    "guid": "1be8bebf-fb8e-461c-92a8-e6b0e0e4feaf",
+    "hash": "661621404c3ddc57afb7402dede72cdcb851c8ce847afb529d51bf8601f048c5"
   },
   "nodes": [
     {
@@ -108,14 +108,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 36,
+              "end_line": 36,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/dot_test.py"
             },
             "data": "x",
-            "guid": "74e94870-ba28-4221-b70d-9f9ac2f74637"
+            "guid": "3c77b20e-53e4-4c3f-a1d6-67e632e34a8c"
           },
           "id": 0,
           "scope_entry": null,
@@ -127,14 +127,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 37,
+              "end_line": 37,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/dot_test.py"
             },
             "data": "y",
-            "guid": "9cf0b915-561f-4878-9cbd-ca8444882e31"
+            "guid": "6e20626a-394e-4aa6-b3e8-b2c015907ac5"
           },
           "id": 1,
           "scope_entry": null,
@@ -146,14 +146,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 38,
+              "end_line": 38,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/blas/nodes/dot_test.py"
             },
             "data": "r",
-            "guid": "5b8cacbb-5f2f-47db-85d4-bf55aa1cf726"
+            "guid": "2ef13885-6b72-44ee-a946-633d7ee31485"
           },
           "id": 2,
           "scope_entry": null,
@@ -174,7 +174,7 @@
             "out_connectors": {
               "_result": null
             },
-            "guid": "4738ef3b-8ad8-4983-aa74-4d35f294f5bc"
+            "guid": "7885e8dc-7317-4952-9d7f-ef3a46edf60f"
           },
           "id": 3,
           "scope_entry": null,
@@ -203,7 +203,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "bcfd62eb-31b8-4a92-9e22-01bd1b2478b0",
+                "guid": "1ea21f9e-b677-4729-a595-d72f9b80d068",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -246,7 +246,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "7695deca-090f-47b4-8763-1fdd4d8daa8a",
+                "guid": "c2d230bd-05a2-4a5f-83af-155e153bb6e3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -289,7 +289,7 @@
                 },
                 "data": "r",
                 "debuginfo": null,
-                "guid": "69d91687-b661-4a6f-8349-351635f7416d",
+                "guid": "c2935557-dbab-4f21-8c5a-78645cc30f66",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -314,7 +314,7 @@
         }
       ],
       "attributes": {
-        "guid": "f85bd5e7-19fe-498c-ad3d-b36aa3e95cce"
+        "guid": "25a0bcf8-96c5-4fc3-be9d-4d06d8fd037c"
       }
     }
   ],

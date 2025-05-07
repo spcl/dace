@@ -1,0 +1,900 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "transients_transients_15_4",
+    "_arrays": {
+      "__tmp_16_11_r": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "float32",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__tmp4": {
+        "type": "Scalar",
+        "attributes": {
+          "dtype": "bool",
+          "shape": [
+            "1"
+          ],
+          "transient": true,
+          "debuginfo": null
+        }
+      },
+      "__tmp5": {
+        "type": "Stream",
+        "attributes": {
+          "offset": [
+            "0"
+          ],
+          "buffer_size": "1",
+          "dtype": "float32",
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      },
+      "__tmp_19_23": {
+        "type": "Scalar",
+        "attributes": {
+          "shape": [
+            "1"
+          ],
+          "debuginfo": null
+        }
+      }
+    },
+    "symbols": {
+      "i": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "ba5ccfa1-eb1d-4184-bbd7-07984410b2f5",
+    "hash": "74291c04eef4f32a93800a93861f1a4d0d0e41f06df811c13ee2d83837beb89a"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "init",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "216ecb20-af15-4951-8180-6ebebb5eb8da",
+        "executions": "1",
+        "dynamic_executions": false
+      }
+    },
+    {
+      "type": "ControlFlowRegion",
+      "attributes": {
+        "guid": "2b4a1cca-75fa-4ed9-8ff5-3ca54d82189f",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "SDFGState",
+          "label": "cond_prep_start_16",
+          "id": 0,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": []
+          },
+          "nodes": [],
+          "edges": [],
+          "attributes": {
+            "guid": "642d003d-563e-400d-a94e-20d9d8e828b5"
+          }
+        },
+        {
+          "type": "SDFGState",
+          "label": "BinOp_16",
+          "id": 1,
+          "collapsed": false,
+          "scope_dict": {
+            "-1": [
+              0,
+              1,
+              2
+            ]
+          },
+          "nodes": [
+            {
+              "type": "AccessNode",
+              "label": "__tmp_16_11_r",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 16,
+                  "end_line": 16,
+                  "start_column": 19,
+                  "end_column": 19,
+                  "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                },
+                "data": "__tmp_16_11_r",
+                "guid": "11f732ef-cb87-4cf4-88b5-2e7ae35e5dba"
+              },
+              "id": 0,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "Tasklet",
+              "label": "_GtE_",
+              "attributes": {
+                "code": {
+                  "string_data": "__out = (__in1 >= 0.5)",
+                  "language": "Python"
+                },
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 16,
+                  "end_line": 16,
+                  "start_column": 19,
+                  "end_column": 19,
+                  "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                },
+                "label": "_GtE_",
+                "in_connectors": {
+                  "__in1": null
+                },
+                "out_connectors": {
+                  "__out": null
+                },
+                "guid": "1764faaf-9006-489f-b04a-13d3775f9851"
+              },
+              "id": 1,
+              "scope_entry": null,
+              "scope_exit": null
+            },
+            {
+              "type": "AccessNode",
+              "label": "__tmp4",
+              "attributes": {
+                "debuginfo": {
+                  "type": "DebugInfo",
+                  "start_line": 16,
+                  "end_line": 16,
+                  "start_column": 19,
+                  "end_column": 19,
+                  "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                },
+                "data": "__tmp4",
+                "guid": "6193309e-55db-4617-9e7d-8ee25c6aec6c"
+              },
+              "id": 2,
+              "scope_entry": null,
+              "scope_exit": null
+            }
+          ],
+          "edges": [
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "__tmp_16_11_r",
+                    "debuginfo": null,
+                    "guid": "cb0e9fa6-a6f5-40f3-8bbd-d9616605a005",
+                    "src_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "dst_subset": null,
+                    "is_data_src": true,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "0",
+              "dst": "1",
+              "dst_connector": "__in1",
+              "src_connector": null
+            },
+            {
+              "type": "MultiConnectorEdge",
+              "attributes": {
+                "data": {
+                  "type": "Memlet",
+                  "attributes": {
+                    "volume": "1",
+                    "subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "data": "__tmp4",
+                    "debuginfo": null,
+                    "guid": "1ac718c4-f33d-41a1-8b60-0d2d67c4b3d1",
+                    "src_subset": null,
+                    "dst_subset": {
+                      "type": "Range",
+                      "ranges": [
+                        {
+                          "start": "0",
+                          "end": "0",
+                          "step": "1",
+                          "tile": "1"
+                        }
+                      ]
+                    },
+                    "is_data_src": false,
+                    "num_accesses": "1"
+                  }
+                }
+              },
+              "src": "1",
+              "dst": "2",
+              "dst_connector": null,
+              "src_connector": "__out"
+            }
+          ],
+          "attributes": {
+            "guid": "65b61fec-aecd-4479-8b51-8b23261f6107"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "type": "Edge",
+          "attributes": {
+            "data": {
+              "type": "InterstateEdge",
+              "attributes": {
+                "guid": "062aab3b-1fdd-44c1-b8df-a002f19da41b"
+              },
+              "label": ""
+            }
+          },
+          "src": "0",
+          "dst": "1"
+        }
+      ],
+      "collapsed": false,
+      "label": "cond_prep_16",
+      "id": 1,
+      "cfg_list_id": 2,
+      "start_block": null
+    },
+    {
+      "type": "ConditionalBlock",
+      "attributes": {
+        "guid": "104e2ab0-645e-4ff5-a6e0-64bcad3ac51b",
+        "executions": "1",
+        "dynamic_executions": false
+      },
+      "nodes": [
+        {
+          "type": "ControlFlowRegion",
+          "attributes": {
+            "guid": "b8ac7bfe-59fb-4978-927a-e6c2eff2a492"
+          },
+          "nodes": [
+            {
+              "type": "SDFGState",
+              "label": "if_16",
+              "id": 0,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": []
+              },
+              "nodes": [],
+              "edges": [],
+              "attributes": {
+                "guid": "b7ce153d-4e9d-4f6a-a366-547f6a960435"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "globalmemlet_17",
+              "id": 1,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp_16_11_r",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 16,
+                      "end_line": 16,
+                      "start_column": 19,
+                      "end_column": 19,
+                      "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                    },
+                    "data": "__tmp_16_11_r",
+                    "guid": "16818f4c-66a4-4093-83aa-84f22f74dbe4"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp5",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 16,
+                      "end_line": 16,
+                      "start_column": 19,
+                      "end_column": 19,
+                      "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                    },
+                    "data": "__tmp5",
+                    "guid": "7cb4fdae-f685-4a29-9f9a-71fbcbd3681b"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "dynamic": true,
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp5",
+                        "debuginfo": null,
+                        "guid": "ae242fe2-a882-4da7-985a-022d5aa961f4",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": -1
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": null
+                }
+              ],
+              "attributes": {
+                "guid": "81698fd7-919c-427c-a66e-b6fa1a7e1b19"
+              }
+            },
+            {
+              "type": "SDFGState",
+              "label": "with_18",
+              "id": 2,
+              "collapsed": false,
+              "scope_dict": {
+                "-1": [
+                  0,
+                  1
+                ]
+              },
+              "nodes": [
+                {
+                  "type": "Tasklet",
+                  "label": "transients_test_transients_18",
+                  "attributes": {
+                    "code": {
+                      "string_data": "out = 1",
+                      "language": "Python"
+                    },
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 18,
+                      "end_line": 20,
+                      "start_column": 12,
+                      "end_column": 16,
+                      "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                    },
+                    "label": "transients_test_transients_18",
+                    "out_connectors": {
+                      "out": null
+                    },
+                    "guid": "bdb52c77-19b0-4f91-970d-48f5e9008681"
+                  },
+                  "id": 0,
+                  "scope_entry": null,
+                  "scope_exit": null
+                },
+                {
+                  "type": "AccessNode",
+                  "label": "__tmp_19_23",
+                  "attributes": {
+                    "debuginfo": {
+                      "type": "DebugInfo",
+                      "start_line": 18,
+                      "end_line": 18,
+                      "start_column": 12,
+                      "end_column": 12,
+                      "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                    },
+                    "data": "__tmp_19_23",
+                    "guid": "c5342b89-e013-4c66-b5f8-e0300c418535"
+                  },
+                  "id": 1,
+                  "scope_entry": null,
+                  "scope_exit": null
+                }
+              ],
+              "edges": [
+                {
+                  "type": "MultiConnectorEdge",
+                  "attributes": {
+                    "data": {
+                      "type": "Memlet",
+                      "attributes": {
+                        "volume": "1",
+                        "subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "data": "__tmp_19_23",
+                        "wcr": "(lambda a, b: (a + b))",
+                        "debuginfo": null,
+                        "guid": "a6e630a8-9d54-406f-a612-84d18e9e9fa7",
+                        "src_subset": null,
+                        "dst_subset": {
+                          "type": "Range",
+                          "ranges": [
+                            {
+                              "start": "0",
+                              "end": "0",
+                              "step": "1",
+                              "tile": "1"
+                            }
+                          ]
+                        },
+                        "is_data_src": false,
+                        "num_accesses": "1"
+                      }
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1",
+                  "dst_connector": null,
+                  "src_connector": "out"
+                }
+              ],
+              "attributes": {
+                "guid": "e4330ff9-c371-429b-ae01-292d6f206b91"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "978323df-c194-4806-ac00-858e1378274a"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "0",
+              "dst": "1"
+            },
+            {
+              "type": "Edge",
+              "attributes": {
+                "data": {
+                  "type": "InterstateEdge",
+                  "attributes": {
+                    "guid": "2d4c14f6-1eae-48ca-9cc9-7212cd12935b"
+                  },
+                  "label": ""
+                }
+              },
+              "src": "1",
+              "dst": "2"
+            }
+          ],
+          "collapsed": false,
+          "label": "if_16_body",
+          "id": 0,
+          "cfg_list_id": 4,
+          "start_block": null
+        }
+      ],
+      "edges": [],
+      "collapsed": false,
+      "label": "if_16",
+      "id": 2,
+      "cfg_list_id": 3,
+      "start_block": null,
+      "branches": [
+        [
+          {
+            "string_data": "__tmp4",
+            "language": "Python"
+          },
+          {
+            "type": "ControlFlowRegion",
+            "attributes": {
+              "guid": "b8ac7bfe-59fb-4978-927a-e6c2eff2a492"
+            },
+            "nodes": [
+              {
+                "type": "SDFGState",
+                "label": "if_16",
+                "id": 0,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": []
+                },
+                "nodes": [],
+                "edges": [],
+                "attributes": {
+                  "guid": "b7ce153d-4e9d-4f6a-a366-547f6a960435"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "globalmemlet_17",
+                "id": 1,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp_16_11_r",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 16,
+                        "end_line": 16,
+                        "start_column": 19,
+                        "end_column": 19,
+                        "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                      },
+                      "data": "__tmp_16_11_r",
+                      "guid": "16818f4c-66a4-4093-83aa-84f22f74dbe4"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp5",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 16,
+                        "end_line": 16,
+                        "start_column": 19,
+                        "end_column": 19,
+                        "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                      },
+                      "data": "__tmp5",
+                      "guid": "7cb4fdae-f685-4a29-9f9a-71fbcbd3681b"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "dynamic": true,
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp5",
+                          "debuginfo": null,
+                          "guid": "ae242fe2-a882-4da7-985a-022d5aa961f4",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": -1
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": null
+                  }
+                ],
+                "attributes": {
+                  "guid": "81698fd7-919c-427c-a66e-b6fa1a7e1b19"
+                }
+              },
+              {
+                "type": "SDFGState",
+                "label": "with_18",
+                "id": 2,
+                "collapsed": false,
+                "scope_dict": {
+                  "-1": [
+                    0,
+                    1
+                  ]
+                },
+                "nodes": [
+                  {
+                    "type": "Tasklet",
+                    "label": "transients_test_transients_18",
+                    "attributes": {
+                      "code": {
+                        "string_data": "out = 1",
+                        "language": "Python"
+                      },
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 18,
+                        "end_line": 20,
+                        "start_column": 12,
+                        "end_column": 16,
+                        "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                      },
+                      "label": "transients_test_transients_18",
+                      "out_connectors": {
+                        "out": null
+                      },
+                      "guid": "bdb52c77-19b0-4f91-970d-48f5e9008681"
+                    },
+                    "id": 0,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  },
+                  {
+                    "type": "AccessNode",
+                    "label": "__tmp_19_23",
+                    "attributes": {
+                      "debuginfo": {
+                        "type": "DebugInfo",
+                        "start_line": 18,
+                        "end_line": 18,
+                        "start_column": 12,
+                        "end_column": 12,
+                        "filename": "/scratch/bates/dace/tests/python_frontend/transients_test.py"
+                      },
+                      "data": "__tmp_19_23",
+                      "guid": "c5342b89-e013-4c66-b5f8-e0300c418535"
+                    },
+                    "id": 1,
+                    "scope_entry": null,
+                    "scope_exit": null
+                  }
+                ],
+                "edges": [
+                  {
+                    "type": "MultiConnectorEdge",
+                    "attributes": {
+                      "data": {
+                        "type": "Memlet",
+                        "attributes": {
+                          "volume": "1",
+                          "subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "data": "__tmp_19_23",
+                          "wcr": "(lambda a, b: (a + b))",
+                          "debuginfo": null,
+                          "guid": "a6e630a8-9d54-406f-a612-84d18e9e9fa7",
+                          "src_subset": null,
+                          "dst_subset": {
+                            "type": "Range",
+                            "ranges": [
+                              {
+                                "start": "0",
+                                "end": "0",
+                                "step": "1",
+                                "tile": "1"
+                              }
+                            ]
+                          },
+                          "is_data_src": false,
+                          "num_accesses": "1"
+                        }
+                      }
+                    },
+                    "src": "0",
+                    "dst": "1",
+                    "dst_connector": null,
+                    "src_connector": "out"
+                  }
+                ],
+                "attributes": {
+                  "guid": "e4330ff9-c371-429b-ae01-292d6f206b91"
+                }
+              }
+            ],
+            "edges": [
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "978323df-c194-4806-ac00-858e1378274a"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "0",
+                "dst": "1"
+              },
+              {
+                "type": "Edge",
+                "attributes": {
+                  "data": {
+                    "type": "InterstateEdge",
+                    "attributes": {
+                      "guid": "2d4c14f6-1eae-48ca-9cc9-7212cd12935b"
+                    },
+                    "label": ""
+                  }
+                },
+                "src": "1",
+                "dst": "2"
+              }
+            ],
+            "collapsed": false,
+            "label": "if_16_body",
+            "id": null,
+            "cfg_list_id": 4,
+            "start_block": null
+          }
+        ]
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "53b975f4-6569-4b2d-bd42-37aa72f229b7"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "a77e300b-7c6e-4256-b67f-551d1600ab9d"
+          },
+          "label": ""
+        }
+      },
+      "src": "1",
+      "dst": "2"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 1,
+  "start_block": 0
+}

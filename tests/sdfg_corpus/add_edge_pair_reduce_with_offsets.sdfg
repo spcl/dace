@@ -59,8 +59,8 @@
         "language": "CPP"
       }
     },
-    "guid": "de5a6a95-4842-4d91-8d2a-648566c1edb9",
-    "hash": "955646f360700a42f746c0cb1ea28bf48efc6816f319c22043c20a5ffbe8c99e"
+    "guid": "26ae1262-3fdd-4305-a558-65adc015ce93",
+    "hash": "4c0f06c891e774500a2b9943bdd662daf05397e67067c492727db88e77d57274"
   },
   "nodes": [
     {
@@ -82,14 +82,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 18,
+              "end_line": 18,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/reduce_offsets_test.py"
             },
             "data": "A",
-            "guid": "7a71a6ac-d83c-407f-807b-a3add253ab0b"
+            "guid": "33777fb2-33c7-40d6-96ea-89b570f9fbe7"
           },
           "id": 0,
           "scope_entry": null,
@@ -101,14 +101,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 19,
+              "end_line": 19,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/reduce_offsets_test.py"
             },
             "data": "B",
-            "guid": "38557bd0-34a1-4571-a8d8-3eb4292fc246"
+            "guid": "b64c960e-2876-4cdf-a1ba-261fe6516371"
           },
           "id": 1,
           "scope_entry": null,
@@ -126,14 +126,14 @@
             "name": "Reduce",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 20,
+              "end_line": 20,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/reduce_offsets_test.py"
             },
             "label": "Reduce",
-            "guid": "e3be41df-08a4-46ee-acbc-5621dd427f77"
+            "guid": "bfaf6f73-7847-446e-8cc0-f04f5a4be4a2"
           },
           "id": 2,
           "scope_entry": null,
@@ -168,7 +168,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "aea8d153-9e52-45c5-8b22-aaa88b6e37f7",
+                "guid": "3de73121-0224-40e9-aa6b-2a502b55191b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -217,7 +217,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "009640cd-54d2-4203-81ec-ca107b812169",
+                "guid": "6e55e267-6b34-4693-ab7b-e1482c69f82d",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -242,7 +242,7 @@
         }
       ],
       "attributes": {
-        "guid": "cff39e98-6a66-41c0-a89e-bfb50d8833b4"
+        "guid": "fea5b9f7-368b-4747-92e2-83b28f76dc0d"
       }
     }
   ],

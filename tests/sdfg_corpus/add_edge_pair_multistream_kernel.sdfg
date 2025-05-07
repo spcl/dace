@@ -176,8 +176,8 @@
         "language": "CPP"
       }
     },
-    "guid": "d5241901-753b-4edc-9166-2a099bac6697",
-    "hash": "96db802e292edb9f4762a6f9c7cc3e7516abd1ce2260e93249fd8ceefe67cdbf"
+    "guid": "e0ee2b92-6d13-4d9b-94dc-2a40c72e3d71",
+    "hash": "6e5b4b029982c37fbf5bd963e0e8d6d11e797eef48fa8164fd1898c944452564"
   },
   "nodes": [
     {
@@ -219,14 +219,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 20,
+              "end_line": 20,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "A",
-            "guid": "aa2db793-26de-4c81-90b6-590927066ed4"
+            "guid": "4bfb8d7f-dd98-4c1e-9d2d-0c59402e8701"
           },
           "id": 0,
           "scope_entry": null,
@@ -238,14 +238,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 21,
+              "end_line": 21,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "gA1",
-            "guid": "f8fd003a-0958-498d-a3c7-d4b571e70ed2"
+            "guid": "9936f327-7c9e-4349-84cb-595f4e020f83"
           },
           "id": 1,
           "scope_entry": null,
@@ -257,14 +257,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 22,
+              "end_line": 22,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "gA2",
-            "guid": "3292f67d-51ba-4638-9686-c42ddc1f0037"
+            "guid": "022e9794-23b8-4e3c-8156-09b0f36bc98f"
           },
           "id": 2,
           "scope_entry": null,
@@ -276,14 +276,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 25,
+              "end_line": 25,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "B",
-            "guid": "b8762dd3-b65f-4a82-9100-a1e423574fba"
+            "guid": "8b275254-b4a4-4123-bff4-d452c924df38"
           },
           "id": 3,
           "scope_entry": null,
@@ -295,14 +295,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 26,
+              "end_line": 26,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "gB1",
-            "guid": "1a488b7b-74e7-44c4-b074-b2b5c87709c3"
+            "guid": "7b55beb2-4d69-4330-a8e8-8d8456f59191"
           },
           "id": 4,
           "scope_entry": null,
@@ -314,14 +314,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 27,
+              "end_line": 27,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "gB2",
-            "guid": "a108cc36-1907-4462-b754-2f257b49952c"
+            "guid": "a89aff71-c696-4a34-9f39-d94884e828a5"
           },
           "id": 5,
           "scope_entry": null,
@@ -333,14 +333,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 30,
+              "end_line": 30,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "gC",
-            "guid": "139d1484-3f43-41e9-a6f1-5a69b2c2e888"
+            "guid": "02ee7493-90c4-49e8-bc1d-ca86db30e860"
           },
           "id": 6,
           "scope_entry": null,
@@ -352,14 +352,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 31,
+              "end_line": 31,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "data": "C",
-            "guid": "f477b1f3-e9e1-4759-b28d-9d3ed406d24f"
+            "guid": "cf83aeb5-9dd5-4525-a96d-2fbc3e012643"
           },
           "id": 7,
           "scope_entry": null,
@@ -387,11 +387,11 @@
             "schedule": "GPU_Device",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "in_connectors": {
               "IN_1": null
@@ -399,7 +399,7 @@
             "out_connectors": {
               "OUT_1": null
             },
-            "guid": "be7f285d-0fd1-4aff-91a4-a9d6bb85255a"
+            "guid": "0e9c97d0-5157-4fdb-b0b6-94b86632a5e0"
           },
           "id": 8,
           "scope_entry": null,
@@ -415,11 +415,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "label": "addone",
             "in_connectors": {
@@ -428,7 +428,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "f8a3102a-4d55-4d7f-9eb6-286adf329104"
+            "guid": "f3941700-146a-4401-9083-249f3ae4c128"
           },
           "id": 9,
           "scope_entry": "8",
@@ -444,7 +444,7 @@
             "out_connectors": {
               "OUT_1": null
             },
-            "guid": "7b14dc15-19b6-47e5-8d74-e6be603ed48e"
+            "guid": "6f0448d9-db0e-4e0f-a97d-a92d4614efad"
           },
           "id": 10,
           "scope_entry": "8",
@@ -472,11 +472,11 @@
             "schedule": "GPU_Device",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 37,
+              "end_line": 37,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "in_connectors": {
               "IN_1": null
@@ -484,7 +484,7 @@
             "out_connectors": {
               "OUT_1": null
             },
-            "guid": "b378118b-85cc-4f04-be4e-7e53ddab9159"
+            "guid": "634a0662-8ec4-4417-a900-bc35b2713e5a"
           },
           "id": 11,
           "scope_entry": null,
@@ -500,11 +500,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 37,
+              "end_line": 37,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "label": "addtwo",
             "in_connectors": {
@@ -513,7 +513,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "bb629379-d374-4562-be53-3f87637e4265"
+            "guid": "d7bf2561-5249-4074-86d3-83bc6f933510"
           },
           "id": 12,
           "scope_entry": "11",
@@ -529,7 +529,7 @@
             "out_connectors": {
               "OUT_1": null
             },
-            "guid": "4366b48d-2889-444f-a540-10bd9e0f0043"
+            "guid": "379ce24f-c5ed-44d2-9628-059c49c7d6a2"
           },
           "id": 13,
           "scope_entry": "11",
@@ -557,11 +557,11 @@
             "schedule": "GPU_Device",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 41,
+              "end_line": 41,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "in_connectors": {
               "IN_1": null,
@@ -571,7 +571,7 @@
               "OUT_1": null,
               "OUT_2": null
             },
-            "guid": "52861e17-f4a7-406d-84da-86af3da5a8e9"
+            "guid": "25d36160-ae34-46d6-95ee-cb79b1c56f43"
           },
           "id": 14,
           "scope_entry": null,
@@ -587,11 +587,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 41,
+              "end_line": 41,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/multistream_kernel_cudatest.py"
             },
             "label": "twoarrays",
             "in_connectors": {
@@ -601,7 +601,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "918da623-5059-4f71-be7b-5aa978d20e17"
+            "guid": "9401fabb-bc49-458b-9e8b-b314c5882094"
           },
           "id": 15,
           "scope_entry": "14",
@@ -617,7 +617,7 @@
             "out_connectors": {
               "OUT_1": null
             },
-            "guid": "5e0a0e4d-73ac-46d3-b516-e23da4d7ef38"
+            "guid": "a7bdb3d3-b424-4e35-9d5f-523f2c2089e9"
           },
           "id": 16,
           "scope_entry": "14",
@@ -645,7 +645,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "8bb5b387-eda4-48ec-b2b4-5538c9fca3fa",
+                "guid": "91a9beb9-8878-48a3-88f3-9b1077b15d9c",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -688,7 +688,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "1fbd4bb2-1cfe-4077-aa35-7397f73e41d2",
+                "guid": "79bb9330-5c3c-439e-9334-86697a4bd616",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -731,7 +731,7 @@
                 },
                 "data": "gC",
                 "debuginfo": null,
-                "guid": "c5b0e887-3c28-44e5-b54c-ae58441c7805",
+                "guid": "4547e112-e477-4379-ac93-38de75a359de",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -774,7 +774,7 @@
                 },
                 "data": "gA1",
                 "debuginfo": null,
-                "guid": "0584251b-bca2-4968-b5d2-d237ecbcbd2b",
+                "guid": "c13f8120-da91-43bb-ac66-87f21bbf9fd2",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -817,7 +817,7 @@
                 },
                 "data": "gB1",
                 "debuginfo": null,
-                "guid": "deb020c4-e20a-422a-a771-52349daa96ed",
+                "guid": "94f7711e-e240-4f61-a794-6ad25cfa9348",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -860,7 +860,7 @@
                 },
                 "data": "gA2",
                 "debuginfo": null,
-                "guid": "631e251d-1984-4371-8078-d3d7a555a914",
+                "guid": "3289bcc6-524a-4879-bece-14781fbbe8ff",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -903,7 +903,7 @@
                 },
                 "data": "gB2",
                 "debuginfo": null,
-                "guid": "66e603b5-0497-432e-9426-065702321425",
+                "guid": "f6aba620-4d47-499f-8d14-d60cf4096d63",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -946,7 +946,7 @@
                 },
                 "data": "gA2",
                 "debuginfo": null,
-                "guid": "195399e0-ac86-49de-b268-d0a1f2ddbf5f",
+                "guid": "c680761b-0bbe-468b-a896-8af2ff658d2c",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -989,7 +989,7 @@
                 },
                 "data": "gB2",
                 "debuginfo": null,
-                "guid": "42097e94-e96b-4b05-8231-b7dea3aab732",
+                "guid": "6cac7375-3ee2-4bfa-9d44-4dc580b59922",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1032,7 +1032,7 @@
                 },
                 "data": "gC",
                 "debuginfo": null,
-                "guid": "e4ccfd92-4205-4a0d-94b8-42ca9ca4f10b",
+                "guid": "e4bb137d-2260-424d-9774-0d54822bb236",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1075,7 +1075,7 @@
                 },
                 "data": "gA1",
                 "debuginfo": null,
-                "guid": "e0403b7d-bd58-43f5-ad64-acb2be6998cb",
+                "guid": "fc053323-10b9-416d-9220-a7f3ad6c5bea",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1118,7 +1118,7 @@
                 },
                 "data": "gB1",
                 "debuginfo": null,
-                "guid": "538da8e5-4762-453b-8c40-1a4c9d4fd9d3",
+                "guid": "8622fdd8-2618-46ae-b91f-b26268a27eb0",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1161,7 +1161,7 @@
                 },
                 "data": "gA2",
                 "debuginfo": null,
-                "guid": "aeafda47-8680-4973-811c-9fbbf6b66b76",
+                "guid": "cb0fd9c9-99db-4177-afa0-d0cecfc6d523",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1204,7 +1204,7 @@
                 },
                 "data": "gB2",
                 "debuginfo": null,
-                "guid": "c6422462-99c1-432c-b4d5-4dca7a5c9eb8",
+                "guid": "09185802-8500-4c2c-b636-a2f0e11e4af0",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1247,7 +1247,7 @@
                 },
                 "data": "gA2",
                 "debuginfo": null,
-                "guid": "1417cddf-50da-4d85-9b78-40104f9d2775",
+                "guid": "391682da-3e50-4944-b448-7100160fc798",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1290,7 +1290,7 @@
                 },
                 "data": "gB2",
                 "debuginfo": null,
-                "guid": "41026c51-b698-4145-8dea-8a66794ebdc2",
+                "guid": "e843ba44-c795-40f7-bdd4-434bef689ede",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1333,7 +1333,7 @@
                 },
                 "data": "gC",
                 "debuginfo": null,
-                "guid": "d84b22b2-9c60-424a-87bd-e6da810765b0",
+                "guid": "8df23bdb-eaaf-47c8-afa4-48021103668d",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1358,7 +1358,7 @@
         }
       ],
       "attributes": {
-        "guid": "51b04832-18fd-463b-a83d-9ba704fda32b"
+        "guid": "2a965ace-eeae-457a-9380-fb3182c8b627"
       }
     }
   ],

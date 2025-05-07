@@ -18,7 +18,6 @@
           "offset": [
             "0"
           ],
-          "dtype": "float32",
           "shape": [
             "1"
           ],
@@ -35,7 +34,7 @@
           "offset": [
             "0"
           ],
-          "dtype": "int16",
+          "dtype": "int64",
           "shape": [
             "1"
           ],
@@ -80,15 +79,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 45,
-      "end_line": 51,
+      "start_line": 48,
+      "end_line": 54,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/python_frontend/power_operator_test.py"
+      "filename": "/scratch/bates/dace/tests/python_frontend/power_operator_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "89e3ccfd-9ac2-4372-8e1a-2c7c77540c36",
-    "hash": "5f1f3f79c77990434e2b683bc1fb3af50f1a3dd966bb3570d27a83d3e6abf53e"
+    "guid": "9ef7f56a-07dc-4a97-a189-5ffe9dba0e06",
+    "hash": "934f557bf515a311dc419ca10340266ee6fda505108d15a55a619cc84b9dcb6e"
   },
   "nodes": [
     {
@@ -102,14 +101,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "89513493-0664-45ac-af18-78aa3b32eb45",
+        "guid": "1e2ff969-74a2-4725-8f04-8189ec442414",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "with_47",
+      "label": "with_50",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -123,7 +122,7 @@
       "nodes": [
         {
           "type": "Tasklet",
-          "label": "power_operator_test_47",
+          "label": "power_operator_test_50",
           "attributes": {
             "code": {
               "string_data": "scalar_r = (scalar_a ** scalar_b)",
@@ -131,13 +130,13 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 47,
-              "end_line": 51,
+              "start_line": 50,
+              "end_line": 54,
               "start_column": 4,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/power_operator_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/power_operator_test.py"
             },
-            "label": "power_operator_test_47",
+            "label": "power_operator_test_50",
             "in_connectors": {
               "scalar_a": null,
               "scalar_b": null
@@ -145,7 +144,7 @@
             "out_connectors": {
               "scalar_r": null
             },
-            "guid": "6540366b-dc7f-438f-8ab0-212522e1a055"
+            "guid": "7eaa16a8-6277-4cca-9e2e-ca4b7f148386"
           },
           "id": 0,
           "scope_entry": null,
@@ -157,14 +156,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 47,
-              "end_line": 47,
+              "start_line": 50,
+              "end_line": 50,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/power_operator_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/power_operator_test.py"
             },
             "data": "A",
-            "guid": "8620efae-ef9a-4189-9eb0-ac9ecc453924"
+            "guid": "b64708c8-1eb6-48a9-bf1c-c075e1f7b238"
           },
           "id": 1,
           "scope_entry": null,
@@ -176,14 +175,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 47,
-              "end_line": 47,
+              "start_line": 50,
+              "end_line": 50,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/power_operator_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/power_operator_test.py"
             },
             "data": "B",
-            "guid": "c56318a6-a3da-4286-b047-2287e57ff2e9"
+            "guid": "77295895-6438-485e-ab61-c24673674799"
           },
           "id": 2,
           "scope_entry": null,
@@ -195,14 +194,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 47,
-              "end_line": 47,
+              "start_line": 50,
+              "end_line": 50,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/power_operator_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/power_operator_test.py"
             },
             "data": "R",
-            "guid": "6e8f2837-6734-4872-884d-a78fde25a938"
+            "guid": "a523ab19-b4fb-4f8b-8647-6e555c473347"
           },
           "id": 3,
           "scope_entry": null,
@@ -225,7 +224,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "f6a15906-5e5d-4119-912b-723583998408",
+                "guid": "9452fc2e-f72e-4ace-928c-7cb3719db267",
                 "src_subset": {
                   "type": "Indices",
                   "indices": [
@@ -258,7 +257,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "2ccaa2b8-9d69-4593-8304-5ab4ea12a7ab",
+                "guid": "fe274ce6-7d81-419f-858d-cafbf1a6e1e6",
                 "src_subset": {
                   "type": "Indices",
                   "indices": [
@@ -291,7 +290,7 @@
                 },
                 "data": "R",
                 "debuginfo": null,
-                "guid": "4b5f7eac-ac59-42cb-aeb2-b7252bed36b9",
+                "guid": "c1417d31-da50-4c3d-876e-a5ec1366a7bc",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Indices",
@@ -311,7 +310,7 @@
         }
       ],
       "attributes": {
-        "guid": "480d4857-4154-4184-b9d8-d7ec27de50ad",
+        "guid": "a5bf5793-fd3b-4d32-8b13-64c786c825ee",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -324,7 +323,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "191cb72d-5cd9-466f-b7b7-0565e17b05da"
+            "guid": "a8b841ff-a74d-475c-a570-85d090cb6b2c"
           },
           "label": ""
         }

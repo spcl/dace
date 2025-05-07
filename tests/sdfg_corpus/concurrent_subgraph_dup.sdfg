@@ -124,8 +124,8 @@
         "language": "CPP"
       }
     },
-    "guid": "437ac7ba-10f6-4304-882c-0b605b0e8da4",
-    "hash": "ff86327a98494f9c8d90576468cfe3195d86ddca48bdbb7519dcc2e0f1145e4c"
+    "guid": "149c8e37-77c2-4603-943c-493394d201d0",
+    "hash": "ff63108faaed7a302ab324920abcfc2b092d14cf39895dda7057edca3e68e6ce"
   },
   "nodes": [
     {
@@ -157,11 +157,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 15,
+              "end_line": 15,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "label": "c_task",
             "in_connectors": {
@@ -170,7 +170,7 @@
             "out_connectors": {
               "d": null
             },
-            "guid": "23dd3ff7-7ef0-4e4d-9b38-0d0b46dc14a2"
+            "guid": "f7ed2d06-7a04-49b6-bca2-9e1fb848e8c6"
           },
           "id": 0,
           "scope_entry": null,
@@ -186,11 +186,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 16,
+              "end_line": 16,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "label": "e_task",
             "in_connectors": {
@@ -200,7 +200,7 @@
             "out_connectors": {
               "e": null
             },
-            "guid": "c5b06e3e-1290-4c76-b32e-3070afab3686"
+            "guid": "4c093a02-aaaf-4cc5-9152-593425a799d2"
           },
           "id": 1,
           "scope_entry": null,
@@ -216,11 +216,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 17,
+              "end_line": 17,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "label": "f_task",
             "in_connectors": {
@@ -230,7 +230,7 @@
             "out_connectors": {
               "f": null
             },
-            "guid": "e12be323-030f-4528-bae7-bf7b021ceee2"
+            "guid": "df94f608-02ce-4f6e-9a0e-590b464e4284"
           },
           "id": 2,
           "scope_entry": null,
@@ -242,14 +242,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 37,
+              "end_line": 37,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "data": "A",
-            "guid": "50e669ef-9741-45d5-a1b9-dd4511bf5e2f"
+            "guid": "b76d16c2-a5da-431d-b363-482c9101c2cb"
           },
           "id": 3,
           "scope_entry": null,
@@ -261,14 +261,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 38,
+              "end_line": 38,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "data": "B",
-            "guid": "25ecf6d8-dc39-40ef-8c0d-8943bcfe83f4"
+            "guid": "93b68d32-615e-402a-8f6c-91eb323c8a00"
           },
           "id": 4,
           "scope_entry": null,
@@ -280,14 +280,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 39,
+              "end_line": 39,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "data": "C",
-            "guid": "73a5d72c-eea4-414c-b38c-48155ad0b6aa"
+            "guid": "9aefee38-042c-4513-844b-44b140660559"
           },
           "id": 5,
           "scope_entry": null,
@@ -299,14 +299,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 40,
+              "end_line": 40,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "data": "D",
-            "guid": "9b3f6c63-c203-4de3-adf4-c76c2a1c81fd"
+            "guid": "b3dfe24d-9ee1-4bbb-8ab2-b49b9b5e368f"
           },
           "id": 6,
           "scope_entry": null,
@@ -318,14 +318,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 41,
+              "end_line": 41,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "data": "E",
-            "guid": "f80aabd7-3161-4ad8-a005-bd3af2ea852b"
+            "guid": "bc057e0d-64b5-4384-bebb-8dfdf790ed45"
           },
           "id": 7,
           "scope_entry": null,
@@ -337,14 +337,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 42,
+              "end_line": 42,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/concurrent_subgraph_test.py"
             },
             "data": "F",
-            "guid": "1fa6d542-792f-40bd-9bb8-046a93d29c36"
+            "guid": "0c87bd29-019b-4836-80d1-f731cbceea6f"
           },
           "id": 8,
           "scope_entry": null,
@@ -372,7 +372,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "7a158363-83b7-4af6-9d29-0a00ac16ccc9",
+                "guid": "f70706e0-3bb0-4906-8c63-4b1e1956f6dc",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -415,7 +415,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "c006b280-ba04-43d0-9aba-9ae1065c4824",
+                "guid": "647ffb5e-79e3-4134-a2a2-9b5fd91bc148",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -458,7 +458,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "c8ddaeea-3bb6-4535-a416-810f1ff0e129",
+                "guid": "3e74b3c4-962a-4884-829f-7eb961c6eb01",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -501,7 +501,7 @@
                 },
                 "data": "D",
                 "debuginfo": null,
-                "guid": "5fbea374-26fb-4063-96ec-eb88b1965295",
+                "guid": "c5d49dbd-6380-4c2c-90ce-91fe03acf0bb",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -544,7 +544,7 @@
                 },
                 "data": "D",
                 "debuginfo": null,
-                "guid": "c61bba64-fcdd-4816-8fb7-640e9384fbdc",
+                "guid": "921f5e28-692c-4f3b-8904-460be70abc93",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -587,7 +587,7 @@
                 },
                 "data": "D",
                 "debuginfo": null,
-                "guid": "02d2aa9e-6f9a-45f9-a73b-b0d75ddbc5a5",
+                "guid": "e1807efd-26e6-43d1-9d8d-b2f1c9c0f54a",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -631,7 +631,7 @@
                 "data": "E",
                 "wcr": "(lambda x, y: (x + y))",
                 "debuginfo": null,
-                "guid": "ea1117bc-a3fb-4d2f-a49d-df8020af30d1",
+                "guid": "53f6b33a-4e2f-4578-9a26-24b7fd6ed9b9",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -675,7 +675,7 @@
                 "data": "F",
                 "wcr": "(lambda x, y: (x + y))",
                 "debuginfo": null,
-                "guid": "efd4c989-4bd1-45bf-8eb5-ceaf7bbc4233",
+                "guid": "7f5ba977-1446-4d83-bafd-43c17d9509d1",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -700,7 +700,7 @@
         }
       ],
       "attributes": {
-        "guid": "06b3836e-ac04-4416-bae0-65d302bb17af"
+        "guid": "61015b98-4356-4a4e-9472-b77a25fb4bc0"
       }
     }
   ],

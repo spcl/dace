@@ -65,15 +65,15 @@
     },
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 55,
-      "end_line": 57,
+      "start_line": 58,
+      "end_line": 60,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/autooptimize/tile_wcr_test.py"
+      "filename": "/scratch/bates/dace/tests/autooptimize/tile_wcr_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "022112f9-a409-4cda-815c-9c04d3b4b7fe",
-    "hash": "eb61f1d835029b6fe8f84c7b1e6af6132a4a73b08fa31f667b01744e03eb5cd9"
+    "guid": "efd9c2ec-61d2-47ea-933f-0ac4aaed744a",
+    "hash": "ff202c212c0f3340963d7ade82dbffcd8d39150e3a1bcb6092938b7c15a07ee9"
   },
   "nodes": [
     {
@@ -87,14 +87,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "2b7f09a3-027a-4826-aa48-ab103823b7b3",
+        "guid": "2eac8489-f9c5-4a9f-91e8-67ea1cc1c79b",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "call_57",
+      "label": "call_60",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -111,14 +111,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 57,
-              "end_line": 57,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 56,
               "end_column": 56,
-              "filename": "/home/beates/Desktop/dace/tests/autooptimize/tile_wcr_test.py"
+              "filename": "/scratch/bates/dace/tests/autooptimize/tile_wcr_test.py"
             },
             "data": "A",
-            "guid": "4f6ecf87-9443-4dba-9acd-54d0c13d39dc"
+            "guid": "1f7ac3a6-bb66-468b-bc4d-10a610906f92"
           },
           "id": 0,
           "scope_entry": null,
@@ -133,14 +133,14 @@
             "name": "Reduce",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 57,
-              "end_line": 57,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 56,
               "end_column": 56,
-              "filename": "/home/beates/Desktop/dace/tests/autooptimize/tile_wcr_test.py"
+              "filename": "/scratch/bates/dace/tests/autooptimize/tile_wcr_test.py"
             },
             "label": "Reduce",
-            "guid": "5344bd51-77e0-4967-8ee5-ba7fe9d8a768"
+            "guid": "49e22fa8-051f-404b-9a5e-57a997efc84b"
           },
           "id": 1,
           "scope_entry": null,
@@ -153,14 +153,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 57,
-              "end_line": 57,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 56,
               "end_column": 56,
-              "filename": "/home/beates/Desktop/dace/tests/autooptimize/tile_wcr_test.py"
+              "filename": "/scratch/bates/dace/tests/autooptimize/tile_wcr_test.py"
             },
             "data": "output",
-            "guid": "0a475578-e8ec-4d9b-89d6-98f60a66c6a6"
+            "guid": "2b4a229d-a30d-48db-bd81-a0fbbf9b3b8d"
           },
           "id": 2,
           "scope_entry": null,
@@ -188,7 +188,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "1ac3ae51-4efa-4354-b982-4e919aa256af",
+                "guid": "3a2eda7d-d2d5-4ffe-845d-b757ca30d485",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -231,7 +231,7 @@
                 },
                 "data": "output",
                 "debuginfo": null,
-                "guid": "48909969-142b-44d5-b30d-42e56a585aa5",
+                "guid": "d2e681d1-a99e-472d-9244-f4de017d413d",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -256,7 +256,7 @@
         }
       ],
       "attributes": {
-        "guid": "7daf540a-300c-4791-af0a-fef397f7bea2",
+        "guid": "21da73e5-e61c-424c-a323-74617cb47d88",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -269,7 +269,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "53316907-17bf-4a6c-bce9-d99de46784aa"
+            "guid": "0f46b20b-aa10-4cd6-b77a-f7bf7529f59c"
           },
           "label": ""
         }

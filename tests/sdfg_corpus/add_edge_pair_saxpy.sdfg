@@ -76,8 +76,8 @@
         "language": "CPP"
       }
     },
-    "guid": "ce2b7279-d465-4e50-abbc-a50fa73041eb",
-    "hash": "5082571b1f526640728ea753231f4880f943dfde21d432bfa7f6d34579091742"
+    "guid": "869aa309-98a3-4923-9424-f52e9d5543cf",
+    "hash": "2dffc48624e35cbc5a53aefe176e2616a58045cd04ec15b0e9f0fa73c3534c31"
   },
   "nodes": [
     {
@@ -100,14 +100,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 72,
+              "end_line": 72,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "data": "x1",
-            "guid": "5e461e7d-f8e0-4b7e-87ff-061c74aa632f"
+            "guid": "37807f39-84bf-4d14-8a36-f67559f979fa"
           },
           "id": 0,
           "scope_entry": null,
@@ -119,14 +119,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 73,
+              "end_line": 73,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "data": "y1",
-            "guid": "50fa9cef-2dd2-4730-aec0-71db28244621"
+            "guid": "a0f2f7bf-707d-48ac-8a75-966843fd2799"
           },
           "id": 1,
           "scope_entry": null,
@@ -138,14 +138,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 74,
+              "end_line": 74,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "data": "z1",
-            "guid": "fb1c18be-863d-4027-92d7-07c0d385c18e"
+            "guid": "f428fac4-ad60-4b28-b533-2841f38b3649"
           },
           "id": 2,
           "scope_entry": null,
@@ -245,7 +245,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "55a9f1c0-be4a-4677-a224-1e77c7fc9693"
+                "guid": "c65350a3-1322-40d9-a541-3ddbf510f037"
               },
               "nodes": [
                 {
@@ -272,14 +272,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 32,
+                          "end_line": 32,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
                         },
                         "data": "_x",
-                        "guid": "97dc1968-9ca3-48fb-81d4-751785545677"
+                        "guid": "1fd13bae-44f0-47af-8103-ba2a460b17ce"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -291,14 +291,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 33,
+                          "end_line": 33,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
                         },
                         "data": "_y",
-                        "guid": "978d6ced-9574-42d0-ba2b-5dda19bda851"
+                        "guid": "797fc1a6-c66d-4e57-9df6-934c35bef671"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -310,14 +310,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 34,
+                          "end_line": 34,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
                         },
                         "data": "_res",
-                        "guid": "46830239-cd07-49fa-b82c-246eb22edfa7"
+                        "guid": "ee1a68fe-c98f-414f-bff0-82218c42300e"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -344,11 +344,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 39,
+                          "end_line": 39,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
                         },
                         "in_connectors": {
                           "IN__x": null,
@@ -358,7 +358,7 @@
                           "OUT__x": null,
                           "OUT__y": null
                         },
-                        "guid": "2cdd2308-9111-4066-a1bc-aae94df9468f"
+                        "guid": "6cf32234-85c5-4f7e-b90f-c7366c2f6050"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -374,7 +374,7 @@
                         "out_connectors": {
                           "OUT__res": null
                         },
-                        "guid": "aa4944c4-f172-4c37-85bd-30efc66d1cf7"
+                        "guid": "02f6090a-465b-4039-a1fb-263be20c4a85"
                       },
                       "id": 4,
                       "scope_entry": "3",
@@ -390,11 +390,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 41,
+                          "end_line": 41,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
                         },
                         "label": "vecAdd_task",
                         "in_connectors": {
@@ -404,7 +404,7 @@
                         "out_connectors": {
                           "z_con": null
                         },
-                        "guid": "9ed50cb3-9aad-4d29-a0d3-7d0d5cc4bcdb"
+                        "guid": "fffb90ac-420e-4a70-89f7-7a4f19367c7e"
                       },
                       "id": 5,
                       "scope_entry": "3",
@@ -432,7 +432,7 @@
                             },
                             "data": "_x",
                             "debuginfo": null,
-                            "guid": "29e76ab8-c22e-46cf-a528-6094dcf1cfa5",
+                            "guid": "e932e83a-078d-49a6-ac80-5c12e5eb146a",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -475,7 +475,7 @@
                             },
                             "data": "_y",
                             "debuginfo": null,
-                            "guid": "7ee68203-5950-40ce-bb5b-b43175025e10",
+                            "guid": "8097a117-bfc4-4c5a-9179-14abe22bdf5d",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -518,7 +518,7 @@
                             },
                             "data": "_res",
                             "debuginfo": null,
-                            "guid": "3ba36041-418a-4e73-a4fe-933767b213fe",
+                            "guid": "d924b5af-be3d-4ae0-acb0-46af29268774",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -561,7 +561,7 @@
                             },
                             "data": "_x",
                             "debuginfo": null,
-                            "guid": "29e76ab8-c22e-46cf-a528-6094dcf1cfa5",
+                            "guid": "e932e83a-078d-49a6-ac80-5c12e5eb146a",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -604,7 +604,7 @@
                             },
                             "data": "_y",
                             "debuginfo": null,
-                            "guid": "7ee68203-5950-40ce-bb5b-b43175025e10",
+                            "guid": "8097a117-bfc4-4c5a-9179-14abe22bdf5d",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -647,7 +647,7 @@
                             },
                             "data": "_res",
                             "debuginfo": null,
-                            "guid": "3ba36041-418a-4e73-a4fe-933767b213fe",
+                            "guid": "d924b5af-be3d-4ae0-acb0-46af29268774",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -672,7 +672,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "74952f6e-66cd-4725-aab7-722cd3d23a74"
+                    "guid": "c3853985-c65a-4410-90ea-3b46408917e4"
                   }
                 }
               ],
@@ -688,11 +688,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 76,
+              "end_line": 76,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_vector_type_test.py"
             },
             "label": "vecAdd_graph",
             "in_connectors": {
@@ -702,7 +702,7 @@
             "out_connectors": {
               "_res": null
             },
-            "guid": "cf0c3b8d-7bdd-4706-88f8-fca14407e3e6"
+            "guid": "1fa6b464-ec21-4287-a174-0087eb905b5b"
           },
           "id": 3,
           "scope_entry": null,
@@ -730,7 +730,7 @@
                 },
                 "data": "x1",
                 "debuginfo": null,
-                "guid": "1bea09b2-b42b-4208-b1f8-dbee29912924",
+                "guid": "50cc6ed2-eecc-4465-98a3-e9f01181de37",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -773,7 +773,7 @@
                 },
                 "data": "y1",
                 "debuginfo": null,
-                "guid": "3b10eb5e-296a-4966-a3d2-8a8a9d9f2c73",
+                "guid": "6e2377d1-3c55-42bb-8352-7381cc9adfbb",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -816,7 +816,7 @@
                 },
                 "data": "z1",
                 "debuginfo": null,
-                "guid": "bce887e5-a161-4f0d-8b78-b14681dd09a3",
+                "guid": "374a7001-4852-49f7-87fd-d7a09f1910ea",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -841,7 +841,7 @@
         }
       ],
       "attributes": {
-        "guid": "b61b93bc-6734-4d17-af67-8542baec3fe1"
+        "guid": "b76d3fe9-8ca5-471a-bd4b-647d09046145"
       }
     }
   ],

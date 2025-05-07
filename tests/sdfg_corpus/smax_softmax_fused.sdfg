@@ -168,11 +168,11 @@
       "end_line": 45,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "ec2aa6ee-9f77-46fd-a090-67cc39298243",
-    "hash": "f0e0bae3f55e186f9d75fea0b634ef3fe9a09c660c5e230372fe512db98602cd"
+    "guid": "0c189a9f-8fef-4564-87f2-d8286827d748",
+    "hash": "954a8640c3b95b44bc2944a4a167377f7bcf8e64b204f6353f5ac7a3aec09541"
   },
   "nodes": [
     {
@@ -186,7 +186,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "dc8886db-0f22-468e-ad7b-44aaf76864f8",
+        "guid": "81ceeb7c-2c50-45a8-a668-4556d6360a35",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -214,10 +214,10 @@
               "end_line": 23,
               "start_column": 73,
               "end_column": 73,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "X_in",
-            "guid": "47594325-cfa4-4b8e-9329-851ef2241d34"
+            "guid": "af18ad02-c53a-41d2-a328-70b2eaa7c863"
           },
           "id": 0,
           "scope_entry": null,
@@ -239,10 +239,10 @@
               "end_line": 23,
               "start_column": 73,
               "end_column": 73,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "label": "Reduce",
-            "guid": "beee4ba8-9146-47dc-8a37-ffafe3ef73c3"
+            "guid": "9d92e0ec-3363-47df-929e-61fd15ef1276"
           },
           "id": 1,
           "scope_entry": null,
@@ -259,10 +259,10 @@
               "end_line": 23,
               "start_column": 73,
               "end_column": 73,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "tmp_max",
-            "guid": "9d160860-bdbc-4597-99d1-b00f1509b86f"
+            "guid": "3db07bf1-758c-4c71-9267-323b4539f279"
           },
           "id": 2,
           "scope_entry": null,
@@ -308,7 +308,7 @@
                 },
                 "data": "X_in",
                 "debuginfo": null,
-                "guid": "d73e5051-c2f2-4d23-8e5e-56e42c7d63ac",
+                "guid": "5c597173-0a25-473c-bb75-0064c12a97b0",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -381,7 +381,7 @@
                 },
                 "data": "tmp_max",
                 "debuginfo": null,
-                "guid": "d9e06238-b84e-477d-abd2-309b0efcd735",
+                "guid": "9f53dac2-3d41-4723-9b18-6de3d00c4090",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -418,7 +418,7 @@
         }
       ],
       "attributes": {
-        "guid": "a42a55ec-b668-45cc-8105-b926b87525ac",
+        "guid": "f11ec281-e447-4e37-8092-03b5e9553bfe",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -434,7 +434,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "3c0a3048-eb0d-42eb-a38e-ec60f98d07dd",
+        "guid": "04cda403-f9d5-4163-a564-5163f4b7bdd6",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -450,7 +450,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "3f3b824c-56f5-442b-9cfa-a1fd4fff79de",
+        "guid": "9530e2f8-1bc5-4dc8-ae14-0aeb11d45815",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -519,7 +519,7 @@
               "end_line": 29,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "in_connectors": {
               "IN_X_in": null,
@@ -529,7 +529,7 @@
               "OUT_X_in": null,
               "OUT___tmp0": null
             },
-            "guid": "3638a084-1a75-45f0-906e-5a64781fa0ae"
+            "guid": "ddb2ab39-e7ea-401b-8ae7-eae7f956aa56"
           },
           "id": 0,
           "scope_entry": null,
@@ -545,7 +545,7 @@
             "out_connectors": {
               "OUT___tmp1": null
             },
-            "guid": "e046fee8-3f89-4916-a6cf-01e76f448e73"
+            "guid": "10d1e9e8-731f-4855-a4a5-fd69e68bd1b8"
           },
           "id": 1,
           "scope_entry": "0",
@@ -630,7 +630,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "c9f16a6e-1054-48db-bdb2-35667debead4"
+                "guid": "e11d0f22-4bf9-4c7a-b4f9-ee67bf7beceb"
               },
               "nodes": [
                 {
@@ -644,7 +644,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "18726666-73b2-4542-906d-d307b0ea9e06",
+                    "guid": "de9a08a3-60d2-4268-8d12-09976eaf5f75",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -677,7 +677,7 @@
                           "end_line": 34,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "label": "smax_test_softmax_30",
                         "in_connectors": {
@@ -687,7 +687,7 @@
                         "out_connectors": {
                           "o": null
                         },
-                        "guid": "d3187e7c-d374-4ed7-b90a-de2bcde2275c"
+                        "guid": "cae45524-f2ee-41e8-9799-581818b791ed"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -703,10 +703,10 @@
                           "end_line": 30,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "data": "__tmp_31_19",
-                        "guid": "1fb6f69d-c4eb-49f9-b65c-cad03dee9841"
+                        "guid": "bb4c04af-144f-47ca-b31d-3a8a4b2560c8"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -722,10 +722,10 @@
                           "end_line": 30,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "data": "__tmp_32_18",
-                        "guid": "f3ba03dd-8d6f-469e-8edf-c0a9f0bf85e9"
+                        "guid": "ea39ae67-ffc9-42c6-a05f-1f12d5d05edc"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -741,10 +741,10 @@
                           "end_line": 30,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "data": "__tmp_33_17",
-                        "guid": "2bec7f8d-3588-421d-a736-9f65104f18a8"
+                        "guid": "38f661a7-b1b5-4fa4-bbe2-2db084763f38"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -772,7 +772,7 @@
                             },
                             "data": "__tmp_31_19",
                             "debuginfo": null,
-                            "guid": "1575efed-162f-4392-878b-dea616181385",
+                            "guid": "7f1d6e82-68ac-4765-b790-ad4f92f6f483",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -815,7 +815,7 @@
                             },
                             "data": "__tmp_32_18",
                             "debuginfo": null,
-                            "guid": "eb05a728-6f73-429f-8f95-e8317c1de8be",
+                            "guid": "c71b4cee-6378-4fb8-931d-2b128d8172c6",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -858,7 +858,7 @@
                             },
                             "data": "__tmp_33_17",
                             "debuginfo": null,
-                            "guid": "0edbcbbe-d50b-46f5-b334-6bd2c9f5d797",
+                            "guid": "01e94b49-d08f-4400-bdea-4289f3ecd841",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -883,7 +883,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "56143a51-2e80-445b-b91d-b931a2a4a6fd",
+                    "guid": "0245d8cd-51f4-4fe6-95e8-e93b5ee54c5f",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -896,7 +896,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "62028eb1-9b54-468b-83a2-5ef56068599f"
+                        "guid": "1637b268-d79a-4e85-8a79-5754472d8f54"
                       },
                       "label": ""
                     }
@@ -917,7 +917,7 @@
               "end_line": 29,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "label": "smax_test_softmax_29_4",
             "in_connectors": {
@@ -927,7 +927,7 @@
             "out_connectors": {
               "__tmp_33_17": null
             },
-            "guid": "b6de349a-3892-42ca-8827-8b01fd89b954"
+            "guid": "e7a62206-14d5-443b-b73e-fe52daf5c0b5"
           },
           "id": 2,
           "scope_entry": "0",
@@ -943,10 +943,10 @@
               "end_line": 29,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "X_in",
-            "guid": "eb085c21-ec00-4533-b21b-205a6632f397"
+            "guid": "48622d5c-c522-4667-9677-1177160bf0d8"
           },
           "id": 3,
           "scope_entry": null,
@@ -962,10 +962,10 @@
               "end_line": 29,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "tmp_max",
-            "guid": "90ec64fe-413d-46e3-aa43-6e36c4764503"
+            "guid": "f1fd75d5-ce4b-47d3-a839-8bd5b5e3c666"
           },
           "id": 4,
           "scope_entry": null,
@@ -981,10 +981,10 @@
               "end_line": 29,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "tmp_out",
-            "guid": "623d2d1e-d245-4895-ae31-2992babdc068"
+            "guid": "f7d28202-10f6-4cc6-9c38-7a4381983b68"
           },
           "id": 5,
           "scope_entry": null,
@@ -1030,7 +1030,7 @@
                 },
                 "data": "X_in",
                 "debuginfo": null,
-                "guid": "6138cb0f-ab5e-45c7-a6bd-8f06dfff2bce",
+                "guid": "de680fbe-efba-4fef-af2e-c9dac8be1889",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1103,7 +1103,7 @@
                 },
                 "data": "tmp_max",
                 "debuginfo": null,
-                "guid": "26ebd81c-c3f0-4f2a-93ec-c20d20dccc3c",
+                "guid": "f277d687-918c-4b4d-9c79-58688f543216",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1176,7 +1176,7 @@
                 },
                 "data": "X_in",
                 "debuginfo": null,
-                "guid": "6138cb0f-ab5e-45c7-a6bd-8f06dfff2bce",
+                "guid": "de680fbe-efba-4fef-af2e-c9dac8be1889",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1249,7 +1249,7 @@
                 },
                 "data": "tmp_max",
                 "debuginfo": null,
-                "guid": "26ebd81c-c3f0-4f2a-93ec-c20d20dccc3c",
+                "guid": "f277d687-918c-4b4d-9c79-58688f543216",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1322,7 +1322,7 @@
                 },
                 "data": "tmp_out",
                 "debuginfo": null,
-                "guid": "286727b0-aeb9-423b-93d6-32afea381688",
+                "guid": "dd5cf6d8-4cda-46de-bf07-257746f9563d",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1401,7 +1401,7 @@
                 },
                 "data": "tmp_out",
                 "debuginfo": null,
-                "guid": "286727b0-aeb9-423b-93d6-32afea381688",
+                "guid": "dd5cf6d8-4cda-46de-bf07-257746f9563d",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1444,7 +1444,7 @@
         }
       ],
       "attributes": {
-        "guid": "e1c0e7f9-424b-4bf4-9e34-801c3bdeeea9",
+        "guid": "6bc4cded-5a84-4fce-9fd9-53b1cbddeaaf",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1472,10 +1472,10 @@
               "end_line": 37,
               "start_column": 72,
               "end_column": 72,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "tmp_out",
-            "guid": "c440fefc-bc5f-40a4-8d7e-4f4246215135"
+            "guid": "588e022a-a80d-4fcd-8b20-5cddd32e989b"
           },
           "id": 0,
           "scope_entry": null,
@@ -1497,10 +1497,10 @@
               "end_line": 37,
               "start_column": 72,
               "end_column": 72,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "label": "Reduce",
-            "guid": "d65fbcd8-d6b3-4374-9f2b-243236766444"
+            "guid": "987612ef-f2e0-44d0-8198-fd939e63118a"
           },
           "id": 1,
           "scope_entry": null,
@@ -1517,10 +1517,10 @@
               "end_line": 37,
               "start_column": 72,
               "end_column": 72,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "tmp_sum",
-            "guid": "99490465-7a85-473f-ae42-f0121c66cf74"
+            "guid": "c3a75237-f34a-4330-8017-f32eacad3dd7"
           },
           "id": 2,
           "scope_entry": null,
@@ -1566,7 +1566,7 @@
                 },
                 "data": "tmp_out",
                 "debuginfo": null,
-                "guid": "12105927-135b-4973-a499-6f71c0ed7f19",
+                "guid": "91aef123-4bb0-4dc5-985c-491483b135c0",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1639,7 +1639,7 @@
                 },
                 "data": "tmp_sum",
                 "debuginfo": null,
-                "guid": "720d3215-8746-45b3-9845-2fd5c2036e5f",
+                "guid": "bb04cf23-0151-4f72-9563-0aac7a0bd2be",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1676,7 +1676,7 @@
         }
       ],
       "attributes": {
-        "guid": "2bf302ef-cc9d-40a4-ab5f-d601c73fba05",
+        "guid": "a178b68d-07c4-4d4c-9522-ec17bab45f51",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1745,7 +1745,7 @@
               "end_line": 38,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "in_connectors": {
               "IN___tmp1": null,
@@ -1755,7 +1755,7 @@
               "OUT___tmp1": null,
               "OUT___tmp3": null
             },
-            "guid": "5c7ee2f6-4f0d-43e7-b6d5-971e5d185823"
+            "guid": "7e93dbd9-a425-4b25-a3d0-3189cff9fc5f"
           },
           "id": 0,
           "scope_entry": null,
@@ -1771,7 +1771,7 @@
             "out_connectors": {
               "OUT___tmp2": null
             },
-            "guid": "0dc57977-f589-4223-a6ce-4c5c65c192e1"
+            "guid": "48e849e7-ce68-441f-8012-0aab81cb2612"
           },
           "id": 1,
           "scope_entry": "0",
@@ -1856,7 +1856,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "d7788d62-d848-4f77-9ff6-a10ca779c9e7"
+                "guid": "7d2c3383-7b3e-4ee8-8585-b49d4139ed39"
               },
               "nodes": [
                 {
@@ -1870,7 +1870,7 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "0c3cfb5d-8581-416e-8763-783ec4509431",
+                    "guid": "04a07cbf-bb25-45e4-9547-651d6a13110d",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -1903,7 +1903,7 @@
                           "end_line": 43,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "label": "smax_test_softmax_39",
                         "in_connectors": {
@@ -1913,7 +1913,7 @@
                         "out_connectors": {
                           "o": null
                         },
-                        "guid": "d2c285b4-4e7b-430c-8fec-8131dc97cf65"
+                        "guid": "a2932687-ab30-42a3-a9f6-28b92f8f1bf2"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -1929,10 +1929,10 @@
                           "end_line": 39,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "data": "__tmp_40_19",
-                        "guid": "2e2bf2bf-39c7-4980-97d3-0fb750bdc73a"
+                        "guid": "0764618e-9aa1-47e3-86ca-5462959ec4b1"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -1948,10 +1948,10 @@
                           "end_line": 39,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "data": "__tmp_41_18",
-                        "guid": "aa05531e-79b2-46ee-bc9a-d917778b431e"
+                        "guid": "bc727c02-8075-4715-b49a-3189948403e9"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -1967,10 +1967,10 @@
                           "end_line": 39,
                           "start_column": 8,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
                         },
                         "data": "__tmp_42_17",
-                        "guid": "2997af08-9753-4dc3-9580-be3c2f57c2ed"
+                        "guid": "c6664a88-effd-4d8e-b146-cc22c204bbb3"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -1998,7 +1998,7 @@
                             },
                             "data": "__tmp_40_19",
                             "debuginfo": null,
-                            "guid": "b9e75f5a-5cf4-4c32-a25c-e115ec1739f7",
+                            "guid": "b6495f90-552d-4101-93b2-5600b0cad59c",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2041,7 +2041,7 @@
                             },
                             "data": "__tmp_41_18",
                             "debuginfo": null,
-                            "guid": "ae13fb35-47ae-457b-a79d-3287606bf6ed",
+                            "guid": "2a815516-8e12-4acf-a9dd-757a44958714",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2084,7 +2084,7 @@
                             },
                             "data": "__tmp_42_17",
                             "debuginfo": null,
-                            "guid": "8578c5bd-70a9-4b65-8069-0365f3350479",
+                            "guid": "b34b4b42-5b98-48db-b284-c20c4cf870fb",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -2109,7 +2109,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "89b78664-e406-4625-a186-fa750f84d367",
+                    "guid": "a854820f-b10b-490f-bff3-08c3edb538d3",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -2122,7 +2122,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "6d79179f-49e7-42dd-a851-3bf2ae988c4c"
+                        "guid": "1fe84fc4-70c1-44f7-8d10-efad406681de"
                       },
                       "label": ""
                     }
@@ -2143,7 +2143,7 @@
               "end_line": 38,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "label": "smax_test_softmax_38_4",
             "in_connectors": {
@@ -2153,7 +2153,7 @@
             "out_connectors": {
               "__tmp_42_17": null
             },
-            "guid": "41ff7528-d362-461b-8e76-0f8aee3f887c"
+            "guid": "f6ebbb40-42f0-4626-b4cc-74637c613227"
           },
           "id": 2,
           "scope_entry": "0",
@@ -2169,10 +2169,10 @@
               "end_line": 38,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "tmp_out",
-            "guid": "45a65510-6c7c-4645-b443-18a8d33f212a"
+            "guid": "990ca950-4c8b-4f6b-b8c0-10f78115466f"
           },
           "id": 3,
           "scope_entry": null,
@@ -2188,10 +2188,10 @@
               "end_line": 38,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "tmp_sum",
-            "guid": "946e5e95-83ca-4af5-b2c6-1bc5bb79b90e"
+            "guid": "92c723a9-5555-42a4-b156-1ea78711e240"
           },
           "id": 4,
           "scope_entry": null,
@@ -2207,10 +2207,10 @@
               "end_line": 38,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/smax_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/smax_test.py"
             },
             "data": "__return",
-            "guid": "58b031cf-5249-4ce2-9f17-f2d9655c5238"
+            "guid": "397db1cc-a4e8-432c-b8f4-c8f3687c9e66"
           },
           "id": 5,
           "scope_entry": null,
@@ -2256,7 +2256,7 @@
                 },
                 "data": "tmp_out",
                 "debuginfo": null,
-                "guid": "b1671a71-263a-4e68-9b3c-d73b8d0b614a",
+                "guid": "f14adb75-3a61-486f-806c-93fbf3dd0874",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2329,7 +2329,7 @@
                 },
                 "data": "tmp_sum",
                 "debuginfo": null,
-                "guid": "ce82ddd6-5481-49a1-a527-165c16f1797c",
+                "guid": "fdf83956-960e-4ca8-aa1b-56d8d6a5a79b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2402,7 +2402,7 @@
                 },
                 "data": "tmp_out",
                 "debuginfo": null,
-                "guid": "b1671a71-263a-4e68-9b3c-d73b8d0b614a",
+                "guid": "f14adb75-3a61-486f-806c-93fbf3dd0874",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2481,7 +2481,7 @@
                 },
                 "data": "__return",
                 "debuginfo": null,
-                "guid": "0a1424bd-1df1-43e0-a4df-00caba6222af",
+                "guid": "0b8aeb78-5d30-4645-bdf0-5b6fba48e200",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -2554,7 +2554,7 @@
                 },
                 "data": "tmp_sum",
                 "debuginfo": null,
-                "guid": "ce82ddd6-5481-49a1-a527-165c16f1797c",
+                "guid": "fdf83956-960e-4ca8-aa1b-56d8d6a5a79b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -2627,7 +2627,7 @@
                 },
                 "data": "__return",
                 "debuginfo": null,
-                "guid": "0a1424bd-1df1-43e0-a4df-00caba6222af",
+                "guid": "0b8aeb78-5d30-4645-bdf0-5b6fba48e200",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -2670,7 +2670,7 @@
         }
       ],
       "attributes": {
-        "guid": "244bc68c-e747-4f30-a3a3-3071884c8ed2",
+        "guid": "26d249b2-cf16-4a68-a33e-f4f0c2b1ce13",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -2683,7 +2683,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "07556d1a-828f-425a-a0a4-c7b49d98f89b"
+            "guid": "7896851b-3334-4f16-8835-ef192f52bd61"
           },
           "label": ""
         }
@@ -2697,7 +2697,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "e2fba3d4-d6cd-4186-90e4-82f638287626"
+            "guid": "c58f4466-f6c9-4d7e-99f4-1d9f5a7af9dd"
           },
           "label": ""
         }
@@ -2711,7 +2711,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "2fece9b4-4340-4dc4-885f-015edbfd7f02"
+            "guid": "c63ef9b4-fc2e-48cf-9784-bd04cb27363e"
           },
           "label": ""
         }
@@ -2725,7 +2725,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "d10f0ec7-4092-4884-bf6f-8b8714aadc85"
+            "guid": "3a05f696-a0ec-4d46-960a-b5b1f3781c1f"
           },
           "label": ""
         }
@@ -2739,7 +2739,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "6de7cc40-32b7-48de-bf88-25c167f7a060"
+            "guid": "65929212-0590-457d-b86e-eaa6877379e3"
           },
           "label": ""
         }
@@ -2753,7 +2753,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "6772186b-0da5-4163-a540-e547919caf94"
+            "guid": "d7d28775-ea89-4551-962e-83231a21abb6"
           },
           "label": ""
         }

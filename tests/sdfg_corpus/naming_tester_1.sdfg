@@ -1,0 +1,251 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "naming_tester",
+    "symbols": {
+      "M": "int64",
+      "N": "int64"
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "7e86e305-d80c-42bc-8c3d-af06216bb9cf",
+    "hash": "41ec704d864fbd136695f44cf89a2f02490df779f6e42343aa039498f1be00ad"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "block",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "954994d5-2648-483b-8f42-7620b2a17fcc"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "block_0",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0
+        ]
+      },
+      "nodes": [
+        {
+          "type": "NestedSDFG",
+          "label": "nester",
+          "attributes": {
+            "sdfg": {
+              "type": "SDFG",
+              "attributes": {
+                "name": "nester",
+                "symbols": {
+                  "M": "int64",
+                  "N": "int64",
+                  "k": "int64"
+                },
+                "global_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "init_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "exit_code": {
+                  "frame": {
+                    "string_data": "",
+                    "language": "CPP"
+                  }
+                },
+                "guid": "525e9608-c12b-465f-85cf-0f16a6aa1f21"
+              },
+              "nodes": [
+                {
+                  "type": "SDFGState",
+                  "label": "block",
+                  "id": 0,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": [
+                      0
+                    ]
+                  },
+                  "nodes": [
+                    {
+                      "type": "Tasklet",
+                      "label": "dosomething",
+                      "attributes": {
+                        "code": {
+                          "string_data": "print(k)",
+                          "language": "Python"
+                        },
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 150,
+                          "end_line": 150,
+                          "start_column": 0,
+                          "end_column": 0,
+                          "filename": "/scratch/bates/dace/tests/schedule_tree/naming_test.py"
+                        },
+                        "side_effects": true,
+                        "label": "dosomething",
+                        "guid": "63a19d9a-362a-4bb2-a97b-cc375026a3d4"
+                      },
+                      "id": 0,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    }
+                  ],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "a69dbf2a-3358-42ac-9357-710019e21208"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "block_0",
+                  "id": 1,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "2fd0236a-df46-47c5-a0a0-d1a18b7a1ddf"
+                  }
+                },
+                {
+                  "type": "SDFGState",
+                  "label": "block_1",
+                  "id": 2,
+                  "collapsed": false,
+                  "scope_dict": {
+                    "-1": []
+                  },
+                  "nodes": [],
+                  "edges": [],
+                  "attributes": {
+                    "guid": "5538614e-4e49-4df6-9278-62d5d73e5525"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "assignments": {
+                          "k": "M + 1"
+                        },
+                        "guid": "ecc24487-fa96-46d2-8a50-77436e74cac0"
+                      },
+                      "label": "k=M + 1"
+                    }
+                  },
+                  "src": "0",
+                  "dst": "1"
+                },
+                {
+                  "type": "Edge",
+                  "attributes": {
+                    "data": {
+                      "type": "InterstateEdge",
+                      "attributes": {
+                        "assignments": {
+                          "l": "k"
+                        },
+                        "guid": "ddce6fc9-8e58-4db3-9c99-b734298e5082"
+                      },
+                      "label": "l=k"
+                    }
+                  },
+                  "src": "1",
+                  "dst": "2"
+                }
+              ],
+              "collapsed": false,
+              "label": "",
+              "id": null,
+              "cfg_list_id": 1,
+              "start_block": null
+            },
+            "symbol_mapping": {
+              "M": "N",
+              "N": "M",
+              "k": "M + 1"
+            },
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 156,
+              "end_line": 156,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/scratch/bates/dace/tests/schedule_tree/naming_test.py"
+            },
+            "label": "nester",
+            "guid": "496fcf5e-18db-4b2d-8162-a99f9dfc4d7f"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        }
+      ],
+      "edges": [],
+      "attributes": {
+        "guid": "669579e0-49b4-4ec1-822f-ff3187896f6d"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "a3a4b479-a043-4efb-a86d-f1d8f1cf72d2"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}

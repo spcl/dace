@@ -58,8 +58,8 @@
         "language": "CPP"
       }
     },
-    "guid": "2250e271-c4ae-4376-af43-344b50ec9529",
-    "hash": "62e7ce505657d6fab670069643f24db97e78bb69ec151ab3a32a2b1e7bf77786"
+    "guid": "3170a8ad-fe0e-440f-a3cf-2854feec760c",
+    "hash": "e84f24eb9c5f39d15d9aa59c510b98f77f4d752ad123df5690f1865c2b129dbb"
   },
   "nodes": [
     {
@@ -141,7 +141,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "9ca7c000-40cd-4878-8fda-d1019b77950e"
+                "guid": "cdda9031-da14-43d4-817d-ea39fe8784eb"
               },
               "nodes": [
                 {
@@ -163,14 +163,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 317,
+                          "end_line": 317,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
                         },
                         "data": "used",
-                        "guid": "553b4063-7797-4b06-a97c-1d7d372b8b07"
+                        "guid": "6b1db9f7-748f-4622-902f-e15efdaaa694"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -186,17 +186,17 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 318,
+                          "end_line": 318,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
                         },
                         "label": "do",
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "e7a3aa51-d122-4045-bcee-108cd23b3106"
+                        "guid": "7c05b40d-7352-4f6b-9294-fefad0421cdd"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -208,14 +208,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 319,
+                          "end_line": 319,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
                         },
                         "data": "__return",
-                        "guid": "15bb4085-b185-4b26-be03-bf0d2673fe1a"
+                        "guid": "a5e6c4e6-addc-4072-bcf9-123649ad275c"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -243,7 +243,7 @@
                             },
                             "data": "__return",
                             "debuginfo": null,
-                            "guid": "980ee830-131e-4ada-810f-574447f9ec3b",
+                            "guid": "9c4e9c32-06c0-4f26-919f-116b18c53770",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -286,7 +286,7 @@
                             },
                             "data": "used",
                             "debuginfo": null,
-                            "guid": "f9988711-2961-4071-90c9-c90fb31e784e",
+                            "guid": "b158c8e9-13fe-40fd-8772-e0dc41fe15a8",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -311,7 +311,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "872fef23-885e-44ca-853b-fe6431069552"
+                    "guid": "6291bbf3-5403-43a3-8039-6ee25d2a9d11"
                   }
                 }
               ],
@@ -324,11 +324,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 320,
+              "end_line": 320,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
             },
             "no_inline": true,
             "label": "nester",
@@ -336,7 +336,7 @@
               "__return": null,
               "used": null
             },
-            "guid": "359669be-cf1e-45d2-a121-b3360ace0f10"
+            "guid": "ddd2b74a-4fb0-4238-8919-620ef60448b3"
           },
           "id": 0,
           "scope_entry": "1",
@@ -363,13 +363,13 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 321,
+              "end_line": 321,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
             },
-            "guid": "46f75425-08e5-4bed-a760-86dc6ffc8b07"
+            "guid": "d5e54ae6-1897-4b7f-a6ef-6ab5b73326e3"
           },
           "id": 1,
           "scope_entry": null,
@@ -387,7 +387,7 @@
               "OUT_output": null,
               "OUT_tmp": null
             },
-            "guid": "aceeb1a2-5149-4bc0-b977-6d740a98ad15"
+            "guid": "392977f6-960b-4786-9d34-85a408a24488"
           },
           "id": 2,
           "scope_entry": "1",
@@ -399,14 +399,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 323,
+              "end_line": 323,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
             },
             "data": "output",
-            "guid": "346f3c94-4a2e-4f32-87af-3e481b56fae7"
+            "guid": "c91c2f50-fda3-4e73-8079-f872d62851ae"
           },
           "id": 3,
           "scope_entry": null,
@@ -418,14 +418,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 324,
+              "end_line": 324,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/prune_connectors_test.py"
             },
             "data": "tmp",
-            "guid": "6153b1d4-3650-4e58-b98f-17ddc6cad311"
+            "guid": "490f67bb-3aca-4ece-a86e-86b0b864c1a2"
           },
           "id": 4,
           "scope_entry": null,
@@ -441,7 +441,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "7b85859b-af73-4dbb-b667-b53a6d7eb4cc",
+                "guid": "5cbee320-afab-4b16-b27b-9c9cd7d15a49",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -474,7 +474,7 @@
                 },
                 "data": "output",
                 "debuginfo": null,
-                "guid": "bc495248-672a-4a11-9cf8-6e198955c34c",
+                "guid": "1b33546d-6b81-4686-ac47-a374a410d099",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -517,7 +517,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "96e66bc4-be5b-4e9d-8744-472a80ceb1b2",
+                "guid": "8d570d21-1750-48a9-812f-dd1bf49b20a1",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -560,7 +560,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "96e66bc4-be5b-4e9d-8744-472a80ceb1b2",
+                "guid": "8d570d21-1750-48a9-812f-dd1bf49b20a1",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -603,7 +603,7 @@
                 },
                 "data": "output",
                 "debuginfo": null,
-                "guid": "bc495248-672a-4a11-9cf8-6e198955c34c",
+                "guid": "1b33546d-6b81-4686-ac47-a374a410d099",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -628,7 +628,7 @@
         }
       ],
       "attributes": {
-        "guid": "345db00f-a520-4c88-a58f-68b34393e994"
+        "guid": "b6eb35bd-a7f4-4947-945b-4c7c904d5389"
       }
     }
   ],

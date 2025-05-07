@@ -110,8 +110,8 @@
         "language": "CPP"
       }
     },
-    "guid": "6fec880f-9226-426a-b424-8aab15dc5787",
-    "hash": "06f2d449a890d7472cc5cdf13b5801d6ed3c258a00bd9ac5c4a70a4531d0c079"
+    "guid": "ad8ba27c-596a-4390-8993-057cf2ab3f6f",
+    "hash": "7ce2678fc3de5b64e99dd82653650e88f5144c82e2547d3a9a054bb3b728972d"
   },
   "nodes": [
     {
@@ -125,7 +125,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "3cf6dce2-88cf-4c29-b7b1-23f3fc0a1159",
+        "guid": "8518dd01-c2fb-48a9-8954-b0a33fcc879f",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -160,7 +160,7 @@
               "end_line": 46,
               "start_column": 4,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "label": "m3",
             "in_connectors": {
@@ -172,7 +172,7 @@
             "out_connectors": {
               "out1": null
             },
-            "guid": "0603c095-2ffd-45c5-a578-9ee27a1ed6dd"
+            "guid": "e3768979-1c69-4f36-a381-5e795e6e5339"
           },
           "id": 0,
           "scope_entry": null,
@@ -188,10 +188,10 @@
               "end_line": 37,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "data": "__tmp_38_17",
-            "guid": "e57a04bc-0230-4368-8661-9008ae6b5c33"
+            "guid": "ce0c6475-1466-42c7-bbc4-99bf4f5b2fcd"
           },
           "id": 1,
           "scope_entry": null,
@@ -207,10 +207,10 @@
               "end_line": 37,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "data": "__tmp_39_17",
-            "guid": "a5305a0a-c068-4e9f-b9b7-fce5926e5d32"
+            "guid": "8b0232a3-26b4-4064-a284-842b7bf3f801"
           },
           "id": 2,
           "scope_entry": null,
@@ -226,10 +226,10 @@
               "end_line": 37,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "data": "__tmp_41_17",
-            "guid": "1cc1ba33-6b56-465c-afc8-572328fb25b9"
+            "guid": "d0aa2877-212d-43df-9928-5b9ab240b860"
           },
           "id": 3,
           "scope_entry": null,
@@ -245,10 +245,10 @@
               "end_line": 37,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "data": "__tmp_42_17",
-            "guid": "bd62270b-58ce-4c41-96c9-83a615ac1b33"
+            "guid": "d82b6d2d-6d58-426b-beee-394e020b850a"
           },
           "id": 4,
           "scope_entry": null,
@@ -264,10 +264,10 @@
               "end_line": 37,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "data": "__tmp_44_16",
-            "guid": "4286db1e-c2f7-4990-b5c0-4ebf47413155"
+            "guid": "d4ded7a6-80f0-4121-b365-8d09fbfa867d"
           },
           "id": 5,
           "scope_entry": null,
@@ -295,7 +295,7 @@
                 },
                 "data": "__tmp_38_17",
                 "debuginfo": null,
-                "guid": "1c237e8c-b09e-4761-a6ac-b172725b3a9a",
+                "guid": "9b08ee52-8493-4400-ad95-7d2e2f0d05a0",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -338,7 +338,7 @@
                 },
                 "data": "__tmp_39_17",
                 "debuginfo": null,
-                "guid": "379b8264-88f4-40f3-aaa5-1c4a16ab4757",
+                "guid": "139d51b8-b1f5-41ab-86cd-29833219dc63",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -381,7 +381,7 @@
                 },
                 "data": "__tmp_42_17",
                 "debuginfo": null,
-                "guid": "9d24b1fe-5f04-415b-bfd0-7c46e8fa10b7",
+                "guid": "4f7dfd11-2e8c-46d2-8baf-825070861915",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -424,7 +424,7 @@
                 },
                 "data": "__tmp_41_17",
                 "debuginfo": null,
-                "guid": "8ac70324-1741-4967-b219-cc2331bfddb9",
+                "guid": "e6c1a548-85fc-49e9-a695-100b62eb48a8",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -467,7 +467,7 @@
                 },
                 "data": "__tmp_44_16",
                 "debuginfo": null,
-                "guid": "4a83dc40-f39d-4ff1-91f9-01b1c2f313fd",
+                "guid": "638fd995-b16b-4d10-be65-2262b1a2a824",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -492,7 +492,7 @@
         }
       ],
       "attributes": {
-        "guid": "3bfc4002-2752-4eeb-8856-a9f4b8eacf26",
+        "guid": "5b8bf676-7257-49dd-a725-a49fa8370048",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -505,7 +505,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "1a096a8c-c324-4140-a99e-9ebdaefce408"
+            "guid": "717f4bda-9a4c-4fa2-a37a-5a7d5b77d1cf"
           },
           "label": ""
         }

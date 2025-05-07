@@ -57,8 +57,8 @@
         "language": "CPP"
       }
     },
-    "guid": "f8cbc5a5-efe7-49c2-9a88-4b4b47722631",
-    "hash": "c12ebb87f5488416446bd15cdb2e999f4df1bebfed4610817b24e7e7063c31d8"
+    "guid": "2fcf051b-72ab-470a-a189-125b15f422fc",
+    "hash": "bdb78878a31e0458a9ac97e2c0c856bfc2547a7828c06b62e83272df788fbd72"
   },
   "nodes": [
     {
@@ -84,14 +84,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "A",
-            "guid": "28f78aa6-afaa-4b1b-aeb9-b8cda434399e"
+            "guid": "61380230-9293-4ca2-ab09-d849802af45e"
           },
           "id": 0,
           "scope_entry": null,
@@ -103,14 +103,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "B",
-            "guid": "272ecbe2-2366-451b-baa9-cc57622cb6a9"
+            "guid": "8094c2cf-2565-4c13-a99d-050330adfa22"
           },
           "id": 1,
           "scope_entry": null,
@@ -137,11 +137,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 81,
+              "end_line": 81,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -149,7 +149,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "ef90305a-e698-40c9-8d3d-d20f429a35cf"
+            "guid": "052e11cc-e617-488b-bb70-50b4ef743639"
           },
           "id": 2,
           "scope_entry": null,
@@ -165,7 +165,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "843e0ef6-8b32-4998-8da5-c9c96a5f7300"
+            "guid": "899f34ef-9c35-4940-a54e-458d9e190375"
           },
           "id": 3,
           "scope_entry": "2",
@@ -235,7 +235,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "1e556cba-ed70-490c-bc3b-8dfcab1ade6e"
+                "guid": "e324df73-9d77-4676-a4c3-e78d4fff94cc"
               },
               "nodes": [
                 {
@@ -262,14 +262,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 2377,
+                          "end_line": 2377,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/dace/sdfg/state.py"
                         },
                         "data": "a",
-                        "guid": "51efdeff-556e-4282-b913-7f883f3b8e65"
+                        "guid": "e978b702-0256-4945-ab4b-347edeea1046"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -281,14 +281,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 2377,
+                          "end_line": 2377,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/dace/sdfg/state.py"
                         },
                         "data": "b",
-                        "guid": "01c8d450-6197-4915-9fa9-ccec8757d999"
+                        "guid": "8250053e-2cd1-4270-8afa-798b322eb570"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -315,11 +315,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 73,
+                          "end_line": 73,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
                         },
                         "in_connectors": {
                           "IN_a": null
@@ -327,7 +327,7 @@
                         "out_connectors": {
                           "OUT_a": null
                         },
-                        "guid": "4af1bed9-18d7-42ae-b94b-8f47c471ad98"
+                        "guid": "0e90a3c3-8ae9-4343-929d-38e634427e51"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -343,7 +343,7 @@
                         "out_connectors": {
                           "OUT_b": null
                         },
-                        "guid": "97492357-d9b1-4af8-9692-fbfe6aa1f8ac"
+                        "guid": "7049b2ad-1be0-4eca-800b-07a01df19c6e"
                       },
                       "id": 3,
                       "scope_entry": "2",
@@ -359,11 +359,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 74,
+                          "end_line": 74,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
                         },
                         "label": "mytasklet",
                         "in_connectors": {
@@ -372,7 +372,7 @@
                         "out_connectors": {
                           "bb": null
                         },
-                        "guid": "6be26c04-aa7a-44b8-8db6-a6f42787bbd1"
+                        "guid": "4aa37b38-f0b5-425d-9cdd-12375e876ae3"
                       },
                       "id": 4,
                       "scope_entry": "2",
@@ -388,11 +388,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 76,
+                          "end_line": 76,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
                         },
                         "label": "mytasklet2",
                         "in_connectors": {
@@ -401,7 +401,7 @@
                         "out_connectors": {
                           "dd": null
                         },
-                        "guid": "5760f24c-5f1b-4df1-adf3-444b97d4bc04"
+                        "guid": "4ac80eb0-ad39-4edf-8335-918c2be26c57"
                       },
                       "id": 5,
                       "scope_entry": "2",
@@ -429,7 +429,7 @@
                             },
                             "data": "a",
                             "debuginfo": null,
-                            "guid": "a9daf5c5-ef7d-4594-9f10-7062c9bc4d30",
+                            "guid": "99d5e29c-b5c6-42db-aa13-a3d5ad6d53a3",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -472,7 +472,7 @@
                             },
                             "data": "a",
                             "debuginfo": null,
-                            "guid": "a9daf5c5-ef7d-4594-9f10-7062c9bc4d30",
+                            "guid": "99d5e29c-b5c6-42db-aa13-a3d5ad6d53a3",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -515,7 +515,7 @@
                             },
                             "data": "b",
                             "debuginfo": null,
-                            "guid": "7e42898e-6285-458c-ba2a-e0aff4f7eeac",
+                            "guid": "f170a82e-6308-44d7-acb0-b5a854c6a70e",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -546,7 +546,7 @@
                           "attributes": {
                             "volume": "1",
                             "debuginfo": null,
-                            "guid": "118d3e06-7b42-41f8-ae36-90dad73c1082",
+                            "guid": "e2d956ff-b39b-4113-822c-577fa05de05e",
                             "src_subset": null,
                             "dst_subset": null,
                             "is_data_src": false,
@@ -579,7 +579,7 @@
                             },
                             "data": "b",
                             "debuginfo": null,
-                            "guid": "7e42898e-6285-458c-ba2a-e0aff4f7eeac",
+                            "guid": "f170a82e-6308-44d7-acb0-b5a854c6a70e",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -604,7 +604,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "59943951-f159-4362-85fd-229290bcd4ff"
+                    "guid": "9c01b34f-29f1-4ea5-9975-a82074a866c8"
                   }
                 }
               ],
@@ -621,11 +621,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 82,
+              "end_line": 82,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/chained_nested_tasklet_test.py"
             },
             "label": "ctasklet_nested_sdfg_inner",
             "in_connectors": {
@@ -634,7 +634,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "6ec0fd6e-f668-4cf2-a060-84ad313312e1"
+            "guid": "9c6ec3d3-054f-4755-83a8-d0b0cf06e7fe"
           },
           "id": 4,
           "scope_entry": "2",
@@ -662,7 +662,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "8c68e13b-f88f-45bd-9abb-7d208f0ca8c2",
+                "guid": "4d6978f6-f874-47c7-b018-05399f6241b6",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -705,7 +705,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "8c68e13b-f88f-45bd-9abb-7d208f0ca8c2",
+                "guid": "4d6978f6-f874-47c7-b018-05399f6241b6",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -748,7 +748,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "f18220d1-7bda-4807-bd58-57b2a35bb951",
+                "guid": "f9328a10-d3ac-414e-9c91-93642db99c58",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -791,7 +791,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "f18220d1-7bda-4807-bd58-57b2a35bb951",
+                "guid": "f9328a10-d3ac-414e-9c91-93642db99c58",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -816,7 +816,7 @@
         }
       ],
       "attributes": {
-        "guid": "eccaa279-24a9-43e6-ae80-c7cdff81eb46"
+        "guid": "5062f81c-e800-4002-be96-b9a976d481e2"
       }
     }
   ],

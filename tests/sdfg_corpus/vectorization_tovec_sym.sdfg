@@ -84,14 +84,14 @@
     "debuginfo": {
       "type": "DebugInfo",
       "start_line": 15,
-      "end_line": 24,
+      "end_line": 25,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "7dcc9c38-028d-4c6b-a66d-94e15753815a",
-    "hash": "4a1b3f29b05cffc89856b691902ce754f72610390d709e47385c98cfe5a1d743"
+    "guid": "e6155f4c-5453-4d8b-9027-9ff89df55f0b",
+    "hash": "cebf18c23e8bc5f51b612f9fb6e6182e95febe0f7c97f9196758169f0a16f090"
   },
   "nodes": [
     {
@@ -105,14 +105,14 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "2afdb290-1344-45a3-983f-2a8c6c098443",
+        "guid": "854a9dd1-74b0-45b6-a77b-964438083b0c",
         "executions": "1",
         "dynamic_executions": false
       }
     },
     {
       "type": "SDFGState",
-      "label": "s18_4",
+      "label": "s19_4",
       "id": 1,
       "collapsed": false,
       "scope_dict": {
@@ -150,11 +150,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 18,
-              "end_line": 18,
+              "start_line": 19,
+              "end_line": 19,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
             },
             "in_connectors": {
               "IN_x": null,
@@ -166,7 +166,7 @@
               "OUT_y": null,
               "OUT_z": null
             },
-            "guid": "8a5f70dd-0a4a-4ea0-a110-2ea431f52203"
+            "guid": "706603c5-c685-4e1e-bfdf-470ff116441e"
           },
           "id": 0,
           "scope_entry": null,
@@ -182,7 +182,7 @@
             "out_connectors": {
               "OUT_z": null
             },
-            "guid": "ace7bb12-fd59-446a-8eb1-58ae25ac108c"
+            "guid": "db2d5b94-68d0-4a8c-b32e-1802356867f3"
           },
           "id": 1,
           "scope_entry": "0",
@@ -190,30 +190,13 @@
         },
         {
           "type": "NestedSDFG",
-          "label": "sum_body_18_4",
+          "label": "sum_body_19_4",
           "attributes": {
             "sdfg": {
               "type": "SDFG",
               "attributes": {
-                "name": "sum_body_18_4",
+                "name": "sum_body_19_4",
                 "_arrays": {
-                  "__tmp_19_14": {
-                    "type": "Array",
-                    "attributes": {
-                      "strides": [
-                        "1"
-                      ],
-                      "total_size": "1",
-                      "offset": [
-                        "0"
-                      ],
-                      "dtype": "float32",
-                      "shape": [
-                        "1"
-                      ],
-                      "debuginfo": null
-                    }
-                  },
                   "__tmp_20_14": {
                     "type": "Array",
                     "attributes": {
@@ -248,7 +231,24 @@
                       "debuginfo": null
                     }
                   },
-                  "__tmp_22_15": {
+                  "__tmp_22_14": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "1"
+                      ],
+                      "total_size": "1",
+                      "offset": [
+                        "0"
+                      ],
+                      "dtype": "float32",
+                      "shape": [
+                        "1"
+                      ],
+                      "debuginfo": null
+                    }
+                  },
+                  "__tmp_23_15": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
@@ -287,7 +287,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "34a745b7-5f33-4d12-a835-4004cc641923"
+                "guid": "e9c66d79-2186-4647-8e10-5314ffbd38a8"
               },
               "nodes": [
                 {
@@ -301,14 +301,14 @@
                   "nodes": [],
                   "edges": [],
                   "attributes": {
-                    "guid": "67fc0ee2-944c-4ff6-8ee6-4ed8d8ddf4e1",
+                    "guid": "854f7985-88c8-4ab6-83e1-86abd7e984da",
                     "executions": "1",
                     "dynamic_executions": false
                   }
                 },
                 {
                   "type": "SDFGState",
-                  "label": "s18_4",
+                  "label": "s19_4",
                   "id": 1,
                   "collapsed": false,
                   "scope_dict": {
@@ -331,11 +331,11 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 18,
-                          "end_line": 24,
+                          "start_line": 19,
+                          "end_line": 25,
                           "start_column": 4,
                           "end_column": 8,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
                         },
                         "label": "sum",
                         "in_connectors": {
@@ -346,28 +346,9 @@
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "e98baedc-7c20-4a75-8ea6-c4e764eaaf3f"
+                        "guid": "c2543a8a-1350-468d-9dcf-ce345de08433"
                       },
                       "id": 0,
-                      "scope_entry": null,
-                      "scope_exit": null
-                    },
-                    {
-                      "type": "AccessNode",
-                      "label": "__tmp_19_14",
-                      "attributes": {
-                        "debuginfo": {
-                          "type": "DebugInfo",
-                          "start_line": 18,
-                          "end_line": 18,
-                          "start_column": 4,
-                          "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
-                        },
-                        "data": "__tmp_19_14",
-                        "guid": "211a303e-7ac6-4ad4-a050-a64aa6858667"
-                      },
-                      "id": 1,
                       "scope_entry": null,
                       "scope_exit": null
                     },
@@ -377,16 +358,16 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 18,
-                          "end_line": 18,
+                          "start_line": 19,
+                          "end_line": 19,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
                         },
                         "data": "__tmp_20_14",
-                        "guid": "0e77699a-abad-47b8-9efe-a4d27c556221"
+                        "guid": "75203c79-e749-4151-b487-3e82a7013ed8"
                       },
-                      "id": 2,
+                      "id": 1,
                       "scope_entry": null,
                       "scope_exit": null
                     },
@@ -396,14 +377,33 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 18,
-                          "end_line": 18,
+                          "start_line": 19,
+                          "end_line": 19,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
                         },
                         "data": "__tmp_21_14",
-                        "guid": "ca3d5d03-5dfb-4f36-b22d-c03828b627d2"
+                        "guid": "e1157a8f-87eb-43e2-bc39-3b4795b958e2"
+                      },
+                      "id": 2,
+                      "scope_entry": null,
+                      "scope_exit": null
+                    },
+                    {
+                      "type": "AccessNode",
+                      "label": "__tmp_22_14",
+                      "attributes": {
+                        "debuginfo": {
+                          "type": "DebugInfo",
+                          "start_line": 19,
+                          "end_line": 19,
+                          "start_column": 4,
+                          "end_column": 4,
+                          "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
+                        },
+                        "data": "__tmp_22_14",
+                        "guid": "bb007dae-02d1-42d3-aeee-f11e48e74102"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -411,18 +411,18 @@
                     },
                     {
                       "type": "AccessNode",
-                      "label": "__tmp_22_15",
+                      "label": "__tmp_23_15",
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 18,
-                          "end_line": 18,
+                          "start_line": 19,
+                          "end_line": 19,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+                          "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
                         },
-                        "data": "__tmp_22_15",
-                        "guid": "1146362b-1aac-427f-b3af-79391c317747"
+                        "data": "__tmp_23_15",
+                        "guid": "868ef507-6417-434f-b836-03019dfaf096"
                       },
                       "id": 4,
                       "scope_entry": null,
@@ -448,9 +448,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_19_14",
+                            "data": "__tmp_20_14",
                             "debuginfo": null,
-                            "guid": "7fa9d478-8e91-43e1-86d6-916907741d69",
+                            "guid": "82611170-7550-4d67-9a8b-d05fededbdc2",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -491,9 +491,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_20_14",
+                            "data": "__tmp_21_14",
                             "debuginfo": null,
-                            "guid": "42cb4e01-7ef2-4239-b227-22446eb02ac8",
+                            "guid": "464b5a09-a812-4d74-b296-db1ea21e09eb",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -534,9 +534,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_21_14",
+                            "data": "__tmp_22_14",
                             "debuginfo": null,
-                            "guid": "3197ca1b-6e30-40e0-a094-536ab17bb253",
+                            "guid": "1ab9df19-ffd6-4054-9303-80f63097a7e0",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -577,9 +577,9 @@
                                 }
                               ]
                             },
-                            "data": "__tmp_22_15",
+                            "data": "__tmp_23_15",
                             "debuginfo": null,
-                            "guid": "1a083124-0f16-4243-9b68-f1b212494e1c",
+                            "guid": "88d417c9-db64-4927-a2a6-d584d4eaf36b",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -604,7 +604,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "513988a6-0db6-4998-8dff-1604dfe7126a",
+                    "guid": "9ff03579-d37c-4ce2-aea6-288c8f8b68f6",
                     "executions": "1",
                     "dynamic_executions": false
                   }
@@ -617,7 +617,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "b0506cc8-9007-478c-a5cc-34d1961c4f1d"
+                        "guid": "5804ba47-b8cf-4a4d-988a-df82a9883f27"
                       },
                       "label": ""
                     }
@@ -637,22 +637,22 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 18,
-              "end_line": 18,
+              "start_line": 19,
+              "end_line": 19,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
             },
-            "label": "sum_body_18_4",
+            "label": "sum_body_19_4",
             "in_connectors": {
-              "__tmp_19_14": null,
               "__tmp_20_14": null,
-              "__tmp_21_14": null
+              "__tmp_21_14": null,
+              "__tmp_22_14": null
             },
             "out_connectors": {
-              "__tmp_22_15": null
+              "__tmp_23_15": null
             },
-            "guid": "a4bf780b-80a1-44d2-81d6-641dedb090d4"
+            "guid": "f73760a5-301d-4522-b074-0075d2fca85d"
           },
           "id": 2,
           "scope_entry": "0",
@@ -664,14 +664,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 18,
-              "end_line": 18,
+              "start_line": 19,
+              "end_line": 19,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
             },
             "data": "x",
-            "guid": "03450f3a-f419-4f45-9513-d19e823023c5"
+            "guid": "8c1d1666-50da-4bb8-a011-f1e7bff6589a"
           },
           "id": 3,
           "scope_entry": null,
@@ -683,14 +683,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 18,
-              "end_line": 18,
+              "start_line": 19,
+              "end_line": 19,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
             },
             "data": "y",
-            "guid": "6f5e3f48-24ff-4abc-8fd7-8efdecd7801d"
+            "guid": "4758a556-33bf-467a-984f-a374215f4cd2"
           },
           "id": 4,
           "scope_entry": null,
@@ -702,14 +702,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 18,
-              "end_line": 18,
+              "start_line": 19,
+              "end_line": 19,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
             },
             "data": "z",
-            "guid": "b6c12fbf-492c-463b-bf36-13a844a49663"
+            "guid": "dee20cd7-c337-4507-a4a7-63231229e452"
           },
           "id": 5,
           "scope_entry": null,
@@ -721,14 +721,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 18,
-              "end_line": 18,
+              "start_line": 19,
+              "end_line": 19,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/vectorization_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/vectorization_test.py"
             },
             "data": "z",
-            "guid": "9fb52f15-37fb-4ec2-ac2e-936bc7764007"
+            "guid": "0ba5c417-935c-4992-b8b4-ff6280da1c19"
           },
           "id": 6,
           "scope_entry": null,
@@ -756,7 +756,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "29e55f90-48d1-4202-9c49-528f336d116a",
+                "guid": "f079b80c-5862-4469-b7bc-95af415c0134",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -799,7 +799,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "05d5a676-8d4a-4e7f-819f-3e86ad873907",
+                "guid": "372b6f66-5f34-42f7-83a0-3577799d7052",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -842,7 +842,7 @@
                 },
                 "data": "z",
                 "debuginfo": null,
-                "guid": "412c5099-16b1-4043-b293-c62e3d889321",
+                "guid": "a86d18ed-1e6c-4891-aa24-ede8fa3f348b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -885,7 +885,7 @@
                 },
                 "data": "x",
                 "debuginfo": null,
-                "guid": "29e55f90-48d1-4202-9c49-528f336d116a",
+                "guid": "f079b80c-5862-4469-b7bc-95af415c0134",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -905,7 +905,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_19_14",
+          "dst_connector": "__tmp_20_14",
           "src_connector": "OUT_x"
         },
         {
@@ -928,7 +928,7 @@
                 },
                 "data": "y",
                 "debuginfo": null,
-                "guid": "05d5a676-8d4a-4e7f-819f-3e86ad873907",
+                "guid": "372b6f66-5f34-42f7-83a0-3577799d7052",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -948,7 +948,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_20_14",
+          "dst_connector": "__tmp_21_14",
           "src_connector": "OUT_y"
         },
         {
@@ -971,7 +971,7 @@
                 },
                 "data": "z",
                 "debuginfo": null,
-                "guid": "49620eee-69c9-4d62-945a-421fbd9d89a9",
+                "guid": "8f25fbd0-97cd-449d-b7b1-c74c74cf85b6",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1014,7 +1014,7 @@
                 },
                 "data": "z",
                 "debuginfo": null,
-                "guid": "412c5099-16b1-4043-b293-c62e3d889321",
+                "guid": "a86d18ed-1e6c-4891-aa24-ede8fa3f348b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1034,7 +1034,7 @@
           },
           "src": "0",
           "dst": "2",
-          "dst_connector": "__tmp_21_14",
+          "dst_connector": "__tmp_22_14",
           "src_connector": "OUT_z"
         },
         {
@@ -1057,7 +1057,7 @@
                 },
                 "data": "z",
                 "debuginfo": null,
-                "guid": "49620eee-69c9-4d62-945a-421fbd9d89a9",
+                "guid": "8f25fbd0-97cd-449d-b7b1-c74c74cf85b6",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1078,11 +1078,11 @@
           "src": "2",
           "dst": "1",
           "dst_connector": "IN_z",
-          "src_connector": "__tmp_22_15"
+          "src_connector": "__tmp_23_15"
         }
       ],
       "attributes": {
-        "guid": "c33e6e5a-b432-4a6d-8465-543d4824b7fa",
+        "guid": "c6399ab8-7020-4624-8651-07053ec2b415",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -1095,7 +1095,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "092f08cf-648f-47fd-8c25-5ca9c773dd82"
+            "guid": "257febfd-5543-40e7-8b85-16fe4b3f8ba2"
           },
           "label": ""
         }

@@ -62,8 +62,8 @@
         "language": "CPP"
       }
     },
-    "guid": "439e5d8a-c646-4e0b-bdb8-12948187bb5f",
-    "hash": "cd6d5191c0e426eaeed2083b34f952838cf5d7d78e7e323dfef4639a391d2656"
+    "guid": "204a1f97-d2c5-4746-beb5-5bdd444395ae",
+    "hash": "38bb78b1f14b8f7133bdf61ade898e196550689803bf1a893864c650d67919ef"
   },
   "nodes": [
     {
@@ -89,14 +89,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "A",
-            "guid": "56611d5d-2da9-4587-9f8f-fc2e60f7f03f"
+            "guid": "5d6a84ce-0c32-48b7-b448-217d8e850428"
           },
           "id": 0,
           "scope_entry": null,
@@ -108,14 +108,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 2377,
+              "end_line": 2377,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/sdfg/state.py"
             },
             "data": "B",
-            "guid": "e9f8480f-3907-4773-9c8e-af2e6bd67bec"
+            "guid": "cce6d995-04aa-4236-884d-cd807b055011"
           },
           "id": 1,
           "scope_entry": null,
@@ -131,11 +131,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 11,
+              "end_line": 11,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/strided_range_test.py"
             },
             "label": "srtest",
             "in_connectors": {
@@ -144,7 +144,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "b85c965c-3f2f-4499-b9ef-c35b81da3c16"
+            "guid": "1d29776a-aad1-496c-be2b-6bc6a01984be"
           },
           "id": 2,
           "scope_entry": "3",
@@ -171,11 +171,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 17,
+              "end_line": 17,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/strided_range_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -183,7 +183,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "546a7987-4d22-42a6-9ee7-46fca176283b"
+            "guid": "7258316e-0f31-439c-b7f8-c3a5d9446c1e"
           },
           "id": 3,
           "scope_entry": null,
@@ -199,7 +199,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "0fe7c190-e19d-4417-b51b-f209702aaee4"
+            "guid": "b4d10cce-95d7-44a0-9d65-d047b2d86384"
           },
           "id": 4,
           "scope_entry": "3",
@@ -239,7 +239,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "801238e9-46f4-499e-b5e1-0be3e2ee516a",
+                "guid": "342a63c9-2a49-4f06-ab72-78d8343a1279",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -306,7 +306,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "801238e9-46f4-499e-b5e1-0be3e2ee516a",
+                "guid": "342a63c9-2a49-4f06-ab72-78d8343a1279",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -361,7 +361,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "d7170345-2f74-455b-85dd-8158f7feb65c",
+                "guid": "6cd543e4-b415-43f1-9c39-1324f13bb8a0",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -404,7 +404,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "d7170345-2f74-455b-85dd-8158f7feb65c",
+                "guid": "6cd543e4-b415-43f1-9c39-1324f13bb8a0",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -429,7 +429,7 @@
         }
       ],
       "attributes": {
-        "guid": "bb409edf-b8af-4286-a3a9-1b32652916b4"
+        "guid": "519c77c6-25de-4402-8b6f-a32a8abc29ac"
       }
     }
   ],

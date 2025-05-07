@@ -1,0 +1,106 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "cutout_multistate_cutout_cutout",
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "ae62d91b-e327-46a1-aa71-6c2fee2225fd",
+    "hash": "2a47827b160b65eb43bbf9fa79e0e164acb99aa5f27124e40ed273b4fbf580cc"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "s5",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "a9778207-9fbb-4e0c-b73b-397c6e6ebc5e"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "s6",
+      "id": 1,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "39e89e26-9447-4154-895a-7e01c68e0070"
+      }
+    },
+    {
+      "type": "SDFGState",
+      "label": "s7",
+      "id": 2,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": []
+      },
+      "nodes": [],
+      "edges": [],
+      "attributes": {
+        "guid": "2269aeb5-9ea5-44df-aff1-f0476752283a"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "f027c8a3-7a38-4c54-9db2-4b46b8b03126"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "1"
+    },
+    {
+      "type": "Edge",
+      "attributes": {
+        "data": {
+          "type": "InterstateEdge",
+          "attributes": {
+            "guid": "762207e1-2d30-4952-8f11-80f56d563c90"
+          },
+          "label": ""
+        }
+      },
+      "src": "0",
+      "dst": "2"
+    }
+  ],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": 0,
+  "dace_version": "1.0.0"
+}

@@ -59,8 +59,8 @@
         "language": "CPP"
       }
     },
-    "guid": "66a744ff-1040-4501-87ea-04c166487811",
-    "hash": "38cf171077189e5d2c84439fac6e2bde64d37f4704fd45cfe21c9092516dbd1d"
+    "guid": "e0bf5330-7754-44c9-9d2c-c444f5ec81f9",
+    "hash": "b09dc67e012cff70c88ad9bb499deb9a4db95cd28aef3126b4c0547c32e13163"
   },
   "nodes": [
     {
@@ -74,7 +74,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "b46f4aad-5dcc-46a0-bf43-595cb64ba1ff",
+        "guid": "e6817469-2ca4-4ea4-9a61-a6d87a368870",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -106,7 +106,7 @@
               "end_line": 53,
               "start_column": 4,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "label": "m4",
             "in_connectors": {
@@ -115,7 +115,7 @@
             "out_connectors": {
               "out1": null
             },
-            "guid": "ae042dff-2d38-45c8-bcba-623eb90d203b"
+            "guid": "00d5da61-466c-4986-8068-5ba60227a8de"
           },
           "id": 0,
           "scope_entry": null,
@@ -131,10 +131,10 @@
               "end_line": 49,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "data": "__tmp_50_15",
-            "guid": "c23a7e23-1757-4ba7-9b9c-6083b333e596"
+            "guid": "9d5928b4-e0a9-48af-86c3-b0c9e04eb4e9"
           },
           "id": 1,
           "scope_entry": null,
@@ -150,10 +150,10 @@
               "end_line": 49,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/subgraph_fusion/tiling_stencil_test.py"
             },
             "data": "__tmp_51_16",
-            "guid": "f7f8f10c-926e-4596-ac94-c553f580753b"
+            "guid": "3f004344-24fb-42eb-af19-bad88fc0342c"
           },
           "id": 2,
           "scope_entry": null,
@@ -181,7 +181,7 @@
                 },
                 "data": "__tmp_50_15",
                 "debuginfo": null,
-                "guid": "5063a34f-f262-4543-8c86-f6980437d9a3",
+                "guid": "39c62ab7-03ec-492a-87ab-ae86c1fbebf3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -224,7 +224,7 @@
                 },
                 "data": "__tmp_51_16",
                 "debuginfo": null,
-                "guid": "41a3ac21-537a-486e-a4e7-4d3cc42b3fcc",
+                "guid": "a38fce20-fee7-4f17-9896-513a5de38787",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -249,7 +249,7 @@
         }
       ],
       "attributes": {
-        "guid": "f506f13c-31ce-4bca-bb2d-ee506fd143ba",
+        "guid": "0d877579-a262-4972-b56f-6e27b6e9e042",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -262,7 +262,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "17c1e09d-25a2-4324-b3ec-c87e663ca212"
+            "guid": "546e81e1-084b-4d00-8646-1074775b7ce9"
           },
           "label": ""
         }

@@ -103,8 +103,8 @@
         "language": "CPP"
       }
     },
-    "guid": "2ea603ac-186f-4ef9-bdc4-3f3d4e831bd4",
-    "hash": "823ae2915701ac971293bb4880d923df9682f8215807347e3c3fa82f418a5a97"
+    "guid": "888bf914-b9d3-44d0-84d0-fa0331e9382b",
+    "hash": "45b4274519ee41d2b3715035c21cd272bbec68b9dd74c7eb3a228316dae5d058"
   },
   "nodes": [
     {
@@ -147,11 +147,11 @@
             "schedule": "GPU_Device",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 29,
+              "end_line": 29,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -159,7 +159,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "1afe05a5-f24c-4172-b91a-553eeffe46e2"
+            "guid": "680944f8-8824-4576-bd0d-a8ebcdb38692"
           },
           "id": 0,
           "scope_entry": null,
@@ -175,7 +175,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "ed22a8f8-a1c6-4b1f-99ed-6316bb7c4a19"
+            "guid": "9761cf5b-64b6-4a6b-a72e-34498dcc0812"
           },
           "id": 1,
           "scope_entry": "0",
@@ -187,14 +187,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 30,
+              "end_line": 30,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "tmp",
-            "guid": "2716d7d6-4a4f-43a8-94b2-432f89e62884"
+            "guid": "c6a036ca-f9e1-4103-a1b5-4274c68d3849"
           },
           "id": 2,
           "scope_entry": "0",
@@ -206,14 +206,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 31,
+              "end_line": 31,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "tmp2",
-            "guid": "a8e1dd74-6ff2-4bd7-a6b6-1d19971ccf7f"
+            "guid": "d88ddf44-63cd-48d0-bf36-adaffd8e8d28"
           },
           "id": 3,
           "scope_entry": "0",
@@ -225,14 +225,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 33,
+              "end_line": 33,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "A",
-            "guid": "f16bcc5e-670e-450a-9109-f2b7a2fec0d5"
+            "guid": "6a4fd486-da76-4fa8-a43d-163d1602df59"
           },
           "id": 4,
           "scope_entry": null,
@@ -244,14 +244,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/codegen/allocation_lifetime_test.py"
             },
             "data": "B",
-            "guid": "a645456b-f720-49da-9c2b-092ae29cc695"
+            "guid": "f80e01ed-e842-4695-b157-a1e45c683c61"
           },
           "id": 5,
           "scope_entry": null,
@@ -279,7 +279,7 @@
                 },
                 "data": "tmp",
                 "debuginfo": null,
-                "guid": "43a3ea0e-68f9-4d39-bb85-801241791c06",
+                "guid": "fae53927-afe6-496f-99d9-3663479964a1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -322,7 +322,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "36e0e0fa-fd1f-4f40-b1c0-298b4cdb7b1a",
+                "guid": "af89e906-5bb1-49f7-b1b6-89e00c07f207",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -366,7 +366,7 @@
                 "data": "B",
                 "wcr": "(lambda a, b: (a + b))",
                 "debuginfo": null,
-                "guid": "bab0e81c-1ef7-4a55-aebc-916e1cdd0a4b",
+                "guid": "5ddf5937-214e-4c65-8506-a8b688b12fcb",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -409,7 +409,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "36e0e0fa-fd1f-4f40-b1c0-298b4cdb7b1a",
+                "guid": "af89e906-5bb1-49f7-b1b6-89e00c07f207",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -453,7 +453,7 @@
                 "data": "B",
                 "wcr": "(lambda a, b: (a + b))",
                 "debuginfo": null,
-                "guid": "bab0e81c-1ef7-4a55-aebc-916e1cdd0a4b",
+                "guid": "5ddf5937-214e-4c65-8506-a8b688b12fcb",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -478,68 +478,11 @@
         }
       ],
       "attributes": {
-        "guid": "a3424108-b05d-44c1-86cf-a23fcca79a67"
-      }
-    },
-    {
-      "type": "SDFGState",
-      "label": "idom_block",
-      "id": 1,
-      "collapsed": false,
-      "scope_dict": {
-        "-1": []
-      },
-      "nodes": [],
-      "edges": [],
-      "attributes": {
-        "guid": "0cabbb09-64f6-41ea-b392-df5babbe9656"
-      }
-    },
-    {
-      "type": "SDFGState",
-      "label": "ipostdom_block",
-      "id": 2,
-      "collapsed": false,
-      "scope_dict": {
-        "-1": []
-      },
-      "nodes": [],
-      "edges": [],
-      "attributes": {
-        "guid": "8e6370d7-2134-4ab8-ab11-14056f7b3499"
+        "guid": "3c8674d6-ea2e-4029-b15f-4531cd080202"
       }
     }
   ],
-  "edges": [
-    {
-      "type": "Edge",
-      "attributes": {
-        "data": {
-          "type": "InterstateEdge",
-          "attributes": {
-            "guid": "9fb09f48-6a15-4e50-96ab-ffaeda15a57d"
-          },
-          "label": ""
-        }
-      },
-      "src": "1",
-      "dst": "0"
-    },
-    {
-      "type": "Edge",
-      "attributes": {
-        "data": {
-          "type": "InterstateEdge",
-          "attributes": {
-            "guid": "427d6db2-5a6c-4884-ab3c-23d0239338a6"
-          },
-          "label": ""
-        }
-      },
-      "src": "0",
-      "dst": "2"
-    }
-  ],
+  "edges": [],
   "collapsed": false,
   "label": "",
   "id": null,

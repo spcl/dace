@@ -69,8 +69,8 @@
         "language": "CPP"
       }
     },
-    "guid": "13733326-6669-4bcb-84ba-7204b2216cf8",
-    "hash": "78992e71721beaf0c117e82dc391cb8149a775d4332fa8ef7d883f8acec9c5c9"
+    "guid": "a148abf8-4159-415e-b59b-f53473b8bb63",
+    "hash": "f146712d712923c2bba10d216fedeebe5b5334caa24b00eba09f92ac096e04d4"
   },
   "nodes": [
     {
@@ -95,17 +95,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 73,
+              "end_line": 73,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_elimination_test.py"
             },
             "label": "do",
             "out_connectors": {
               "out": null
             },
-            "guid": "3af73aac-c405-438d-99de-2a750f7ad37a"
+            "guid": "5e68b7f5-6e21-41f0-ba0e-38bbdcfa10db"
           },
           "id": 0,
           "scope_entry": null,
@@ -117,14 +117,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 73,
+              "end_line": 73,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_elimination_test.py"
             },
             "data": "scal",
-            "guid": "1180c6e5-2f18-4528-b6bd-c09688e0c371"
+            "guid": "fefecd01-5f0e-40eb-b53a-bdd87db8ea7b"
           },
           "id": 1,
           "scope_entry": null,
@@ -152,7 +152,7 @@
                 },
                 "data": "scal",
                 "debuginfo": null,
-                "guid": "a281c868-212a-47b0-ab5b-e182dac50a57",
+                "guid": "5a463a7a-a368-483f-848f-d729646e4f47",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -177,7 +177,7 @@
         }
       ],
       "attributes": {
-        "guid": "2ce0dca5-0261-40f7-8af7-5fcd32abaedb"
+        "guid": "52c70b35-0434-444f-ada2-8806ba9c9c29"
       }
     },
     {
@@ -199,14 +199,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 77,
+              "end_line": 77,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_elimination_test.py"
             },
             "data": "A",
-            "guid": "43e3d153-7550-4593-94de-7517d3d4cfcf"
+            "guid": "a99804ea-7130-4066-af8b-6e17bba07024"
           },
           "id": 0,
           "scope_entry": null,
@@ -222,11 +222,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 78,
+              "end_line": 78,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_elimination_test.py"
             },
             "label": "do",
             "in_connectors": {
@@ -235,7 +235,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "e1b2f4e1-55b4-47c2-84bd-fa4ba7102da6"
+            "guid": "cbf341c9-c50f-4d42-8024-91089d342744"
           },
           "id": 1,
           "scope_entry": null,
@@ -247,14 +247,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 79,
+              "end_line": 79,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_elimination_test.py"
             },
             "data": "B",
-            "guid": "d56c8388-95db-43ee-9efe-2ef1ce46158d"
+            "guid": "92e55475-3e34-4816-a063-7be994903800"
           },
           "id": 2,
           "scope_entry": null,
@@ -288,7 +288,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "7e0f79a6-88f2-4c33-b468-91bdc18415b0",
+                "guid": "de2f7b7f-791a-4594-9a79-da58abb62ef9",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -337,7 +337,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "97ed5fb8-3332-4925-a3f7-623249946968",
+                "guid": "82ca5a10-e155-443d-9880-a439a4aaa6a0",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -362,7 +362,7 @@
         }
       ],
       "attributes": {
-        "guid": "669d611c-374a-48e7-a48d-adf6c87a1feb"
+        "guid": "931f6096-0f61-4419-98b5-542cd733cf7b"
       }
     }
   ],
@@ -376,7 +376,7 @@
             "assignments": {
               "s2": "scal"
             },
-            "guid": "190d7550-473d-41c5-b6e0-71156920af57"
+            "guid": "8e1c4e8c-7ede-469d-9cd6-c04a5ce48954"
           },
           "label": "s2=scal"
         }

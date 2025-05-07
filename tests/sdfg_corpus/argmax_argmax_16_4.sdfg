@@ -74,8 +74,8 @@
         "language": "CPP"
       }
     },
-    "guid": "bef330cb-66d1-46ca-8786-5b01871bc5f5",
-    "hash": "84fbc729b71b791839a74241244afd09519381cc4a81ece2325aac03d5d3141e"
+    "guid": "39014b8e-bdae-4a91-ae75-5064ea6a2296",
+    "hash": "2083cd4b0c31c561b8212531be9ce2ca2db5800cb1f8b24c09905e2fef732fc4"
   },
   "nodes": [
     {
@@ -89,7 +89,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "2733535c-2e46-4425-b913-d806e46d4bf4",
+        "guid": "944121b8-9298-49ec-b530-d8a504dc6125",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -121,7 +121,7 @@
               "end_line": 20,
               "start_column": 8,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/argmax_test.py"
+              "filename": "/scratch/bates/dace/tests/argmax_test.py"
             },
             "label": "tests_argmax_test_argmax_17",
             "in_connectors": {
@@ -130,7 +130,7 @@
             "out_connectors": {
               "out": null
             },
-            "guid": "8b095565-9001-4b11-b54b-dec7afae3a65"
+            "guid": "48f412bc-42ad-4c79-8d04-bb42e2724a57"
           },
           "id": 0,
           "scope_entry": null,
@@ -146,10 +146,10 @@
               "end_line": 17,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/argmax_test.py"
+              "filename": "/scratch/bates/dace/tests/argmax_test.py"
             },
             "data": "__tmp_18_19",
-            "guid": "62c161e8-3a0e-42cd-adea-cfc34f199399"
+            "guid": "3bc2a554-8401-4172-add3-56570b482cde"
           },
           "id": 1,
           "scope_entry": null,
@@ -165,10 +165,10 @@
               "end_line": 17,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/argmax_test.py"
+              "filename": "/scratch/bates/dace/tests/argmax_test.py"
             },
             "data": "__tmp_19_19",
-            "guid": "0b6709a0-91a7-430e-9a79-d092bb009c66"
+            "guid": "7261fa35-75c1-4a9f-9844-ad2428d42b18"
           },
           "id": 2,
           "scope_entry": null,
@@ -196,7 +196,7 @@
                 },
                 "data": "__tmp_18_19",
                 "debuginfo": null,
-                "guid": "b5c6ad38-2c0f-4bb8-aa56-2352a9bbc9e9",
+                "guid": "e476d44e-c5f7-4223-9f57-e5dae5e45c0e",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -240,7 +240,7 @@
                 "data": "__tmp_19_19",
                 "wcr": "(lambda x, y: __DACESTRUCT_pair(val=max(x.val, y.val), idx=(x.idx if (x.val > y.val) else y.idx)))",
                 "debuginfo": null,
-                "guid": "b7e70d16-f976-45d3-ba17-b56d22d07f9d",
+                "guid": "b1bf6a59-3727-4749-a8a3-dda3e3f10a23",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -265,7 +265,7 @@
         }
       ],
       "attributes": {
-        "guid": "eabb4567-705e-4840-8fbb-5bd61b3e8603",
+        "guid": "e1b1676c-953e-42c5-9613-fd2a2eab0c98",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -278,7 +278,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "413ed240-0d51-41d2-8b5e-a7fcc771781c"
+            "guid": "c8281ec1-bac4-4a47-9081-7489928be758"
           },
           "label": ""
         }

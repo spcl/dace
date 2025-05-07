@@ -142,11 +142,11 @@
       "end_line": 16,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+      "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "5f6bd123-faa0-4134-9e41-817ed2c13135",
-    "hash": "45151db1ad373d28ab2c3ebc82f20548f9913754f58e0f0606dbe3f713b24a05"
+    "guid": "41c46a60-5a75-42f8-b02f-30e21a3378f2",
+    "hash": "c347c5f8ea45ed84a60930a718e025eac057ec5e9bf5f2669b3e4b7bc4420100"
   },
   "nodes": [
     {
@@ -160,7 +160,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "93dc523b-fe24-46b0-a3e2-91df7c25caf7",
+        "guid": "60f36ce1-c404-41d5-8b7d-9fe3e2fae9e3",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -188,10 +188,10 @@
               "end_line": 16,
               "start_column": 32,
               "end_column": 32,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "__tmp3",
-            "guid": "65bf9cdc-d39c-4ba9-bc4f-ab22bcc0bede"
+            "guid": "a318cb87-c124-4ede-9e8b-aa4865a58321"
           },
           "id": 0,
           "scope_entry": null,
@@ -211,7 +211,7 @@
               "end_line": 16,
               "start_column": 32,
               "end_column": 32,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "label": "_Sub_",
             "in_connectors": {
@@ -220,7 +220,7 @@
             "out_connectors": {
               "__out": null
             },
-            "guid": "a94a635a-efca-47c6-a07e-f70d091f2060"
+            "guid": "21feb1b3-823b-4efd-8dd5-41b8d3e3f10e"
           },
           "id": 1,
           "scope_entry": null,
@@ -236,10 +236,10 @@
               "end_line": 16,
               "start_column": 32,
               "end_column": 32,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "__tmp0",
-            "guid": "e05ea823-5b60-4404-af2e-a7608ae54224"
+            "guid": "2d4a2d02-a65c-4a6b-ac34-0d86460bd0bd"
           },
           "id": 2,
           "scope_entry": null,
@@ -267,7 +267,7 @@
                 },
                 "data": "__tmp3",
                 "debuginfo": null,
-                "guid": "8d7f0334-2efb-451b-b4f3-5667f806dfe5",
+                "guid": "43541279-9980-43b2-953c-5915b8e707dc",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -310,7 +310,7 @@
                 },
                 "data": "__tmp0",
                 "debuginfo": null,
-                "guid": "13b66023-dc61-4aeb-bd79-a63c8ff2222c",
+                "guid": "91b76d08-1ce7-425f-a0f9-e74a2bf560e6",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -335,7 +335,7 @@
         }
       ],
       "attributes": {
-        "guid": "07fad37c-f7f2-463e-9574-770a91dbdeec",
+        "guid": "a3b0164b-ea38-484e-a529-dcd002ed7ac2",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -351,7 +351,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "7b22b739-2a4d-4eec-a32b-7e37ed6f004e",
+        "guid": "625cb322-4e54-43c4-b42d-b7497c6279ed",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -379,10 +379,10 @@
               "end_line": 16,
               "start_column": 39,
               "end_column": 39,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "__tmp4",
-            "guid": "57765228-ab18-49be-9d49-2aa69dfb07e8"
+            "guid": "dd422437-983b-4544-bcad-8184754a35ec"
           },
           "id": 0,
           "scope_entry": null,
@@ -402,7 +402,7 @@
               "end_line": 16,
               "start_column": 39,
               "end_column": 39,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "label": "_Sub_",
             "in_connectors": {
@@ -411,7 +411,7 @@
             "out_connectors": {
               "__out": null
             },
-            "guid": "a56e5512-2aad-46ea-965f-c4a097768496"
+            "guid": "4de56011-2913-4ab2-be8b-13d9d73aa4ed"
           },
           "id": 1,
           "scope_entry": null,
@@ -427,10 +427,10 @@
               "end_line": 16,
               "start_column": 39,
               "end_column": 39,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "__tmp1",
-            "guid": "1e5445ea-2820-43df-8f24-4c9330dc6e03"
+            "guid": "b9003267-9644-4dee-aad6-7fac5a0da0db"
           },
           "id": 2,
           "scope_entry": null,
@@ -458,7 +458,7 @@
                 },
                 "data": "__tmp4",
                 "debuginfo": null,
-                "guid": "f593cb8e-0af4-4a38-84c3-86cbcac05b77",
+                "guid": "560b1f49-cc2f-4e6c-8d30-ba3aaed9080f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -501,7 +501,7 @@
                 },
                 "data": "__tmp1",
                 "debuginfo": null,
-                "guid": "f95e0018-62ba-4672-892a-feec556a394d",
+                "guid": "b4508cab-cde4-43f3-8946-b6c5e0cffd6c",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -526,7 +526,7 @@
         }
       ],
       "attributes": {
-        "guid": "328a15d7-804f-4a73-bae7-28078e8f4988",
+        "guid": "c16e96e6-8357-4b30-a104-3d0454a68831",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -542,7 +542,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "e08b21a5-a86d-4219-86ea-f1271d4b6e99",
+        "guid": "ee5b2d77-cb20-410f-8273-fcc2e1a76a28",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -558,7 +558,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "1d6d9f0b-d581-4fa3-89ea-a13ec16815aa",
+        "guid": "f213dea7-05f3-4fcd-97cd-615d6cc58e95",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -574,7 +574,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "93a19212-ec9b-428d-afba-b755bf4d6c52",
+        "guid": "e44820e7-0c63-4374-ba35-3412fc0ee7d4",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -590,7 +590,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "22bf1bb2-ffe7-4065-9eb0-397e08581f74",
+        "guid": "bc1179d2-4027-4e00-a487-9d2fca3bc5bd",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -618,13 +618,13 @@
               "end_line": 16,
               "start_column": 16,
               "end_column": 16,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "__tmp2_0",
             "in_connectors": {
               "views": null
             },
-            "guid": "118f3b18-ccce-4877-a53f-fe70e981aa14"
+            "guid": "08cfd6d1-6780-4369-800e-e522dec2e483"
           },
           "id": 0,
           "scope_entry": null,
@@ -640,10 +640,10 @@
               "end_line": 16,
               "start_column": 16,
               "end_column": 16,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "A_0_0",
-            "guid": "a6405f5d-3f0e-477f-8569-7bbe815d7e98"
+            "guid": "71cd0bf2-133a-4d0f-b71e-9297bd1ad9f3"
           },
           "id": 1,
           "scope_entry": null,
@@ -655,14 +655,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 1291,
+              "end_line": 1291,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/dace/frontend/python/newast.py"
             },
             "data": "__tmp2",
-            "guid": "50279f43-4d44-4638-b006-3d46605461f2"
+            "guid": "14074ab4-73da-4555-a00c-72d99351462d"
           },
           "id": 2,
           "scope_entry": null,
@@ -690,7 +690,7 @@
                 },
                 "data": "A_0_0",
                 "debuginfo": null,
-                "guid": "e6f51735-8971-4e99-9669-a35cd9484fef",
+                "guid": "dde538fe-d4cb-4456-a7b2-2fa0c4db3bfa",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -756,7 +756,7 @@
                 },
                 "data": "__tmp2",
                 "debuginfo": null,
-                "guid": "1ff3a319-80e8-4d24-a502-2fe9dc5acbf7",
+                "guid": "0a712ded-5856-48c8-a2a4-11b839a29b51",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -803,7 +803,7 @@
         }
       ],
       "attributes": {
-        "guid": "7c579f1e-5a91-453e-8212-ee1c209cbc47",
+        "guid": "2e653f20-a43c-4e3d-8f0f-84500c140181",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -830,10 +830,10 @@
               "end_line": 16,
               "start_column": 16,
               "end_column": 16,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "A_0_0",
-            "guid": "b9d09a0c-11f3-40a9-a964-b9b263784278"
+            "guid": "d4921998-648a-4162-b8e8-92c197cca9f0"
           },
           "id": 0,
           "scope_entry": null,
@@ -849,10 +849,10 @@
               "end_line": 16,
               "start_column": 16,
               "end_column": 16,
-              "filename": "/home/beates/Desktop/dace/tests/python_frontend/python_slice_test.py"
+              "filename": "/scratch/bates/dace/tests/python_frontend/python_slice_test.py"
             },
             "data": "__tmp2",
-            "guid": "8297dee2-98ee-4705-b2f2-b8755b11f9aa"
+            "guid": "849344d8-e2ea-4aff-9e50-70b1f3d33170"
           },
           "id": 1,
           "scope_entry": null,
@@ -903,7 +903,7 @@
                 },
                 "data": "__tmp2",
                 "debuginfo": null,
-                "guid": "5b36d6bd-bb7f-4bcc-a121-ac693390f069",
+                "guid": "37e736a7-4e70-4b5e-b455-5fc55dcc1f2d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -950,7 +950,7 @@
         }
       ],
       "attributes": {
-        "guid": "1e3162b9-2d86-491a-b7f0-abcd2168439f",
+        "guid": "208d41ae-101e-44d3-a13a-52b942a3cf72",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -963,7 +963,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "df682527-f90a-473f-b3a8-d139e8e1d8e8"
+            "guid": "567707fb-ec91-4e22-b42d-c7bde8cce6c8"
           },
           "label": ""
         }
@@ -980,7 +980,7 @@
             "assignments": {
               "__sym___tmp0": "__tmp0"
             },
-            "guid": "fd39ae18-6df2-4f2c-a479-fce9845dfda4"
+            "guid": "108dc72e-1600-47e4-a019-299585881b8b"
           },
           "label": "__sym___tmp0=__tmp0"
         }
@@ -994,7 +994,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "0031e262-a27e-41d8-be2a-4800b14264b7"
+            "guid": "72aa8367-a478-4a76-af03-f2ef1bf56d3c"
           },
           "label": ""
         }
@@ -1011,7 +1011,7 @@
             "assignments": {
               "__sym___tmp1": "__tmp1"
             },
-            "guid": "7eba5324-871a-4aeb-bf04-beb70195711f"
+            "guid": "50ca322f-3291-4384-a663-4a0c68bd0cff"
           },
           "label": "__sym___tmp1=__tmp1"
         }
@@ -1025,7 +1025,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "4453e394-5a53-4326-9481-2931354c76d1"
+            "guid": "f5b811be-2b11-4f4b-918d-a3ede15af3bb"
           },
           "label": ""
         }
@@ -1042,7 +1042,7 @@
             "assignments": {
               "__sym_i": "__tmp3"
             },
-            "guid": "7953191f-da26-472f-950f-c58e80de8b26"
+            "guid": "211548ac-9c19-4059-b2de-12bb1f777c32"
           },
           "label": "__sym_i=__tmp3"
         }
@@ -1059,7 +1059,7 @@
             "assignments": {
               "__sym_j": "__tmp4"
             },
-            "guid": "5bec75a8-b9b1-4b06-8c6c-e0ffa106f9a8"
+            "guid": "5a2ecce7-874a-479d-b2b0-a5a6c5f22c34"
           },
           "label": "__sym_j=__tmp4"
         }
@@ -1073,7 +1073,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "221439d6-f1d6-4dcc-9924-977be6143fc7"
+            "guid": "c2555ed9-f7be-4eaf-8801-8ffdf5847d74"
           },
           "label": ""
         }
@@ -1087,7 +1087,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "8c14098c-e68a-430a-8a9f-bb3dab8c68a7"
+            "guid": "93eb0cb4-d27c-4212-a185-1b6d73340291"
           },
           "label": ""
         }

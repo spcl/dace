@@ -56,8 +56,8 @@
         "language": "CPP"
       }
     },
-    "guid": "b11dfbab-d340-4778-a792-239966467474",
-    "hash": "ef9abfc9365b97225a19b22338826a4f425df3f466087a7b3979f6763c7f2c7a"
+    "guid": "0b74e964-e880-4cf5-9a7f-089f4d6ecab8",
+    "hash": "330070dc9efba264d6788a9bb9cf2ba3baeb8b3f5cd77606b52c1b4f11a172e6"
   },
   "nodes": [
     {
@@ -71,7 +71,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "8e0cf72c-26f6-4c11-8c49-1f0299384197",
+        "guid": "281e118e-074c-465e-8222-7e766dc5ea8e",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -103,7 +103,7 @@
               "end_line": 36,
               "start_column": 8,
               "end_column": 12,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_twowrites_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_twowrites_test.py"
             },
             "label": "state_fusion_twowrites_test_sftw_33",
             "in_connectors": {
@@ -112,7 +112,7 @@
             "out_connectors": {
               "b": null
             },
-            "guid": "db79be9a-a5b2-47c8-9f31-9cdc5f7b676c"
+            "guid": "496a87e4-a040-4a31-b4cc-25a743fa01df"
           },
           "id": 0,
           "scope_entry": null,
@@ -128,10 +128,10 @@
               "end_line": 33,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_twowrites_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_twowrites_test.py"
             },
             "data": "__tmp_34_17",
-            "guid": "eb04cc1e-25c3-49d3-823e-423285bac4dd"
+            "guid": "57ac88c3-351b-4551-83e6-1825ae0d9aef"
           },
           "id": 1,
           "scope_entry": null,
@@ -147,10 +147,10 @@
               "end_line": 33,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/state_fusion_twowrites_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fusion_twowrites_test.py"
             },
             "data": "__tmp_35_17",
-            "guid": "4ba9e5ab-81f8-4ccf-b2f3-8af8957e94d5"
+            "guid": "30d6c530-57d3-4829-90b5-cc7c979c3501"
           },
           "id": 2,
           "scope_entry": null,
@@ -178,7 +178,7 @@
                 },
                 "data": "__tmp_34_17",
                 "debuginfo": null,
-                "guid": "ccf7fb21-b471-4a89-b96b-ac5eb90c9aa0",
+                "guid": "34a0414b-dc2a-4cb5-b483-0aeb5cc83841",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -221,7 +221,7 @@
                 },
                 "data": "__tmp_35_17",
                 "debuginfo": null,
-                "guid": "854074d2-b00c-4c15-b1bf-a59dfd6e0749",
+                "guid": "db1f0bbc-32ce-47d6-9bcd-dccb0dac40e8",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -246,7 +246,7 @@
         }
       ],
       "attributes": {
-        "guid": "2f2a0807-8583-4530-a3da-27052b0deaa2",
+        "guid": "177022b9-6585-4ad1-9f8c-58dc188520cf",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -259,7 +259,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "6517d3a9-38f8-4bd9-819d-d45398f65d8b"
+            "guid": "c25de3e0-f268-4655-b9ba-6ce851fa81fa"
           },
           "label": ""
         }

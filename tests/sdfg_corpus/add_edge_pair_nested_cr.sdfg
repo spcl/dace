@@ -38,8 +38,8 @@
         "language": "CPP"
       }
     },
-    "guid": "d47f7291-aed4-47a2-8e90-7b943df60c6a",
-    "hash": "e64e726135cc7a43d6259257b24f78432398a9772662a5d6380f7e6a7b22eade"
+    "guid": "481bceab-5a70-465c-ad2c-ca161a70cd72",
+    "hash": "3df47842e8be3cd81f0eb46544db044506ca5479674fe6e2f1e189b7030b7179"
   },
   "nodes": [
     {
@@ -60,14 +60,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 20,
+              "end_line": 20,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_cr_test.py"
             },
             "data": "B",
-            "guid": "c1daca6d-6338-41ea-9c67-b440a9c1b8a3"
+            "guid": "6760b0d8-bbe1-4455-bd13-41e4002ce24d"
           },
           "id": 0,
           "scope_entry": null,
@@ -117,7 +117,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "21ec0f1c-c8d5-4ca9-9d99-c0da7115dfc8"
+                "guid": "7b1db8ef-cc48-4218-a47c-eb89a6155446"
               },
               "nodes": [
                 {
@@ -142,17 +142,17 @@
                         },
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 10,
+                          "end_line": 10,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_cr_test.py"
                         },
                         "label": "task",
                         "out_connectors": {
                           "o": null
                         },
-                        "guid": "3ffbc566-72e1-4ed8-8df7-eb2d05bb6c2f"
+                        "guid": "6cb5b29e-b6d8-41be-81bb-858ebb4f915a"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -164,14 +164,14 @@
                       "attributes": {
                         "debuginfo": {
                           "type": "DebugInfo",
-                          "start_line": 1,
-                          "end_line": 1,
+                          "start_line": 11,
+                          "end_line": 11,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "skipped"
+                          "filename": "/scratch/bates/dace/tests/nested_cr_test.py"
                         },
                         "data": "nout",
-                        "guid": "e71d089f-37d0-4ea5-bb09-79610f1aa43f"
+                        "guid": "0ad0b42d-1ce5-4090-aae0-f179b7572b7a"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -200,7 +200,7 @@
                             "data": "nout",
                             "wcr": "(lambda a, b: (a * b))",
                             "debuginfo": null,
-                            "guid": "eec17498-a3b5-4a5f-9f2b-7533dcec580c",
+                            "guid": "87f0c01f-f485-4056-873e-470c5b21eb9c",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -225,7 +225,7 @@
                     }
                   ],
                   "attributes": {
-                    "guid": "49fae1c0-f8c1-4ad0-8767-a6dd905e4efe"
+                    "guid": "911a26ec-e26f-4952-8350-56b3a6a008ab"
                   }
                 }
               ],
@@ -238,17 +238,17 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 21,
+              "end_line": 21,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/nested_cr_test.py"
             },
             "label": "nested",
             "out_connectors": {
               "nout": null
             },
-            "guid": "608a363c-22cc-4d97-94e5-4bb9ed98b1f6"
+            "guid": "7f2501d1-5c20-4091-9cc9-3e4761496c36"
           },
           "id": 1,
           "scope_entry": null,
@@ -277,7 +277,7 @@
                 "data": "B",
                 "wcr": "(lambda a, b: (a * b))",
                 "debuginfo": null,
-                "guid": "18f8cadb-c41f-4867-a545-5c56acf52f3b",
+                "guid": "70bd9a01-8818-496b-9a53-8e6cb49929b8",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -302,7 +302,7 @@
         }
       ],
       "attributes": {
-        "guid": "6f5b6d96-f9e5-4033-a2d6-ccbaee6242b0"
+        "guid": "6ac05bc6-3e59-4dab-82b5-423f09319863"
       }
     }
   ],

@@ -93,8 +93,8 @@
         "language": "CPP"
       }
     },
-    "guid": "b367fa80-1bec-4f03-8a6a-5872ab1dd72c",
-    "hash": "1c86de601f4c1d38d6f8ce6fcf767fd47d0e90202d3ed79f5f106f127938b75e"
+    "guid": "252c0117-fdc9-4638-88a1-456d57382402",
+    "hash": "e83867e74297eeaa2dacd5b3ae37c7abca4a4ca492596114a54211a945cdae5c"
   },
   "nodes": [
     {
@@ -116,14 +116,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 242,
+              "end_line": 242,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "A",
-            "guid": "cd1c2b96-10b6-471e-bda8-8534a9242dc3"
+            "guid": "b1359fb6-7dfb-4b88-b7ff-8ab2f08f646b"
           },
           "id": 0,
           "scope_entry": null,
@@ -135,14 +135,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 243,
+              "end_line": 243,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "B",
-            "guid": "f5166bfc-f951-493c-92e3-28f56e7d7674"
+            "guid": "a0ad5e5b-6c4e-4d6d-81e4-6b3dad941200"
           },
           "id": 1,
           "scope_entry": null,
@@ -154,14 +154,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 244,
+              "end_line": 244,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/redundant_copy_test.py"
             },
             "data": "C",
-            "guid": "200dfc06-f9fe-4290-bf4c-839a651937d5"
+            "guid": "45465bf5-e4f0-4cd9-8ad3-1dc8c79b283a"
           },
           "id": 2,
           "scope_entry": null,
@@ -218,7 +218,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "d3078512-976c-4b99-86d1-47b946efcc51",
+                "guid": "fcc9735d-fc8e-4231-8578-d5eb2e197c98",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -324,7 +324,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "42a535da-fd65-41a0-b381-58cb44ec7708",
+                "guid": "e0e3d6af-c8af-48be-aa5a-60c153ed585b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -383,7 +383,7 @@
         }
       ],
       "attributes": {
-        "guid": "24cf61fb-cc8f-41e1-abbd-ac8a0a88516e"
+        "guid": "4e940aee-ea85-48ce-b964-dab9a7e072f7"
       }
     }
   ],

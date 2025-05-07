@@ -56,7 +56,7 @@
       }
     },
     "symbols": {
-      "m": "int64"
+      "m": "int32"
     },
     "global_code": {
       "frame": {
@@ -76,8 +76,8 @@
         "language": "CPP"
       }
     },
-    "guid": "01fac31e-5832-4959-a113-b91d8004cfc6",
-    "hash": "c956aa5811ea74adc2091e46b614af0f48184b9dee09493f7bed6b06fc69406f"
+    "guid": "6d39ef66-0767-40a6-b530-0a29fd3585b8",
+    "hash": "39eb6eda110325f297c97948aa644de6193173e1c7c707c783494f89b69626d1"
   },
   "nodes": [
     {
@@ -104,14 +104,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 30,
+              "end_line": 30,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fission_test.py"
             },
             "data": "v",
-            "guid": "53522175-f702-40c0-b52c-3a4207e48c97"
+            "guid": "883b2e69-74cb-4ed1-ac10-92474889e2f4"
           },
           "id": 0,
           "scope_entry": null,
@@ -123,14 +123,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 31,
+              "end_line": 31,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fission_test.py"
             },
             "data": "w",
-            "guid": "ea85b66d-eef5-4b25-be5b-b7e7ed17b141"
+            "guid": "f7e4eab9-8535-4ed4-8bfb-0418e813b034"
           },
           "id": 1,
           "scope_entry": null,
@@ -142,14 +142,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 32,
+              "end_line": 32,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fission_test.py"
             },
             "data": "u",
-            "guid": "5a225b88-42e9-48d9-84f5-be9a9464fe50"
+            "guid": "e3caca2a-48e3-42b0-ad4b-bd7364c2369a"
           },
           "id": 2,
           "scope_entry": null,
@@ -176,11 +176,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 37,
+              "end_line": 37,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fission_test.py"
             },
             "in_connectors": {
               "IN_v": null,
@@ -190,7 +190,7 @@
               "OUT_v": null,
               "OUT_w": null
             },
-            "guid": "54a9e642-06a8-4a96-a8db-7e952304a3e4"
+            "guid": "d9a1ce3d-2f5b-43ba-907f-275f74806d52"
           },
           "id": 3,
           "scope_entry": null,
@@ -206,7 +206,7 @@
             "out_connectors": {
               "OUT_u": null
             },
-            "guid": "591e4dfb-6318-4a8b-8fd9-f656b8b9dbe3"
+            "guid": "6f5d94e3-d196-4d21-a2d9-da2d0d284066"
           },
           "id": 4,
           "scope_entry": "3",
@@ -222,11 +222,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 39,
+              "end_line": 39,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/transformations/state_fission_test.py"
             },
             "label": "vecAdd_task",
             "in_connectors": {
@@ -236,7 +236,7 @@
             "out_connectors": {
               "z_con": null
             },
-            "guid": "c6258eb9-ee3c-4af0-a89b-a9455f516045"
+            "guid": "d2e2eaa0-9886-4812-9d3d-cf6d7acff23a"
           },
           "id": 5,
           "scope_entry": "3",
@@ -264,7 +264,7 @@
                 },
                 "data": "v",
                 "debuginfo": null,
-                "guid": "f1e8515b-fab6-4d71-bad0-b0ebb087de92",
+                "guid": "217cdb9f-d937-4b0f-a6c0-1cf0754d38b7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -307,7 +307,7 @@
                 },
                 "data": "w",
                 "debuginfo": null,
-                "guid": "969c12f7-05e7-4f84-9b2c-834c31da61a7",
+                "guid": "ff15907a-baaf-49cb-9f06-05194f63abf1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -350,7 +350,7 @@
                 },
                 "data": "u",
                 "debuginfo": null,
-                "guid": "2bac2d77-c6c1-40c2-a813-4f840689b700",
+                "guid": "8d34cff1-d851-446c-8258-bc9c471088f9",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -393,7 +393,7 @@
                 },
                 "data": "v",
                 "debuginfo": null,
-                "guid": "f1e8515b-fab6-4d71-bad0-b0ebb087de92",
+                "guid": "217cdb9f-d937-4b0f-a6c0-1cf0754d38b7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -436,7 +436,7 @@
                 },
                 "data": "w",
                 "debuginfo": null,
-                "guid": "969c12f7-05e7-4f84-9b2c-834c31da61a7",
+                "guid": "ff15907a-baaf-49cb-9f06-05194f63abf1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -479,7 +479,7 @@
                 },
                 "data": "u",
                 "debuginfo": null,
-                "guid": "2bac2d77-c6c1-40c2-a813-4f840689b700",
+                "guid": "8d34cff1-d851-446c-8258-bc9c471088f9",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -504,7 +504,7 @@
         }
       ],
       "attributes": {
-        "guid": "345daba9-c449-4b54-a151-36be23c814c4"
+        "guid": "241b0667-2b03-4fde-83a8-5ababe98381b"
       }
     }
   ],

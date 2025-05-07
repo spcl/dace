@@ -56,8 +56,8 @@
         "language": "CPP"
       }
     },
-    "guid": "a4a89790-669b-4423-83be-4506ee30bba2",
-    "hash": "e757a21a44acba97c9ece459602a5fa6e430010b47b0088f3efa16782e57baa6"
+    "guid": "90995f61-8ef4-4913-af99-a547a075fc43",
+    "hash": "666a902ceff88d79dc3d5f5f6827f8d3a6699d124f4cce9e2571842e4dd3f756"
   },
   "nodes": [
     {
@@ -80,14 +80,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 58,
+              "end_line": 58,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/vectortype_test.py"
             },
             "data": "A",
-            "guid": "a31fec8f-30ae-45d0-9cb9-080d9355149c"
+            "guid": "bb12f3b1-05bf-4332-a6e5-b3551a6363f3"
           },
           "id": 0,
           "scope_entry": null,
@@ -103,11 +103,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 59,
+              "end_line": 59,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/vectortype_test.py"
             },
             "label": "something",
             "in_connectors": {
@@ -124,7 +124,7 @@
                 "elements": "2"
               }
             },
-            "guid": "0cc9a202-cc3a-4b49-98fc-6e8218cf3371"
+            "guid": "1cfc6a05-bc66-48c0-9f96-f39d85c1b3b5"
           },
           "id": 1,
           "scope_entry": null,
@@ -140,11 +140,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 60,
+              "end_line": 60,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/vectortype_test.py"
             },
             "label": "something",
             "in_connectors": {
@@ -161,7 +161,7 @@
                 "elements": "2"
               }
             },
-            "guid": "107ea202-d782-43f5-aa4e-fc32c0e19f37"
+            "guid": "01a1e523-7e5d-43a0-876b-7f43487d8517"
           },
           "id": 2,
           "scope_entry": null,
@@ -173,14 +173,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 1,
-              "end_line": 1,
+              "start_line": 61,
+              "end_line": 61,
               "start_column": 0,
               "end_column": 0,
-              "filename": "skipped"
+              "filename": "/scratch/bates/dace/tests/vectortype_test.py"
             },
             "data": "B",
-            "guid": "65cc09ad-7868-4dea-a3fa-58ca3b4e9638"
+            "guid": "6d1ecb62-56c5-4885-aee5-f3fd97d57900"
           },
           "id": 3,
           "scope_entry": null,
@@ -208,7 +208,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "5c8c92d2-df01-4cfc-a4c4-1577d154ecde",
+                "guid": "f9b9103b-e395-44b9-bacc-99d562628b05",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -251,7 +251,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "ee8a557e-4345-4e23-8c01-39200a577fb7",
+                "guid": "a1284557-5f7b-4745-a693-aa05fe0f3e7d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -294,7 +294,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "f2760451-7345-4e10-85f0-fec183db2f8d",
+                "guid": "d5298d12-95ec-4324-a39e-3d51b41759c4",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -337,7 +337,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "282232c9-d829-4868-858d-03aba237e9d5",
+                "guid": "10e227e6-ad67-46e9-ae92-ce446061dca6",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -362,7 +362,7 @@
         }
       ],
       "attributes": {
-        "guid": "e5c2f863-5eb7-46cd-a4d2-81b237087179"
+        "guid": "fc58dda3-e3a4-46cd-9344-a6dfdb7e7ac3"
       }
     }
   ],

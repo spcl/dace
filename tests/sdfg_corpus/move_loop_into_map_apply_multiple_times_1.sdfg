@@ -72,11 +72,11 @@
       "end_line": 71,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+      "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "2804c995-86c1-4fca-8461-42da011013e1",
-    "hash": "f5ee36672c9223e5216107f9001890c76af45be6c901716ede5349bcb737fa36"
+    "guid": "21032240-6426-4698-aef8-9edce3bfb72e",
+    "hash": "899f2cc9202255161acb44bfbdedb2b1687d65e3e4ce92d1e54f43e6d97d6b59"
   },
   "nodes": [
     {
@@ -90,7 +90,7 @@
       "nodes": [],
       "edges": [],
       "attributes": {
-        "guid": "126307a1-ecab-4fee-9101-4c1b4afae786",
+        "guid": "eb1f3916-8084-4cf2-80e0-bc3eed9ec900",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -117,10 +117,10 @@
               "end_line": 67,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
             },
             "data": "l",
-            "guid": "38e72840-5fa9-422f-8105-661c2a64fc9b"
+            "guid": "4f5fa1a5-b8e8-498c-868b-c90a7afa6580"
           },
           "id": 0,
           "scope_entry": null,
@@ -140,13 +140,13 @@
               "end_line": 67,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+              "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
             },
             "label": "assign_67_4",
             "out_connectors": {
               "__out": null
             },
-            "guid": "ef367272-64ac-4678-83ce-c45faf652651"
+            "guid": "e1bbca6e-a825-4ace-8a33-ad8fa57af182"
           },
           "id": 1,
           "scope_entry": null,
@@ -174,7 +174,7 @@
                 },
                 "data": "l",
                 "debuginfo": null,
-                "guid": "6ebcac87-ef7b-46be-a915-85d87399c48a",
+                "guid": "c1cce667-23bd-49e9-af23-f8ded1e3b345",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -199,7 +199,7 @@
         }
       ],
       "attributes": {
-        "guid": "bdbae80e-aa65-49d9-ab37-8f5217981ee6",
+        "guid": "d3205698-0c68-477e-ac0a-d14816ced458",
         "executions": "1",
         "dynamic_executions": false
       }
@@ -220,7 +220,7 @@
           "language": "Python"
         },
         "loop_variable": "i",
-        "guid": "71dc71b6-c71d-4358-b0b6-b9b4f942369a",
+        "guid": "8e3e14d4-a09e-4d6d-a943-cf732d713b7e",
         "executions": "1",
         "dynamic_executions": false
       },
@@ -236,7 +236,7 @@
           "nodes": [],
           "edges": [],
           "attributes": {
-            "guid": "6dc8729b-c771-44d6-bb40-370facd67e73"
+            "guid": "05f61f9e-092b-4a79-86ba-289e3faf0277"
           }
         },
         {
@@ -255,7 +255,7 @@
               "language": "Python"
             },
             "loop_variable": "j",
-            "guid": "3c63de56-b162-41c2-94be-a8ab12869692"
+            "guid": "98f72d34-e8a9-4527-b802-28eae571ad6e"
           },
           "nodes": [
             {
@@ -269,7 +269,7 @@
               "nodes": [],
               "edges": [],
               "attributes": {
-                "guid": "1988721f-6dfb-4145-a5fa-ba9e6b2428b7"
+                "guid": "c517a1ba-f1e6-4a06-b143-753d3e7a623b"
               }
             },
             {
@@ -314,7 +314,7 @@
                       "end_line": 70,
                       "start_column": 12,
                       "end_column": 12,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                     },
                     "in_connectors": {
                       "IN___tmp0": null
@@ -322,7 +322,7 @@
                     "out_connectors": {
                       "OUT___tmp0": null
                     },
-                    "guid": "0f89d87e-73dc-44fb-ab2f-438e81843fc3"
+                    "guid": "37456175-ddd0-4519-821b-e531ffa30871"
                   },
                   "id": 0,
                   "scope_entry": null,
@@ -338,7 +338,7 @@
                     "out_connectors": {
                       "OUT_A": null
                     },
-                    "guid": "2a50b505-fcb9-470b-866d-991f3851d16c"
+                    "guid": "3dbd9701-5548-4e24-89d6-7908261c5fd3"
                   },
                   "id": 1,
                   "scope_entry": "0",
@@ -425,7 +425,7 @@
                             "language": "CPP"
                           }
                         },
-                        "guid": "2ae5c48f-490a-45d7-8dc5-004ac792534c"
+                        "guid": "ee2cee35-2595-4f07-8dac-3650069d5be2"
                       },
                       "nodes": [
                         {
@@ -439,7 +439,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "c661a476-594c-4ede-990f-5f32a8067182",
+                            "guid": "28234f17-f552-4f95-82a1-d71f74cd4705",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -455,7 +455,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "dabf221c-fd98-4f2c-bcce-3d1ec0e9b2b3",
+                            "guid": "a2335629-7972-4bde-a838-f5f0a6ef4ff6",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -471,7 +471,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "4b6ee11b-bf40-4eac-a92b-71727c403727",
+                            "guid": "bfaa64be-8d27-46be-a26c-fd1581a04b0a",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -487,7 +487,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "f6973e2f-48db-482c-a438-dfcd0d9bf46c",
+                            "guid": "9fb7e5cb-02fc-4fd9-8ecf-dbf0190348fe",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -503,7 +503,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "99cc0495-7ba2-435b-8514-ed0e2bcae996",
+                            "guid": "4a6df293-4b6e-4c57-b3be-61544bb68d4e",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -519,7 +519,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "e7479227-32e1-4530-b573-0407487357aa",
+                            "guid": "727b9ace-5ccb-4e51-9260-d3f5ccc1610d",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -547,10 +547,10 @@
                                   "end_line": 71,
                                   "start_column": 62,
                                   "end_column": 62,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                                 },
                                 "data": "__tmp_71_62_r",
-                                "guid": "4f44a2bd-2b1a-45a3-956b-c3e94d41e015"
+                                "guid": "e9a704e2-6d85-4635-bfc5-c12c75d13f47"
                               },
                               "id": 0,
                               "scope_entry": null,
@@ -570,7 +570,7 @@
                                   "end_line": 71,
                                   "start_column": 62,
                                   "end_column": 62,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                                 },
                                 "label": "_Add_",
                                 "in_connectors": {
@@ -579,7 +579,7 @@
                                 "out_connectors": {
                                   "__out": null
                                 },
-                                "guid": "a1452ee6-377c-4c42-a5ed-4552aa2c42b6"
+                                "guid": "ebee6748-51df-47b0-8f45-e4fe806a6795"
                               },
                               "id": 1,
                               "scope_entry": null,
@@ -595,10 +595,10 @@
                                   "end_line": 71,
                                   "start_column": 62,
                                   "end_column": 62,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                                 },
                                 "data": "__tmp2",
-                                "guid": "40175334-1e74-4add-bd7c-98790d495a9a"
+                                "guid": "2690b780-f01b-4b9e-9caa-2070f462f424"
                               },
                               "id": 2,
                               "scope_entry": null,
@@ -626,7 +626,7 @@
                                     },
                                     "data": "__tmp_71_62_r",
                                     "debuginfo": null,
-                                    "guid": "541cf5f7-07b6-4cab-867b-409132a45d0d",
+                                    "guid": "fab85ae6-8e84-415d-aa1c-5476751b51f9",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -669,7 +669,7 @@
                                     },
                                     "data": "__tmp2",
                                     "debuginfo": null,
-                                    "guid": "ac113331-b92c-4240-ab07-436ea00159c7",
+                                    "guid": "1d142340-bb68-41c4-ab1d-07bd0e4e8c79",
                                     "src_subset": null,
                                     "dst_subset": {
                                       "type": "Range",
@@ -694,7 +694,7 @@
                             }
                           ],
                           "attributes": {
-                            "guid": "06be47ae-86c5-458c-899e-d31021adeeac",
+                            "guid": "123d70b4-5114-48b7-86f2-6580d9840350",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -710,7 +710,7 @@
                           "nodes": [],
                           "edges": [],
                           "attributes": {
-                            "guid": "c74ca5e9-a4f9-4e62-8d85-f79a822b4611",
+                            "guid": "82f60e1e-a0d2-4f80-891a-c2b5dcbba70a",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -738,10 +738,10 @@
                                   "end_line": 71,
                                   "start_column": 27,
                                   "end_column": 27,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                                 },
                                 "data": "__tmp2",
-                                "guid": "af662616-7c24-4a2c-8b18-ee5574df0810"
+                                "guid": "c9106e49-213c-427d-ba88-03b8cabad17b"
                               },
                               "id": 0,
                               "scope_entry": null,
@@ -757,10 +757,10 @@
                                   "end_line": 71,
                                   "start_column": 27,
                                   "end_column": 27,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                                 },
                                 "data": "__tmp_71_16_w",
-                                "guid": "fd022fd7-9a5e-4aba-ab54-84f4240c1f0c"
+                                "guid": "430396db-8a3f-4e46-a0c7-36fc81dc77ea"
                               },
                               "id": 1,
                               "scope_entry": null,
@@ -780,7 +780,7 @@
                                   "end_line": 71,
                                   "start_column": 27,
                                   "end_column": 27,
-                                  "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                                  "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                                 },
                                 "label": "assign_71_16",
                                 "in_connectors": {
@@ -789,7 +789,7 @@
                                 "out_connectors": {
                                   "__out": null
                                 },
-                                "guid": "b3b190df-e893-4ad2-b9af-895761d5518a"
+                                "guid": "d830dedf-8836-4218-9c00-87e6f55e05ec"
                               },
                               "id": 2,
                               "scope_entry": null,
@@ -817,7 +817,7 @@
                                     },
                                     "data": "__tmp2",
                                     "debuginfo": null,
-                                    "guid": "e7943a62-eb3d-4371-b17f-cb06ead85221",
+                                    "guid": "d694c0c3-db27-418b-92b3-115b1c278cbe",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -878,7 +878,7 @@
                                     },
                                     "data": "__tmp_71_16_w",
                                     "debuginfo": null,
-                                    "guid": "88280fda-0669-450f-8c7c-30fbcebc5f35",
+                                    "guid": "8034fb3c-dbbf-4801-9952-a87cea8d6439",
                                     "src_subset": null,
                                     "dst_subset": {
                                       "type": "Range",
@@ -921,7 +921,7 @@
                             }
                           ],
                           "attributes": {
-                            "guid": "a16c9c5f-2cac-41c6-88e0-ae532d5e0d30",
+                            "guid": "fd936694-7a96-40c1-925f-de9bdf1b695d",
                             "executions": "1",
                             "dynamic_executions": false
                           }
@@ -934,7 +934,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "a2ead925-b9a7-42c3-9d92-078d87b67824"
+                                "guid": "2bf0e712-3523-470c-aeb5-ef45375e2c65"
                               },
                               "label": ""
                             }
@@ -948,7 +948,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "b94ff012-b0cf-49d9-b3b7-0519352c2386"
+                                "guid": "44678761-4ebd-4d0d-ab5f-ece3e05b58d0"
                               },
                               "label": ""
                             }
@@ -962,7 +962,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "b86ba662-7509-46df-8bd0-d5016f2a4e73"
+                                "guid": "5fab3eb4-a043-4253-b53f-78f229a0ebb1"
                               },
                               "label": ""
                             }
@@ -976,7 +976,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "113e2928-ca59-45ae-9af7-0c40f4d49e3d"
+                                "guid": "83a2cb72-626f-421a-b884-bbe9f8a1a023"
                               },
                               "label": ""
                             }
@@ -990,7 +990,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "b09423bb-9bc1-4350-89e4-46c7bce3274e"
+                                "guid": "9d9e7e0d-fa00-44ca-8c25-5feae58944a7"
                               },
                               "label": ""
                             }
@@ -1004,7 +1004,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "0b428b26-3351-4b4a-9e7e-1978f06aca18"
+                                "guid": "c13cf88e-c40b-415f-b06a-9589e8b835e0"
                               },
                               "label": ""
                             }
@@ -1021,7 +1021,7 @@
                                 "assignments": {
                                   "__sym___tmp_71_62_r": "__tmp_71_62_r"
                                 },
-                                "guid": "d9237be5-7acb-4f8b-abba-38ad083b909b"
+                                "guid": "51e40c70-b457-48a6-99b5-f8ce12ce7bd3"
                               },
                               "label": "__sym___tmp_71_62_r=__tmp_71_62_r"
                             }
@@ -1035,7 +1035,7 @@
                             "data": {
                               "type": "InterstateEdge",
                               "attributes": {
-                                "guid": "4b4b3fa3-0524-42af-99a2-f5f6de34a018"
+                                "guid": "8326eab3-3c15-4990-8339-b5846d794bae"
                               },
                               "label": ""
                             }
@@ -1061,7 +1061,7 @@
                       "end_line": 70,
                       "start_column": 12,
                       "end_column": 12,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                     },
                     "label": "move_loop_into_map_test_apply_multiple_times_1_70_12",
                     "in_connectors": {
@@ -1070,7 +1070,7 @@
                     "out_connectors": {
                       "__tmp_71_16_w": null
                     },
-                    "guid": "e9f2a589-c114-4cbe-acad-0ba06fd5207f"
+                    "guid": "62ff00ed-5a54-47b6-96fe-33cea898d3a9"
                   },
                   "id": 2,
                   "scope_entry": "0",
@@ -1086,10 +1086,10 @@
                       "end_line": 70,
                       "start_column": 12,
                       "end_column": 12,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                     },
                     "data": "l",
-                    "guid": "7b30e3ae-c3d5-4f68-b38a-1a096f70d844"
+                    "guid": "dabae2d7-76de-469a-af82-00ec9231a269"
                   },
                   "id": 3,
                   "scope_entry": null,
@@ -1105,10 +1105,10 @@
                       "end_line": 70,
                       "start_column": 12,
                       "end_column": 12,
-                      "filename": "/home/beates/Desktop/dace/tests/transformations/move_loop_into_map_test.py"
+                      "filename": "/scratch/bates/dace/tests/transformations/move_loop_into_map_test.py"
                     },
                     "data": "A",
-                    "guid": "79cf5ae9-9837-4c7f-ad11-867ae001463d"
+                    "guid": "044a1436-2f7c-4fc1-a31f-cb028b8ddb51"
                   },
                   "id": 4,
                   "scope_entry": null,
@@ -1136,7 +1136,7 @@
                         },
                         "data": "l",
                         "debuginfo": null,
-                        "guid": "7e0b6460-34df-49a0-88f0-abdf7f68da6e",
+                        "guid": "d8b8c748-8dfd-4b4c-8a74-73494d5d7f15",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1197,7 +1197,7 @@
                         },
                         "data": "A",
                         "debuginfo": null,
-                        "guid": "b196f03a-cf94-461d-b7d1-0208d3f4c48d",
+                        "guid": "ba486e90-1d90-4900-88d5-9548f5b1df5c",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -1258,7 +1258,7 @@
                         },
                         "data": "l",
                         "debuginfo": null,
-                        "guid": "7e0b6460-34df-49a0-88f0-abdf7f68da6e",
+                        "guid": "d8b8c748-8dfd-4b4c-8a74-73494d5d7f15",
                         "src_subset": {
                           "type": "Range",
                           "ranges": [
@@ -1319,7 +1319,7 @@
                         },
                         "data": "A",
                         "debuginfo": null,
-                        "guid": "b196f03a-cf94-461d-b7d1-0208d3f4c48d",
+                        "guid": "ba486e90-1d90-4900-88d5-9548f5b1df5c",
                         "src_subset": null,
                         "dst_subset": {
                           "type": "Range",
@@ -1362,7 +1362,7 @@
                 }
               ],
               "attributes": {
-                "guid": "d6935162-a610-408d-b4a5-f17c1faf94dd"
+                "guid": "ba4fb9df-e35e-47ed-b26e-a05406b921b1"
               }
             }
           ],
@@ -1373,7 +1373,7 @@
                 "data": {
                   "type": "InterstateEdge",
                   "attributes": {
-                    "guid": "c483d9bc-8929-473f-be0d-a9bc9af2b6a0"
+                    "guid": "620372f3-4224-4a0a-af79-c08c67e9902a"
                   },
                   "label": ""
                 }
@@ -1396,7 +1396,7 @@
             "data": {
               "type": "InterstateEdge",
               "attributes": {
-                "guid": "a0cab63f-faa7-4862-a447-bc6f26c6998a"
+                "guid": "34d4aebd-ac80-4c20-a234-6e538f47a23d"
               },
               "label": ""
             }
@@ -1419,7 +1419,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "fbfc8c86-4a22-4b1f-a3fa-8db05f1e9462"
+            "guid": "d1e93868-aa69-4f0c-9a6b-e2bfa0c6c3d4"
           },
           "label": ""
         }
@@ -1433,7 +1433,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "a3b514d3-d0ad-419f-9e2a-3ea20473261c"
+            "guid": "7077190a-87a1-4cca-a989-bd12d060919a"
           },
           "label": ""
         }
