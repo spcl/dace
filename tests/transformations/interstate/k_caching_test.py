@@ -12,8 +12,8 @@ from dace import InterstateEdge
 
 # Checks if KCaching applied N times and if memory footprint was reduced
 def check_kcaching(kc_sdfg: dace.SDFG, N: int):
+    kc_sdfg.validate()
     orig_sdfg = copy.deepcopy(kc_sdfg)
-    orig_sdfg.validate()
     assert kc_sdfg.apply_transformations_repeated(KCaching) == N
     kc_sdfg.validate()
 
@@ -22,6 +22,7 @@ def check_kcaching(kc_sdfg: dace.SDFG, N: int):
             "Mod" in str(r)
             for e, _ in orig_sdfg.all_edges_recursive()
             if not isinstance(e.data, InterstateEdge)
+            if e.data.subset is not None
             for r in e.data.subset
         ]
     )
@@ -30,6 +31,7 @@ def check_kcaching(kc_sdfg: dace.SDFG, N: int):
             "Mod" in str(r)
             for e, _ in kc_sdfg.all_edges_recursive()
             if not isinstance(e.data, InterstateEdge)
+            if e.data.subset is not None
             for r in e.data.subset
         ]
     )
@@ -170,8 +172,7 @@ def test_indirect_access():
     @dace.program
     def tester(b: dace.float64[32], c: dace.float64[32]):
         a = dace.define_local([32], dace.float64)
-        a[0] = 0
-        a[1] = 1
+        a[:] = 0
         for i in range(2, 32):
             b[i] = a[i - 1] + a[i - 2]
             idx = int(b[i]) % 32
@@ -316,22 +317,22 @@ def test_used_values3():
 
 
 if __name__ == "__main__":
-    test_simple()
-    test_non_transient()
-    test_gaps()
-    test_interleaved()
-    test_nonlinear_index()
-    test_nonlinear_step()
-    test_nonconstant_step()
+    # test_simple()
+    # test_non_transient()
+    # test_gaps()
+    # test_interleaved()
+    # test_nonlinear_index()
+    # test_nonlinear_step()
+    # test_nonconstant_step()
     test_indirect_access()
-    test_constant_index()
-    test_larger_step()
-    test_larger_index()
-    test_reverse_step()
-    test_reverse_step2()
-    test_reverse_index()
-    test_used_values()
-    test_used_values2()
-    test_used_values3()
+    # test_constant_index()
+    # test_larger_step()
+    # test_larger_index()
+    # test_reverse_step()
+    # test_reverse_step2()
+    # test_reverse_index()
+    # test_used_values()
+    # test_used_values2()
+    # test_used_values3()
     # Views? WCR?
     # Same iteration variable used in multiple dimensions?
