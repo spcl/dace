@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from collections import defaultdict
+import time
 from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
@@ -33,15 +34,23 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     :return: An SDFG representing the schedule tree.
     """
     # Set SDFG descriptor repository
+    s = time.time()
     result = SDFG(stree.name, propagate=False)
     result.arg_names = copy.deepcopy(stree.arg_names)
     for key, container in stree.containers.items():
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
     result.symbols = copy.deepcopy(stree.symbols)
+    print("\n")
+    print(f"Setup SDFG descriptor repository in {(time.time() - s):.3f} seconds.")
 
     # after WAW, before label, etc.
+    s = time.time()
     stree = insert_state_boundaries_to_tree(stree)
+    print(f"Inserted state boundaries in {(time.time() - s):.3f} seconds.")
+
+    # main visitor
+    s = time.time()
 
     class StreeToSDFG(tn.ScheduleNodeVisitor):
 
@@ -637,8 +646,12 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             return assignments
 
     StreeToSDFG().visit(stree, sdfg=result)
+    print(f"Main visitor took {(time.time() - s):.3f} seconds.")
 
+    # memlet propagation
+    s = time.time()
     propagation.propagate_memlets_sdfg(result)
+    print(f"Memlet propagation took {(time.time() - s):.3f} seconds.")
 
     return result
 
@@ -657,6 +670,8 @@ def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTr
     :param stree: The schedule tree to operate on.
     """
 
+    s = time.time()
+
     # Simple boundary node inserter for control flow blocks and state labels
     class SimpleStateBoundaryInserter(tn.ScheduleNodeTransformer):
 
@@ -670,21 +685,58 @@ def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTr
 
     # First, insert boundaries around labels and control flow
     stree = SimpleStateBoundaryInserter().visit(stree)
+    print(f"\tSimpleStateBoundaryInserter took {(time.time() - s):.3f} seconds.")
 
+    s = time.time()
     # Then, insert boundaries after unmet memory dependencies or potential data races
     _insert_memory_dependency_state_boundaries(stree)
+    print(f"\tMemory dependency analysis took {(time.time() - s):.3f} seconds.")
+
+    s = time.time()
+
+    # Insert a state boundary after every symbol assignment to ensure symbols are assigned before usage
+    class SymbolAssignmentBoundaryInserter(tn.ScheduleNodeTransformer):
+
+        def visit_AssignNode(self, node: tn.AssignNode):
+            # We can assume that assignment nodes are at least contained in the root scope.
+            assert node.parent, "Expected assignment nodes live a parent scope."
+
+            # Find this node in the parent's children.
+            node_index = _list_index(node.parent.children, node)
+
+            # Don't add boundary if there's already one or for immediately following assignment nodes.
+            if node_index < len(node.parent.children) - 1 and isinstance(node.parent.children[node_index + 1],
+                                                                         (tn.StateBoundaryNode, tn.AssignNode)):
+                return self.generic_visit(node)
+
+            return [self.generic_visit(node), tn.StateBoundaryNode()]
+
+    stree = SymbolAssignmentBoundaryInserter().visit(stree)
+    print(f"\tSymbolAssignmentBoundaryInserter took {(time.time() - s):.3f} seconds.")
 
     # Hack: "backprop-insert" state boundaries from nested SDFGs
+    s = time.time()
+
     class NestedSDFGStateBoundaryInserter(tn.ScheduleNodeTransformer):
 
-        def visit_scope(self, scope: tn.ScheduleTreeScope):
+        def visit_MapScope(self, scope: tn.MapScope):
             visited = self.generic_visit(scope)
-            if isinstance(scope, tn.MapScope) and any(
-                [isinstance(child, tn.StateBoundaryNode) for child in scope.children]):
+            if any([isinstance(child, tn.StateBoundaryNode) for child in scope.children]):
+                # We can assume that map nodes are at least contained in the root scope.
+                assert scope.parent is not None
+
+                # Find this scope in its parent's children
+                node_index = _list_index(scope.parent.children, scope)
+
+                # If there's already a state boundary before the map, don't add another one
+                if node_index > 0 and isinstance(scope.parent.children[node_index - 1], tn.StateBoundaryNode):
+                    return visited
+
                 return [tn.StateBoundaryNode(), visited]
             return visited
 
     stree = NestedSDFGStateBoundaryInserter().visit(stree)
+    print(f"\tNestedSDFGStateBoundaryInserter took {(time.time() - s):.3f} seconds.")
 
     return stree
 

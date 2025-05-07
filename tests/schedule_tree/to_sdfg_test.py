@@ -528,6 +528,62 @@ def test_edge_assignment_read_after_write():
     assert [edge.data.assignments for edge in sdfg.edges()] == [{"my_condition": "True"}, {"condition": "my_condition"}]
 
 
+def test_assign_nodes_force_state_transition():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = mySymbol'), {}, {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    stree = t2s.insert_state_boundaries_to_tree(stree)
+    assert [type(child) for child in stree.children] == [tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
+
+
+def test_assign_nodes_multiple_force_one_transition():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
+            tn.AssignNode("myOtherSymbol", CodeBlock("2"), dace.InterstateEdge()),
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = mySymbol + myOtherSymbol'), {},
+                           {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    stree = t2s.insert_state_boundaries_to_tree(stree)
+    assert [type(child)
+            for child in stree.children] == [tn.AssignNode, tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
+
+
+def test_assign_nodes_avoid_duplicate_boundaries():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
+            tn.StateBoundaryNode(),
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = mySymbol + myOtherSymbol'), {},
+                           {'out': dace.Memlet('A[1]')}),
+        ],
+    )
+
+    stree = t2s.insert_state_boundaries_to_tree(stree)
+    assert [type(child) for child in stree.children] == [tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
+
+
 def test_xppm_tmp():
     loaded = dace.SDFG.from_file("test.sdfgz")
     stree = loaded.as_schedule_tree()
@@ -554,6 +610,30 @@ def test_DelnFlux_tmp():
 
 def test_FvTp2d_tmp():
     loaded = dace.SDFG.from_file("tmp_FvTp2d.sdfgz")
+    stree = loaded.as_schedule_tree()
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_FxAdv_tmp():
+    loaded = dace.SDFG.from_file("tmp_FxAdv.sdfgz")
+    stree = loaded.as_schedule_tree()
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_D_SW_tmp():
+    loaded = dace.SDFG.from_file("tmp_D_SW.sdfgz")
+    stree = loaded.as_schedule_tree()
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_UpdateDzD():
+    loaded = dace.SDFG.from_file("tmp_UpdateDzD.sdfgz")
     stree = loaded.as_schedule_tree()
 
     sdfg = stree.as_sdfg()
