@@ -4,10 +4,10 @@ dace.codegen.instrumentation package
 Submodules
 ----------
 
-dace.codegen.instrumentation.nvtx module
+dace.codegen.instrumentation.gpu_tx_markers module
 -----------------------------------------------
 
-.. automodule:: dace.codegen.instrumentation.nvtx
+.. automodule:: dace.codegen.instrumentation.gpu_tx_markers
    :members:
    :undoc-members:
    :show-inheritance:

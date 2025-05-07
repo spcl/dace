@@ -8,6 +8,7 @@ import re
 import sys
 
 import dace
+from dace.codegen import common
 from dace.sdfg import nodes
 from dace.transformation.interstate import GPUTransformSDFG
 
@@ -44,7 +45,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     if instrumentation == dace.InstrumentationType.Timer:
         sdfg.instrument = instrumentation
 
-    if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.NVTX]:
+    if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS]:
         sdfg.apply_transformations(GPUTransformSDFG)
 
     sdfg(A=A, B=B, C=C, N=size)
@@ -59,7 +60,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         print(report)
 
     # Check that the NVTX range wrapper is present in the generated CPU code
-    if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.NVTX]:
+    if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS] and common.get_gpu_backend() == 'cuda':
         code = sdfg.generate_code()[0].clean_code
         nvtx_include = re.search(r'#include <nvtx3/nvToolsExt.h>', code)
         assert nvtx_include is not None
@@ -85,8 +86,8 @@ def test_gpu_events():
 
 
 @pytest.mark.gpu
-def test_nvtx():
-    onetest(dace.InstrumentationType.NVTX)
+def test_gpu_tx_markers():
+    onetest(dace.InstrumentationType.GPU_TX_MARKERS)
 
 
 if __name__ == '__main__':
@@ -94,4 +95,4 @@ if __name__ == '__main__':
     test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_gpu_events()
-        test_nvtx()
+        test_gpu_tx_markers()
