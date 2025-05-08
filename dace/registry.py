@@ -37,6 +37,15 @@ def autoregister(cls: Type, **kwargs):
     that automatically registers the subclass with the superclass registry upon
     creation.
     """
+
+    if 'name' in kwargs and (kwargs['name'] == 'cuda' or kwargs['name'] == 'experimental_cuda'):
+        from dace.config import Config
+        if Config.get('compiler', 'cuda', 'implementation') == 'experimental' and kwargs['name'] == 'cuda':
+            return
+        if Config.get('compiler', 'cuda', 'implementation') == 'legacy' and kwargs['name'] == 'experimental_cuda':
+            return
+
+
     registered = False
     for base in cls.__bases__:
         if hasattr(base, '_registry_') and hasattr(base, 'register'):

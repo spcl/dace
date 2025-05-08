@@ -448,6 +448,15 @@ required:
                             range, or to reduce memory usage.
 
 
+                    implementation:
+                        type: str
+                        title: CUDA codegen implementation
+                        description: >
+                            Choose between available CUDA code generation implementations.
+                            "legacy" is stable, "experimental" is used by Berkay Aydogdu and
+                            Yakup Koray Budanaz for Berkays master-thesis.
+                        enum: [legacy, experimental]
+                        default: experimental
             #############################################
             # General FPGA flags
             fpga:
