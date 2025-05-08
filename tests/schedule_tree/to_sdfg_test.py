@@ -584,8 +584,8 @@ def test_assign_nodes_avoid_duplicate_boundaries():
     assert [type(child) for child in stree.children] == [tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
 
 
-def test_xppm_tmp():
-    loaded = dace.SDFG.from_file("test.sdfgz")
+def test_XPPM_tmp():
+    loaded = dace.SDFG.from_file("tmp_XPPM.sdfgz")
     stree = loaded.as_schedule_tree()
 
     sdfg = stree.as_sdfg()
@@ -632,8 +632,24 @@ def test_D_SW_tmp():
     sdfg.validate()
 
 
-def test_UpdateDzD():
+def test_UpdateDzD_tmp():
     loaded = dace.SDFG.from_file("tmp_UpdateDzD.sdfgz")
+    stree = loaded.as_schedule_tree()
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_Fillz_tmp():
+    loaded = dace.SDFG.from_file("tmp_Fillz.sdfgz")
+    stree = loaded.as_schedule_tree()
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_Ray_Fast_tmp():
+    loaded = dace.SDFG.from_file("tmp_Ray_Fast.sdfgz")
     stree = loaded.as_schedule_tree()
 
     sdfg = stree.as_sdfg()
