@@ -188,6 +188,7 @@ class MemletDict(Dict[Memlet, T]):
     """
     Implements a dictionary with memlet keys that considers subsets that intersect or are covered by its other memlets.
     """
+    covers_cache: Dict[Tuple, bool] = {}
 
     def __init__(self, **kwargs):
         self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
@@ -202,7 +203,12 @@ class MemletDict(Dict[Memlet, T]):
         if elem.data not in self.internal_dict:
             return None
         for existing_memlet in self.internal_dict[elem.data]:
-            if existing_memlet.subset.covers(elem.subset):
+            key = (existing_memlet.subset, elem.subset)
+            is_covered = self.covers_cache.get(key, None)
+            if is_covered is None:
+                is_covered = existing_memlet.subset.covers(elem.subset)
+                self.covers_cache[key] = is_covered
+            if is_covered:
                 return existing_memlet
             try:
                 if existing_memlet.subset.intersects(elem.subset) == False:  # Definitely does not intersect
