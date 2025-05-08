@@ -15,7 +15,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
     def __init__(self):
         self.backend = common.get_gpu_backend()
         # Check if ROCm TX libraries and headers are available
-        self.enable_rocTX = ctypes.util.find_library('rocmtx64')
+        self.enable_rocTX = ctypes.util.find_library('roctx64')
         super().__init__()
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:

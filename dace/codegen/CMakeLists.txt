@@ -167,8 +167,16 @@ if(DACE_ENABLE_HIP)
 
   # Add libraries such as rocBLAS
   link_directories(${HIP_PATH}/../lib)
-  find_path(ROCMTX_INCLUDE_DIR HINTS ${ROCM_PATH} rocmtx.h)
-  find_path(ROCMTX_LIBRARY_DIR HINTS ${ROCM_PATH} librocmtx64.so)
+  if(ROCM_PATH)
+    find_path(ROCTX_INCLUDE_DIR roctx.h HINTS ${ROCM_PATH}/include)
+    if(NOT ROCTX_INCLUDE_DIR)
+      message(FATAL_ERROR "Could not find roctx.h in ${ROCM_PATH}/include")
+    endif()
+  endif()
+  if(ROCM_PATH AND ROCTX_INCLUDE_DIR)
+    list(APPEND DACE_LIBS "-lroctx64 -L${ROCMTX_LIBRARY_DIR}")
+    include_directories(SYSTEM ${ROCTX_INCLUDE_DIR})
+  endif()
 endif()
 
 # Function for performing deferred variable expansion
