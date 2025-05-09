@@ -21,7 +21,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             os.path.join(rocm_path, 'include/roctracer/roctx.h')
         ]
         roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
-        self.enable_rocTX = any(os.path.isfile(path) for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
+        self.enable_rocTX = any(os.path.isfile(path)
+                                for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
         super().__init__()
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
