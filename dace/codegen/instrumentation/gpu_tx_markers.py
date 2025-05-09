@@ -24,9 +24,10 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             if self.backend == 'cuda':
                 sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
                 local_stream.write(f'nvtxRangePush("{sdfg.name}");')
-            elif self.backend == 'hip' and self.enable_rocTX:
-                sdfg.append_global_code('#include <roctracer.h>', 'frame')
-                local_stream.write(f'roctxRangePush("{sdfg.name}");')
+            elif self.backend == 'hip':
+                if self.enable_rocTX:
+                    sdfg.append_global_code('#include <roctx.h>', 'frame')
+                    local_stream.write(f'roctxRangePush("{sdfg.name}");')
             else:
                 raise NameError('GPU backend "%s" not recognized' % self.backend)
 
@@ -35,7 +36,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         if top_level_sdfg:
             if self.backend == 'cuda':
                 local_stream.write('nvtxRangePop();')
-            elif self.backend == 'hip' and self.enable_rocTX:
-                local_stream.write('roctxRangePop();')
+            elif self.backend == 'hip':
+                if self.enable_rocTX:
+                    local_stream.write('roctxRangePop();')
             else:
                 raise NameError('GPU backend "%s" not recognized' % self.backend)
