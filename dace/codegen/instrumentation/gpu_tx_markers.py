@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-import ctypes.util
+import os
 
 from dace import dtypes, registry
 from dace.codegen import common
@@ -15,7 +15,13 @@ class GPUTXMarkersProvider(InstrumentationProvider):
     def __init__(self):
         self.backend = common.get_gpu_backend()
         # Check if ROCm TX libraries and headers are available
-        self.enable_rocTX = ctypes.util.find_library('roctx64')
+        rocm_path = os.getenv('ROCM_PATH', '/opt/rocm')
+        roctx_header_paths = [
+            os.path.join(rocm_path, 'roctracer/include/roctx.h'),
+            os.path.join(rocm_path, 'include/roctracer/roctx.h')
+        ]
+        roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
+        self.enable_rocTX = any(os.path.isfile(path) for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
         super().__init__()
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
