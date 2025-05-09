@@ -121,7 +121,9 @@ Instrumentation can also collect performance counters on CPUs and GPUs using `LI
 The :class:`~dace.dtypes.InstrumentationType.LIKWID_Counters` instrumentation type can be configured to collect
 a wide variety of performance counters on CPUs and GPUs. An example use can be found in the
 `LIKWID instrumentation code sample <https://github.com/spcl/dace/blob/main/samples/instrumentation/matmul_likwid.py>`_.
-
+There is also the :class:`~dace.dtypes.InstrumentationType.GPU_TX_MARKERS` instrumentation type which wraps in NVTX or rocTX markers the CPU function that launches any GPU activity for a top level SDFG. The range will have the name of the top level SDFG.
+These markers can be used to visualize and measure the GPU activity launched by a top level SDFG using the NVIDIA Nsight Systems or rocprof/rocprofile-systems profilers.
+NVTX/rocTX markers are enabled by default with the :class:`~dace.dtypes.InstrumentationType.GPU_Events` instrumentation type as well.
 
 Instrumentation file format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
