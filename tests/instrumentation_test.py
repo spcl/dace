@@ -62,8 +62,8 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     # Check that the NVTX range wrapper is present in the generated CPU code
     if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS]:
         code = sdfg.generate_code()[0].clean_code
-        nvtx_include = re.search(r'#include <(nvtx3/nvToolsExt|roctx).h>', code)
-        assert nvtx_include is not None
+        tx_include = re.search(r'#include <(nvtx3/nvToolsExt|roctx).h>', code)
+        assert tx_include is not None
         range_push = re.search(r'(nvtx|roctx)RangePush\b', code)
         assert range_push is not None
         range_pop = re.search(r'(nvtx|roctx)RangePop\b', code)
