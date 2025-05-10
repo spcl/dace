@@ -438,7 +438,10 @@ def _my_gen_baseline_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
                      output_float,
                      coarsening_factor,
                      mmad_tasklet_str: str,
-                     is_hbm_interleaved: bool = False):
+                     is_hbm_interleaved: bool = False,
+                     GEMM_shape: typing.Tuple = None):
+    if GEMM_shape is not None:
+        (M, N, K) = GEMM_shape
     sdfg = dace.SDFG("GEMM")
     tM, tN, tK = hardware_matmul_mnk
     tM *= coarsening_factor

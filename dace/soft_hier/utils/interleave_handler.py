@@ -74,7 +74,7 @@ class InterleaveHandler:
         # print(split_x, split_y)
         (dim_x_dace, dim_y_dace) = self.cluster_dims_dace
         if split_x % dim_x != 0 or split_y % dim_y != 0:
-            print(split_x, split_y, dim_x_dace, dim_y_dace)
+            # print(split_x, split_y, dim_x_dace, dim_y_dace)
             raise ValueError("Split scheme must be multiples of cluster dimensions")
         place_base = [
             [0, 0, 1, 1],
@@ -153,7 +153,62 @@ class InterleaveHandler:
                 channel_id = 2 * dim_y + dim_x + pi_real % dim_x
             self.placement_scheme += (channel_id,)
 
-    def rhs_split_K_place_to_left_and_bottom(self, k_group_dims:tuple):
+    def rhs_split_K_place_to_left(self, k_group_dims:tuple):
+        if self.split_scheme is None:
+            raise ValueError("Split scheme is not set")
+        split_x = self.split_scheme[0]
+        split_y = self.split_scheme[1]
+        dim_x = self.cluster_dims[0]
+        dim_y = self.cluster_dims[1]
+        dim_x_dace = self.cluster_dims_dace[0]
+        dim_y_dace = self.cluster_dims_dace[1]
+        if len(k_group_dims) != 2:
+            raise ValueError("K group dimensions must be a tuple of 2 elements")
+        (k_dim_x, k_dim_y) = k_group_dims
+        # self.print_info()
+
+        self.placement_scheme = ()
+        for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
+            kg_j = j % (dim_y // k_dim_y)
+            kg_off = i % (k_dim_x * k_dim_y)
+            kg_oj = kg_off // k_dim_x
+            channel_id = kg_j * k_dim_y + kg_oj
+            self.placement_scheme += (channel_id,)
+
+    def result_split_K_place_to_left_and_bottom(self, k_group_dims:tuple):
+        print(f"k_group_dims: {k_group_dims}")
+        (kg_m, kg_n) = k_group_dims
+        kg_num = kg_m * kg_n
+        
+        split_x = self.split_scheme[0]
+        split_y = self.split_scheme[1]
+        dim_x = self.cluster_dims[0]
+        dim_y = self.cluster_dims[1]
+        dim_x_dace = self.cluster_dims_dace[0]
+        dim_y_dace = self.cluster_dims_dace[1]
+        if dim_x != dim_x_dace or dim_y != dim_y_dace:
+            raise ValueError("Cluster dimensions must be the same as DACE dimensions in this placement scheme")
+        index_diff_list = []
+        self.placement_scheme = ()
+        for (i, j) in [(i, j) for i in range(split_x) for j in range(split_y)]:
+            kg_i = i % (dim_x//kg_m)
+            kg_j = j % (dim_y//kg_n)
+            kg_oi = kg_j % kg_m
+            kg_oj = kg_i % kg_n
+            pi_real = kg_i * kg_m + kg_oi
+            pj_real = kg_j * kg_n + kg_oj
+
+            index_diff = (pi_real - pj_real + dim_y) % dim_y
+            if index_diff not in index_diff_list:
+                index_diff_list.append(index_diff)
+            
+            if index_diff >= dim_x//2:
+                channel_id = pj_real % dim_y
+            else:
+                channel_id = 2 * dim_y + dim_x + pi_real % dim_x
+            self.placement_scheme += (channel_id,)
+
+    def rhs_remap_split_K_place_to_left_and_bottom(self, k_group_dims:tuple):
         if self.split_scheme is None:
             raise ValueError("Split scheme is not set")
         split_x = self.split_scheme[0]
@@ -203,7 +258,7 @@ class InterleaveHandler:
             # print(f"i: {i}, j: {j}, k_group_index: {k_group_index}, k_group_offset: {k_group_offset}, kg_i: {kg_i}, kg_j: {kg_j}, kg_oi: {kg_oi}, kg_oj: {kg_oj}, pi_dace: {pi_dace}, pj_dace: {pj_dace}, pi_index: {pi_index}, pi_real: {pi_real}, pj_real: {pj_real}, place: {place}")
             self.placement_scheme += (channel_id,)
         
-    def result_split_K_place_to_left_and_bottom(self, k_group_dims:tuple):
+    def result_remap_split_K_place_to_left_and_bottom(self, k_group_dims:tuple):
         print(f"k_group_dims: {k_group_dims}")
         (kg_m, kg_n) = k_group_dims
         kg_num = kg_m * kg_n
