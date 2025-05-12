@@ -341,7 +341,13 @@ def create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot)
     # the nested SDFGs' descriptor repositories
     for nsdfg in sdfg.all_sdfgs_recursive():
         transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
-        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols}
+
+        # Get all symbols that are not participating in nested SDFG symbol mappings (they will be removed)
+        syms_to_ignore = set()
+        if nsdfg.parent_nsdfg_node is not None:
+            syms_to_ignore = nsdfg.parent_nsdfg_node.symbol_mapping.keys()
+        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols and k not in syms_to_ignore}
+
         constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
         stree.containers.update(transients)
         stree.symbols.update(symbols)
