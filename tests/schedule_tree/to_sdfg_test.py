@@ -633,7 +633,7 @@ def test_D_SW_tmp():
 
 
 def test_UpdateDzD_tmp():
-    loaded = dace.SDFG.from_file("tmp_UpdateDzD.sdfgz")
+    loaded = dace.SDFG.from_file("tmp_UpdateDzD-ConstantPropagation.sdfgz")
     stree = loaded.as_schedule_tree()
 
     sdfg = stree.as_sdfg()

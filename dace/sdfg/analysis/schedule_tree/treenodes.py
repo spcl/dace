@@ -12,6 +12,8 @@ from dace.symbolic import symbol
 from dace.memlet import Memlet
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
+from dace.transformation.passes.simplify import SimplifyPass
+
 INDENTATION = '  '
 
 
@@ -209,8 +211,11 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         if validate:
             sdfg.validate()
 
+        # TODO
+        # UpdateDzD-ConstantPropagation.sdfgz generates an SDFG here that validates, but that doesn't
+        # simplify. Simplification fails in constant propagation with `__k_6` not found.
         if simplify:
-            sdfg.simplify(validate=validate)
+            SimplifyPass(validate=validate, skip=["ConstantPropagation"]).apply_pass(sdfg, {})
 
         return sdfg
 

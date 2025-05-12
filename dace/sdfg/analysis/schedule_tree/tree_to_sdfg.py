@@ -130,6 +130,46 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             # see visitors below.
             self._interstate_symbols.append(node)
 
+            # If AssignNode depends on arrays, e.g. `my_sym = my_array[__k] > 0`, make sure array accesses can be resolved.
+            input_memlets = node.input_memlets()
+            if not input_memlets:
+                return
+
+            for entry in reversed(self._dataflow_stack):
+                scope_node, to_connect = entry
+                if isinstance(scope_node, SDFG):
+                    # In case we are inside a nested SDFG, make sure memlet data can be
+                    # resolved by explicitly adding inputs.
+                    for memlet in input_memlets:
+                        # Copy data descriptor from parent SDFG and add input connector
+                        if memlet.data not in sdfg.arrays:
+                            parent_sdfg = sdfg.parent.parent
+                            sdfg_counter = 1
+                            while memlet.data not in parent_sdfg.arrays and sdfg_counter < MAX_NESTED_SDFGS:
+                                parent_sdfg = parent_sdfg.parent.parent
+                                assert isinstance(parent_sdfg, SDFG)
+                                sdfg_counter += 1
+                            sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
+
+                            # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                            if parent_sdfg.arrays[memlet.data].transient:
+                                sdfg.arrays[memlet.data].transient = False
+                                # TODO
+                                # ... unless they are only ever used inside the nested SDFG, in which case
+                                # we should delete them from the parent SDFG's array list.
+                                # NOTE This can probably be done automatically by a cleanup pass in the end.
+                                #      Something like DDE should be able to do this.
+
+                            assert memlet.data not in to_connect["inputs"]
+                            to_connect["inputs"].add(memlet.data)
+                    return
+
+            for memlet in input_memlets:
+                # If we aren't inside a nested SDFG, make sure all memlets can be resolved.
+                # Imo, this should always be the case. It not, raise an error.
+                if memlet.data not in sdfg.arrays:
+                    raise ValueError(f"Parsing AssignNode {node} failed. Can't find {memlet.data} in {sdfg}.")
+
         def visit_ForScope(self, node: tn.ForScope, sdfg: SDFG) -> None:
             before_state = self._current_state
             pending = self._pending_interstate_assignments()
