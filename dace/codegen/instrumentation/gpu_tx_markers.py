@@ -6,6 +6,7 @@ from dace.codegen import common
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_TX_MARKERS)
@@ -25,26 +26,52 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                                 for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
         super().__init__()
 
+    def print_range_push(self, name: str, stream: CodeIOStream) -> None:
+        if self.backend == 'cuda':
+            stream.write('#ifndef __CUDA_ARCH__')
+            stream.write(f'nvtxRangePush("{name}");')
+            stream.write('#endif')
+        elif self.backend == 'hip':
+            if self.enable_rocTX:
+                stream.write('#ifndef __HIP_DEVICE_COMPILE__')
+                stream.write(f'roctxRangePush("{name}");')
+                stream.write('#endif')
+        else:
+            raise NameError(f'GPU backend "{self.backend}" not recognized')
+
+    def print_range_pop(self, stream: CodeIOStream) -> None:
+        if self.backend == 'cuda':
+            stream.write('#ifndef __CUDA_ARCH__')
+            stream.write('nvtxRangePop();')
+            stream.write('#endif')
+        elif self.backend == 'hip':
+            if self.enable_rocTX:
+                stream.write('#ifndef __HIP_DEVICE_COMPILE__')
+                stream.write('roctxRangePop();')
+                stream.write('#endif')
+        else:
+            raise NameError(f'GPU backend "{self.backend}" not recognized')
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
-        top_level_sdfg = sdfg.parent is None
-        if top_level_sdfg:
+        top_level = sdfg.parent is None
+        if top_level:
             if self.backend == 'cuda':
                 sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
-                local_stream.write(f'nvtxRangePush("{sdfg.name}");')
             elif self.backend == 'hip':
                 if self.enable_rocTX:
                     sdfg.append_global_code('#include <roctx.h>', 'frame')
-                    local_stream.write(f'roctxRangePush("{sdfg.name}");')
             else:
                 raise NameError('GPU backend "%s" not recognized' % self.backend)
 
+        self.print_range_push(f'sdfg_{sdfg.name}', local_stream)
+
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        top_level_sdfg = sdfg.parent is None
-        if top_level_sdfg:
-            if self.backend == 'cuda':
-                local_stream.write('nvtxRangePop();')
-            elif self.backend == 'hip':
-                if self.enable_rocTX:
-                    local_stream.write('roctxRangePop();')
-            else:
-                raise NameError('GPU backend "%s" not recognized' % self.backend)
+        self.print_range_pop(local_stream)
+
+    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
+                       global_stream: CodeIOStream) -> None:
+        self.print_range_push(f'state_{state.label}', local_stream)
+
+    def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
+                     global_stream: CodeIOStream) -> None:
+        self.print_range_pop(local_stream)

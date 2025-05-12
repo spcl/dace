@@ -22,6 +22,7 @@ from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.codegen.instrumentation.gpu_tx_markers import GPUTXMarkersProvider
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -285,6 +286,9 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 
             """, sdfg)
 
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            GPUTXMarkersProvider().print_range_push(f'init_{sdfg.name}', callsite_stream)
+
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
@@ -304,17 +308,25 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
-        callsite_stream.write(
-            f"""
+        callsite_stream.write(f"""
     if (__result) {{
         delete __state;
         return nullptr;
     }}
+""", sdfg)
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            GPUTXMarkersProvider().print_range_pop(callsite_stream)
+        callsite_stream.write(
+            f"""
     return __state;
 }}
 
 DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state)
 {{
+""", sdfg)
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            GPUTXMarkersProvider().print_range_push(f'exit_{sdfg.name}', callsite_stream)
+        callsite_stream.write(f"""
     int __err = 0;
 """, sdfg)
 
@@ -349,6 +361,8 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 callsite_stream.write("}")
 
         callsite_stream.write('delete __state;\n', sdfg)
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            GPUTXMarkersProvider().print_range_pop(callsite_stream)
         callsite_stream.write('return __err;\n}\n', sdfg)
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):

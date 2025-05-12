@@ -6,6 +6,7 @@ from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
+from dace.codegen import common
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
@@ -13,8 +14,8 @@ class GPUEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
 
     def __init__(self):
-        self.backend = config.Config.get('compiler', 'cuda', 'backend')
-        super().__init__()  
+        self.backend = common.get_gpu_backend()
+        super().__init__()
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if self.backend == 'cuda':
