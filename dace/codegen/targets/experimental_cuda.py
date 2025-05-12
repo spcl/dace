@@ -36,14 +36,14 @@ if TYPE_CHECKING:
 
 
 
-def prod(iterable):
-    return functools.reduce(sympy.Mul, iterable, 1)
-
 
 
 
 # TODO: GENERAL, discuss with Yakup
-# have a look at dtypes maybe
+
+
+# TODO: I am not handling map with strided rights now,
+# why? because This is handled somewhere else than in the scope
 
 
 
@@ -723,42 +723,117 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 
 
-    def _generate_GPU_Warp_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
-                                        state_id: int, function_stream: CodeIOStream, kernel_stream: CodeIOStream) -> None:
-        
 
-        with KernelScopeManager(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id,
-                                function_stream=function_stream, callsite_stream=kernel_stream, comment="WarpLevel Scope",) as scopeManager:
-            
+
+    def _generate_GPU_Warp_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                function_stream: CodeIOStream, kernel_stream: CodeIOStream) -> None:
+
+
+        with KernelScopeManager(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id, 
+                                function_stream=function_stream, callsite_stream=kernel_stream, comment="WarpLevel Scope") as scopeManager:
+
             node = dfg_scope.source_nodes()[0]
             scope_map = node.map
-            map_range = subsets.Range(scope_map.range)
-            current_kernel_spec = self._current_kernel_spec
-            grid_dims = current_kernel_spec.grid_dims
-            block_dims = current_kernel_spec.block_dims
-
-            # TODO: Does it?
-            if len(map_range) > 1:
-                raise ValueError("The range for GPU_Warp maps must be one-dimensional.")
-
-            warpId = "int warpId = "
-            warpId += f"(threadIdx.x + blockDim.x * threadIdx.y + blockDim.x * blockDim.y * threadIdx.z) / 32;"
+            map_range = subsets.Range(scope_map.range[::-1])  # Reversed for potential better performance
+            block_dims = self._current_kernel_spec.block_dims
             
-            map_start = symbolic_to_cpp(map_range.min_element()[0])
-            map_end = symbolic_to_cpp(map_range.max_element()[0])
+
+            THREADS_PER_WARP = 32
+            num_threads_in_block = prod(block_dims)
+            upper_bound_warp_ids = [max_elem + 1 for max_elem in map_range.max_element()]
+            num_warps = prod(upper_bound_warp_ids)
+            warp_dim = len(map_range)
+            state_dfg = cfg.state(state_id)
 
 
-            kernel_stream.write(f"\n", cfg, state_id, node)
-            kernel_stream.write(f"{warpId}", cfg, state_id, node)
+            # ----------------- Guard checks -----------------------
 
-            condition = f" {map_start} < warpId && warpId < {map_end}"
-            scopeManager.open(condition=condition)
+            #TODO: rename xfh, to cryptic
+            parent_map, _ = xfh.get_parent_map(state_dfg, node)
+            if parent_map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
+                raise ValueError("GPU_Warp map must be nested within a GPU_ThreadBlock map.")
 
-            kernel_stream.write(f"\n\n\n", cfg, state_id, node)
-            kernel_stream.write(f"----------------------------------", cfg, state_id, node)
-            kernel_stream.write(f"// WarpLevel operations here", cfg, state_id, node)
-            kernel_stream.write(f"----------------------------------", cfg, state_id, node)
-            kernel_stream.write(f"\n\n\n", cfg, state_id, node)
+            if warp_dim > 3:
+                raise NotImplementedError("GPU_Warp maps are limited to 3 dimensions.")
+
+            if num_threads_in_block % THREADS_PER_WARP != 0:
+                raise ValueError(f"Block must be a multiple of {THREADS_PER_WARP} threads for GPU_Warp scheduling "
+                                f"(got {num_threads_in_block}).")
+
+            # TODO: This should be checked at get_kernel dim
+            if num_threads_in_block > 1024:
+                raise ValueError("CUDA does not support more than 1024 threads per block (hardware limit).")
+
+            if num_warps * THREADS_PER_WARP > num_threads_in_block:
+                raise ValueError(f"Invalid configuration: {num_warps} warps x {THREADS_PER_WARP} threads exceed "
+                                f"{num_threads_in_block} threads in the block.")
+
+            if not all(x >= 0 for x in map_range.min_element()):
+                raise ValueError("Warp IDs (from map range) must be non-negative.")
+
+
+
+            # ----------------- Map unflattening and scope guards -----------------------
+
+            flattened_terms = []
+            for i, dim_size in enumerate(block_dims):
+                if dim_size == 1:
+                    continue
+                dim = _get_cuda_dim(i)
+                stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
+                idx_expr = " * ".join(stride + [f"threadIdx.{_get_cuda_dim(i)}"]) if stride else f"threadIdx.{dim}"
+                flattened_terms.append(idx_expr)
+
+            # NOTE: too ugly? 
+            flat_thread_id_expr = " + ".join(flattened_terms)
+            warp_id_name = 'warpId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id, state_dfg.node_id(node))
+
+            kernel_stream.write(
+                f"int {warp_id_name} = ({flat_thread_id_expr}) / {THREADS_PER_WARP};",
+                cfg, state_id, node
+            )
+            self._dispatcher.defined_vars.add(warp_id_name, DefinedType.Scalar, 'int')
+
+            
+            
+            # ----------------- Compute flattened warp ID   -----------------------
+
+            range_max_elements = map_range.max_element()
+            range_min_elements = map_range.min_element()
+            warp_dim_bounds = [str(e + 1) for e in range_max_elements]
+
+            for i in range(warp_dim):
+                var_name = scope_map.params[-i - 1]  # reverse order
+                previous_sizes = warp_dim_bounds[:i]
+
+                if len(previous_sizes) > 0:
+                    divisor = " * ".join(previous_sizes)
+                    divisor = f"({divisor})" if len(previous_sizes) > 1 else divisor
+                    expr = f"({warp_id_name} / {divisor}) % {warp_dim_bounds[i]}"
+                else:
+                    expr = f"{warp_id_name} % {warp_dim_bounds[i]}"
+
+                kernel_stream.write(f"int {var_name} = {expr};", cfg, state_id, node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int')
+
+
+                # check conditions
+                # NOTE: WarpId coordinate can start at non-zero but never exceeds the upper range bound
+                # due to the combination of enforcing guard checks (32 * warps <= # threads in block) and the way 
+                # we assign the coordinates
+                min_element = range_min_elements[i]
+                if range_min_elements[i] != 0:
+                    conditions = f'{var_name} >= {min_element}'
+                    scopeManager.open(condition=conditions)
+
+
+
+            # ----------------- Warp Code Block -----------------------
+
+            self._dispatcher.dispatch_subgraph(
+                sdfg, cfg, dfg_scope, state_id, function_stream,
+                kernel_stream, skip_entry_node=True
+            )
 
 
 
@@ -862,7 +937,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         else:
             self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
 
-
     def generate_devicelevel_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState,
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Special case: if this is a GPU grid state and something is reading
@@ -875,7 +949,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             return
 
         self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
-
 
     def _emit_sync(self, codestream: CodeIOStream):
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
@@ -2015,6 +2088,9 @@ def _get_storagename(storage):
     return sname[sname.rindex('_') + 1:]
 
 
+# TODO: Just use product as name? 
+def prod(iterable):
+    return functools.reduce(sympy.Mul, iterable, 1)
 
 #########################################################################
 # Functions I had to redefine locally to not modify other files and ensure backwards compatibility
