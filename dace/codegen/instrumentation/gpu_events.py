@@ -3,10 +3,10 @@ from typing import Union
 from dace import config, dtypes, registry
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg import nodes, is_devicelevel_gpu
+from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
-from dace.codegen import common
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
