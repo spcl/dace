@@ -3,14 +3,18 @@ from typing import Union
 from dace import config, dtypes, registry
 from dace.codegen.prettycode import CodeIOStream
 from dace.sdfg import nodes, is_devicelevel_gpu
-from dace.codegen.instrumentation.gpu_tx_markers import GPUTXMarkersProvider
+from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
-class GPUEventProvider(GPUTXMarkersProvider):
+class GPUEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
+
+    def __init__(self):
+        self.backend = config.Config.get('compiler', 'cuda', 'backend')
+        super().__init__()  
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if self.backend == 'cuda':
@@ -26,8 +30,6 @@ class GPUEventProvider(GPUTXMarkersProvider):
         # For other file headers
         sdfg.append_global_code('\n#include <chrono>', None)
         sdfg.append_global_code('\n#include <%s>' % header_name, None)
-
-        super().on_sdfg_begin(sdfg, local_stream, global_stream, codegen)
 
     def _get_sobj(self, node: Union[nodes.EntryNode, nodes.ExitNode]):
         # Get object behind scope
