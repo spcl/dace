@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 
 # TODO: GENERAL, discuss with Yakup
+# 1. Approval of dtypes
 
 
 # TODO: I am not handling map with strided rights now,
@@ -658,37 +659,39 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         
             
 
+    """
 
 
-    def _generate_GPU_ThreadBlock_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
-                                        state_id: int, function_stream: CodeIOStream, kernel_stream: CodeIOStream) -> None:
+                # First three dimensions are evaluated directly
+                for i in range(min(len(brange), 3)):
+                    varname = scope_map.params[-i - 1]
 
-        node = dfg_scope.source_nodes()[0]
-        scope_map = node.map
+                    # Delinearize third dimension if necessary
+                    if i == 2 and len(brange) > 3:
+                        block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
+                    else:
+                        block_expr = 'threadIdx.%s' % _named_idx(i)
 
+                    expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
+                    callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
-        with KernelScopeManager(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id,
-                                function_stream=function_stream, callsite_stream=kernel_stream, comment="ThreadBlock Scope",) as scopeManager:
-            
+                # Delinearize beyond the third dimension
+                if len(brange) > 3:
+                    for i in range(3, len(brange)):
+                        varname = scope_map.params[-i - 1]
+                        # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
+                        block_expr = '(threadIdx.z / (%s)) %% (%s)' % (
+                            _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
+                            _topy(kdims[i]),
+                        )
 
-            brange = subsets.Range(scope_map.range[::-1])
+                        expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
+                        callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
+                        self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
-            dsym = [symbolic.symbol(f'__DAPT{i}', nonnegative=True, integer=True) for i in range(len(brange))]
-            bdims = self._current_kernel_spec.block_dims
-            dsym_end = [d + (bs * rng[2]) - 1 for d, bs, rng in zip(dsym, bdims, brange)]
-            tidx = brange.coord_at(dsym)
-
-            # First three dimensions are evaluated directly
-            for i in range(min(len(brange), 3)):
-
-                varname = scope_map.params[-i - 1]
-                block_expr = 'threadIdx.%s' % _get_cuda_dim(i)
-
-                expr = symbolic_to_cpp(tidx[i]).replace(f'__DAPT{i}', block_expr)
-                kernel_stream.write(f'int {varname} = {expr};', cfg, state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-
-
+                # Generate conditions for this block's execution using min and max
+                # element, e.g. skipping out-of-bounds threads in trailing block
                 minels = brange.min_element()
                 maxels = brange.max_element()
                 for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
@@ -699,7 +702,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
                     # Block range start
                     if i >= 3 or (dsym[i] >= minel) != True:
-                        condition += '%s >= %s' % (v, symbolic_to_cpp(minel))
+                        condition += '%s >= %s' % (v, _topy(minel))
 
                     # Special case: block size is exactly the range of the map (0:b)
                     if i >= 3:
@@ -711,15 +714,110 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
                         if len(condition) > 0:
                             condition += ' && '
-                        condition += '%s < %s' % (v, symbolic_to_cpp(maxel + 1))
+                        condition += '%s < %s' % (v, _topy(maxel + 1))
 
                     # Emit condition in code
                     if len(condition) > 0:
-                        scopeManager.open(condition=condition)
+                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
+                    else:
+                        callsite_stream.write('{', cfg, state_id, scope_entry)
+    """
 
+    def _generate_GPU_ThreadBlock_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
+                                        state_id: int, function_stream: CodeIOStream, kernel_stream: CodeIOStream) -> None:
+
+
+        # NOTE: not my code, but my insights. Approval for commenting this needed
+        with KernelScopeManager(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id,
+                                function_stream=function_stream, callsite_stream=kernel_stream, comment="ThreadBlock Scope",) as scopeManager:
+            
+            node = dfg_scope.source_nodes()[0]
+            scope_map = node.map
+
+
+            # ----------------- Map Range Preprocessing -----------------------
+
+            # Reverse range for better performance (e.g. memory coalescing)
+            reversed_scope_range = scope_map.range[::-1]
+            map_range = subsets.Range(reversed_scope_range)
+            map_dimensions = len(map_range)
+            map_dim_sizes = map_range.size()
+
+            kernel_block_dims = self._current_kernel_spec.block_dims
+
+
+            # ----------------- Symbolic Index Expressions -----------------------
+
+            symbolic_indices = [ symbolic.symbol(f'__SYM_IDX{dim}', nonnegative=True, integer=True) for dim in range(map_dimensions)]
+            symbolic_index_bounds = [idx + (block_dim * rng[2]) - 1 for idx, block_dim, rng in zip(symbolic_indices, kernel_block_dims, map_range)]
+            symbolic_coordinates = map_range.coord_at(symbolic_indices)
+
+
+            # ----------------- Generate Index Variable Definitions -----------------------
+
+            for dim in range(map_dimensions):
+
+                var_name = scope_map.params[-dim - 1] # also reverse it here!
+
+                if dim < 3:
+                    # First three dimensions: direct mapping or partial delinearization
+                    if dim == 2 and map_dimensions > 3:
+                        tail_prod = prod(map_dim_sizes[3:])
+                        base_expr = f"(threadIdx.z / ({symbolic_to_cpp(tail_prod)}))"
+                    else:
+                        base_expr = f"threadIdx.{_get_cuda_dim(dim)}"
+                else:
+                    # Dimensions beyond the third: full delinearization
+                    tail_prod = prod(map_dim_sizes[dim + 1:])
+                    base_expr = (f"(threadIdx.z / ({symbolic_to_cpp(tail_prod)})) % "f"({symbolic_to_cpp(map_dim_sizes[dim])})")
+
+
+                var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', base_expr)
+                kernel_stream.write(f'int {var_name} = {var_def};', cfg, state_id, node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int')
+
+            
+
+            # ----------------- Guard Conditions for Block Execution -----------------------
+
+            # Generate conditions for this block's execution using min and max
+            # element, e.g. skipping out-of-bounds threads in trailing block
+            minels = map_range.min_element()
+            maxels = map_range.max_element()
+            for dim, (var_name, start, end) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
+
+                # Optimize conditions if they are always true
+                #############################################
+
+                condition = ''
+
+                # Block range start
+                if dim >= 3 or (symbolic_indices[dim] >= start) != True:
+                    condition += f'{var_name} >= {symbolic_to_cpp(start)}' 
+
+                # Special case: block size is exactly the range of the map (0:b)
+                if dim >= 3:
+                    skipcond = False
+                else:
+                    skipcond = symbolic_index_bounds[dim].subs({symbolic_indices[dim]: start}) == end
+
+                # Block range end
+                if dim >= 3 or (not skipcond and (symbolic_index_bounds[dim] < end) != True):
+                    if len(condition) > 0:
+                        condition += ' && '
+                    condition += f'{var_name} < {symbolic_to_cpp(end + 1)}'
+
+                # Emit condition in code if any
+                if len(condition) > 0:
+                    scopeManager.open(condition=condition)
+
+
+            # ----------------- Dispatch Subgraph code generation -----------------------
 
             self._dispatcher.dispatch_subgraph(sdfg, cfg, dfg_scope, state_id, function_stream,
-                                               kernel_stream, skip_entry_node=True)
+                            kernel_stream, skip_entry_node=True)
+
+
 
 
 
@@ -748,6 +846,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             # ----------------- Guard checks -----------------------
 
+            #TODO: Move them to validation as well if possible
+            
             #TODO: rename xfh, to cryptic
             parent_map, _ = xfh.get_parent_map(state_dfg, node)
             if parent_map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
@@ -828,7 +928,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 
 
-            # ----------------- Warp Code Block -----------------------
+            # ----------------- Dispatch Subgraph code generation -----------------------
 
             self._dispatcher.dispatch_subgraph(
                 sdfg, cfg, dfg_scope, state_id, function_stream,
