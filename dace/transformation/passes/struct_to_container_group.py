@@ -562,24 +562,26 @@ def _get_name_hierarchy_from_name(demangled_name: str):
 class Flattener(CodeLibraryNode):
     code = Property(dtype=str, default="", allow_none=False)
     shallow = Property(dtype=bool, default=False, allow_none=False)
+    taskloop = Property(dtype=bool, default=False, allow_none=False)
 
-    def __init__(self, name, input_names, output_names, code, shallow=False):
+    def __init__(self, name, input_names, output_names, code, shallow=False, taskloop=False):
         super().__init__(name=name, input_names=input_names, output_names=output_names)
         self.code = code
         self.shallow = shallow
+        self.taskloop = taskloop
 
     def generate_code(self, inputs, outputs):
         if not self.shallow:
             all_code = f"""
 // Start {self.name}
-#pragma omp parallel
+{'#pragma omp parallel' if self.taskloop else ''}
 {{
-#pragma omp single
+{'#pragma omp single' if self.taskloop else ''}
 {{
 {{
 {self.code}
 }}
-#pragma omp taskwait
+{'#pragma omp taskwait' if self.taskloop else ''}
 }}
 }}
 // End {self.name}
@@ -616,7 +618,8 @@ class StructToContainerGroups(ppl.Pass):
         verbose: bool = False,
         clean_trivial_views: bool = False,
         shallow_copy: bool = False,
-        shallow_copy_to_gpu: bool = False
+        shallow_copy_to_gpu: bool = False,
+        taskloop: bool = False,
     ):
         if shallow_copy:
             assert shallow_copy_to_gpu is False and interface_to_gpu is False and interface_with_struct_copy is True
@@ -643,6 +646,7 @@ class StructToContainerGroups(ppl.Pass):
         self.clean_trivial_views = clean_trivial_views
         self._shallow_copy = shallow_copy
         self._shallow_copy_to_gpu = shallow_copy_to_gpu
+        self._taskloop = taskloop
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -793,6 +797,7 @@ class StructToContainerGroups(ppl.Pass):
         name: str,
         desc: dace.data.Structure,
         registered_members: typing.List[typing.Tuple[str, dace.data.Data]],
+        taskloop:bool=False,
     ):
         def _gen_loop(
             sdfg: SDFG,
@@ -802,6 +807,7 @@ class StructToContainerGroups(ppl.Pass):
             arr: dace.data.Data,
             name_hierarchy: List[str],
             name_hierarchy_types: List[str],
+            taskloop:bool=False,
         ):
 
             _cstr = ""
@@ -887,10 +893,10 @@ class StructToContainerGroups(ppl.Pass):
 
             if not isinstance(member_arr, dace.data.Scalar):
                 if len(arr.shape) > 2:
-                    ompfor = f"#pragma omp taskloop\n"
+                    ompfor = f"#pragma omp taskloop\n" if taskloop else '#pragma omp parallel for\n'
                 elif len(arr.shape) == 2:
                     #ompfor = f"#pragma omp taskloop\n"
-                    ompfor = f"#pragma omp task\n"
+                    ompfor = f"#pragma omp task\n" if taskloop else '\n'
                 else:
                     ompfor = ""
                 _cstr = ompfor + _cstr
@@ -944,6 +950,7 @@ class StructToContainerGroups(ppl.Pass):
                 arr_name,
                 arr_desc,
                 *_get_name_hierarchy_from_name(arr_name),
+                taskloop=taskloop,
             )
             for (arr_name, arr_desc) in registered_members
             if _get_name_hierarchy_from_name(arr_name)[0][0] == name
@@ -965,7 +972,7 @@ class StructToContainerGroups(ppl.Pass):
 {copy_strs}
 """
         """
-        // Deflatten: 
+        // Deflatten:
         // Form:
         {main_comment}
         // To:
@@ -1149,7 +1156,7 @@ class StructToContainerGroups(ppl.Pass):
                     self._interface_with_struct_copy
 
                 elif self._interface_with_struct_copy:
-                    self._generate_flattener(sdfg, name, desc, registered_members)
+                    self._generate_flattener(sdfg, name, desc, registered_members, self._taskloop)
 
         if self._shallow_copy:
             assert self._interface_with_struct_copy
