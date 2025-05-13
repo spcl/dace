@@ -455,7 +455,13 @@ required:
                 title: AscendC
                 description: "Common preferences for AscendC compilation."
                 required:
-
+                    soc_version:
+                        type: str
+                        title : Ascend product type
+                        default: 'ascend910'
+                        description: >
+                            Ascend product type. Can be 'ascend910' or 'ascend910B4'.
+                            This is used to determine the target arch (like cuda-arch).
                     max_concurrent_streams:
                         type: int
                         title: Concurrent execution streams

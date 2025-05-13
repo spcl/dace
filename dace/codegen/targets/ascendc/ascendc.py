@@ -382,7 +382,9 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
     @staticmethod
     def cmake_options():
-        options = ["-DDACE_ENABLE_ASCEND=ON"]
+        soc_version = Config.get("compiler", "ascendc", "soc_version")
+        options = [f"-DDACE_ENABLE_ASCEND=ON",
+                   f"-DDACE_ASCEND_SOC_VERSION={soc_version}"]
         return options
 
     def declare_array(
@@ -1339,22 +1341,25 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
         if instr is not None:
             pre_outer_stream = CodeIOStream()
+            # on_scope_entry(self, sdfg, cfg, state, node, outer_stream, inner_stream, global_stream):
             instr.on_scope_entry(
-                sdfg,
-                state,
-                scope_entry,
-                pre_outer_stream,
-                self.scope_entry_stream,
-                self._globalcode,
+                sdfg=sdfg,
+                cfg=cfg,
+                state=state,
+                node=scope_entry,
+                outer_stream=pre_outer_stream,
+                inner_stream=self.scope_entry_stream,
+                global_stream=self._globalcode,
             )
             outer_stream = CodeIOStream()
             instr.on_scope_exit(
-                sdfg,
-                state,
-                scope_exit,
-                outer_stream,
-                self.scope_exit_stream,
-                self._globalcode,
+                sdfg=sdfg,
+                cfg=cfg,
+                state=state,
+                node=scope_exit,
+                outer_stream=outer_stream,
+                inner_stream=self.scope_exit_stream,
+                global_stream=self._globalcode,
             )
 
         # Redefine constant arguments and rename arguments to device counterparts
@@ -1558,7 +1563,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         #print("KARGS", kernel_args)
         kargs = str(
             ", ".join(
-                [f"reinterpret_cast<GM_ADDR>({k})" if isinstance(v, dace.data.Array) else f"{k}" for k,v in kernel_args.items()]
+                [f"(GM_ADDR)({k})" if isinstance(v, dace.data.Array) else f"{k}" for k,v in kernel_args.items()]
 
             )
         )  # join makes them into a tuple of strings somehow if one of them is empty
@@ -1566,12 +1571,25 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 
         if len(extra_call_args) != 0:
             raise Exception("TODO, support for: extra_call_args not empty")
-        #+ [f"reinterpret_cast<GM_ADDR>({k})" if isinstance(v, dace.data.Array) else f"{k}" for k,v in extra_call_args.items()]
+        #+ [f"(GM_ADDR)({k})" if isinstance(v, dace.data.Array) else f"{k}" for k,v in extra_call_args.items()]
 
+        assert scope_entry.map.schedule ==  dace.dtypes.ScheduleType.Ascend_Device
+        tblock_maps = set([m for m in state.all_nodes_between(scope_entry, state.exit_node(scope_entry)) if isinstance(m, nodes.MapEntry) and m.schedule == dace.dtypes.ScheduleType.Ascend_AiCoreGroup])
+        assert len(tblock_maps) == 1
+        tblock_map : dace.nodes.Map = tblock_maps.pop()
+        r: dace.subsets.Range = tblock_map.range
+        dim = 1
+        for (b, e, s) in r.ranges:
+            try:
+                dim *= (e+1 - b) // s
+            except Exception as ex:
+                raise Exception(
+                    f"Error in range {r} of map {tblock_map.label}: {ex} (end - beg) // step should be an integer"
+                ) from ex
 
         self._localcode.write(
             f"""
-            {kernel_name}<<<32, nullptr, nullptr>>>({kargs});
+            {kernel_name}<<<{dim}, nullptr, nullptr>>>({kargs});
             """
         )
 

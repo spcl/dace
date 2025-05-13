@@ -53,7 +53,7 @@ if(DEFINED DACE_ASCEND_PRODUCT_TYPE)
     elseif(DACE_ASCEND_PRODUCT_TYPE AND NOT DACE_ASCEND_PRODUCT_TYPE MATCHES "^ascend[0-9][0-9][0-9][a-zA-Z]?[1-9]?$")
         message(FATAL_ERROR
             "ASCEND_PRODUCT_TYPE: ${DACE_ASCEND_PRODUCT_TYPE}\n"
-            "is not one of the following: ascend910, ascend310p, ascend910B1"
+            "is not one of the following: ascend910, ascend310p, ascend910B1, ascend910B4"
         )
     elseif(DACE_ASCEND_PRODUCT_TYPE STREQUAL "ascend910")
         if (DACE_ASCEND_CORE_TYPE STREQUAL "AiCore")
@@ -79,6 +79,12 @@ if(DEFINED DACE_ASCEND_PRODUCT_TYPE)
         set(_CMAKE_CCE_COMPILE_OPTIONS
             "-mllvm -cce-aicore-function-stack-size=16000 -mllvm -cce-aicore-record-overflow=false -mllvm -cce-aicore-addr-transform"
         )
+    elseif(DACE_ASCEND_PRODUCT_TYPE STREQUAL "ascend910B4")
+        if (DACE_ASCEND_CORE_TYPE STREQUAL "AiCore")
+            set(_CMAKE_COMPILE_AS_CCE_FLAG "--cce-soc-version=Ascend910B4 --cce-soc-core-type=VecCore")
+        elseif(DACE_ASCEND_CORE_TYPE STREQUAL "VectorCore")
+            message(FATAL_ERROR, "only AiCore inside")
+        endif()
     endif()
 endif()
 
