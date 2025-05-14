@@ -5,6 +5,7 @@ from dace import dtypes, registry
 from dace.codegen import common
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.sdfg.nodes import CodeNode
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 
@@ -24,6 +25,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
         self.enable_rocTX = any(os.path.isfile(path)
                                 for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
+        self.includes_generated = False
         super().__init__()
 
     def print_range_push(self, name: str, stream: CodeIOStream) -> None:
@@ -53,8 +55,10 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             raise NameError(f'GPU backend "{self.backend}" not recognized')
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
+        if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
         top_level = sdfg.parent is None
-        if top_level:
+        if top_level or not self.includes_generated:
             if self.backend == 'cuda':
                 sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
             elif self.backend == 'hip':
@@ -62,16 +66,20 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                     sdfg.append_global_code('#include <roctx.h>', 'frame')
             else:
                 raise NameError('GPU backend "%s" not recognized' % self.backend)
+            self.includes_generated = True
 
         self.print_range_push(f'sdfg_{sdfg.name}', local_stream)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
-        self.print_range_pop(local_stream)
+        if sdfg.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            self.print_range_pop(local_stream)
 
     def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
-        self.print_range_push(f'state_{state.label}', local_stream)
+        if state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            self.print_range_push(f'state_{state.label}', local_stream)
 
     def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                      global_stream: CodeIOStream) -> None:
-        self.print_range_pop(local_stream)
+        if state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            self.print_range_pop(local_stream)
