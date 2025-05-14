@@ -565,7 +565,7 @@ class Range(Subset):
                 # Open parenthesis found, increase count by 1
                 if token[i] == '(':
                     count += 1
-                # Closing parenthesis found, decrease cound by 1
+                # Closing parenthesis found, decrease count by 1
                 elif token[i] == ')':
                     count -= 1
                 # Move to the next character
