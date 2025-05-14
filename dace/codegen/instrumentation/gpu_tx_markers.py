@@ -25,10 +25,23 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
         self.enable_rocTX = any(os.path.isfile(path)
                                 for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
-        self.includes_generated = False
+        self.include_generated = False
         super().__init__()
 
-    def print_range_push(self, name: str, stream: CodeIOStream) -> None:
+    def _print_include(self, sdfg: SDFG) -> None:
+        if self.include_generated:
+            return
+        if self.backend == 'cuda':
+            sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
+        elif self.backend == 'hip':
+            if self.enable_rocTX:
+                sdfg.append_global_code('#include <roctx.h>', 'frame')
+        else:
+            raise NameError('GPU backend "%s" not recognized' % self.backend)
+        self.include_generated = True
+
+    def print_range_push(self, name: str, sdfg: SDFG, stream: CodeIOStream) -> None:
+        self._print_include(sdfg)
         if self.backend == 'cuda':
             stream.write('#ifndef __CUDA_ARCH__')
             stream.write(f'nvtxRangePush("{name}");')
@@ -57,18 +70,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
-        top_level = sdfg.parent is None
-        if top_level or not self.includes_generated:
-            if self.backend == 'cuda':
-                sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
-            elif self.backend == 'hip':
-                if self.enable_rocTX:
-                    sdfg.append_global_code('#include <roctx.h>', 'frame')
-            else:
-                raise NameError('GPU backend "%s" not recognized' % self.backend)
-            self.includes_generated = True
-
-        self.print_range_push(f'sdfg_{sdfg.name}', local_stream)
+        self.print_range_push(f'sdfg_{sdfg.name}', sdfg, local_stream)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if sdfg.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
@@ -77,7 +79,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
     def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
         if state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
-            self.print_range_push(f'state_{state.label}', local_stream)
+            self.print_range_push(f'state_{state.label}', sdfg, local_stream)
 
     def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                      global_stream: CodeIOStream) -> None:
