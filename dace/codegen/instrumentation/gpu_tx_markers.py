@@ -5,14 +5,17 @@ from dace import dtypes, registry
 from dace.codegen import common
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.sdfg.nodes import CodeNode
+from dace.sdfg.nodes import NestedSDFG
+from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_TX_MARKERS)
 class GPUTXMarkersProvider(InstrumentationProvider):
-    """ Timing instrumentation that adds NVTX range to the top level SDFG. """
+    """ Timing instrumentation that adds NVTX/rocTX ranges to SDFGs and states. """
+    NVTX_HEADER_INCLUDE = '#include <nvtx3/nvToolsExt.h>'
+    ROCTX_HEADER_INCLUDE = '#include <roctx.h>'
 
     def __init__(self):
         self.backend = common.get_gpu_backend()
@@ -29,59 +32,85 @@ class GPUTXMarkersProvider(InstrumentationProvider):
         super().__init__()
 
     def _print_include(self, sdfg: SDFG) -> None:
+        """ Prints the include statement for the NVTX/rocTX library for a given SDFG. """
         if self.include_generated:
             return
         if self.backend == 'cuda':
-            sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
+            sdfg.append_global_code(self.NVTX_HEADER_INCLUDE, 'frame')
         elif self.backend == 'hip':
             if self.enable_rocTX:
-                sdfg.append_global_code('#include <roctx.h>', 'frame')
+                sdfg.append_global_code(self.ROCTX_HEADER_INCLUDE, 'frame')
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
         self.include_generated = True
 
+    def print_include(self, stream: CodeIOStream) -> None:
+        """ Prints the include statement for the NVTX/rocTX library in stream. """
+        if self.backend == 'cuda':
+            stream.write(self.NVTX_HEADER_INCLUDE)
+        elif self.backend == 'hip':
+            if self.enable_rocTX:
+                stream.write(self.ROCTX_HEADER_INCLUDE)
+        else:
+            raise NameError('GPU backend "%s" not recognized' % self.backend)
+
     def print_range_push(self, name: str, sdfg: SDFG, stream: CodeIOStream) -> None:
         self._print_include(sdfg)
         if self.backend == 'cuda':
-            stream.write('#ifndef __CUDA_ARCH__')
             stream.write(f'nvtxRangePush("{name}");')
-            stream.write('#endif')
         elif self.backend == 'hip':
             if self.enable_rocTX:
-                stream.write('#ifndef __HIP_DEVICE_COMPILE__')
                 stream.write(f'roctxRangePush("{name}");')
-                stream.write('#endif')
         else:
             raise NameError(f'GPU backend "{self.backend}" not recognized')
 
     def print_range_pop(self, stream: CodeIOStream) -> None:
         if self.backend == 'cuda':
-            stream.write('#ifndef __CUDA_ARCH__')
             stream.write('nvtxRangePop();')
-            stream.write('#endif')
         elif self.backend == 'hip':
             if self.enable_rocTX:
-                stream.write('#ifndef __HIP_DEVICE_COMPILE__')
                 stream.write('roctxRangePop();')
-                stream.write('#endif')
         else:
             raise NameError(f'GPU backend "{self.backend}" not recognized')
 
+    def _is_sdfg_in_device_code(self, sdfg: SDFG) -> bool:
+        """ Check if the SDFG is in device code and not top level SDFG. """
+        if sdfg.parent is None:
+            return False
+
+        for state in sdfg.parent.sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, NestedSDFG) and node.sdfg == sdfg and is_devicelevel_gpu_kernel(sdfg, state, node):
+                    return True
+        return False
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if self._is_sdfg_in_device_code(sdfg):
+            # Don't instrument device code
             return
         self.print_range_push(f'sdfg_{sdfg.name}', sdfg, local_stream)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if sdfg.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            if self._is_sdfg_in_device_code(sdfg):
+                # Don't instrument device code
+                return
             self.print_range_pop(local_stream)
 
     def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
         if state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            if self._is_sdfg_in_device_code(sdfg):
+                # Don't instrument device code
+                return
             self.print_range_push(f'state_{state.label}', sdfg, local_stream)
 
     def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                      global_stream: CodeIOStream) -> None:
         if state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            if self._is_sdfg_in_device_code(sdfg):
+                # Don't instrument device code
+                return
             self.print_range_pop(local_stream)

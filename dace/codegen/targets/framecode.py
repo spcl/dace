@@ -255,6 +255,13 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
 
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            # Need to make sure that the necessary includes for GPU_TX_MARKERS are present
+            # in the generated code.
+            gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
+            if gpu_tx_markers_provider:
+                gpu_tx_markers_provider.print_include(callsite_stream)
+
         # Write awkward footer to avoid 'extern "C"' issues
         params_comma = (', ' + params) if params else ''
         initparams_comma = (', ' + initparams) if initparams else ''
