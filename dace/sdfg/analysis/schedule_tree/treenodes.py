@@ -211,11 +211,8 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         if validate:
             sdfg.validate()
 
-        # TODO
-        # UpdateDzD-ConstantPropagation.sdfgz generates an SDFG here that validates, but that doesn't
-        # simplify. Simplification fails in constant propagation with `__k_6` not found.
         if simplify:
-            SimplifyPass(validate=validate, skip=["ConstantPropagation"]).apply_pass(sdfg, {})
+            sdfg.simplify(validate=validate)
 
         return sdfg
 
