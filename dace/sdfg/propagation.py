@@ -1519,11 +1519,11 @@ def propagate_subset(memlets: List[Memlet],
     return new_memlet
 
 
-def _freesyms(expr):
+def _freesyms(expr) -> Set:
     """ 
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.
     """
     if isinstance(expr, sympy.Basic):
         return expr.free_symbols
-    return {}
+    return set()
