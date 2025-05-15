@@ -55,7 +55,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_state, cls.second_state)]
 
-
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.connections_to_make = []
