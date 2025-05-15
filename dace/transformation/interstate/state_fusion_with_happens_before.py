@@ -44,7 +44,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         and fuses them into one state. If permissive, also applies if potential memory
         access hazards are created.
     """
-    connections_to_make = []
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
 
@@ -55,6 +54,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_state, cls.second_state)]
+
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.connections_to_make = []
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> List[CCDesc]:
@@ -176,6 +180,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
+        # We keep it alive, such that `apply()` can use it later.
+        self.connections_to_make.clear()
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -466,6 +472,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
+        # This will populate `self.connections_to_make`.
+        self.can_be_applied(graph, 0, sdfg)
+
         # Remove interstate edge(s)
         edges = graph.edges_between(first_state, second_state)
         for edge in edges:
@@ -589,3 +598,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         graph.remove_node(second_state)
         if graph.start_block == second_state:
             graph.start_block = graph.node_id(first_state)
+
+        # Technically unneeded, but better to keep track.
+        self.connections_to_make.clear()
