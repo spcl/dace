@@ -119,7 +119,6 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         sequential_map: nodes.Map = sequential_map_entry.map
 
         # Rm unnecessary copy-over edges
-        """
         edges_to_remove = []
         for edge in state.out_edges(thread_group_entry):
             u, u_conn, v, v_conn, memlet = edge
@@ -127,10 +126,8 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
             state.remove_edge(edge)
-        """
 
         # Move the access above the outer sequential map and update memlets for the map entry
-        """
         if inner_sequential_map_entry is not None:
             updated_arr_names = set()
 
@@ -308,7 +305,6 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     and v == state.exit_node(sequential_map_entry)
                 ):
                     edges_to_check = edges_to_check.union(state.out_edges(v))
-            """
 
         # Map Tiling does not update the range as we need them
         # Update the threadblock and device ranges
