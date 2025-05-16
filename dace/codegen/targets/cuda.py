@@ -995,6 +995,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 else:
                     raise NotImplementedError('2D copy only supported with one stride')
 
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_copy_begin(sdfg, cfg, state_dfg, src_node, dst_node, edge, None, callsite_stream,
+                                        copy_shape, src_strides, dst_strides)
+
             # Currently we only support ND copies when they can be represented
             # as a 1D copy or as a 2D strided copy
             if dims > 2:
@@ -1097,6 +1102,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         state_id, [src_node, dst_node])
 
             self._emit_sync(callsite_stream)
+
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_copy_end(sdfg, cfg, state_dfg, src_node, dst_node, edge, None, callsite_stream)
 
         # Copy within the GPU
         elif (src_storage in gpu_storage_types and dst_storage in gpu_storage_types):

@@ -5,6 +5,9 @@ from dace import dtypes, registry
 from dace.codegen import common
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.memlet import Memlet
+from dace.sdfg import nodes, SDFG
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.nodes import NestedSDFG
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace.sdfg.sdfg import SDFG
@@ -46,6 +49,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
 
     def print_include(self, stream: CodeIOStream) -> None:
         """ Prints the include statement for the NVTX/rocTX library in stream. """
+        if stream is None:
+            return
         if self.backend == 'cuda':
             stream.write(self.NVTX_HEADER_INCLUDE)
         elif self.backend == 'hip':
@@ -55,7 +60,11 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
     def print_range_push(self, name: str, sdfg: SDFG, stream: CodeIOStream) -> None:
+        if stream is None:
+            return
         self._print_include(sdfg)
+        if name is None:
+            name = 'None'
         if self.backend == 'cuda':
             stream.write(f'nvtxRangePush("{name}");')
         elif self.backend == 'hip':
@@ -65,6 +74,8 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             raise NameError(f'GPU backend "{self.backend}" not recognized')
 
     def print_range_pop(self, stream: CodeIOStream) -> None:
+        if stream is None:
+            return
         if self.backend == 'cuda':
             stream.write('nvtxRangePop();')
         elif self.backend == 'hip':
@@ -114,3 +125,38 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                 # Don't instrument device code
                 return
             self.print_range_pop(local_stream)
+
+    def on_copy_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, src_node: nodes.Node,
+                      dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], local_stream: CodeIOStream,
+                      global_stream: CodeIOStream, copy_shape, src_strides, dst_strides) -> None:
+        if state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            if is_devicelevel_gpu_kernel(sdfg, state, src_node):
+                # Don't instrument device code
+                return
+            self.print_range_push(f'copy_{src_node.label}_to_{dst_node.label}', sdfg, global_stream)
+
+    def on_copy_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, src_node: nodes.Node,
+                    dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], local_stream: CodeIOStream,
+                    global_stream: CodeIOStream) -> None:
+        if state.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            if is_devicelevel_gpu_kernel(sdfg, state, src_node):
+                # Don't instrument device code
+                return
+            self.print_range_pop(global_stream)
+
+    def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
+                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        if node.map.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            if is_devicelevel_gpu_kernel(sdfg, state, node):
+                # Don't instrument device code
+                return
+            self.print_range_push(f'scope_{node.label}', sdfg, outer_stream)
+
+    def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
+                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        entry_node = state.entry_node(node)
+        if entry_node.map.instrument == dtypes.InstrumentationType.GPU_TX_MARKERS:
+            if is_devicelevel_gpu_kernel(sdfg, state, entry_node):
+                # Don't instrument device code
+                return
+            self.print_range_pop(outer_stream)
