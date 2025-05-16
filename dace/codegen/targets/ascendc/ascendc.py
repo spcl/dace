@@ -72,26 +72,29 @@ class AscendCCodeGen(TargetCodeGenerator):
     title = "AscendC"
     _in_device_code = False
 
-    _c_type_to_ascend_decl_type = {
-        (dtypes.float16, dtypes.StorageType.Ascend_Global): "GM_HALF",
-        (dtypes.float32, dtypes.StorageType.Ascend_Global): "GM_FLOAT",
-        (
-            dtypes.float16,
+    @staticmethod
+    def _generate_type_mapping():
+        mapping = {
+            (dtypes.float16, dtypes.StorageType.Ascend_Global): "GM_HALF",
+            (dtypes.float32, dtypes.StorageType.Ascend_Global): "GM_FLOAT",
+        }
+        tensor_storage_types = [
             dtypes.StorageType.Ascend_VECIN,
-        ): "AscendC::LocalTensor<dace::float16>",
-        (
-            dtypes.float32,
-            dtypes.StorageType.Ascend_VECIN,
-        ): "AscendC::LocalTensor<dace::float32>",
-        (
-            dtypes.float16,
             dtypes.StorageType.Ascend_VECOUT,
-        ): "AscendC::LocalTensor<dace::float16>",
-        (
-            dtypes.float32,
-            dtypes.StorageType.Ascend_VECOUT,
-        ): "AscendC::LocalTensor<dace::float32>",
-    }
+            dtypes.StorageType.Ascend_A1,
+            dtypes.StorageType.Ascend_A2,
+            dtypes.StorageType.Ascend_B1,
+            dtypes.StorageType.Ascend_B2,
+            dtypes.StorageType.Ascend_CO1,
+            dtypes.StorageType.Ascend_CO2,
+        ]
+        for dtype, dtype_name in ((dace.dtypes.float16, "dace::float16"), (dace.dtypes.float32, "dace::float32")):
+            for storage in tensor_storage_types:
+                mapping[(dtype, storage)] = f"AscendC::LocalTensor<dace::{dtype_name}>"
+
+        return mapping
+
+    _c_type_to_ascend_decl_type = _generate_type_mapping.__func__()
     _access_type = {
         "GM_HALF": "*",
         "GM_FLOAT": "*",
@@ -101,6 +104,12 @@ class AscendCCodeGen(TargetCodeGenerator):
     _storage_to_ascendc_que_name = {
         dtypes.StorageType.Ascend_VECIN: "VECIN",
         dtypes.StorageType.Ascend_VECOUT: "VECOUT",
+        dtypes.StorageType.Ascend_A1: "A1",
+        dtypes.StorageType.Ascend_A2: "A2",
+        dtypes.StorageType.Ascend_B1: "B1",
+        dtypes.StorageType.Ascend_B2: "B2",
+        dtypes.StorageType.Ascend_CO1: "CO1",
+        dtypes.StorageType.Ascend_CO2: "CO2",
     }
 
     def _get_access_type(self, type_str):
@@ -166,6 +175,12 @@ class AscendCCodeGen(TargetCodeGenerator):
             dtypes.StorageType.Ascend_Global,
             dtypes.StorageType.Ascend_VECIN,
             dtypes.StorageType.Ascend_VECOUT,
+            dtypes.StorageType.Ascend_A1,
+            dtypes.StorageType.Ascend_A2,
+            dtypes.StorageType.Ascend_B1,
+            dtypes.StorageType.Ascend_B2,
+            dtypes.StorageType.Ascend_CO2,
+            dtypes.StorageType.Ascend_CO1,
         ]
         dispatcher.register_array_dispatcher(ascend_global_storage, self)
 
@@ -418,6 +433,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         result_decl = StringIO()
         ctypedef = "%s *" % nodedesc.dtype.ctype
         dataname = node.data
+        print("Decl", result_decl, ctypedef, dataname)
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.Ascend_Global:
@@ -530,14 +546,10 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr)
             )
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
-        elif nodedesc.storage in [
-            dtypes.StorageType.Ascend_VECIN,
-            dtypes.StorageType.Ascend_VECOUT,
-        ]:
+        elif nodedesc.storage in dace.dtypes.ASCEND_STORAGES:
             ascend_type_decl = self._get_ascendc_type(nodedesc, nodedesc.storage)
             result_decl.write(f"// Declare {dataname}\n")
             result_decl.write(f"{ascend_type_decl} {dataname};\n")
-            # result_decl.write(f"{ascend_type_decl} {dataname} = inQueue_{dataname}.AllocTensor<{nodedesc.dtype.ctype}> ();\n")
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
         else:
             raise NotImplementedError(
@@ -588,7 +600,8 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             # result_alloc.write(f"{ascend_type_decl} {dataname} = inQueue_{dataname}.AllocTensor<{nodedesc.dtype.ctype}> ();\n")
             # TODO
         else:
-            raise NotImplementedError
+            callsite_stream.write(f"// Free {dataname} ?\n")
+            #raise NotImplementedError
 
     def _compute_acl_streams(self, sdfg: SDFG, default_stream=0, default_event=0):
         """Annotates an SDFG (and all nested ones) to include a `_acl_stream`
@@ -627,6 +640,12 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             dtypes.StorageType.Ascend_Global,
             dtypes.StorageType.Ascend_VECIN,
             dtypes.StorageType.Ascend_VECOUT,
+            dtypes.StorageType.Ascend_A1,
+            dtypes.StorageType.Ascend_A2,
+            dtypes.StorageType.Ascend_B1,
+            dtypes.StorageType.Ascend_B2,
+            dtypes.StorageType.Ascend_CO2,
+            dtypes.StorageType.Ascend_CO1,
         ]
 
         copy_shape = memlet.subset.bounding_box_size()
@@ -810,65 +829,219 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             elif isinstance(u, nodes.AccessNode):
                 src_name = u.data
             #src_name = name
-            assert len(subset.string_list()) == 1
-            beg, end, step = subset.ranges[0]
-            assert step == 1
-            length = (end + 1) - beg
-            if (
-                src_storage == dtypes.StorageType.Ascend_Global
-                and dst_storage == dtypes.StorageType.Ascend_VECIN
-            ):
-                callsite_stream.write(
-                    "// Global -> VECIN: Alloc Local, DataCopy, EnQue"
-                )
-                callsite_stream.write(
-                    f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                )
-                callsite_stream.write(
-                    f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
-                )
-                callsite_stream.write(
-                    f"DataCopy({dst_name}, {name}_GM, {length});"
-                )
-                callsite_stream.write(f"inQueue_{dst_name}.EnQue({dst_name});\n")
-            elif (
-                src_storage == dtypes.StorageType.Ascend_VECIN
-                and dst_storage == dtypes.StorageType.Ascend_VECOUT
-            ):
-                callsite_stream.write("// VECIN -> VECOUT: DeQue, Enque, Free Prev.")
-                callsite_stream.write(
-                    f"{src_name} = inQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
-                )
-                callsite_stream.write(
-                    f"{dst_name} = outQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                )
-                callsite_stream.write(
-                    f"{dst_name} = {src_name};"
-                )
-                callsite_stream.write(
-                    f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
-                )
-                callsite_stream.write(f"inQueue_{src_name}.FreeTensor({src_name});\n")
-            elif (
-                src_storage == dtypes.StorageType.Ascend_VECOUT
-                and dst_storage == dtypes.StorageType.Ascend_Global
-            ):
-                callsite_stream.write(
-                    "// VECOUT -> Global: DeQue, DataCopy, Free Prev."
-                )
-                callsite_stream.write(
-                    f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
-                )
-                callsite_stream.write(
-                    f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
-                )
-                callsite_stream.write(
-                    f"DataCopy({name}_GM, {src_name}, {length});"
-                )
-                callsite_stream.write(f"outQueue_{src_name}.FreeTensor({src_name});")
+            if len(subset.string_list()) == 1:
+                beg, end, step = subset.ranges[0]
+                assert step == 1
+                length = (end + 1) - beg
+                if (
+                    src_storage == dtypes.StorageType.Ascend_Global
+                    and dst_storage == dtypes.StorageType.Ascend_VECIN
+                ):
+                    callsite_stream.write(
+                        "// Global -> VECIN: Alloc Local, DataCopy, EnQue"
+                    )
+                    callsite_stream.write(
+                        f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
+                    )
+                    callsite_stream.write(
+                        f"DataCopy({dst_name}, {name}_GM, {length});"
+                    )
+                    callsite_stream.write(f"inQueue_{dst_name}.EnQue({dst_name});\n")
+                elif (
+                    src_storage == dtypes.StorageType.Ascend_VECIN
+                    and dst_storage == dtypes.StorageType.Ascend_VECOUT
+                ):
+                    callsite_stream.write("// VECIN -> VECOUT: DeQue, Enque, Free Prev.")
+                    callsite_stream.write(
+                        f"{src_name} = inQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{dst_name} = outQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{dst_name} = {src_name};"
+                    )
+                    callsite_stream.write(
+                        f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
+                    )
+                    callsite_stream.write(f"inQueue_{src_name}.FreeTensor({src_name});\n")
+                elif (
+                    src_storage == dtypes.StorageType.Ascend_VECOUT
+                    and dst_storage == dtypes.StorageType.Ascend_Global
+                ):
+                    callsite_stream.write(
+                        "// VECOUT -> Global: DeQue, DataCopy, Free Prev."
+                    )
+                    callsite_stream.write(
+                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
+                    )
+                    callsite_stream.write(
+                        f"DataCopy({name}_GM, {src_name}, {length});"
+                    )
+                    callsite_stream.write(f"outQueue_{src_name}.FreeTensor({src_name});")
+                else:
+                    raise NotImplementedError(
+                        f"Unimplemented copy type for 1 Dimensional Copy: {src_storage} -> {dst_storage}"
+                    )
+            elif len(subset.string_list()) == 2:
+                beg1, end1, step1 = subset.ranges[0]
+                beg2, end2, step2 = subset.ranges[1]
+                assert(nodedesc.strides[1] == 1)
+                assert step2 == 1
+                assert step1 == 1
+                width = (end2 + 1) - beg2
+                height = (end1 + 1) - beg1
+                if (
+                    src_storage == dtypes.StorageType.Ascend_Global
+                    and (dst_storage == dtypes.StorageType.Ascend_B1 or
+                         dst_storage == dtypes.StorageType.Ascend_A1)
+                ):
+                    if dst_storage == dtypes.StorageType.Ascend_B1:
+                        callsite_stream.write(
+                            "// Global -> B1: Alloc Local, DataCopy, EnQue"
+                        )
+                    elif dst_storage == dtypes.StorageType.Ascend_A1:
+                        callsite_stream.write(
+                            "// Global -> A1: Alloc Local, DataCopy, EnQue"
+                        )
+                    callsite_stream.write(
+                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {width} * {height});"
+                    )
+                    # TODO ensure 16byte alignment
+                    callsite_stream.write(
+                       f"""
+                        for  (int i =  0 ; i < width / 16 ; ++i)  {{
+                            const int  srcOffset = i * 16;
+                            const int  dstOffset = i * 16 * {height};
+                            AscendC::DataCopy({dst_name}[dstOffset],  {src_name}[srcOffset], {{{height}, 1, uint16_t(({width} / 16) - 1), 0}});
+                        }}
+                       """
+                    )
+                    callsite_stream.write(
+                        f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
+                    )
+                elif (
+                    (src_storage == dtypes.StorageType.Ascend_B1 and
+                     dst_storage == dtypes.StorageType.Ascend_B2) or
+                    (src_storage == dtypes.StorageType.Ascend_A1 and
+                        dst_storage == dtypes.StorageType.Ascend_A2)
+                ):
+                    src_name = "B1" if src_storage == dtypes.StorageType.Ascend_B1 else "A1"
+                    dst_name = "B2" if dst_storage == dtypes.StorageType.Ascend_B2 else "A2"
+                    callsite_stream.write(
+                        f"// {src_name} -> {dst_name}: Alloc Local, DataCopy, EnQue"
+                    )
+                    callsite_stream.write(
+                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
+                    )
+                    # TODO ensure 16byte alignment
+                    callsite_stream.write(
+                       f"""
+                        LoadData2dParams loadDataParams;
+                        loadDataParams.repeatTimes = 1;
+                        loadDataParams.srcStride = 1;
+                        loadDataParams.ifTranspose = false;
+
+                        AscendC::LoadData({dst_name}, {src_name}, loadDataParams);
+                        inQueueA2.EnQue<half>(a2Local);
+                        inQueueA1.FreeTensor(a1Local);
+                       """
+                    )
+                    callsite_stream.write(
+                        f"inQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
+                    )
+                    callsite_stream.write(
+                        f"outQueue_{src_name}.FreeTensor({src_name});"
+                    )
+                elif (
+                    (src_storage == dtypes.StorageType.Ascend_CO2 and
+                     dst_storage == dtypes.StorageType.Ascend_CO1)
+                ):
+                    raise Exception("TODO")
+                    src_name = "B1" if src_storage == dtypes.StorageType.Ascend_B1 else "A1"
+                    dst_name = "B2" if dst_storage == dtypes.StorageType.Ascend_B2 else "A2"
+                    callsite_stream.write(
+                        f"// {src_name} -> {dst_name}: Alloc Local, DataCopy, EnQue"
+                    )
+                    callsite_stream.write(
+                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
+                    )
+                    # TODO ensure 16byte alignment
+                    callsite_stream.write(
+                       f"""
+                        LoadData2dParams loadDataParams;
+                        loadDataParams.repeatTimes = 1;
+                        loadDataParams.srcStride = 1;
+                        loadDataParams.ifTranspose = false;
+
+                        AscendC::LoadData({dst_name}, {src_name}, loadDataParams);
+                        inQueueA2.EnQue<half>(a2Local);
+                        inQueueA1.FreeTensor(a1Local);
+                       """
+                    )
+                    callsite_stream.write(
+                        f"inQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
+                    )
+                    callsite_stream.write(
+                        f"outQueue_{src_name}.FreeTensor({src_name});"
+                    )
+                elif (
+                    (src_storage == dtypes.StorageType.Ascend_CO1 and
+                     dst_storage == dtypes.StorageType.Ascend_VECIN)
+                ):
+                    raise Exception("TODO")
+                    src_name = "B1" if src_storage == dtypes.StorageType.Ascend_B1 else "A1"
+                    dst_name = "B2" if dst_storage == dtypes.StorageType.Ascend_B2 else "A2"
+                    callsite_stream.write(
+                        f"// {src_name} -> {dst_name}: Alloc Local, DataCopy, EnQue"
+                    )
+                    callsite_stream.write(
+                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                    )
+                    callsite_stream.write(
+                        f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
+                    )
+                    # TODO ensure 16byte alignment
+                    callsite_stream.write(
+                       f"""
+                        LoadData2dParams loadDataParams;
+                        loadDataParams.repeatTimes = 1;
+                        loadDataParams.srcStride = 1;
+                        loadDataParams.ifTranspose = false;
+
+                        AscendC::LoadData({dst_name}, {src_name}, loadDataParams);
+                        inQueueA2.EnQue<half>(a2Local);
+                        inQueueA1.FreeTensor(a1Local);
+                       """
+                    )
+                    callsite_stream.write(
+                        f"inQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
+                    )
+                    callsite_stream.write(
+                        f"outQueue_{src_name}.FreeTensor({src_name});"
+                    )
+                else:
+                    raise NotImplementedError(
+                        f"Unimplemented copy type for 2 Dimensional Copy: {src_storage} -> {dst_storage}"
+                    )
             else:
                 raise NotImplementedError(
-                    f"Unimplemented copy type: {src_storage} -> {dst_storage}"
+                    f"Copies for >2 Dimensions not implemented"
                 )
         else:
             """
@@ -1080,7 +1253,8 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         #print("DDD", desc, type(desc))
         ascend_type = self._get_ascendc_type(desc, desc.storage)
         access_type = self._get_access_type(ascend_type)
-        assert isinstance(cdtype, dtypes.pointer)
+        # ???
+        #assert isinstance(cdtype, dtypes.pointer), f"Pointer type expected {cdtype}, type {cdtype}"
         #print("Define out memlet", ascend_type, access_type)
 
         # If reference set, do not emit initial assignment
@@ -1715,8 +1889,9 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
                 self._used_arr_set.add((node.data, sdfg.arrays[node.data]))
         for edge in state.edges():
             mem = edge.data
-            arr = sdfg.arrays[mem.data]
-            self._used_arr_set.add((mem.data, arr))
+            if mem is not None and mem.data is not None:
+                arr = sdfg.arrays[mem.data]
+                self._used_arr_set.add((mem.data, arr))
 
         kernel_stream.write(f"// Initialization of Global Storage")
         for name, arr in self._used_arr_set:
@@ -1742,59 +1917,82 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         # Need to find access sizes for the buffer initialization, this can be read from the
         # AiCore group map ranges
         aicore_group_map_entry = None
-        kentry = None
+        kernel_entry = None
+        map_entries = []
         for node in state.nodes():
-            if isinstance(kentry, nodes.MapEntry) and kentry.map == kernel_map:
-                if kentry is None:
-                    kentry = node
+            if isinstance(node, nodes.MapEntry) and node.map == kernel_map:
+                if kernel_entry is None:
+                    kernel_entry = node
                     break
                 else:
                     NotImplementedError(
-                        "2 AiCore Group Maps inside Device Map is not implemented yet"
+                        "2 Device Maps Within"
                     )
-        for node in sdutil.dfs_topological_sort(state, kentry):
+        assert kernel_entry is not None, f"Could not find kernel map entry {kernel_map.label}, {kernel_map}, {type(kernel_map)}, {kentry}"
+        for node in sdutil.dfs_topological_sort(state, kernel_entry):
             if (
                 isinstance(node, nodes.MapEntry)
                 and node.schedule == dtypes.ScheduleType.Ascend_AiCoreGroup
             ):
                 aicore_group_map_entry = node
                 break
+        for node in sdutil.dfs_topological_sort(state, kernel_entry):
+            if (
+                isinstance(node, nodes.MapEntry)
+            ):
+                map_entries.append(node)
 
         #print(state.in_edges(aicore_group_map_entry))
         #print(state.out_edges(aicore_group_map_entry))
+        """
         for name, arr in self._used_arr_set:
-            if arr.storage in [
-                dtypes.StorageType.Ascend_VECIN,
-                dtypes.StorageType.Ascend_VECOUT,
-            ]:
+            if arr.storage in dace.dtypes.ASCEND_STORAGES:
                 que_name = self._storage_to_ascendc_que_name[arr.storage]
 
                 # Check the edges for the load/write granularity, if we do not want to array both
                 # in in or out edges, return an error
-                for e in state.out_edges(aicore_group_map_entry):
-                    if e.dst.data == name:
-                        ranges: subsets.Range = e.data.subset
-                        assert ranges.dims() == 1
-                        kernel_stream.write(
-                            f"pipe.InitBuffer(inQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
-                        )
-                        break
+                for m in map_entries:
+                    for e in state.out_edges(m):
+                        if isinstance(e.dst, dace.nodes.AccessNode):
+                            if e.dst.data == name:
+                                ranges: subsets.Range = e.data.subset
+                                assert ranges.dims() == 1
+                                kernel_stream.write(
+                                    f"pipe.InitBuffer(inQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
+                                )
+                                break
                 else:
-                    for e in state.in_edges(state.exit_node(aicore_group_map_entry)):
-                        if e.src.data == name:
-                            ranges: subsets.Range = e.data.subset
-                            assert ranges.dims() == 1
-                            kernel_stream.write(
-                                f"pipe.InitBuffer(outQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
-                            )
-                            break
-                        else:
-                            #print(e, e.data, e.data.data, name)
-                            pass
+                    for m in map_entries:
+                        for e in state.in_edges(state.exit_node(m)):
+                            if isinstance(e.src, dace.nodes.AccessNode):
+                                if e.src.data == name:
+                                    ranges: subsets.Range = e.data.subset
+                                    assert ranges.dims() == 1
+                                    kernel_stream.write(
+                                        f"pipe.InitBuffer(outQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
+                                    )
+                                    break
+                                else:
+                                    #print(e, e.data, e.data.data, name)
+                                    pass
                     else:
                         raise Exception(
                             f"One of the out edges need to cover this array we accessed, check impl for: {name}"
                         )
+        """
+        used_arrays_set = set()
+        assert kernel_entry is not None
+        assert kernel_entry in state.nodes()
+        for node in state.all_nodes_between(kernel_entry, state.exit_node(kernel_entry)):
+            if isinstance(node, dace.nodes.AccessNode):
+                used_arrays_set.add(node.data)
+        for arr_name in used_arrays_set:
+            arr = sdfg.arrays[arr_name]
+            total_size = sympy.prod(arr.shape)
+            kernel_stream.write(
+                f"pipe.InitBuffer(inQueue_{name}, 1, {total_size} * sizeof({arr.dtype.ctype}));"
+            )
+
 
         node = dfg_scope.source_nodes()[0]
         kernel_stream.write("\n{", cfg, state_id, node)
@@ -1828,8 +2026,8 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         # Ascend only returns 1D block Id with: GetBlockIdx()
 
         # First three dimensions are evaluated directly
-        if len(krange) > 1:
-            raise Exception("TODO: Ranges with more than one dimension")
+        #if len(krange) > 1:
+        #    raise Exception("TODO: Ranges with more than one dimension")
 
         kernel_stream.write(f"// Ascend Device Map", sdfg, state_id, node)
         for var, (beg, end, step) in zip(kernel_map.params, kernel_map.range):
@@ -1954,25 +2152,41 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             tidx = brange.coord_at(dsym)
 
             # First three dimensions are evaluated directly
-            if len(brange) > 1:
-                raise Exception("TODO, Ranges with more than 1 dimension")
+            if len(brange) > 2:
+                raise Exception("TODO, Ranges with more than 2 dimension")
+
+            print(brange, kdims, dsym, dsym_end, tidx)
+
+            num_cores = brange.num_elements_exact()
+            dim_el = [((e+1-b)//s) for b, e, s in brange.ranges]
+            num_cores = sympy.prod(dim_el)
+            #assert isinstance(num_cores, (sympy.Integer, int))
+            offsets = [sympy.prod(dim_el[0:i]) for i in range(len(dim_el))]
+            #raise Exception(brange, num_cores, offsets)
+            print("tidx", tidx)
 
             conds = []
+            coords = []
             for i in range(min(len(brange), 3)):
                 varname = scope_map.params[-i - 1]
 
-                block_expr = "AscendC::GetBlockIdx()"
+                if i == 0:
+                    block_expr = f"(AscendC::GetBlockIdx() % {offsets[i+1]})"
+                else:
+                    block_expr = f"(AscendC::GetBlockIdx() / {offsets[i]})"
 
                 expr = _topy(tidx[i]).replace("__DAPT%d" % i, block_expr)
                 callsite_stream.write("// AiCore Group Map")
                 callsite_stream.write(
                     "int %s = %s;" % (varname, expr), cfg, state_id, scope_entry
                 )
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, "int")
+                coords.append("int %s = %s;" % (varname, expr))
+            #raise Exception(coords)
+            self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, "int")
 
             # Delinearize beyond the third dimension
             if len(brange) > 3:
-                raise Exception("UWU, TODO, Ranges with more than 1 dimension")
+                raise Exception("TODO, Ranges with more than 3 dimension")
 
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
