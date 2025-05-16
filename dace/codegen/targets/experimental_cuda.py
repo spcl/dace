@@ -37,8 +37,6 @@ if TYPE_CHECKING:
 
 
 
-
-
 # TODO: GENERAL, discuss with Yakup
 # 1. Approval of dtypes
 
@@ -60,11 +58,6 @@ if TYPE_CHECKING:
 
 
 
-
-
-
-
-
 # TODO : I got rid of ScheduleType.GPU_Persistent (not supported anymore). If this codeBase 
 # actually replaces the old one, this should be defined in dtypes.py and also accessed from 
 # there. Also change GPU_SCHEDULES accesses to dtypes.GPU_SCHEDULES 
@@ -74,6 +67,8 @@ GPU_SCHEDULES = [
     dace.ScheduleType.GPU_Warp
 ]
 
+
+THREADS_PER_WARP = 32
 
 @registry.autoregister_params(name='experimental_cuda')
 class ExperimentalCUDACodeGen(TargetCodeGenerator):
@@ -510,25 +505,40 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id
             )
             
-            # 
+        
             self._generate_gpu_bridge(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
             #--------------- Generate Kernel Function ----------------
+
             ExperimentalCUDACodeGen._in_device_code = True
             kernel_stream = CodeIOStream()
 
             kernel_name = self._current_kernel_spec.kernel_name
             kernel_args = self._current_kernel_spec.args_typed
-            scope_entry = dfg_scope.source_nodes()[0]
+            block_dims = self._current_kernel_spec.block_dims
+            node = dfg_scope.source_nodes()[0]
+
+            # Conditionally add __launch_bounds__ for block size optimization.
+            launch_bounds = ''
+            if node.gpu_launch_bounds != '-1':
+                if node.gpu_launch_bounds == "0":
+                    if not any(symbolic.issymbolic(b) for b in block_dims):
+                        launch_bounds = f'__launch_bounds__({prod(block_dims)})'
+                else:
+                    launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+
 
             # Emit kernel function signature
             kernel_stream.write(
-                f'__global__ void {kernel_name}({", ".join(kernel_args)}) ',
-                cfg, state_id, scope_entry
+                f'__global__ void {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ',
+                cfg, state_id, node
             )
+
+            # generate kernel scope
             self._generate_kernel_scope(
                 sdfg, cfg, dfg_scope, state_id, self._globalcode, kernel_stream
             )
+
             self._localcode.write(kernel_stream.getvalue() + '\n')
             ExperimentalCUDACodeGen._in_device_code = False 
             # --------------------------------------------------------------
@@ -536,23 +546,27 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             # Generate the actual launch call (host-side)
             self._generate_kernel_launch(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
+
         else:
-            # We are already inside a kernel — this will be nested scope
+            # Nested scope: already inside a GPU kernel
             node = dfg_scope.source_nodes()[0]
             schedule_type = node.map.schedule.name
-            gen = getattr(self, f'_generate_{schedule_type}_scope', False)
+
+            if schedule_type == dace.ScheduleType.GPU_Device:
+                raise NotImplementedError(
+                    "Dynamic parallelism (nested GPU_Device schedules) is not supported."
+                )
+
+            gen = getattr(self, f'_generate_{schedule_type}_scope', None)
             if gen:
                 gen(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
             else:
                 raise NotImplementedError(
                     f"Scope generation for schedule type '{schedule_type}' is not implemented in ExperimentalCUDACodeGen. "
-                    "Please ensure that the schedule type is supported or implement the required functionality."
+                    "Please check for supported schedule types or implement the corresponding generator."
                 )
 
         
-
-
-
 ####################### helper functions to generate_scope ######################################
 
 
@@ -659,69 +673,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         
             
 
-    """
-
-
-                # First three dimensions are evaluated directly
-                for i in range(min(len(brange), 3)):
-                    varname = scope_map.params[-i - 1]
-
-                    # Delinearize third dimension if necessary
-                    if i == 2 and len(brange) > 3:
-                        block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
-                    else:
-                        block_expr = 'threadIdx.%s' % _named_idx(i)
-
-                    expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                    callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-
-                # Delinearize beyond the third dimension
-                if len(brange) > 3:
-                    for i in range(3, len(brange)):
-                        varname = scope_map.params[-i - 1]
-                        # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                        block_expr = '(threadIdx.z / (%s)) %% (%s)' % (
-                            _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
-                            _topy(kdims[i]),
-                        )
-
-                        expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                        callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
-                        self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-
-                # Generate conditions for this block's execution using min and max
-                # element, e.g. skipping out-of-bounds threads in trailing block
-                minels = brange.min_element()
-                maxels = brange.max_element()
-                for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
-                    condition = ''
-
-                    # Optimize conditions if they are always true
-                    #############################################
-
-                    # Block range start
-                    if i >= 3 or (dsym[i] >= minel) != True:
-                        condition += '%s >= %s' % (v, _topy(minel))
-
-                    # Special case: block size is exactly the range of the map (0:b)
-                    if i >= 3:
-                        skipcond = False
-                    else:
-                        skipcond = dsym_end[i].subs({dsym[i]: minel}) == maxel
-
-                    # Block range end
-                    if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
-                        if len(condition) > 0:
-                            condition += ' && '
-                        condition += '%s < %s' % (v, _topy(maxel + 1))
-
-                    # Emit condition in code
-                    if len(condition) > 0:
-                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
-                    else:
-                        callsite_stream.write('{', cfg, state_id, scope_entry)
-    """
 
     def _generate_GPU_ThreadBlock_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
                                         state_id: int, function_stream: CodeIOStream, kernel_stream: CodeIOStream) -> None:
@@ -820,9 +771,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 
 
-
-
-
     def _generate_GPU_Warp_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                                 function_stream: CodeIOStream, kernel_stream: CodeIOStream) -> None:
 
@@ -830,23 +778,116 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         with KernelScopeManager(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id, 
                                 function_stream=function_stream, callsite_stream=kernel_stream, comment="WarpLevel Scope") as scopeManager:
 
+
+
+            block_dims = self._current_kernel_spec.block_dims
+
+            state_dfg = cfg.state(state_id)
             node = dfg_scope.source_nodes()[0]
             scope_map = node.map
-            map_range = subsets.Range(scope_map.range[::-1])  # Reversed for potential better performance
-            block_dims = self._current_kernel_spec.block_dims
-            
 
-            THREADS_PER_WARP = 32
-            num_threads_in_block = prod(block_dims)
-            upper_bound_warp_ids = [max_elem + 1 for max_elem in map_range.max_element()]
-            num_warps = prod(upper_bound_warp_ids)
+            map_range = subsets.Range(scope_map.range[::-1])  # Reversed for potential better performance
             warp_dim = len(map_range)
-            state_dfg = cfg.state(state_id)
+            
+            # The following sizes and bounds are be symbolic
+            num_threads_in_block = prod(block_dims) 
+            warp_dim_bounds = [max_elem + 1 for max_elem in map_range.max_element()]
+            num_warps = prod(warp_dim_bounds)
+
 
 
             # ----------------- Guard checks -----------------------
 
-            #TODO: Move them to validation as well if possible
+            
+            # handles checks either at compile time or runtime (i.e. checks in the generated code)
+            self._hanlde_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
+                                               kernel_stream, scopeManager)
+                        
+
+
+            # ----------------- Define (flat) Thread ID within Block -----------------------
+
+            flattened_terms = []
+
+            for i, dim_size in enumerate(block_dims):
+
+                if dim_size == 1:
+                    continue
+
+                dim = _get_cuda_dim(i)
+                stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
+                idx_expr = " * ".join(stride + [f"threadIdx.{_get_cuda_dim(i)}"]) if stride else f"threadIdx.{dim}"
+                flattened_terms.append(idx_expr)
+
+
+            joined_terms = " + ".join(flattened_terms)
+            flat_thread_idx_expr = f"({joined_terms})" if len(flattened_terms) > 1 else joined_terms
+            # NOTE: name too ugly? How shorter but still unique ?
+            threadID_name = 'ThreadId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id, state_dfg.node_id(node))
+
+            kernel_stream.write(f"int {threadID_name} = ({flat_thread_idx_expr}) / {THREADS_PER_WARP};", cfg, state_id, node)
+            self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, 'int')
+
+
+            
+            # ----------------- Compute Map indices (= Warp indices) -----------------------
+
+            for i in range(warp_dim):
+                var_name = scope_map.params[-i - 1]  # reverse order
+                previous_sizes = warp_dim_bounds[:i]
+
+                if len(previous_sizes) > 0:
+                    divisor = prod(previous_sizes)
+                    expr = f"({threadID_name} / {divisor}) % {warp_dim_bounds[i]}"
+                else:
+                    expr = f"{threadID_name} % {warp_dim_bounds[i]}"
+
+                kernel_stream.write(f"int {var_name} = {expr};", cfg, state_id, node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int')
+
+
+
+            # ----------------- Guard Conditions for Warp Execution -----------------------
+
+
+            if num_warps * THREADS_PER_WARP != num_threads_in_block:
+                condition = f'{threadID_name} < {num_warps}'
+                scopeManager.open(condition)
+
+            warp_range = [(start, end + 1, stride) for start, end, stride in map_range.ranges]
+
+            for dim, (var_name, (start, _, stride)) in enumerate(zip(scope_map.params[::-1], warp_range)):
+                
+                condition_terms = []
+                
+                if start != 0:
+                    condition_terms.append(f"{var_name} >= {start}")
+                
+                if stride != 1:
+                    expr = var_name if start == 0 else f"({var_name} - {start})"
+                    condition_terms.append(f'{expr} % {stride} == 0' )
+                
+                if condition_terms:
+                    condition = " && ".join(condition_terms)
+                    scopeManager.open(condition)
+
+
+            # ----------------- Dispatch Subgraph code generation -----------------------
+
+
+            self._dispatcher.dispatch_subgraph(
+                sdfg, cfg, dfg_scope, state_id, function_stream,
+                kernel_stream, skip_entry_node=True
+            )
+
+
+
+
+    def _hanlde_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
+                                       warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
+                                       scopeManager: 'KernelScopeManager'):
+        
+            #TODO: Move them to sdfg validation as well if possible
             
             #TODO: rename xfh, to cryptic
             parent_map, _ = xfh.get_parent_map(state_dfg, node)
@@ -856,92 +897,58 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if warp_dim > 3:
                 raise NotImplementedError("GPU_Warp maps are limited to 3 dimensions.")
 
-            if num_threads_in_block % THREADS_PER_WARP != 0:
-                raise ValueError(f"Block must be a multiple of {THREADS_PER_WARP} threads for GPU_Warp scheduling "
-                                f"(got {num_threads_in_block}).")
 
-            # TODO: This should be checked at get_kernel dim
-            if num_threads_in_block > 1024:
-                raise ValueError("CUDA does not support more than 1024 threads per block (hardware limit).")
+            # Guard against invalid thread/block configurations.
+            # - For concrete (compile-time) values, raise Python errors early.
+            # - For symbolic values, insert runtime CUDA checks (guards) into the generated kernel.
+            #   These will emit meaningful error messages and abort execution if violated.
+            if isinstance(num_threads_in_block, symbolic.symbol):
+                condition = (
+                    f"{num_threads_in_block} % {THREADS_PER_WARP} != 0 || "
+                    f"{num_threads_in_block} > 1024 || "
+                    f"{num_warps} * {THREADS_PER_WARP} > {num_threads_in_block}"
+                )
+                kernel_stream.write(f"""\
+                if ({condition}) {{
+                    printf("CUDA error:\\n"
+                        "1. Block must be a multiple of {THREADS_PER_WARP} threads (DaCe requirement for GPU_Warp scheduling).\\n"
+                        "2. Block size must not exceed 1024 threads (CUDA hardware limit).\\n"
+                        "3. Number of warps x {THREADS_PER_WARP} must fit in the block (otherwise logic is unclear).\\n");
+                    asm("trap;");
+                }}
+                """)
 
-            if num_warps * THREADS_PER_WARP > num_threads_in_block:
-                raise ValueError(f"Invalid configuration: {num_warps} warps x {THREADS_PER_WARP} threads exceed "
-                                f"{num_threads_in_block} threads in the block.")
+            else:
+                if isinstance(num_warps, symbolic.symbol):
+                    condition = f"{num_warps} * {THREADS_PER_WARP} > {num_threads_in_block}"
+                    scopeManager.open(condition=condition)
 
-            if not all(x >= 0 for x in map_range.min_element()):
-                raise ValueError("Warp IDs (from map range) must be non-negative.")
+                elif num_warps * THREADS_PER_WARP > num_threads_in_block:
+                    raise ValueError(f"Invalid configuration: {num_warps} warps x {THREADS_PER_WARP} threads exceed "
+                                    f"{num_threads_in_block} threads in the block.")
 
-
-
-            # ----------------- Map unflattening and scope guards -----------------------
-
-            flattened_terms = []
-            for i, dim_size in enumerate(block_dims):
-                if dim_size == 1:
-                    continue
-                dim = _get_cuda_dim(i)
-                stride = [f"{block_dims[j]}" for j in range(i) if block_dims[j] > 1]
-                idx_expr = " * ".join(stride + [f"threadIdx.{_get_cuda_dim(i)}"]) if stride else f"threadIdx.{dim}"
-                flattened_terms.append(idx_expr)
-
-            # NOTE: too ugly? 
-            flat_thread_id_expr = " + ".join(flattened_terms)
-            warp_id_name = 'warpId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id, state_dfg.node_id(node))
-
-            kernel_stream.write(
-                f"int {warp_id_name} = ({flat_thread_id_expr}) / {THREADS_PER_WARP};",
-                cfg, state_id, node
-            )
-            self._dispatcher.defined_vars.add(warp_id_name, DefinedType.Scalar, 'int')
-
+                if num_threads_in_block % THREADS_PER_WARP != 0:
+                    raise ValueError(f"Block must be a multiple of {THREADS_PER_WARP} threads for GPU_Warp scheduling "
+                                     f"(got {num_threads_in_block}).")
+    
+                if num_threads_in_block > 1024:
+                    raise ValueError("CUDA does not support more than 1024 threads per block (hardware limit).")
+                
             
-            
-            # ----------------- Compute flattened warp ID   -----------------------
-
-            range_max_elements = map_range.max_element()
-            range_min_elements = map_range.min_element()
-            warp_dim_bounds = [str(e + 1) for e in range_max_elements]
-
-            for i in range(warp_dim):
-                var_name = scope_map.params[-i - 1]  # reverse order
-                previous_sizes = warp_dim_bounds[:i]
-
-                if len(previous_sizes) > 0:
-                    divisor = " * ".join(previous_sizes)
-                    divisor = f"({divisor})" if len(previous_sizes) > 1 else divisor
-                    expr = f"({warp_id_name} / {divisor}) % {warp_dim_bounds[i]}"
-                else:
-                    expr = f"{warp_id_name} % {warp_dim_bounds[i]}"
-
-                kernel_stream.write(f"int {var_name} = {expr};", cfg, state_id, node)
-                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int')
-
-
-                # check conditions
-                # NOTE: WarpId coordinate can start at non-zero but never exceeds the upper range bound
-                # due to the combination of enforcing guard checks (32 * warps <= # threads in block) and the way 
-                # we assign the coordinates
-                min_element = range_min_elements[i]
-                if range_min_elements[i] != 0:
-                    conditions = f'{var_name} >= {min_element}'
-                    scopeManager.open(condition=conditions)
-
-
-
-            # ----------------- Dispatch Subgraph code generation -----------------------
-
-            self._dispatcher.dispatch_subgraph(
-                sdfg, cfg, dfg_scope, state_id, function_stream,
-                kernel_stream, skip_entry_node=True
-            )
-
-
-
-        
+            for x in map_range.min_element():
+                if isinstance(x, symbolic.symbol):
+                    kernel_stream.write(f'if ({x} < 0) {{\n'
+                                        f'    printf("Runtime error: Warp ID symbol {x} must be non-negative.\\n");\n'
+                                        f'    asm("trap;");\n'
+                                        f'}}\n')
+                elif x < 0:
+                    raise ValueError(f"Warp ID value {x} must be non-negative.")
+                
+    
 
 
     def _generate_gpu_bridge(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
-                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                             state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
 
             scope_entry = dfg_scope.source_nodes()[0]
@@ -960,9 +967,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                 (kernel_name, ', '.join(kernel_bridge_args)), cfg, state_id, scope_entry)
         
 
+
+
     def _generate_kernel_launch(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
                                     state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
             
+            # NOTE: This generates the function that launches the kernel.
+            # Do not confuse it with CUDA's internal "LaunchKernel" API —
+            # the generated function *calls* that API, but we also refer to it as a "launch function".
 
             scope_entry = dfg_scope.source_nodes()[0]
 
@@ -978,7 +990,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             bdims = ', '.join(symbolic_to_cpp(block_dims))
 
 
-            # Declaration of the function which launches the kernel (CUDA code)
+
+            # ----------------- Kernel Launch Function Declaration -----------------------
             self._localcode.write(
                 """
                 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
@@ -989,9 +1002,34 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             )
 
 
-                
+            
+            # ----------------- Guard Checks handling -----------------------
 
-            # Calling kernel function (CUDA code)
+            # Ensure that iteration space is neither empty nor negative sized
+            single_dimchecks = []
+            for gdim in grid_dims:
+                # Only emit a guard if we can't statically prove gdim > 0
+                if (gdim > 0) != True:
+                    single_dimchecks.append(f'(({symbolic_to_cpp(gdim)}) <= 0)')
+
+            dimcheck = ' || '.join(single_dimchecks)
+
+            if dimcheck:
+                emptygrid_warning = ''
+                if Config.get('debugprint') == 'verbose' or Config.get_bool('compiler', 'cuda', 'syncdebug'):
+                    emptygrid_warning = (f'printf("Warning: Skipping launching kernel \\"{kernel_name}\\" '
+                                        'due to an empty grid.\\n");')
+
+                self._localcode.write(
+                    f'''
+                    if ({dimcheck}) {{
+                        {emptygrid_warning}
+                        return;
+                    }}''', cfg, state_id, scope_entry)
+
+
+
+            # ----------------- Kernel Launch Invocation -----------------------
             self._localcode.write(
                 '''
                 void  *{kname}_args[] = {{ {kargs} }};
@@ -1011,7 +1049,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             
 
             self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
-
             self._localcode.write('}')
 
 
@@ -1104,7 +1141,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # if it is not implemented, use generate node of cpu impl
         if gen is not False: 
             gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        elif type(node).__name__ == 'MapExit':
+        elif type(node).__name__ == 'MapExit' and node.schedule in GPU_SCHEDULES:
+            # Special case: It is a MapExit but from a GPU_schedule- the MapExit is already
+            # handled by a KernelScopeManager instance. Otherwise cpu_codegen will close it
             return
         else:
             self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
