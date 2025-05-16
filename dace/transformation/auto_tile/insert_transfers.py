@@ -122,7 +122,7 @@ class InsertTransfers(ppl.Pass):
             kk.sort()
             self._input_output_types[tuple(kk)] = v
 
-    def apply_pass(self, sdfg: SDFG, _):
+    def apply_pass(self, sdfg: SDFG, pipeline_results: typing.List[typing.Any]):
         self.deserialize_inputs()
 
         for state in sdfg.states():
@@ -157,7 +157,7 @@ class InsertTransfers(ppl.Pass):
         for node in all_nodes:
             if isinstance(node, dace.nodes.AccessNode):
                 arr = sdfg.arrays[node.data]
-                if arr.storage == dace.dtypes.StorageType.Register:
+                if arr.storage == dace.dtypes.StorageType.Register or arr.storage == dace.dtypes.StorageType.Default:
                     if scope_dict[node] is not None and hasattr(
                         scope_dict[node], "computational_units"
                     ):
@@ -530,10 +530,13 @@ class InsertTransfers(ppl.Pass):
 
                     if arr.storage == dace.dtypes.StorageType.Register:
                         raise Exception(arr)
+
     def _apply(self, state: SDFGState, sdfg: SDFG, device_map_entry: nodes.MapEntry):
         print(self._G)
         self._specialize_register_storage(sdfg, state, device_map_entry)
+        sdfg.save("gemm_register_specialized.sdfg")
         self._specialize_purpose(sdfg, state, device_map_entry)
+        sdfg.save("gemm_locations_specialized.sdfg")
         all_nodes = state.all_nodes_between(
             device_map_entry, state.exit_node(device_map_entry)
         )

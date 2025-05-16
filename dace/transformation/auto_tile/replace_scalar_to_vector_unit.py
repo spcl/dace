@@ -164,16 +164,19 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
         for oe in state.out_edges(outer_entry):
             print(oe, oe.data)
             ranges = oe.data.subset
-            i_appears = self._param_appears(param_i, ranges)
-            j_appears = self._param_appears(param_j, ranges)
-            if i_appears and not j_appears:
-                purpose_dict[oe.data.data] = "A"
-            elif j_appears and not i_appears:
-                purpose_dict[oe.data.data] = "B"
-            elif i_appears and j_appears:
-                purpose_dict[oe.data.data] = "acc"
+            if ranges is not None:
+                i_appears = self._param_appears(param_i, ranges)
+                j_appears = self._param_appears(param_j, ranges)
+                if i_appears and not j_appears:
+                    purpose_dict[oe.data.data] = "A"
+                elif j_appears and not i_appears:
+                    purpose_dict[oe.data.data] = "B"
+                elif i_appears and j_appears:
+                    purpose_dict[oe.data.data] = "acc"
+                else:
+                    raise Exception("Could not deduce purpose of input")
             else:
-                raise Exception("Could not deduce purpose of input")
+                continue
         for oe in state.out_edges(state.exit_node(outer_entry)):
             ranges = oe.data.subset
             i_appears = self._param_appears(param_i, ranges)
@@ -304,16 +307,21 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
             acc = None
             for k, v in purpose_map.items():
                 if "out" in k:
-                    if v == "acc":
+                    if v == "acc" or v == "C":
                         res = k
                 else:
                     if v == "A":
                         a = k
                     elif v == "B":
                         b = k
-                    elif v == "acc":
+                    elif v == "acc" or v == "C":
                         acc = k
+            print(purpose_map)
             tasklet_template = self.operator_impl[tasklet_type]
+            assert a is not None
+            assert b is not None
+            assert res is not None
+            assert acc is not None
             instanciated_tasklet = tasklet_template.format(a=a, b=b, c=acc, d=res)
         else:
             tasklet_template = self.operator_impl[tasklet_type]
