@@ -4,9 +4,11 @@
 
 import pytest
 import numpy as np
+import re
 import sys
 
 import dace
+from dace.codegen.instrumentation.utils import instrument_sdfg
 from dace.sdfg import nodes
 from dace.transformation.interstate import GPUTransformSDFG
 
@@ -39,12 +41,11 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         if isinstance(node, nodes.MapEntry) and node.map.label == 'mult':
             node.map.instrument = instrumentation
             state.instrument = instrumentation
-    # Set Timer instrumentation on the whole SDFG
-    if instrumentation == dace.InstrumentationType.Timer:
-        sdfg.instrument = instrumentation
 
-    if instrumentation == dace.InstrumentationType.GPU_Events:
+    if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS]:
         sdfg.apply_transformations(GPUTransformSDFG)
+
+    instrument_sdfg(instrumentation, sdfg)
 
     sdfg(A=A, B=B, C=C, N=size)
 
@@ -56,6 +57,19 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
         print('Instrumentation report')
         report = sdfg.get_latest_report()
         print(report)
+
+    # Check that the NVTX/rocTX range wrapper is present in the generated CPU code
+    if instrumentation is dace.InstrumentationType.GPU_TX_MARKERS:
+        code = sdfg.generate_code()[0].clean_code
+        tx_include = re.search(r'#include <(nvtx3/nvToolsExt|roctx).h>', code)
+        assert tx_include is not None
+        range_push = re.search(r'(nvtx|roctx)RangePush\("sdfg', code) is not None
+        range_push &= re.search(r'(nvtx|roctx)RangePush\("copy', code) is not None
+        range_push &= re.search(r'(nvtx|roctx)RangePush\("state', code) is not None
+        range_push &= re.search(r'(nvtx|roctx)RangePush\("scope', code) is not None
+        assert range_push
+        range_pop = re.search(r'(nvtx|roctx)RangePop\b', code)
+        assert range_pop is not None
 
 
 def test_timer():
@@ -73,8 +87,14 @@ def test_gpu_events():
     onetest(dace.InstrumentationType.GPU_Events)
 
 
+@pytest.mark.gpu
+def test_gpu_tx_markers():
+    onetest(dace.InstrumentationType.GPU_TX_MARKERS)
+
+
 if __name__ == '__main__':
     test_timer()
     test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_gpu_events()
+        test_gpu_tx_markers()
