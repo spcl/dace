@@ -1,6 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from ast import Tuple
 import copy
+from typing import Union
+from itertools import product
 import dace
 from dace import subsets
 from dace.data import Array
@@ -72,9 +74,12 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
         conds = dim_check
         if num_threads > line_len:
             lines_at_a_time = num_threads // line_len
-            real_lines_at_a_time = min(
-                int(lines_at_a_time), int(self.dst_arr.shape[-2])
-            )
+            if len(self.dst_arr.shape) == 1:
+                real_lines_at_a_time = 1
+            else:
+                real_lines_at_a_time = min(
+                    int(lines_at_a_time), int(self.dst_arr.shape[-2])
+                )
             code += f"// load multiple lines at a time {real_lines_at_a_time}\n"
             if len(self.src_arr.shape) == 1:
                 num_active_threads = line_len
@@ -113,6 +118,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
 
                 var_id = 0
                 for dim in conds[:-2]:
+                    code += f"#pragma unroll\n"
                     code += f"for (int i{var_id} = 0; i{var_id} < {cpp.sym2cpp(dim)}; i{var_id} += 1) {{\n"
                     var_id += 1
 
@@ -156,7 +162,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                             conds[-2] -= remainder_iters
                         else:
                             remainder_iters = 0
-                    code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{\n"
+                    code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{//A\n"
                     further_access_str_src += (
                         " + " + f"((i{var_id}) * {cpp.sym2cpp(self.src_arr.strides[-2])})"
                     )
@@ -194,7 +200,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
         else:
             code += f"// load one line at a time\n"
             if len(self.src_arr.shape) == 1:
-                num_active_threads = line_len
+                num_active_threads = num_threads
                 strides = self.src_arr.strides
                 offset_expression_1d = "+".join(
                     [
@@ -204,9 +210,10 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
                 )
                 cond = conds[0]
                 code += (
+                    f"#pragma unroll\n" +
                     f"for (int i0 = tid; i0 < {cond}; i0 += {num_active_threads}) {{\n"
                 )
-                code += f"{self.dst_arr_name}[tid] = {self.src_arr_name}[{offset_expression_1d}+tid];\n"
+                code += f"{self.dst_arr_name}[i0] = {self.src_arr_name}[{offset_expression_1d}+i0];\n"
                 code += f"}}\n"
             else:
                 strides = self.src_arr.strides
@@ -220,6 +227,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
 
                 var_id = 0
                 for dim in conds[:-2]:
+                    code += f"#pragma unroll\n"
                     code += f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
                     var_id += 1
 
@@ -266,6 +274,7 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
         tiles_evenly = self.tiles_evenly
 
         conds = []
+        #raise Exception(self.src_subset, self.src_arr_name, self.dst_arr_name, self.src_arr.shape, self.dst_arr.shape)
         for (beg, end, step), lim in zip(self.src_subset, self.src_arr.shape):
             load_len = end + 1 - beg
             conds.append(f"{beg} <= {lim} - {load_len}")
@@ -305,6 +314,8 @@ class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
             code += "__syncthreads();\n"
         return code
 
+from typing import NamedTuple
+
 
 @make_properties
 class ExplicitMemoryMove(transformation.SingleStateTransformation):
@@ -332,12 +343,25 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                      default={}, desc="Name mapping")
     level = Property(dtype=int, default=0, desc="Level of the map")
     pad_contig_dim = Property(dtype=bool, default=False, allow_none=False, desc="Pad contiguous dimension to a prime number bigger than the contig dimension")
+    prepend_purpose_to_name = Property(dtype=bool, default=False, allow_none=False, desc="Prepend the purpose to the name of the array")
+    max_levels = Property(dtype=int, default=2, desc="Maximum number of levels")
+    level_list_reversed = Property(dtype=bool, default=False, desc="Reverse the level list iteraiton")
 
+    locations_with_purpose = DictProperty(
+        key_type=str, value_type=dtypes.StorageType, default=dict(), desc="Locations with purpose"
+    )
+    exclude_from_explicit_memory = ListProperty(element_type=str, default=[], desc="List of arrays to exclude from explicit memory movement")
     def __init__(self):
         super().__init__()
 
     def remove_prefix(self, src_arr_name: str):
-        for prefix in self.location_prefixes.values():
+        level_prefixes = []
+        for i in range(1,self.max_levels+1):
+            level_prefixes += [f"A{i}", f"B{i}", f"C{i}"]
+        all_combinations = level_prefixes
+        #all_combinations = [f"{a}_{b}" for a, b in product(level_prefixes, self.location_prefixes.values())]
+        #print(all_combinations + list(self.location_prefixes.values()))
+        for prefix in all_combinations + list(self.location_prefixes.values()):
             if src_arr_name.startswith(prefix):
                 return src_arr_name[len(prefix)+1:]
         return src_arr_name
@@ -415,7 +439,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             if memlet is not None and memlet.data is not None:
                 src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
                 if src_arrstorage_type == self.src_memory_location:
-                    num_loads += 1
+                    if src_arr_name not in self.exclude_from_explicit_memory:
+                        num_loads += 1
 
         current_load = 0
         for out_edge in state.out_edges(self.map_entry):
@@ -424,14 +449,19 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 continue
 
             src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
-            print(src_arrstorage_type, self.src_memory_location, isinstance(
-                sdfg.arrays[src_arr_name], dace.data.Scalar
-            ))
 
             if src_arrstorage_type != self.src_memory_location or isinstance(
                 sdfg.arrays[src_arr_name], dace.data.Scalar
             ):
                 continue
+            if src_arr_name in self.exclude_from_explicit_memory:
+                continue
+
+            pruned_src_arr_name = self.remove_prefix(src_arr_name)
+            purpose_dict = self.device_map_entry.purpose_dict if self.prepend_purpose_to_name and hasattr(self.device_map_entry, "purpose_dict") else dict()
+            if src_arr_name in purpose_dict:
+                if (str(self.dst_memory_location) + "@" + purpose_dict[pruned_src_arr_name]) in self.locations_with_purpose:
+                    self.dst_memory_location = self.locations_with_purpose[str(self.dst_memory_location) + "@" + purpose_dict[pruned_src_arr_name]]
 
             parsedstorage_type = src_arrstorage_type.name
 
@@ -478,7 +508,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                     smys_to_rm.add(dace.symbol(p))
 
                 subset_to_pass = []
-                print("CCCCCc", memlet.subset)
                 for i, (beg, end, step) in enumerate(memlet.subset):
                     subs_dict = {sym: 0 for sym in smys_to_rm}
                     _beg = beg.subs(subs_dict)
@@ -487,14 +516,14 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                     subset_to_pass.append((_beg, _end, _step))
 
                 shape = [(end + 1 - beg)//step for beg, end, step in subset_to_pass]
-                print("BBBBBBB", memlet)
-            print("AAAAAAA", subset_to_pass, shape, to_replace)
             # End Mapping
+            #raise Exception(subset_to_pass)
 
             mem_loc_a = parsedstorage_type
             mem_loc_b = parsed_memory_location
             lib_node_name = f"move_{memlet.data}_from_{mem_loc_a}_to_{mem_loc_b}"
             dst_arr_shape = shape
+            #print(f"dst_arr_shape: {dst_arr_shape}")
             num_threads = [
                 int((e + 1 - b) / s)
                 for b, e, s in self.thread_group_map_entry.map.range
@@ -502,20 +531,26 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             dst_arr_strides = None
             if self.pad_contig_dim:
                 dst_arr_stride_0 = 1
-                dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
-                dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
-                if len(shape) > 2:
+
+                if len(shape) == 1:
+                    dst_arr_strides = [dst_arr_stride_0]
+                elif len(shape) == 2:
+                    dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
+                    dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
+                elif len(shape) > 2:
+                    dst_arr_stride_1 = self.find_next_prime(dst_arr_shape[-1])
+                    dst_arr_strides = [dst_arr_stride_1, dst_arr_stride_0]
                     for sh in reversed(dst_arr_shape[1:-1]):
                         dst_arr_stride_1 *= sh
                         dst_arr_strides.insert(0, dst_arr_stride_1)
             else:
                 dst_arr_strides = None
-            #raise Exception(strides, shape, self.pad_contig_dim, self.tiles_evenly)
 
-            pruned_src_arr_name = self.remove_prefix(src_arr_name)
+
             dst_arr_name = (
                 self._location_to_prefix(self.dst_memory_location) + "_" + pruned_src_arr_name
             )
+
             c = 0
             while dst_arr_name in sdfg.arrays:
                 if not (dst_arr_name + str(c) in sdfg.arrays):
@@ -563,11 +598,24 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 dst_arr_name,
                 [beg for (beg, end, step) in memlet.subset],
             )
+            # Map thread offsets (tbock + thread offsets) to tblock offsets
+            for n, (n2, offset) in loc1_to_loc2_map.items():
+                noffsets = []
+                for _expr in offset:
+                    expr = _expr
+                    syms = expr.free_symbols
+                    for sym in syms:
+                        expr = expr.subs(sym, dace.symbolic.symbol(str(sym).replace("d_", "b_")))
+                    noffsets.append(expr)
+                loc1_to_loc2_map[n] = (n2, noffsets)
+
 
             dst_access_node = nodes.AccessNode(data=dst_arr_name)
             state.add_node(dst_access_node)
             # Compute thread block offset
             old_subset = memlet.subset
+
+
 
             # This removes any parameter that depends on the grid loop
             new_subset = []
@@ -594,7 +642,11 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                         )
                     else:
                         thread_group_offset.append(False)
-                    new_subset.append((_beg, _end, _step))
+
+                    if _beg == 0:
+                        new_subset.append((_beg, _end, _step))
+                    else:
+                        new_subset.append((_beg - beg, _end - beg, _step))
             else:
                 for i, (beg, end, step) in enumerate(memlet.subset):
                     subs_dict = {sym: 0 for sym in smys_to_rm}
@@ -657,21 +709,9 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 if memlet.data in loc1_to_loc2_map.keys():
                     dst_name, offset = loc1_to_loc2_map[memlet.data]
                     new_subset_list = [
-                        (beg - offset, end - offset, step)
-                        for (beg, end, step), offset in zip(memlet.subset, offset)
+                        (beg - o, end - o, step)
+                        for (beg, end, step), o in zip(memlet.subset, offset)
                     ]
-
-                    for i, ((beg, end, step), apply_offset) in enumerate(
-                        zip(new_subset_list, thread_group_offset)
-                    ):
-                        if apply_offset:
-                            params = self.thread_group_map_entry.map.params
-                            nb = (
-                                beg + symbol(params[i]),
-                                end + symbol(params[i]),
-                                step,
-                            )
-                            new_subset_list[i] = nb
 
                     new_memlet = Memlet(
                         subset=subsets.Range(new_subset_list), data=dst_name

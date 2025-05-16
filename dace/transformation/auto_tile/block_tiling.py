@@ -142,26 +142,26 @@ class BlockTiling(transformation.SingleStateTransformation):
             u, u_conn, v, v_conn, memlet = out_edge
             state.add_edge(outer_work_map_entry, u_conn, v, v_conn, copy.deepcopy(memlet))
             state.add_edge(u, u_conn, outer_work_map_entry, v_conn, copy.deepcopy(memlet))
-            print("AE10", outer_work_map_entry, u_conn, v, v_conn, copy.deepcopy(memlet))
-            print("AE11", u, u_conn, outer_work_map_entry, v_conn, copy.deepcopy(memlet))
+            #print("AE10", outer_work_map_entry, u_conn, v, v_conn, copy.deepcopy(memlet))
+            #print("AE11", u, u_conn, outer_work_map_entry, v_conn, copy.deepcopy(memlet))
             state.remove_edge(out_edge)
         for in_edge in state.in_edges(thread_block_map_exit):
             u, u_conn, v, v_conn, memlet = in_edge
             state.add_edge(outer_work_map_exit, u_conn, v, v_conn, copy.deepcopy(memlet))
             state.add_edge(u, u_conn, outer_work_map_exit, v_conn, copy.deepcopy(memlet))
-            print("AE12", outer_work_map_exit, u_conn, v, v_conn, copy.deepcopy(memlet))
-            print("AE13", u, u_conn, outer_work_map_exit, v_conn, copy.deepcopy(memlet))
+            #print("AE12", outer_work_map_exit, u_conn, v, v_conn, copy.deepcopy(memlet))
+            #print("AE13", u, u_conn, outer_work_map_exit, v_conn, copy.deepcopy(memlet))
             state.remove_edge(in_edge)
 
         # Update the ranges of the inner map
         work_map_range_list = []
         inner_work_map_range_list = []
         old_work_map_ranges = []
-        print(matching_tiling_params, work_map.range, outer_work_map.params, outer_work_map.range)
+        #print(matching_tiling_params, work_map.range, outer_work_map.params, outer_work_map.range)
         for tiling_param, (beg, end, step), outer_work_map_param, (obeg, oend, ostep) in zip(matching_tiling_params, work_map.range, outer_work_map.params, outer_work_map.range):
             old_work_map_ranges.append((beg, end, step))
             sym_outer_work_map_param = symbol(outer_work_map_param)
-            print((oend+1-obeg)//ostep, step*tiling_param-1)
+            #print((oend+1-obeg)//ostep, step*tiling_param-1)
             if ostep <= step*tiling_param-1:
                 work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + ((oend+1-obeg)//ostep), ((oend+1-obeg)//ostep)))
                 inner_work_map_range_list.append((0, (oend+1-obeg)//ostep, step))
@@ -196,7 +196,7 @@ class BlockTiling(transformation.SingleStateTransformation):
             new_memlet = Memlet(subset=subsets.Range(new_ranges), data=memlet.data, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
             state.remove_edge(edge)
             state.add_edge(u, u_conn, v, v_conn, new_memlet)
-            print("AE1:",u, u_conn, v, v_conn, new_memlet)
+            #print("AE1:",u, u_conn, v, v_conn, new_memlet)
             if not isinstance(v, nodes.MapExit):
                 edges_to_check.union(set(state.out_edges(v)))
 
@@ -372,7 +372,6 @@ class BlockTiling(transformation.SingleStateTransformation):
                     print("AE4:",u,uc,v,vc,tmp_memlet)
 
         # Move tmp allocation before the outer work Map
-        sdfg.save("i.sdfg")
         for (access_node_in_edge, access_node, access_node_out_edge, tasklet, tasklet_out_edge) in assignments_removed:
             _, _, _, in_conn, m1 = access_node_in_edge
             for out_edge in state.out_edges(outer_work_map_entry):

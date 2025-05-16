@@ -7,7 +7,7 @@ from pathlib import Path
 import random
 from typing import Dict, List, Tuple, Type, Any
 
-import cupy
+
 import numpy as np
 import dace
 from dace.transformation.auto_tile import auto_tile_util
@@ -27,6 +27,7 @@ from dace.transformation.auto_tile.auto_tile_util import find_nodes_by_cond
 from dace.transformation.auto_tile.auto_tile_util import find_state_by_cond
 from dace.transformation.auto_tile.auto_tile_util import get_ref_kernel_nodes_and_edges
 from dace.transformation.auto_tile.auto_tile_util import validate_and_pad_params_to_three
+#from dace.transformation.passes.indirect_access_from_nested_sdfg_to_map import IndirectAccessFromNestedSDFGToMap
 
 
 def _tile_gpu(
@@ -48,10 +49,48 @@ def _tile_gpu(
     loglines,
     timeout,
     random_iter,
+    static_sram_limit = 48 * 1024,
+    bound_dims = [-1, -1, -1],
+    copy_whole = False,
+    exclude_from_explicit_memory=[],
+    output_name=None,
 ):
+
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
-        _kernel_sdfg = copy_sub_scope(state, entry)
+        _kernel_sdfg = copy_sub_scope(state, entry) if not copy_whole else copy.deepcopy(sdfg)
+        #IndirectAccessFromNestedSDFGToMap().apply_pass(sdfg=_kernel_sdfg, _={})
+
+        for arr_name, arr in sdfg.arrays.items():
+            if arr_name not in inputs:
+                assert arr.transient, f"{arr_name} not in {inputs.keys()} and not transient"
+                if isinstance(arr, dace.data.Array):
+                    raise Exception(f"Pass all inputs {arr_name}: {inputs.keys()}")
+                    shape = arr.shape
+                    newshape = []
+                    strides = []
+                    for s in shape:
+                        if isinstance(dace.symbolic.SymExpr(s), int):
+                            ss = int(dace.symbolic.SymExpr(s))
+                        else:
+                            ss = int(dace.symbolic.SymExpr(s).subs([(k,v) for k, v in inputs.items()
+                                                            if isinstance(v, int) or isinstance(v, float)]))
+                        newshape.append(ss)
+                    for s in arr.strides:
+                        if isinstance(dace.symbolic.SymExpr(s), int):
+                            ss = int(dace.symbolic.SymExpr(s))
+                        else:
+                            ss = int(dace.symbolic.SymExpr(s).subs([(k,v) for k, v in inputs.items()
+                                                            if isinstance(v, int) or isinstance(v, float)]))
+                        strides.append(ss)
+                    #raise Exception(shape, ns)
+                    tensor = torch.rand(*newshape, device='cuda')
+                    tensor = tensor.as_strided(size=newshape, stride=strides)
+                    inputs[arr_name] = tensor
+                else:
+                    inputs[arr_name] = 42
+
+
         _kernel_sdfg.name = f"{sdfg.name}_auto_tiled_{call_id}"
         auto_tile_util.convert_inputs_to_gpu_storage(_kernel_sdfg)
         auto_tile_util.set_transient(_kernel_sdfg)
@@ -65,25 +104,26 @@ def _tile_gpu(
             and n.guid == entry.guid,
         )
         _kernel_exit = _kernel_state.exit_node(_kernel_entry)
-        output_name = None
-        for oe in _kernel_state.out_edges(_kernel_exit):
-            if isinstance(oe.dst, dace.nodes.AccessNode):
-                output_name = oe.dst.data
-                break
+        if output_name is None:
+            for oe in _kernel_state.out_edges(_kernel_exit):
+                if isinstance(oe.dst, dace.nodes.AccessNode):
+                    output_name = oe.dst.data
+                    break
 
         if output_name is None:
-            raise Exception("The output name could not be deduced")
+            _kernel_sdfg.save("failing.sdfgz", compress=True)
+            print("CC",_kernel_entry, _kernel_exit, _kernel_state.out_edges(_kernel_exit), _kernel_state.in_edges(_kernel_entry))
+            raise Exception(f"Warning, The output name could not be deduced, chosing one {_kernel_state.out_edges(_kernel_exit)}")
 
         copy_inputs = copy.deepcopy(inputs)
+        _kernel_sdfg(**copy_inputs)
+        output_from_non_transformed = copy.deepcopy(copy_inputs[output_name])
         non_transformed_time = auto_tile_util.run_and_measure_time(
-            _kernel_sdfg, copy_inputs
+            kernel_sdfg=_kernel_sdfg, inputs=copy_inputs,
+            repeats=6, warmups=1, dev_type=dace.dtypes.ScheduleType.GPU_Device,
+            instr_type=dace.dtypes.InstrumentationType.GPU_Events
         )
-        output_from_non_transformed = copy_inputs[output_name]
-        # Clean memory we do not need anymore
-        for key in list(copy_inputs.keys()):
-            if key != output_name:
-                copy_inputs[key] = None
-        copy_inputs = None
+        del copy_inputs
         gc.collect()
 
         # Unset GPU events
@@ -103,6 +143,7 @@ def _tile_gpu(
             memory_tiling_parameters = [(1,)]
 
     else:
+        #IndirectAccessFromNestedSDFGToMap().apply_pass(sdfg=sdfg, _={})
         _kernel_sdfg = sdfg
         _kernel_state = state
         _kernel_entry = entry
@@ -147,6 +188,7 @@ def _tile_gpu(
 
     curi = 0
     if random_iter:
+        random.seed(42)
         random.shuffle(combinations)
     for i, current_config in enumerate(combinations):
         # We need to copy this sdfg if we are working in the copy as we apply transformations
@@ -157,7 +199,6 @@ def _tile_gpu(
             apply_explicit_memory_transfer_param,
             apply_remainder_loop_param,
         ) = current_config
-        clean_cache()
         curi += 1
         if timeout is not None and curi > timeout:
             logfile.flush()
@@ -169,6 +210,10 @@ def _tile_gpu(
                 continue
         if verbose:
             print("Current config:", current_config)
+
+        for i, (tc, tb) in enumerate(zip(thread_coarsening_param, thread_block_param)):
+            if i < len(bound_dims) and bound_dims[i] != -1 and tc * tb > bound_dims[i]:
+                print(f"Skipping {current_config} as it exceeds bound dims")
 
         if work_on_copy:
             kernel_sdfg = copy.deepcopy(_kernel_sdfg)
@@ -229,7 +274,8 @@ def _tile_gpu(
             lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
             and n.label != "KernelEntryMap"
             and n.label != "ThreadCoarsenedMap"
-            and n.label != dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map",
+            and n.label != dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map"
+            and n.map.range.num_elements_exact() != 1,
         )
         thread_block_map_entry = find_node_by_cond(
             kernel_state,
@@ -247,22 +293,34 @@ def _tile_gpu(
         if not is_assign_kernel:
             for i in range(len(work_maps)):
                 work_map_entry: dace.nodes.MapEntry = work_maps[i]
-                work_map_tile = memory_tiling_params[i % len(memory_tiling_params)]
 
                 # If the passed memory tiling parameter is less than the map dimension, pad
                 # If it longer, then take the first elements
                 tuple_size_needed = len(work_map_entry.map.range)
-                work_map_tile = work_map_tile[:tuple_size_needed] + (1,) * (
-                    tuple_size_needed - len(work_map_tile)
+                work_map_tile = memory_tiling_params[:tuple_size_needed] + (1,) * (
+                    tuple_size_needed - len(memory_tiling_params)
                 )
 
-                BlockTiling.apply_to(
-                    sdfg=kernel_sdfg,
-                    options={"block_tile_sizes": work_map_tile},
-                    verify=True,
-                    thread_block_map_entry=thread_block_map_entry,
-                    sequential_map_entry=work_map_entry,
-                )
+                invalid_block_tile = False
+                for _i, (b,e,s) in enumerate(work_map_entry.map.range):
+                    try:
+                        r = int((e+1-b)//s)
+                        if r < work_map_tile[_i]:
+                            # Cane apply
+                            invalid_block_tile = True
+                            break
+                    except Exception as ex:
+                        pass
+
+
+                if not invalid_block_tile:
+                    BlockTiling.apply_to(
+                        sdfg=kernel_sdfg,
+                        options={"block_tile_sizes": work_map_tile},
+                        verify=True,
+                        thread_block_map_entry=thread_block_map_entry,
+                        work_map_entry=work_map_entry,
+                    )
             thread_block_map_entry = find_node_by_cond(
                 kernel_state,
                 kernel_entry,
@@ -276,13 +334,18 @@ def _tile_gpu(
                     lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                     and n.map.label == dace.dtypes.ScheduleType.GPU_ThreadBlock.name + "Map",
                 )
-                print(thread_block_map_entry)
+                outer_work_map = find_node_by_cond(
+                    kernel_state,
+                    thread_block_map_entry,
+                    lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
+                    and n.map.label.startswith("OuterWorkMap"),
+                )
                 ExplicitMemoryMove.apply_to(
                     sdfg=kernel_sdfg,
                     verify=True,
                     device_map_entry=kernel_entry,
                     thread_group_map_entry=thread_block_map_entry,
-                    map_entry=thread_block_map_entry,
+                    map_entry=outer_work_map,
                     options={
                         "dst_memory_location": dace.dtypes.StorageType.GPU_Shared,
                         "src_memory_location": dace.dtypes.StorageType.GPU_Global,
@@ -294,6 +357,7 @@ def _tile_gpu(
                         "level": 0,
                         "tiles_evenly": apply_explicit_memory_transfer_param[1],
                         "pad_contig_dim": apply_explicit_memory_transfer_param[2],
+                        "exclude_from_explicit_memory": exclude_from_explicit_memory,
                     },
                 )
 
@@ -326,6 +390,7 @@ def _tile_gpu(
                     lambda n, kernel_state: isinstance(n, dace.nodes.MapEntry)
                     and n.map.label.startswith("ThreadCoarsenedMap"),
                 )
+
                 RemainderLoop.apply_to(
                     sdfg=kernel_sdfg,
                     verify=True,
@@ -343,34 +408,55 @@ def _tile_gpu(
                 if arr.storage == dace.dtypes.StorageType.GPU_Shared:
                     shr_mem_needed += arr.total_size * arr.dtype.bytes
 
-            if shr_mem_needed >= 48 * 1024:
+            if shr_mem_needed >= static_sram_limit:
                 print(
                     f"Kernel uses too much shared memory for config {current_config}, skipping."
                 )
             else:
                 copy_inputs_2 = copy.deepcopy(inputs)
-                time = auto_tile_util.run_and_measure_time(kernel_sdfg, copy_inputs_2)
-                output_from_transformed = copy_inputs_2[output_name]
-
                 if verify:
-                    are_close = cupy.allclose(
+                    kernel_sdfg(**copy_inputs_2)
+                    output_from_transformed = copy.deepcopy(copy_inputs_2[output_name])
+                    import torch
+
+                    are_close = torch.allclose(
                         output_from_transformed,
                         output_from_non_transformed,
                         rtol=1e-3,
                         atol=1e-5,
                     )
 
+                    if not are_close:
+                        abs_diff = torch.abs(output_from_transformed - output_from_non_transformed)
+                        max_abs_diff = abs_diff.max().item()
+                        rel_diff = abs_diff / (torch.abs(output_from_non_transformed) + 1e-300)
+                        max_rel_diff = rel_diff.max().item()
+                        print("\nNumerical verification failed!")
+                        print(f"  SDFG: {sdfg.label}")
+                        print(f"  Entry node: {entry.label}")
+                        print(f"  Config: {current_config}")
+                        print(f"  Max absolute difference: {max_abs_diff:.6e}")
+                        print(f"  Max relative difference: {max_rel_diff:.6e}")
+                        print("  Saved failing SDFG as 'failing.sdfgz'")
+                        print(abs_diff)
+                        import numpy as np
+                        np.savetxt("matrix.txt", abs_diff.cpu().numpy(), fmt="%.4f")
+
+                time = auto_tile_util.run_and_measure_time(
+                    kernel_sdfg=kernel_sdfg, inputs=copy_inputs_2,
+                    repeats=6, warmups=1, dev_type=dace.dtypes.ScheduleType.GPU_Device,
+                    instr_type=dace.dtypes.InstrumentationType.GPU_Events)
+
                 # Clean memory we do not need anymore
-                for key in list(copy_inputs_2.keys()):
-                    copy_inputs_2[key] = None
-                copy_inputs_2 = None
+                del copy_inputs_2
                 gc.collect()
 
                 verification_failed = False
                 if verify and not are_close:
-                    kernel_sdfg.save(f"failed.sdfg")
                     verification_failed = True
-                    raise Exception("Numerical verification failed.")
+                    kernel_sdfg.save("failing.sdfgz", compress=True)
+                    print(f"Numerical verification failed for: {sdfg.label}, {entry.label}, {current_config}")
+                    #raise Exception("Numerical verification failed.")
 
                 if best_time is None or time < best_time:
                     best_config = current_config
@@ -385,6 +471,8 @@ def _tile_gpu(
                     logfile.write(f'"{sdfg.label}","{entry.label}","{current_config}","99999999999999.9","0.0"\n')
                 if i % 20 == 0:
                     logfile.flush()
+                #clean_cache(sdfg.build_folder)
+                #clean_cache(kernel_sdfg.build_folder)
     return best_config
 
 
@@ -398,7 +486,8 @@ def _tile_search(
     verify: bool,
     call_id: int,
     logfile,
-    loglines
+    loglines,
+    static_sram_limit=48*1024,
 ):
     raise Exception("TODO, this function needs fixes")
     if not re_apply:
@@ -682,7 +771,7 @@ def _tile_search(
                 if arr.storage == dace.dtypes.StorageType.GPU_Shared:
                     shr_mem_needed += arr.total_size * arr.dtype.bytes
 
-            if shr_mem_needed >= 48 * 1024:
+            if shr_mem_needed >= static_sram_limit:
                 print(
                     f"Kernel uses too much shared memory for config {current_config}, skipping."
                 )
@@ -763,6 +852,11 @@ def auto_tile_gpu(
     verbose: bool = False,
     timeout=None,
     random_iter: bool=True,
+    static_sram_limit: int = 48*1024,
+    bound_dims: List[int] = None,
+    copy_whole: bool = False,
+    exclude_from_explicit_memory: List[str] = [],
+    output_name: str = None
 ):
     sdfg_name = sdfg.name
     sym_dict = sdfg.symbols
@@ -807,6 +901,9 @@ def auto_tile_gpu(
             ):
                 kernel_guids.append((state, node))
 
+    if copy_whole:
+        assert len(kernel_guids) == 1
+
     # Apply tiling one-by-one to kernels
     found_tilings = dict()
     for ii, (state, kernel_entry) in enumerate(kernel_guids):
@@ -829,7 +926,11 @@ def auto_tile_gpu(
                 logfile=f,
                 loglines=logged_lines,
                 timeout=timeout,
-                random_iter=random_iter
+                random_iter=random_iter,
+                static_sram_limit=static_sram_limit,
+                bound_dims=bound_dims,
+                copy_whole=copy_whole,
+                output_name=output_name
             )
             found_tilings[(state.guid, kernel_entry.guid)] = best_config
         else:
@@ -843,7 +944,9 @@ def auto_tile_gpu(
                 verify=True,
                 call_id=ii,
                 logfile=f,
-                loglines=logged_lines
+                loglines=logged_lines,
+                static_sram_limit=static_sram_limit,
+                bound_dims=bound_dims
             )
             found_tilings[(state.guid, kernel_entry.guid)] = tuple(list(best_config) + [(True, False), True])
 
@@ -885,7 +988,11 @@ def auto_tile_gpu(
                 logfile=f,
                 loglines=logged_lines,
                 timeout=None,
-                random_iter=False
+                random_iter=False,
+                static_sram_limit=static_sram_limit,
+                bound_dims=bound_dims,
+                copy_whole=copy_whole,
+                exclude_from_explicit_memory=exclude_from_explicit_memory,
             )
         else:
             raise Exception("TODO")
@@ -905,7 +1012,8 @@ def auto_tile_gpu(
                 verify=False,
                 call_id=len(kernel_guids),
                 logfile=f,
-                loglines=logged_lines
+                loglines=logged_lines,
+                static_sram_limit=static_sram_limit,
             )
 
     # Add missing symbols
@@ -916,8 +1024,8 @@ def auto_tile_gpu(
             else:
                 sdfg.add_symbol(input_sym, dace.dtypes.typeclass(type(sym)))
 
-    for _sdfg, arr_name, arr in sdfg.arrays_recursive():
-        if arr.transient == True and arr.storage == dace.dtypes.StorageType.CPU_Heap:
-            arr.storage = dace.dtypes.StorageType.CPU_Pinned
+    #for _sdfg, arr_name, arr in sdfg.arrays_recursive():
+    #    if arr.transient == True and arr.storage == dace.dtypes.StorageType.CPU_Heap:
+    #        arr.storage = dace.dtypes.StorageType.GPU_Global
 
     return sdfg, found_tilings

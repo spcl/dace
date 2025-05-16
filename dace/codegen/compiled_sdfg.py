@@ -662,7 +662,34 @@ class CompiledSDFG(object):
 
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
+                print('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but not found. Fall back to torch')
+            try:
+                import torch
+                import numpy
+                def ndarray(*args, buffer=None, **kwargs):
+                    cpu_tensor = numpy.ndarray(*args, **kwargs)
+                    gpu_tensor = torch.from_numpy(cpu_tensor).cuda()
+                    return gpu_tensor
+
+                def _zeros(shape, dtype):
+                    dtype_map = {
+                        np.float32: torch.float32,
+                        np.float64: torch.float64,
+                        np.int32: torch.int32,
+                        np.int64: torch.int64,
+                        np.bool_: torch.bool
+                    }
+
+                    _dtype = dtype_map.get(dtype, None)
+                    if dtype is None:
+                        raise TypeError(f"Unsupported dtype: {dtype}")
+
+                    return torch.empty(shape, dtype=_dtype).cuda()
+
+                zeros = _zeros
+            except (ImportError, ModuleNotFoundError):
+                raise NotImplementedError('GPU return values are unsupported if cupy/torch is not installed. Default is cupy, but both torch and cupy are not found.')
+
         if storage is dtypes.StorageType.FPGA_Global:
             raise NotImplementedError('FPGA return values are unsupported')
 

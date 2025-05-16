@@ -51,6 +51,8 @@ class StorageType(aenum.AutoNumberEnum):
     Ascend_CO2 = ()
     Ascend_VECIN = ()
     Ascend_VECOUT = ()
+    Ascend_L1 = ()
+    Ascend_L2 = ()
 
 @undefined_safe_enum
 @extensible_enum

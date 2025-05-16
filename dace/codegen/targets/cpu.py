@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 from dace.codegen.targets import fpga
 from dace import dtypes
 from dace.codegen.tools.type_inference import infer_expr_type
+
+
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 

@@ -280,7 +280,7 @@ class ConsecutiveBlockTiling(transformation.SingleStateTransformation):
                 edges_to_rm.add(edge)
                 #state.add_edge(u, u_conn, v, v_conn, new_memlet)
                 edges_to_add.add((u, u_conn, v, v_conn, new_memlet))
-                print("AE1:",u, u_conn, v, v_conn, new_memlet)
+                #print("AE1:",u, u_conn, v, v_conn, new_memlet)
                 if v != nl_map_exit:
                     edges_to_check.union(set(state.out_edges(v)))
         for e in edges_to_rm:

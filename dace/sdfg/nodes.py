@@ -809,6 +809,8 @@ class MapEntry(EntryNode):
 
         :see: Map
     """
+    computational_units = DictProperty(key_type=str, value_type=int, desc="Computational units to use for this map", default=[])
+
 
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
@@ -962,7 +964,7 @@ class Map(object):
                              default=0,
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
-    unroll__mask = ListProperty(element_type=bool, desc="Which dimensions to unroll, if None unroll all dims", allow_none=True, default=None)
+    unroll_mask = ListProperty(element_type=bool, desc="Which dimensions to unroll, if None unroll all dims", allow_none=True, default=None)
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
@@ -1000,6 +1002,7 @@ class Map(object):
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+
 
     def __init__(self,
                  label,

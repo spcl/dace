@@ -4,7 +4,6 @@ import random
 import statistics
 from typing import Any, Dict, Type
 import dace
-import cupy
 from dace.codegen.compiled_sdfg import CompiledSDFG
 import numpy
 from dace.sdfg.analysis.cutout import SDFGCutout
@@ -14,10 +13,9 @@ import shutil
 from pathlib import Path
 
 
-def clean_cache():
-    script_directory = os.getcwd()
-    cache_dir = Path(f"{script_directory}/.dacecache")
-    print(f"Clean {script_directory}/.dacecache")
+def clean_cache(buildfolder):
+    cache_dir = Path(buildfolder)
+    print(f"Clean {buildfolder}")
     if cache_dir.exists() and cache_dir.is_dir():
         shutil.rmtree(cache_dir)
 
@@ -184,6 +182,7 @@ def generate_random_data(
     defined_symbols: Dict[Type[str], Any],
     storage_type: dace.StorageType = dace.StorageType.GPU_Global,
 ):
+    import torch
     randomly_generated_data = dict()
     # print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
     # TODO: HMMM, understand?
@@ -209,17 +208,24 @@ def generate_random_data(
             shape = tuple(ns)
             np_dtype = dace.dtypes.typeclass.as_numpy_dtype(arr.dtype)
             if storage_type == dace.StorageType.GPU_Global:
-                new_input = cupy.random.rand(*shape).astype(np_dtype)
+                def func(indices):
+                    return (indices.sum() + 1) / indices.numel()
+
+
+                new_input = torch.from_function(func, shape, dtype=np_dtype)
             elif storage_type == dace.StorageType.Default:
-                new_input = numpy.random.rand(*shape).astype(np_dtype)
+                new_input = numpy.from_function(func, shape, dtype=np_dtype)
             elif storage_type == None:
                 if (
                     arr.storage == dace.StorageType.Default
                     or arr.storage == dace.StorageType.CPU_Heap
                 ):
-                    new_input = numpy.random.rand(*shape).astype(np_dtype)
+                    new_input = numpy.from_function(func, shape, dtype=np_dtype)
                 elif arr.storage == dace.StorageType.GPU_Global:
-                    new_input = cupy.random.rand(*shape).astype(np_dtype)
+                    def func(indices):
+                        return (indices.sum() + 1) / indices.numel()
+
+                    new_input = torch.from_function(func, shape, dtype=np_dtype)
                 else:
                     raise Exception(f"uwu, {arr.storage}, {storage_type}")
 
