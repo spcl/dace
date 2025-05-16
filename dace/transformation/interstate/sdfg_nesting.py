@@ -192,7 +192,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """ Remove all edges along a path, until memlet tree contains siblings
             that should not be removed. Removes resulting isolated nodes as
             well. Operates in place.
-            
+
             :param state: The state in which to remove edges.
             :param edge_map: Mapping from identifier to edge, used as a
                              predicate for removal.
@@ -1075,8 +1075,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices),
-                                                                      list(indices)) - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) -
+                                   set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1085,10 +1085,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         _check_cand(out_candidates, state.out_edges_by_connector)
 
         # Return result, filtering out the states
-        return ({k: (dc(v), ind)
-                 for k, (v, _, ind) in in_candidates.items()
-                 if k not in ignore}, {k: (dc(v), ind)
-                                       for k, (v, _, ind) in out_candidates.items() if k not in ignore})
+        return ({
+            k: (dc(v), ind)
+            for k, (v, _, ind) in in_candidates.items() if k not in ignore
+        }, {
+            k: (dc(v), ind)
+            for k, (v, _, ind) in out_candidates.items() if k not in ignore
+        })
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg

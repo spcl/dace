@@ -63,9 +63,11 @@ class SimplifyPass(ppl.FixedPointPipeline):
     skip = properties.SetProperty(element_type=str, default=set(), desc='Set of pass names to skip.')
     verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
 
-    no_inline_function_call_regions = properties.Property(dtype=bool, default=False,
+    no_inline_function_call_regions = properties.Property(dtype=bool,
+                                                          default=False,
                                                           desc='Whether to prevent inlining function call regions.')
-    no_inline_named_regions = properties.Property(dtype=bool, default=False,
+    no_inline_named_regions = properties.Property(dtype=bool,
+                                                  default=False,
                                                   desc='Whether to prevent inlining named control flow regions.')
 
     def __init__(self,
@@ -94,8 +96,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self.no_inline_named_regions = no_inline_named_regions
 
         pass_opts = {
-            'no_inline_function_call_regions': self.no_inline_function_call_regions,
-            'no_inline_named_regions': self.no_inline_named_regions,
+            'InlineControlFlowRegions.no_inline_function_call_regions': self.no_inline_function_call_regions,
+            'InlineControlFlowRegions.no_inline_named_regions': self.no_inline_named_regions,
         }
         if pass_options:
             pass_opts.update(pass_options)
@@ -107,8 +109,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
         if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(p, '__explicit_cf_compatible__') or
-                p.__explicit_cf_compatible__ == False):
+            if (not hasattr(p, '__explicit_cf_compatible__') or p.__explicit_cf_compatible__ == False):
                 warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
                               'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +

@@ -7,6 +7,7 @@ N = dace.symbol('N')
 
 
 def test_stream_push():
+
     @dace.program(dace.float32[N], dace.float32[N])
     def program(A, B):
         stream = dace.define_stream(dace.float32, N)

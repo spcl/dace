@@ -25,6 +25,7 @@ def _runtest2d(sdfg: dace.SDFG, n: int, m: int):
 
 
 def test_shortmap():
+
     @dace.program
     def sum(A: dace.float32[4], output: dace.float32[1]):
         for i in dace.map[0:4]:
@@ -38,6 +39,7 @@ def test_shortmap():
 
 
 def test_symmap():
+
     @dace.program
     def sum(A: dace.float32[N], output: dace.float32[1]):
         for i in dace.map[0:N]:
@@ -52,6 +54,7 @@ def test_symmap():
 
 
 def test_libnode():
+
     @dace.program
     def sum(A: dace.float32[N], output: dace.float32[1]):
         dace.reduce(lambda a, b: a + b, A, output, identity=0)
@@ -66,6 +69,7 @@ def test_libnode():
 
 
 def test_block_reduction():
+
     @dace.program
     def sum(A: dace.float32[N, N], output: dace.float32[N]):
         for i, j in dace.map[0:N, 0:N]:
@@ -81,6 +85,7 @@ def test_block_reduction():
 
 
 def test_block_reduction_short():
+
     @dace.program
     def sum(A: dace.float32[N, 2], output: dace.float32[2]):
         for i, j in dace.map[0:N, 0:2]:

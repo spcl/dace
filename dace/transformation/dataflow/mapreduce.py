@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes and functions that implement the map-reduce-fusion 
+""" Contains classes and functions that implement the map-reduce-fusion
     transformation. """
 
 from dace.sdfg import SDFG, SDFGState
@@ -56,9 +56,9 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (
-                len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                or in_array.data in sdfg.shared_transients()):
+        if not permissive and (len(
+            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+                               or in_array.data in sdfg.shared_transients()):
             return False
 
         # If memlet already has WCR and it is different from reduce node,
@@ -189,9 +189,9 @@ class MapWCRFusion(pm.SingleStateTransformation):
 
         # Make sure that the transient is not accessed anywhere else
         # in this state or other states
-        if not permissive and (
-                len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
-                or in_array.data in sdfg.shared_transients()):
+        if not permissive and (len(
+            [n for n in graph.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data]) > 1
+                               or in_array.data in sdfg.shared_transients()):
             return False
 
         # Verify that reduction ranges match tasklet map

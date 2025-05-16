@@ -21,7 +21,6 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock
 import dace.serialize
 
-
 DiffableT = Union[ControlFlowBlock, nd.Node, MultiConnectorEdge[mlt.Memlet], Edge[InterstateEdge]]
 DiffSetsT = Tuple[Set[str], Set[str], Set[str]]
 
@@ -69,7 +68,7 @@ def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> N
         print('SDFGs are identical')
 
 
-def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, eq_strategy = Union[Literal['hash', '==']]) -> DiffSetsT:
+def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, eq_strategy=Union[Literal['hash', '==']]) -> DiffSetsT:
     all_id_elements_A: Dict[str, DiffableT] = dict()
     all_id_elements_B: Dict[str, DiffableT] = dict()
 
@@ -151,17 +150,13 @@ def main():
                         action='store_true',
                         help="If set, visualize the difference graphically",
                         default=False)
-    parser.add_argument('-o',
-                        '--output',
-                        dest='output',
-                        help="The output filename to generate",
-                        type=str)
+    parser.add_argument('-o', '--output', dest='output', help="The output filename to generate", type=str)
     parser.add_argument('-H',
                         '--hash',
                         dest='hash',
                         action='store_true',
                         help="If set, use the hash of JSON serialized properties for change checks instead of " +
-                             "Python's dictionary equivalence checks. This makes changes order sensitive.",
+                        "Python's dictionary equivalence checks. This makes changes order sensitive.",
                         default=False)
 
     args = parser.parse_args()

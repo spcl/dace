@@ -25,15 +25,20 @@ def test_gpu_shared_to_global_1D():
                 local_gather[j] = A[j, i]
             B[i, :] = local_gather
 
-
     sdfg = transpose_shared_to_global.to_sdfg()
     auto_optimize.apply_gpu_storage(sdfg)
 
     size_M = M
     size_N = 128
 
-    A = rng.random((size_M, size_N,))
-    B = rng.random((size_N, size_M,))
+    A = rng.random((
+        size_M,
+        size_N,
+    ))
+    B = rng.random((
+        size_N,
+        size_M,
+    ))
 
     ref = A.transpose()
 
@@ -58,15 +63,20 @@ def test_gpu_shared_to_global_1D_accumulate():
                 local_gather[j] = A[j, i]
             local_gather[:] >> B(M, lambda x, y: x + y)[i, :]
 
-
     sdfg = transpose_and_add_shared_to_global.to_sdfg()
     auto_optimize.apply_gpu_storage(sdfg)
 
     size_M = M
     size_N = 128
 
-    A = rng.random((size_M, size_N,))
-    B = rng.random((size_N, size_M,))
+    A = rng.random((
+        size_M,
+        size_N,
+    ))
+    B = rng.random((
+        size_N,
+        size_M,
+    ))
 
     ref = A.transpose() + B
 
@@ -81,4 +91,3 @@ def test_gpu_shared_to_global_1D_accumulate():
 if __name__ == '__main__':
     test_gpu_shared_to_global_1D()
     test_gpu_shared_to_global_1D_accumulate()
-

@@ -57,8 +57,10 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         # Add an initialization state
         init_state = sdfg.add_state()
         init_state.add_mapped_tasklet(
-            'batched_matmul_init', {'_o%d' % i: '0:%s' % symstr(d)
-                                    for i, d in enumerate(shape_c)}, {},
+            'batched_matmul_init', {
+                '_o%d' % i: '0:%s' % symstr(d)
+                for i, d in enumerate(shape_c)
+            }, {},
             'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
             external_edges=True)
 
@@ -442,8 +444,9 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Batched matrix-matrix product only supported on matrices")
         res = equal(size0[-1], size1[-2])
         if res is None:
-            warnings.warn(f'First tensor\'s last mode {size0[-1]} and second tensor\'s second-last mode {size1[-2]} '
-                          f'may not match', UserWarning)
+            warnings.warn(
+                f'First tensor\'s last mode {size0[-1]} and second tensor\'s second-last mode {size1[-2]} '
+                f'may not match', UserWarning)
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
         if len(out_memlet.subset) != 3:

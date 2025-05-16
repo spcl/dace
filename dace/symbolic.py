@@ -1004,13 +1004,15 @@ else:
     def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
         return ast.copy_location(ast.Constant(bool(node.value)), node)
 
+
 # Convert simple AST node (constant) into a falsy / truthy. Anything other than 0, None, and an empty string '' is
 # considered a truthy, while the listed exceptions are considered falsy values - following the semantics of Python's
 # bool() builtin.
 _convert_truthy_falsy = __comp_convert_truthy_falsy
 
+
 class PythonOpToSympyConverter(ast.NodeTransformer):
-    """ 
+    """
     Replaces various operations with the appropriate SymPy functions to avoid non-symbolic evaluation.
     """
     _ast_to_sympy_comparators = {
@@ -1322,11 +1324,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
 @lru_cache(maxsize=16384)
 def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
-    """ 
-    Convert a symbolic expression to a compilable expression. 
+    """
+    Convert a symbolic expression to a compilable expression.
 
     :param sym: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy 
+    :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
@@ -1364,9 +1366,9 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
     :param mapping: The replacement dictionary.
     :param replace_callback: A callable function that receives a replacement
-                             dictionary and performs the replacement (can be 
+                             dictionary and performs the replacement (can be
                              unsafe).
-    :param value_as_string: Replacement values are replaced as strings rather 
+    :param value_as_string: Replacement values are replaced as strings rather
                             than symbols.
     """
     # First, filter out direct (to constants) and degenerate (N -> N) replacements

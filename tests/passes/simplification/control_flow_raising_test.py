@@ -32,7 +32,7 @@ def test_dataflow_if_check(lowered_returns: bool):
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
 
-    A = np.zeros((10,), np.int32)
+    A = np.zeros((10, ), np.int32)
     A[4] = 10
     A[5] = 100
     assert sdfg(A, 0)[0] == 0

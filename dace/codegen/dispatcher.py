@@ -20,13 +20,13 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
-    
+
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
-    Scalar = ()   # A copyable scalar moved by value (e.g., POD)
-    Object = ()   # An object moved by reference
-    Stream = ()   # A stream object moved by reference and accessed via a push/pop API
+    Scalar = ()  # A copyable scalar moved by value (e.g., POD)
+    Object = ()  # An object moved by reference
+    Stream = ()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = ()  # An array of Streams
     FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
     ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
@@ -189,7 +189,7 @@ class TargetDispatcher(object):
     @property
     def declared_arrays(self) -> DefinedMemlets:
         """ Returns a list of declared variables.
-        
+
             This is used for variables that must have their declaration and
             allocation separate. It includes all such variables that have been
             declared by the dispatcher.
@@ -199,7 +199,7 @@ class TargetDispatcher(object):
     @property
     def defined_vars(self) -> DefinedMemlets:
         """ Returns a list of defined variables.
-        
+
             This includes all variables defined by the dispatcher.
         """
         return self._defined_vars
@@ -244,7 +244,8 @@ class TargetDispatcher(object):
         """ Returns a list of state dispatchers with predicates. """
         return list(self._state_dispatchers)
 
-    def register_node_dispatcher(self, dispatcher: target.TargetCodeGenerator,
+    def register_node_dispatcher(self,
+                                 dispatcher: target.TargetCodeGenerator,
                                  predicate: Optional[Callable] = None) -> None:
         """ Registers a code generator that processes a single node, calling
             ``generate_node``.
@@ -272,8 +273,7 @@ class TargetDispatcher(object):
         """ Returns a list of node dispatchers with predicates. """
         return list(self._node_dispatchers)
 
-    def register_map_dispatcher(self,
-                                schedule_type: Union[List[dtypes.ScheduleType], dtypes.ScheduleType],
+    def register_map_dispatcher(self, schedule_type: Union[List[dtypes.ScheduleType], dtypes.ScheduleType],
                                 func: target.TargetCodeGenerator) -> None:
         """ Registers a function that processes a scope, used when calling
             ``dispatch_subgraph`` and ``dispatch_scope``.
@@ -315,8 +315,11 @@ class TargetDispatcher(object):
         if not isinstance(func, target.TargetCodeGenerator): raise TypeError
         self._array_dispatchers[storage_type] = func
 
-    def register_copy_dispatcher(self, src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType,
-                                 dst_schedule: dtypes.ScheduleType, func: target.TargetCodeGenerator,
+    def register_copy_dispatcher(self,
+                                 src_storage: dtypes.StorageType,
+                                 dst_storage: dtypes.StorageType,
+                                 dst_schedule: dtypes.ScheduleType,
+                                 func: target.TargetCodeGenerator,
                                  predicate: Optional[Callable] = None) -> None:
         """ Registers code generation of data-to-data (or data from/to
             tasklet, if src/dst storage is StorageType.Register) copy
@@ -449,13 +452,8 @@ class TargetDispatcher(object):
     def get_scope_dispatcher(self, schedule: dtypes.ScheduleType) -> target.TargetCodeGenerator:
         return self._map_dispatchers[schedule]
 
-    def dispatch_scope(self,
-                       map_schedule: dtypes.ScheduleType,
-                       sdfg: SDFG,
-                       cfg: ControlFlowRegion,
-                       sub_dfg: StateSubgraphView,
-                       state_id: int,
-                       function_stream: CodeIOStream,
+    def dispatch_scope(self, map_schedule: dtypes.ScheduleType, sdfg: SDFG, cfg: ControlFlowRegion,
+                       sub_dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream) -> None:
         """ Dispatches a code generator function for a scope in an SDFG
             state. """
@@ -517,9 +515,9 @@ class TargetDispatcher(object):
 
     # Dispatches copy code for a memlet
     def get_copy_dispatcher(self, src_node: Union[nodes.CodeNode, nodes.AccessNode],
-                            dst_node: Union[nodes.CodeNode, nodes.AccessNode, nodes.EntryNode],
-                            edge: MultiConnectorEdge[Memlet],
-                            sdfg: SDFG, state: SDFGState) -> Optional[target.TargetCodeGenerator]:
+                            dst_node: Union[nodes.CodeNode, nodes.AccessNode,
+                                            nodes.EntryNode], edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+                            state: SDFGState) -> Optional[target.TargetCodeGenerator]:
         """
         (Internal) Returns a code generator that should be dispatched for a
         memory copy operation.

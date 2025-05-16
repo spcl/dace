@@ -12,6 +12,7 @@ number = 42
 
 @dace.program
 def duplicate_naming_inner(A, number):
+
     @dace.map(_[0:W])
     def bla(i):
         inp << A[i]

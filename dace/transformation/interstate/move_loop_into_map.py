@@ -172,13 +172,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         nested_state: SDFGState = nsdfg.sdfg.nodes()[0]
 
         # replicate loop in nested sdfg
-        inner_loop = LoopRegion(self.loop.label,
-                                self.loop.loop_condition,
-                                self.loop.loop_variable,
-                                self.loop.init_statement,
-                                self.loop.update_statement,
-                                self.loop.inverted,
-                                nsdfg,
+        inner_loop = LoopRegion(self.loop.label, self.loop.loop_condition, self.loop.loop_variable,
+                                self.loop.init_statement, self.loop.update_statement, self.loop.inverted, nsdfg,
                                 self.loop.update_before_condition)
         inner_loop.add_node(nested_state, is_start_block=True)
         nsdfg.sdfg.remove_node(nested_state)

@@ -98,7 +98,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             if isinstance(reached_block, ControlFlowRegion):
                 closure.update(reached_block.all_control_flow_blocks())
             closure.add(reached_block)
-            
+
         # Walk up the parent tree.
         pivot = region.parent_graph
         while pivot and not isinstance(pivot, SDFG):
@@ -111,9 +111,8 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
-        single_level_reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = defaultdict(
-            lambda: defaultdict(set)
-        )
+        single_level_reachable: Dict[int, Dict[ControlFlowBlock,
+                                               Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             # In networkx this is currently implemented naively for directed graphs.
             # The implementation below is faster
@@ -210,8 +209,8 @@ class SymbolAccessSets(ppl.ControlFlowRegionPass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.States | ppl.Modifies.Edges | ppl.Modifies.Symbols | ppl.Modifies.Nodes
 
-    def apply(self, region: ControlFlowRegion, _) -> Dict[Union[ControlFlowBlock, Edge[InterstateEdge]],
-                                                          Tuple[Set[str], Set[str]]]:
+    def apply(self, region: ControlFlowRegion,
+              _) -> Dict[Union[ControlFlowBlock, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]]:
         adesc = set(region.sdfg.arrays.keys())
         result: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = {}
         for block in region.nodes():
@@ -242,7 +241,7 @@ class AccessSets(ppl.Pass):
 
     def _get_loop_region_readset(self, loop: LoopRegion, arrays: Set[str]) -> Set[str]:
         readset = set()
-        exprs = { loop.loop_condition.as_string }
+        exprs = {loop.loop_condition.as_string}
         update_stmt = loop_analysis.get_update_assignment(loop)
         init_stmt = loop_analysis.get_init_assignment(loop)
         if update_stmt:
@@ -661,9 +660,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
             access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
                 FindAccessNodes.__name__][sdfg.cfg_id]
 
-            block_reach: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
-                ControlFlowBlockReachability.__name__
-            ]
+            block_reach: Dict[ControlFlowBlock,
+                              Set[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__]
 
             anames = sdfg.arrays.keys()
             for desc in sdfg.arrays:
@@ -856,7 +854,9 @@ class DeriveSDFGConstraints(ppl.Pass):
 
     CATEGORY: str = 'Analysis'
 
-    assume_max_data_size = properties.Property(dtype=int, default=None, allow_none=True,
+    assume_max_data_size = properties.Property(dtype=int,
+                                               default=None,
+                                               allow_none=True,
                                                desc='Assume that all data containers have no dimension larger than ' +
                                                'this value. If None, no assumption is made.')
 
