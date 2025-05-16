@@ -2097,3 +2097,15 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         if all_postdom is not None:
             all_postdom.update(cfg_analysis.all_dominators(sdfg, ipostdom))
+
+
+def set_nested_sdfg_parent_references(sdfg: SDFG):
+    """
+    Sets the parent_sdfg attribute for all NestedSDFGs recursively.
+    """
+    sdfg.reset_cfg_list()
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, NestedSDFG):
+                node.sdfg.parent_sdfg = sdfg
+                set_nested_sdfg_parent_references(node.sdfg)
