@@ -437,16 +437,17 @@ class InsertTransfers(ppl.Pass):
                                     #raise Exception("Not implemented")
                                     new_memlet = dace.memlet.Memlet(expr=new_data_name)
                                     an = state.add_access(new_data_name)
-                                    an2 = state.add_access(map_out.data.data)
+                                    #an2 = state.add_access(map_out.data.data)
                                     edges_to_add.add((map_out.src, map_out.src_conn,
                                                      an, None, new_memlet))
                                     edges_to_add.add((an, None,
-                                                     an2, None,
-                                                     copy.deepcopy(map_out.data)))
-                                    edges_to_add.add((an2, None,
                                                      map_out.dst, map_out.dst_conn,
                                                      copy.deepcopy(map_out.data)))
+                                    #edges_to_add.add((an2, None,
+                                    #                 map_out.dst, map_out.dst_conn,
+                                    #                 copy.deepcopy(map_out.data)))
                                     edges_to_rm.add(map_out)
+
 
         for e in edges_to_add:
             state.add_edge(*e)
