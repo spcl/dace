@@ -287,16 +287,18 @@ DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__s
         callsite_stream.write(
             f"""
 DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams})
-{{
-    int __result = 0;
-    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};
-
-            """, sdfg)
+{{""", sdfg)
 
         if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
             gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
-            if gpu_tx_markers_provider:
+            # cannot push rocTX markers before initializing HIP
+            if gpu_tx_markers_provider and not gpu_tx_markers_provider.enable_rocTX:
                 gpu_tx_markers_provider.print_range_push(f'init_{sdfg.name}', sdfg, callsite_stream)
+
+        callsite_stream.write(
+            f"""
+    int __result = 0;
+    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};""", sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
@@ -325,7 +327,8 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 """, sdfg)
         if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
             gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
-            if gpu_tx_markers_provider:
+            # cannot push rocTX markers before initializing HIP
+            if gpu_tx_markers_provider and not gpu_tx_markers_provider.enable_rocTX:
                 gpu_tx_markers_provider.print_range_pop(callsite_stream)
         callsite_stream.write(
             f"""
