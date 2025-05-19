@@ -839,36 +839,24 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     and dst_storage == dtypes.StorageType.Ascend_VECIN
                 ):
                     callsite_stream.write(
-                        "// Global -> VECIN: Alloc Local, DataCopy, EnQue"
+                        f"""// Global -> VECIN: Alloc Local, DataCopy, EnQue
+                        {dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
+                        AscendC::DataCopy({dst_name}, {name}_GM, {length});
+                        inQueue_{dst_name}.EnQue({dst_name});\n"""
                     )
-                    callsite_stream.write(
-                        f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
-                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
-                    )
-                    callsite_stream.write(
-                        f"AscendC::DataCopy({dst_name}, {name}_GM, {length});"
-                    )
-                    callsite_stream.write(f"inQueue_{dst_name}.EnQue({dst_name});\n")
                 elif (
                     src_storage == dtypes.StorageType.Ascend_VECIN
                     and dst_storage == dtypes.StorageType.Ascend_VECOUT
                 ):
-                    callsite_stream.write("// VECIN -> VECOUT: DeQue, Enque, Free Prev.")
                     callsite_stream.write(
-                        f"{src_name} = inQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                        f"""// VECIN -> VECOUT: DeQue, Enque, Free Prev.
+                        {src_name} = inQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        {dst_name} = outQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
+                        {dst_name} = {src_name};"
+                        outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
+                        inQueue_{src_name}.FreeTensor({src_name});\n"""
                     )
-                    callsite_stream.write(
-                        f"{dst_name} = outQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
-                        f"{dst_name} = {src_name};"
-                    )
-                    callsite_stream.write(
-                        f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
-                    )
-                    callsite_stream.write(f"inQueue_{src_name}.FreeTensor({src_name});\n")
                 elif (
                     src_storage == dtypes.StorageType.Ascend_VECOUT
                     and dst_storage == dtypes.StorageType.Ascend_Global
@@ -902,26 +890,19 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     src_storage == dtypes.StorageType.Ascend_Global
                     and dst_storage == dtypes.StorageType.Ascend_VECIN
                 ):
+                    # Coupling Architecture
                     callsite_stream.write(
-                        "// Global -> VECIN: Alloc Local, DataCopy, EnQue"
-                    )
-                    callsite_stream.write(
-                        f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
-                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {height} * {width});"
-                    )
-                    callsite_stream.write(
-                        f"//AscendC::DataCopy({dst_name}, {name}_GM, {width});"
-                        f"""
+                        f"""// Global -> VECIN: Alloc Local, DataCopy, EnQue
+                        {dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {height} * {width});
+                        //AscendC::DataCopy({dst_name}, {name}_GM, {width});
                         for  (int i =  0 ; i < width / 16 ; ++i)  {{
                             const int  srcOffset = i * 16;
                             const int  dstOffset = i * 16 * {height};
                             AscendC::DataCopy({dst_name}[dstOffset],  {src_name}[srcOffset], {{{height}, 1, uint16_t(({width} / 16) - 1), 0}});
                         }}
-                       """
+                        inQueue_{dst_name}.EnQue({dst_name});\n"""
                     )
-                    callsite_stream.write(f"inQueue_{dst_name}.EnQue({dst_name});\n")
                 elif (
                     src_storage == dtypes.StorageType.Ascend_VECIN
                     and dst_storage == dtypes.StorageType.Ascend_VECOUT
@@ -968,34 +949,27 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     and (dst_storage == dtypes.StorageType.Ascend_B1 or
                          dst_storage == dtypes.StorageType.Ascend_A1)
                 ):
-                    if dst_storage == dtypes.StorageType.Ascend_B1:
-                        callsite_stream.write(
-                            "// Global -> B1: Alloc Local, DataCopy, EnQue"
-                        )
-                    elif dst_storage == dtypes.StorageType.Ascend_A1:
-                        callsite_stream.write(
-                            "// Global -> A1: Alloc Local, DataCopy, EnQue"
-                        )
-                    callsite_stream.write(
-                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
-                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {width} * {height});"
-                    )
-                    # TODO ensure 16byte alignment
-                    callsite_stream.write(
-                       f"""
-                        for  (int i =  0 ; i < width / 16 ; ++i)  {{
-                            const int  srcOffset = i * 16;
-                            const int  dstOffset = i * 16 * {height};
-                            AscendC::DataCopy({dst_name}[dstOffset],  {src_name}[srcOffset], {{{height}, 1, uint16_t(({width} / 16) - 1), 0}});
-                        }}
-                       """
-                    )
-                    callsite_stream.write(
-                        f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
-                    )
+                    dst_name = "B1" if dst_storage == dtypes.StorageType.Ascend_B1 else "A1"
+                    copy_str = f"// Global -> {dst_name}: Alloc Local, DataCopy, EnQue"
 
+                    callsite_stream.write(
+                        f"""
+                        {copy_str}
+                        {src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {width} * {height});
+                        AscendC::Nd2NzParams  nd2nz{dst_name}Params;
+                        nd2nz{dst_name}Params.ndNum = 1;
+                        nd2nz{dst_name}Params.nValue = {height};
+                        nd2nz{dst_name}Params.dValue = {width};
+                        nd2nz{dst_name}Params.srcNdMatrixStride = 0;
+                        nd2nz{dst_name}Params.srcDValue = {width};
+                        nd2nz{dst_name}Params.dstNzC0Stride = CeilCubeBlock({height}) * CUBE_BLOCK;
+                        nd2nz{dst_name}Params.dstNzNStride = 1;
+                        nd2nz{dst_name}Params.dstNzMatrixStride = 0;
+                        AscendC::DataCopy({dst_name}, {src_name}, nd2nz{dst_name}Params);
+                        inQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
+                        """
+                    )
                 elif (
                     (src_storage == dtypes.StorageType.Ascend_B1 and
                      dst_storage == dtypes.StorageType.Ascend_B2) or
@@ -1004,30 +978,24 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 ):
                     src_name = "B1" if src_storage == dtypes.StorageType.Ascend_B1 else "A1"
                     dst_name = "B2" if dst_storage == dtypes.StorageType.Ascend_B2 else "A2"
+                    copy_str = f"// {src_name} -> {dst_name}: Alloc Local, DataLoad, EnQue"
                     callsite_stream.write(
-                        f"// {src_name} -> {dst_name}: Alloc Local, DataCopy, EnQue"
-                    )
-                    callsite_stream.write(
-                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
-                        f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                    )
-                    # TODO ensure 16byte alignment
-                    callsite_stream.write(
-                       f"""
-                        LoadData2dParams loadDataParams;
-                        loadDataParams.repeatTimes = 1;
-                        loadDataParams.srcStride = 1;
-                        loadDataParams.ifTranspose = false;
-                        AscendC::LoadData({dst_name}, {src_name}, loadDataParams);
-                       """
-                    )
-                    callsite_stream.write(
-                        f"inQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
-                    )
-                    callsite_stream.write(
-                        f"outQueue_{src_name}.FreeTensor({src_name});"
+                        f"""
+                        {copy_str}
+                        {src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        uint32_t {dst_name}_dstOffset = CeilCubeBlock({width}) * CUBE_BLOCK_SIZE;
+                        uint32_t {src_name}_srcOffset = CUBE_BLOCK_SIZE;
+                        AscendC::LoadData2DParams loadData{dst_name}Params;
+                        loadData{dst_name}Params.repeatTimes  =  CeilCubeBlock({width});
+                        loadData{dst_name}Params.srcStride  =  CeilCubeBlock({height});
+                        loadData{dst_name}Params.dstGap  =  0;
+                        loadData{dst_name}Params.ifTranspose  =  false;
+                        for  (int  i  =  0;  i  <  CeilCubeBlock({height});  ++i)  {{
+                            AscendC::LoadData({dst_name}[i * {dst_name}_dstOffset], {src_name}[i * {src_name}_srcOffset], loadData{dst_name}Params);
+                        }}
+                        inQueue_{dst_name}..EnQue<{nodedesc.dtype.ctype}>({dst_name});
+                        outQueue_{src_name}.FreeTensor({src_name});
+                        """
                     )
                 elif (
                     (src_storage == dtypes.StorageType.Ascend_CO1 and
@@ -1035,12 +1003,6 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 ):
                     src_name = "CO1"
                     dst_name = "CO2"
-                    callsite_stream.write(
-                        f"// {src_name} -> {dst_name}: DeQue, DataCopy, Free Prev."
-                    )
-                    callsite_stream.write(
-                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
-                    )
                     beg1, end1, step1 = subset.ranges[0]
                     beg2, end2, step2 = subset.ranges[1]
                     assert(nodedesc.strides[1] == 1)
@@ -1050,13 +1012,15 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     height = (end1 + 1) - beg1
                     callsite_stream.write(
                         f"""
+                        // {src_name} -> {dst_name}: DeQue, DataCopy, Free Prev.
+                        {src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
                         DataCopyParams dataCopyParams;
                         dataCopyParams.blockCount = {width} / 16;
                         dataCopyParams.blockLen = {height};
                         DataCopyEnhancedParams enhancedParams;
                         enhancedParams.blockMode = BlockMode::BLOCK_MODE_MATRIX;
                         AscendC::DataCopy({dst_name}, {src_name}, dataCopyParams, enhancedParams);
-"""
+                        """
                     )
                     callsite_stream.write(f"outQueue_{src_name}.FreeTensor({src_name});")
                 elif (
@@ -1073,22 +1037,19 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     width = (end2 + 1) - beg2
                     height = (end1 + 1) - beg1
                     callsite_stream.write(
-                        f"// {src_name} -> {dst_name}: DeQue, DataCopy, Free Prev."
-                    )
-                    callsite_stream.write(
-                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
                         f"""
-                        DataCopyParams dataCopyParams;
-                        dataCopyParams.blockCount = {width} / 16;
-                        dataCopyParams.blockLen = {height};
-                        DataCopyEnhancedParams enhancedParams;
-                        enhancedParams.blockMode = BlockMode::BLOCK_MODE_MATRIX;
-                        AscendC::DataCopy({dst_name}, {src_name}, dataCopyParams, enhancedParams);
-"""
+                        // {src_name} -> {dst_name}: DeQue, DataCopy, Free Prev.
+                        {src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        DataCopyParams dataCopy{dst_name}Params;
+                        dataCopy{dst_name}Params.blockCount = {width} / 16;
+                        dataCopy{dst_name}Params.blockLen = {height};
+                        DataCopyEnhancedParams enhancedParams{dst_name};
+                        enhancedParams{dst_name}.blockMode = BlockMode::BLOCK_MODE_MATRIX;
+                        AscendC::DataCopy({dst_name}, {src_name}, dataCopy{dst_name}Params, enhancedParams{dst_name});
+                        inQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
+                        outQueue_{src_name}.FreeTensor({src_name});
+                        """
                     )
-                    callsite_stream.write(f"outQueue_{src_name}.FreeTensor({src_name});")
                 else:
                     raise NotImplementedError(
                         f"Unimplemented copy type for 2 Dimensional Copy: {src_storage} -> {dst_storage}, nodes: {src_node} -> {dst_node}"
