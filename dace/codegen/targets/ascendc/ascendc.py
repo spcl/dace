@@ -907,43 +907,29 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     src_storage == dtypes.StorageType.Ascend_VECIN
                     and dst_storage == dtypes.StorageType.Ascend_VECOUT
                 ):
-                    callsite_stream.write("// VECIN -> VECOUT: DeQue, Enque, Free Prev.")
-                    callsite_stream.write(
-                        f"{src_name} = inQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
+                    callsite_stream.write(f"""// VECIN -> VECOUT: DeQue, Enque, Free Prev.
+                        {src_name} = inQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        {dst_name} = outQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
+                        {dst_name} = {src_name};
+                        outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
+                        inQueue_{src_name}.FreeTensor({src_name});\n"""
                     )
-                    callsite_stream.write(
-                        f"{dst_name} = outQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
-                        f"{dst_name} = {src_name};"
-                    )
-                    callsite_stream.write(
-                        f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
-                    )
-                    callsite_stream.write(f"inQueue_{src_name}.FreeTensor({src_name});\n")
                 elif (
                     src_storage == dtypes.StorageType.Ascend_VECOUT
                     and dst_storage == dtypes.StorageType.Ascend_Global
                 ):
                     callsite_stream.write(
-                        "// VECOUT -> Global: DeQue, DataCopy, Free Prev."
-                    )
-                    callsite_stream.write(
-                        f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
-                    )
-                    callsite_stream.write(
-                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {height} * {width});"
-                    )
-                    callsite_stream.write(
-                       f"""
+                        f"""// VECOUT -> Global: DeQue, DataCopy, Free Prev.
+                        {src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {height} * {width});
                         for  (int i =  0 ; i < width / 16 ; ++i)  {{
                             const int  srcOffset = i * 16;
                             const int  dstOffset = i * 16 * {height};
                             AscendC::DataCopy({dst_name}[dstOffset],  {src_name}[srcOffset], {{{height}, 1, uint16_t(({width} / 16) - 1), 0}});
                         }}
+                        outQueue_{src_name}.FreeTensor({src_name});\n
                        """
                     )
-                    callsite_stream.write(f"outQueue_{src_name}.FreeTensor({src_name});")
                 elif (
                     src_storage == dtypes.StorageType.Ascend_Global
                     and (dst_storage == dtypes.StorageType.Ascend_B1 or
