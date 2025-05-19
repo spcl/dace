@@ -854,8 +854,8 @@ using AscendC::Mmad;
                 ):
                     callsite_stream.write(
                         f"""// Global -> VECIN: Alloc Local, DataCopy, EnQue
-                        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
+                        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});
                         AscendC::DataCopy({dst_name}, {name}_GM, {length});
                         queue_{dst_name}.EnQue({dst_name});\n"""
                     )
@@ -1959,44 +1959,6 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             ):
                 map_entries.append(node)
 
-        #print(state.in_edges(aicore_group_map_entry))
-        #print(state.out_edges(aicore_group_map_entry))
-        """
-        for name, arr in self._used_arr_set:
-            if arr.storage in dace.dtypes.ASCEND_STORAGES:
-                que_name = self._storage_to_ascendc_que_name[arr.storage]
-
-                # Check the edges for the load/write granularity, if we do not want to array both
-                # in in or out edges, return an error
-                for m in map_entries:
-                    for e in state.out_edges(m):
-                        if isinstance(e.dst, dace.nodes.AccessNode):
-                            if e.dst.data == name:
-                                ranges: subsets.Range = e.data.subset
-                                assert ranges.dims() == 1
-                                kernel_stream.write(
-                                    f"pipe.InitBuffer(queue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
-                                )
-                                break
-                else:
-                    for m in map_entries:
-                        for e in state.in_edges(state.exit_node(m)):
-                            if isinstance(e.src, dace.nodes.AccessNode):
-                                if e.src.data == name:
-                                    ranges: subsets.Range = e.data.subset
-                                    assert ranges.dims() == 1
-                                    kernel_stream.write(
-                                        f"pipe.InitBuffer(queue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
-                                    )
-                                    break
-                                else:
-                                    #print(e, e.data, e.data.data, name)
-                                    pass
-                    else:
-                        raise Exception(
-                            f"One of the out edges need to cover this array we accessed, check impl for: {name}"
-                        )
-        """
         used_arrays_set = set()
         assert kernel_entry is not None
         assert kernel_entry in state.nodes()
@@ -2191,7 +2153,10 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
                 varname = scope_map.params[-i - 1]
 
                 if i == 0:
-                    block_expr = f"(AscendC::GetBlockIdx() % {offsets[i+1]})"
+                    if len(offsets) > 1:
+                        block_expr = f"(AscendC::GetBlockIdx() % {offsets[i+1]})"
+                    else:
+                        block_expr = f"(AscendC::GetBlockIdx())"
                 else:
                     block_expr = f"(AscendC::GetBlockIdx() / {offsets[i]})"
 
