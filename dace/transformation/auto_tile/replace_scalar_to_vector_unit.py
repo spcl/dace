@@ -25,7 +25,7 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
     operator_impl = DictProperty(
         key_type=str,
         value_type=str,
-        default={"add": "{c} = Add({a},{b})", "gemm": "{d} = GEMM({a},{b},{c})"},
+        default={"add": "AscendC::Add({c}, {a}, {b}, {size});", "gemm": "{params}\n AscendC::Mmad({c}, {a}, {b}, {param_name});"},
     )
     mmu_size = Property(dtype=int, default=32)
     vector_unit_size = Property(dtype=int, default=32)
@@ -322,7 +322,12 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
             assert b is not None
             assert res is not None
             assert acc is not None
-            instanciated_tasklet = tasklet_template.format(a=a, b=b, c=acc, d=res)
+            params = f"""AscendC::MmadParams mmadParams;
+            mmadParams.m = {self.mmu_size};
+            mmadParams.n = {self.mmu_size};
+            mmadParams.k = {self.mmu_size};"""
+            param_name = f"mmadParams"
+            instanciated_tasklet = tasklet_template.format(a=a, b=b, c=acc, params=params, param_name=param_name)
         else:
             tasklet_template = self.operator_impl[tasklet_type]
             sorted_format_in_dict = {k: v for k in sorted(data_map) if "in" in k}
@@ -335,12 +340,14 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
             for k, v in sorted_format_out_dict.items():
                 combined_dict [name] = k
                 name = chr(ord(name) + 1)
+            combined_dict["size"] = self.vector_unit_size
             instanciated_tasklet = tasklet_template.format(**combined_dict)
         tasklet = dace.nodes.Tasklet(
             str(tasklet_type),
             ins,
             outs,
             instanciated_tasklet,
+            language=dace.dtypes.Language.CPP
         )
         #if len(purpose_map) == 0:
         #    raise Exception(instanciated_tasklet, data_map, purpose_map, conn_map)
