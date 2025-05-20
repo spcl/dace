@@ -13,7 +13,6 @@ from dace.config import Config
 # and not only 1 element. But there is no support for correct representation (yet). However,
 # the construction of the warpIds is not affected by this. Correct SDFGs appear in the next 
 # test section 
-
 @pytest.mark.gpu
 @pytest.mark.parametrize("start, end, stride", [
     (0, 32, 1),

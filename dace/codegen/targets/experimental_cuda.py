@@ -139,8 +139,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self.has_pool = False
 
 
-        self._ignore_warnings = True
-
         # INFO: 
         # Register GPU schedules and storage types for ExperimentalCUDACodeGen.
         # The dispatcher maps GPU-related schedules and storage types to the
@@ -1654,228 +1652,6 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
 
         return options  
 
-    def get_tb_maps_recursive(self, subgraph):
-        res = []
-        for node in subgraph.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                for state in node.sdfg.states():
-                    tbmaps = self.get_tb_maps_recursive(state)
-                    for map, sym_map in tbmaps:
-                        for k in sym_map.values():
-                            for kk, vv in node.symbol_mapping.items():
-                                sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
-                        res.append((map, sym_map))
-            elif isinstance(node, nodes.MapEntry) and node.schedule in (
-                    dtypes.ScheduleType.GPU_Device,
-                    dtypes.ScheduleType.GPU_ThreadBlock,
-                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-            ):
-                res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
-        return res
-
-    def get_kernel_dimensions(self, dfg_scope):
-        """
-        Determines a GPU kernel's grid/block dimensions from map scopes.
-
-        Ruleset for kernel dimensions:
-
-            1. If only one map (device-level) exists, of an integer set ``S``,
-                the block size is ``32x1x1`` and grid size is ``ceil(|S|/32)`` in
-                1st dimension.
-            2. If nested thread-block maps exist ``(T_1,...,T_n)``, grid
-                size is ``|S|`` and block size is ``max(|T_1|,...,|T_n|)`` with
-                block specialization.
-            3. If block size can be overapproximated, it is (for
-                dynamically-sized blocks that are bounded by a
-                predefined size).
-            4. If nested device maps exist, they generate extra grid dimensions (block size 1)
-                as the sum of all their sizes ``(|T_1| + ... + |T_n|)``
-
-        :note: Kernel dimensions are separate from the map
-                variables, and they should be treated as such.
-        :note: To make use of the grid/block 3D registers, we use multi-
-                dimensional kernels up to 3 dimensions, and flatten the
-                rest into the third dimension.
-        """
-
-        kernelmap_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]
-        grid_size = kernelmap_entry.map.range.size(True)[::-1]
-        block_size = None
-        is_persistent = (kernelmap_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent)
-        int_ceil = symbolic.int_ceil
-
-        # Obtain thread-block maps from nested SDFGs
-        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
-        sub_maps = self.get_tb_maps_recursive(subgraph)
-
-        # Introduce extra grid dimensions based on device sub-maps
-        extra_dim_offsets: Dict[nodes.Map, symbolic.SymbolicType] = {}
-        extra_grid_dims: List[symbolic.SymbolicType] = None
-        for submap, sym_map in sub_maps:
-            submap: nodes.Map
-            if submap.schedule != dtypes.ScheduleType.GPU_Device or submap is kernelmap_entry.map:
-                continue
-            if extra_grid_dims is not None and len(submap.params) != len(extra_grid_dims):
-                raise NotImplementedError(
-                    'Multiple GPU_Device sub-ranges with different dimensionality not yet implemented (found: '
-                    f'{len(submap.params)}, existing: {len(extra_grid_dims)}, map: {kernelmap_entry})')
-
-            # Add and overapproximate sizes
-            gsize = [s.subs(list(sym_map.items())) for s in submap.range.size()[::-1]]
-            gsize = [symbolic.overapproximate(s) for s in gsize]
-            if extra_grid_dims is None:
-                extra_grid_dims = gsize
-                extra_dim_offsets[submap] = [0] * len(submap.params)
-            else:
-                extra_dim_offsets[submap] = extra_grid_dims
-                extra_grid_dims = [(sz + gsz) for sz, gsz in zip(extra_grid_dims, gsize)]
-        if extra_grid_dims is None:
-            extra_grid_dims = []
-        grid_size.extend(extra_grid_dims)
-
-        # Linearize (flatten) rest of dimensions to third
-        if len(grid_size) > 3:
-            grid_size[2] = functools.reduce(sympy.Mul, grid_size[2:], 1)
-            del grid_size[3:]
-
-        # Extend to 3 dimensions if necessary
-        grid_size = grid_size + [1] * (3 - len(grid_size))
-
-        # Thread-block map cases
-        has_dtbmap = len(
-            [tbmap for tbmap, _ in sub_maps if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic]) > 0
-
-        # keep only thread-block maps
-        tb_maps_sym_map = [(tbmap, sym_map) for tbmap, sym_map in sub_maps
-                           if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
-
-        # Map thread-block size override
-        block_size = kernelmap_entry.map.gpu_block_size
-        if block_size is not None:
-            # Complement to three dimensions
-            block_size += [1] * (3 - len(block_size))
-            # Linearize (flatten) rest of dimensions to third
-            if len(block_size) > 3:
-                block_size[2] = functools.reduce(sympy.Mul, block_size[2:], 1)
-                del block_size[3:]
-
-        # No thread-block maps
-        if len(tb_maps_sym_map) == 0:
-            if block_size is None:
-                if has_dtbmap:
-                    if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
-                        raise NotImplementedError('max dynamic block size unimplemented')
-                    else:
-                        block_size = [
-                            int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')
-                        ]
-                else:
-                    def_bsize = Config.get('compiler', 'cuda', 'default_block_size')
-                    if (not self._ignore_warnings): # NOTE: remove the ignoring of warnings later
-                        warnings.warn(
-                            f'No `gpu_block_size` property specified on map "{kernelmap_entry.map.label}". '
-                            f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {def_bsize}. '
-                            'You can either specify the block size to use with the gpu_block_size property, '
-                            'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
-                            'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
-                    
-                    if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
-                        raise NotImplementedError('max dynamic block size unimplemented')
-                    else:
-                        block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
-
-                    block_ndim = max(1, sum(1 if b != 1 else 0 for b in block_size))
-                    grid_ndim = max(1, sum(1 if g != 1 else 0 for g in grid_size))
-                    if block_ndim > grid_ndim:
-                        linearized_remainder = prod(block_size[grid_ndim:])
-                        block_size = block_size[:grid_ndim] + [1] * (3 - grid_ndim)
-                        block_size[grid_ndim - 1] *= linearized_remainder
-                        warnings.warn(f'Default block size has more dimensions ({block_ndim}) than kernel dimensions '
-                                      f'({grid_ndim}) in map "{kernelmap_entry.map.label}". Linearizing block '
-                                      f'size to {block_size}. Consider setting the ``gpu_block_size`` property.')
-
-            assert (len(block_size) >= 1 and len(block_size) <= 3)
-
-            # Grid size = ceil(|S|/32) for first dimension, rest = |S|
-            grid_size = [int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)]
-
-        else:
-            # Find all thread-block maps to determine overall block size
-            detected_block_sizes = [block_size] if block_size is not None else []
-            for tbmap, sym_map in tb_maps_sym_map:
-                tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
-
-                # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-                # The partial trailing thread-block is emitted as an if-condition
-                # that returns on some of the participating threads
-                tbsize = [symbolic.overapproximate(s) for s in tbsize]
-
-                # Linearize (flatten) rest of dimensions to third
-                if len(tbsize) > 3:
-                    tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
-                    del tbsize[3:]
-
-                # Extend to 3 dimensions if necessary
-                tbsize = tbsize + [1] * (3 - len(tbsize))
-
-                if len(detected_block_sizes) == 0:
-                    block_size = tbsize
-                else:
-                    block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
-
-                if block_size != tbsize or len(detected_block_sizes) == 0:
-                    detected_block_sizes.append(tbsize)
-
-            # TODO: If grid/block sizes contain elements only defined within the
-            #       kernel, raise an invalid SDFG exception and recommend
-            #       overapproximation.
-
-            if len(detected_block_sizes) > 1:
-
-                # Error when both gpu_block_size and thread-block maps were defined and conflict
-                if kernelmap_entry.map.gpu_block_size is not None:
-                    raise ValueError('Both the `gpu_block_size` property and internal thread-block '
-                                     'maps were defined with conflicting sizes for kernel '
-                                     f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
-                                     'Use `gpu_block_size` only if you do not need access to individual '
-                                     'thread-block threads, or explicit block-level synchronization (e.g., '
-                                     '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
-                                     '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
-                                     'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
-
-                warnings.warn('Multiple thread-block maps with different sizes detected for '
-                              f'kernel "{kernelmap_entry.map.label}": {detected_block_sizes}. '
-                              f'Over-approximating to block size {block_size}.\n'
-                              'If this was not the intent, try tiling one of the thread-block maps to match.')
-
-            # both thread-block map and dynamic thread-block map exist at the same
-            # time
-            if has_dtbmap:
-                raise NotImplementedError("GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
-                                          "not supported in the same scope")
-
-        if is_persistent:
-            grid_size = ['gridDim.x', '1', '1']
-
-        # Check block size against configured maximum values, if those can be determined
-        total_bsize = prod(block_size)
-        total_limit = Config.get('compiler', 'cuda', 'block_size_limit')
-        lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
-        if (total_bsize > total_limit) == True:
-            raise ValueError(f'Block size for kernel "{kernelmap_entry.map.label}" ({block_size}) '
-                             f'is larger than the possible number of threads per block ({total_limit}). '
-                             'The kernel will potentially not run, please reduce the thread-block size. '
-                             'To increase this limit, modify the `compiler.cuda.block_size_limit` '
-                             'configuration entry.')
-        if (block_size[-1] > lastdim_limit) == True:
-            raise ValueError(f'Last block size dimension for kernel "{kernelmap_entry.map.label}" ({block_size}) '
-                             'is larger than the possible number of threads in the last block dimension '
-                             f'({lastdim_limit}). The kernel will potentially not run, please reduce the '
-                             'thread-block size. To increase this limit, modify the '
-                             '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
-
-        return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
-
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet],
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -2286,17 +2062,19 @@ class KernelSpec:
 
     def __init__(self, cudaCodeGen: ExperimentalCUDACodeGen, sdfg: SDFG, cfg: ControlFlowRegion,
                  dfg_scope: ScopeSubgraphView, state_id: int):
-        # Entry and exit nodes of the scope
-        scope_entry = dfg_scope.source_nodes()[0]
-        state = cfg.state(state_id)
+        
+        
+        kernel_entry_node = dfg_scope.source_nodes()[0]
+        state: SDFGState = cfg.state(state_id)
 
-        self._kernel_map: nodes.Map = scope_entry.map
+        self._kernel_entry_node: nodes.MapEntry  = kernel_entry_node
+        self._kernel_map: nodes.Map = kernel_entry_node.map
 
         # Kernel name
-        self._kernel_name: str = '%s_%d_%d_%d' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
+        self._kernel_name: str = '%s_%d_%d_%d' % (kernel_entry_node.map.label, cfg.cfg_id, state.block_id, state.node_id(kernel_entry_node))
 
         # Kernel arguments
-        self._args: Dict = cudaCodeGen._arglists[scope_entry]
+        self._args: Dict = cudaCodeGen._arglists[kernel_entry_node]
         self._args_typed: list[str] = [adata.as_arg(name=aname) for aname, adata in self._args.items()]
         self._args_as_input: list[str] = [ptr(aname, adata, sdfg, cudaCodeGen._frame) for aname, adata in self._args.items()]
 
@@ -2307,7 +2085,279 @@ class KernelSpec:
         self._bridge_args_typed: list[str] = state_param + self._args_typed
 
         # Kernel dimensions
-        self._grid_dims, self._block_dims, self._has_tbmap, self._has_dtbmap, _ = cudaCodeGen.get_kernel_dimensions(dfg_scope)
+        self._grid_dims, self._block_dims, self._has_tbmap, self._has_dtbmap, _ = self._get_kernel_dimensions(dfg_scope)
+
+    
+
+    def _get_kernel_dimensions(self, dfg_scope: ScopeSubgraphView):
+        """
+        Determines a GPU kernel's grid/block dimensions from map scopes.
+
+        Ruleset for kernel dimensions:
+
+            1. If only one map (device-level) exists, of an integer set ``S``,
+                the block size is ``32x1x1`` and grid size is ``ceil(|S|/32)`` in
+                1st dimension.
+            2. If nested thread-block maps exist ``(T_1,...,T_n)``, grid
+                size is ``|S|`` and block size is ``max(|T_1|,...,|T_n|)`` with
+                block specialization.
+            3. If block size can be overapproximated, it is (for
+                dynamically-sized blocks that are bounded by a
+                predefined size).
+            4. If nested device maps exist, behavior is unknown but an error is thrown 
+               in the generate_scope function. This is not supported here
+
+        :note: Kernel dimensions are separate from the map
+               variables, and they should be treated as such.
+        :note: To make use of the grid/block 3D registers, we use multi-
+               dimensional kernels up to 3 dimensions, and flatten the
+               rest into the third dimension.
+        """
+
+
+        # Extract the subgraph of the kernel entry map
+        launch_scope = dfg_scope.scope_subgraph(self._kernel_entry_node)
+
+        # Collect all relevant maps affecting launch (i.e. grid and block) dimensions
+        affecting_maps = self._get_maps_affecting_launch_dims(launch_scope)
+
+        # Filter for ThreadBlock maps
+        threadblock_maps = [(tbmap, sym_map) for tbmap, sym_map in affecting_maps
+                                if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
+        
+        # Determine if we fall back to default block size (which also affects grid size)
+        no_block_info: bool = len(threadblock_maps) == 0 and self._kernel_map.gpu_block_size is None
+        
+        if no_block_info:
+            block_size, grid_size = self._compute_default_block_and_grid()
+        else:
+            block_size, grid_size = self._compute_block_and_grid_from_maps(threadblock_maps)
+
+
+        return grid_size, block_size, len(threadblock_maps) > 0, False, 0
+
+
+    def _compute_default_block_and_grid(self):
+        """
+        Fallback when no gpu_block_size (i.e. self._kernel_map.gpu_block_size is None)
+        or GPU_ThreadBlock maps are defined:
+
+        Uses default_block_size (e.g. [32,1,1]) on the whole domain S (assuming 1 dimensional),
+        producing block=[32,1,1] and grid=[ceil(|S|/32),1,1].
+
+        Special case: if the block has more active (non-1) dimensions than S,
+        extra block dimensions are collapsed into the last active slot.
+        """
+
+        kernel_map_label = self._kernel_entry_node.map.label
+        default_block_size_config = Config.get('compiler', 'cuda', 'default_block_size')
+
+        # 1) Reject unsupported 'max' setting
+        if default_block_size_config == 'max':
+            # TODO: does this make sense? what is meant with dynamic here?
+            raise NotImplementedError('max dynamic block size unimplemented') 
+        
+        # 2) Warn that we're falling back to config
+        warnings.warn(
+            f'No `gpu_block_size` property specified on map "{kernel_map_label}". '
+            f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {default_block_size_config}. '
+            'You can either specify the block size to use with the gpu_block_size property, '
+            'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
+            'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+        
+
+        # 3) Normalize the total iteration space size (len(X),len(Y),len(Z)…) to 3D
+        raw_domain = list(self._kernel_map.range.size(True))[::-1]
+        kernel_domain_size = self._to_3d_dims(raw_domain)
+
+        # 4) Parse & normalize the default block size to 3D
+        default_block_size = [int(x) for x in default_block_size_config.split(',')]
+        default_block_size = self._to_3d_dims(default_block_size)
+
+        # 5) If block has more "active" dims than the domain, collapse extras
+        active_block_dims = max(1, sum(1 for b in default_block_size if b != 1))
+        active_grid_dims  = max(1, sum(1 for g in kernel_domain_size  if g != 1))
+
+        if active_block_dims > active_grid_dims:
+            tail_product = prod(default_block_size[active_grid_dims:])
+            block_size = default_block_size[:active_grid_dims] + [1] * (3 - active_grid_dims)
+            block_size[active_grid_dims - 1] *= tail_product
+            warnings.warn(f'Default block size has more dimensions ({active_block_dims}) than kernel dimensions '
+                            f'({active_grid_dims}) in map "{kernel_map_label}". Linearizing block '
+                            f'size to {block_size}. Consider setting the ``gpu_block_size`` property.')
+        else:
+            block_size = default_block_size
+
+        # 6) Compute the final grid size per axis: ceil(domain / block)
+        grid_size = [symbolic.int_ceil(gs, bs) for gs, bs in zip(kernel_domain_size, block_size)]
+
+
+        # 7) Check block size against configured CUDA hardware limits
+        self._validate_block_size_limits(block_size)
+
+        return block_size, grid_size
+
+
+    def _compute_block_and_grid_from_maps(self, tb_maps_sym_map):
+        # TODO: also provide a description here in docstring
+
+
+        kernel_entry_node = self._kernel_entry_node
+        
+        # Compute kernel grid size
+        raw_grid_size = self._kernel_map.range.size(True)[::-1]
+        grid_size = self._to_3d_dims(raw_grid_size)
+
+        # Determine block size, using gpu_block_size override if specified
+        # NOTE: this must be done on the original list! otherwise error
+        block_size = self._kernel_map.gpu_block_size
+        if block_size is not None:
+            block_size = self._to_3d_dims(block_size)
+
+
+        # Find all thread-block maps to determine overall block size
+        detected_block_sizes = [block_size] if block_size is not None else []
+        for tbmap, sym_map in tb_maps_sym_map:
+            tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
+
+            # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
+            # The partial trailing thread-block is emitted as an if-condition
+            # that returns on some of the participating threads
+            tbsize = [symbolic.overapproximate(s) for s in tbsize]
+
+            # To Cuda compatible block dimension description
+            tbsize = self._to_3d_dims(tbsize)
+ 
+            if len(detected_block_sizes) == 0:
+                block_size = tbsize
+            else:
+                block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
+
+            if block_size != tbsize or len(detected_block_sizes) == 0:
+                detected_block_sizes.append(tbsize)
+
+
+
+        #-------------- Error handling and warnings ------------------------
+
+        # TODO: If grid/block sizes contain elements only defined within the
+        #       kernel, raise an invalid SDFG exception and recommend
+        #       overapproximation.
+
+        kernel_map_label = kernel_entry_node.map.label
+        if len(detected_block_sizes) > 1:
+            # Error when both gpu_block_size and thread-block maps were defined and conflict
+            if kernel_entry_node.map.gpu_block_size is not None:
+                raise ValueError('Both the `gpu_block_size` property and internal thread-block '
+                                    'maps were defined with conflicting sizes for kernel '
+                                    f'"{kernel_map_label}" (sizes detected: {detected_block_sizes}). '
+                                    'Use `gpu_block_size` only if you do not need access to individual '
+                                    'thread-block threads, or explicit block-level synchronization (e.g., '
+                                    '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
+                                    '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
+                                    'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+
+            warnings.warn('Multiple thread-block maps with different sizes detected for '
+                            f'kernel "{kernel_map_label}": {detected_block_sizes}. '
+                            f'Over-approximating to block size {block_size}.\n'
+                            'If this was not the intent, try tiling one of the thread-block maps to match.')
+        
+        # Check block size against configured CUDA hardware limits
+        self._validate_block_size_limits(block_size)
+        
+        return block_size, grid_size
+
+
+    def _validate_block_size_limits(self, block_size):
+        """
+        Check block size against configured maximum values, if those can be determined
+        """
+
+        kernel_map_label = self._kernel_map.label
+
+        total_block_size = prod(block_size)
+        limit = Config.get('compiler', 'cuda', 'block_size_limit')
+        lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
+        
+        if (total_block_size > limit) == True:
+            raise ValueError(f'Block size for kernel "{kernel_map_label}" ({block_size}) '
+                             f'is larger than the possible number of threads per block ({limit}). '
+                             'The kernel will potentially not run, please reduce the thread-block size. '
+                             'To increase this limit, modify the `compiler.cuda.block_size_limit` '
+                             'configuration entry.')
+        if (block_size[-1] > lastdim_limit) == True:
+            raise ValueError(f'Last block size dimension for kernel "{kernel_map_label}" ({block_size}) '
+                             'is larger than the possible number of threads in the last block dimension '
+                             f'({lastdim_limit}). The kernel will potentially not run, please reduce the '
+                             'thread-block size. To increase this limit, modify the '
+                             '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
+
+
+    def _to_3d_dims(self, dim_sizes: List) -> List:
+        """
+        Given a list representing the size of each dimension, this function modifies
+        the list in-place by collapsing all dimensions beyond the second into the
+        third entry. If the list has fewer than three entries, it is padded with 1's
+        to ensure it always contains exactly three elements. This is used to format
+        grid and block size parameters for a kernel launch.
+
+        Examples:
+            [x]             → [x, 1, 1]
+            [x, y]          → [x, y, 1]
+            [x, y, z]       → [x, y, z]
+            [x, y, z, u, v] → [x, y, z * u * v]
+        """
+        
+        if len(dim_sizes) > 3:
+            # multiply everything from the 3rd onward into d[2]
+            dim_sizes[2] = prod(dim_sizes[2:])
+            dim_sizes = dim_sizes[:3]
+
+        # pad with 1s if necessary
+        dim_sizes += [1] * (3 - len(dim_sizes))
+
+        return dim_sizes
+
+
+    def _get_maps_affecting_launch_dims(self, graph: ScopeSubgraphView) -> List[Tuple[nodes.MapEntry, Dict[dace.symbol, dace.symbol]]]:
+        """
+        Recursively collects all GPU_Device and GPU_ThreadBlock maps within the given graph,
+        including those inside nested SDFGs. For each relevant map, returns a tuple containing
+        the map object and an identity mapping of its free symbols.
+
+        Args:
+            graph (ScopeSubgraphView): The subgraph to search for relevant maps.
+
+        Returns:
+            List[Tuple[nodes.MapEntry, Dict[dace.symbol, dace.symbol]]]: 
+                A list of tuples, each consisting of a MapEntry object and a dictionary mapping 
+                each free symbol in the map's range to itself (identity mapping).
+        
+        NOTE:
+            Currently, dynamic parallelism (nested GPU_Device schedules) is not supported.
+            The GPU_Device is only used for the top level map, where it is allowed and required.
+        """
+
+        relevant_maps = []
+
+        for node in graph.nodes():
+
+            # Recurse into nested SDFGs
+            if isinstance(node, nodes.NestedSDFG):
+                for state in node.sdfg.states():
+                    relevant_maps.extend(self._get_maps_affecting_launch_dims(state))
+                continue
+
+            # MapEntry with schedule affecting launch dimensions
+            if (isinstance(node, nodes.MapEntry) and
+                node.schedule in {dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock}):
+                identity_map = { dace.symbol(sym): dace.symbol(sym) for sym in node.map.range.free_symbols}
+                relevant_maps.append((node.map, identity_map))
+
+        return relevant_maps
+    
+
+
 
     @property
     def kernel_name(self) -> list[str]:
@@ -2318,7 +2368,6 @@ class KernelSpec:
     def kernel_map(self) -> nodes.Map:
         """Returns the kernel map node"""
         return self._kernel_map
-    
     
     @property
     def args_as_input(self) -> list[str]:
