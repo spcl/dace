@@ -366,8 +366,8 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
 
 // CUBE_BLOCK needs to be 16?
-constexpr uint32_t CUBE_BLOCK  =  16 ;
-constexpr uint32_t CUBE_BLOCK_SIZE  =  16  *  16 ;
+constexpr uint32_t CUBE_BLOCK = 32;
+constexpr uint32_t CUBE_BLOCK_SIZE  = 32 * 32;
 __aicore__  inline  uint32_t CeilCubeBlock(uint32_t  len)  {{
     return (len + CUBE_BLOCK - 1) / CUBE_BLOCK ;
 }}
