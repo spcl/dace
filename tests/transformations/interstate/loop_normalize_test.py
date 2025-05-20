@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests loop normalization trainsformations. """
 
 import numpy as np
@@ -6,7 +6,6 @@ import pytest
 import dace
 from dace.memlet import Memlet
 from dace.sdfg.state import LoopRegion
-from dace.transformation.interstate import LoopNormalize
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -49,9 +48,9 @@ def test_normalize(start, step):
     assert loop_analysis.get_loop_stride(loop) == step
 
     if start == 0 and step == 1:
-        assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+        assert loop.normalize() == False
     else:
-        assert sdfg.apply_transformations_repeated(LoopNormalize) == 1
+        assert loop.normalize() == True
 
     # Check if loop normalization was successful
     assert loop_analysis.get_init_assignment(loop) == 0
@@ -90,7 +89,7 @@ def test_normalize_altered_iter():
     sdfg.validate()
 
     # Should not apply
-    assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+    assert loop.normalize() == False
 
 
 def test_normalize_nonlin_step():
@@ -110,7 +109,7 @@ def test_normalize_nonlin_step():
     sdfg.validate()
 
     # Should not apply
-    assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+    assert loop.normalize() == False
 
 
 def test_normalize_altered_step():
@@ -132,22 +131,35 @@ def test_normalize_altered_step():
     sdfg.validate()
 
     # Should not apply
-    assert sdfg.apply_transformations_repeated(LoopNormalize) == 0
+    assert loop.normalize() == False
+
+
+def test_inequality():
+    """
+    Tests if loop normalization works correctly with an inequality condition.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [32], dace.float32)
+    sdfg.add_array("B", [32], dace.float32)
+    sdfg.add_symbol("step", dace.int32)
+
+    loop = LoopRegion("loop", f"i != 32", "i", f"i = 0", f"i = i + step")
+    sdfg.add_node(loop)
+    s = loop.add_state("loop_body", is_start_block=True)
+    a = s.add_access("A")
+    b = s.add_access("B")
+    s.add_edge(a, None, b, None, Memlet("A[i] -> B[i]"))
+    sdfg.validate()
+
+    # Should not apply
+    assert loop.normalize() == False
 
 
 if __name__ == "__main__":
-    test_normalize(0, 1)
-    test_normalize(1, 1)
-    test_normalize(2, 2)
-    test_normalize(4, 2)
-    test_normalize(8, 4)
-    test_normalize(16, 4)
-    test_normalize(0, -1)
-    test_normalize(1, -1)
-    test_normalize(2, -2)
-    test_normalize(4, -2)
-    test_normalize(8, -4)
-    test_normalize(16, -4)
+    for b in [0, 1, 2, 4, 8, 16]:
+        for s in [1, 2, 4, -1, -2, -4]:
+            test_normalize(b, s)
     test_normalize_altered_iter()
     test_normalize_nonlin_step()
     test_normalize_altered_step()
+    test_inequality()
