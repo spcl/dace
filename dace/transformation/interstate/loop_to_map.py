@@ -253,9 +253,8 @@ class LoopToMap(xf.MultiStateTransformation):
                 break
 
             # Check state contents
-            if not permissive:
-              if symbols_that_may_be_used & block.free_symbols:
-                  return False
+            if symbols_that_may_be_used & block.free_symbols:
+                return False
 
             # Check inter-state edges
             reassigned_symbols = None
