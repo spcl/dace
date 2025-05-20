@@ -1107,7 +1107,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out
-                    result.write(write_expr + "// 5", cfg, state_id, node)
+                    # TODO: HACK FIX THIS
+                    result.write("// " + write_expr + "// 5", cfg, state_id, node)
 
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):

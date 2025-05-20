@@ -848,15 +848,21 @@ using AscendC::Mmad;
                 beg, end, step = subset.ranges[0]
                 assert step == 1
                 length = (end + 1) - beg
+                width = length
                 if (
                     src_storage == dtypes.StorageType.Ascend_Global
                     and dst_storage == dtypes.StorageType.Ascend_VECIN
                 ):
                     callsite_stream.write(
                         f"""// Global -> VECIN: Alloc Local, DataCopy, EnQue
-                        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
-                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
-                        AscendC::DataCopy({dst_name}, {name}_GM, {length});
+                        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = 1;
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = 0;
+                        {dst_name}Params.dstStride = 0;
+                        AscendC::DataCopy({dst_name}, {name}_GM, {dst_name}Params);
                         queue_{dst_name}.EnQue({dst_name});\n"""
                     )
                 elif (
@@ -879,7 +885,12 @@ using AscendC::Mmad;
                         f"""// VECOUT -> Global: DeQue, DataCopy, Free Prev.
                         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
                         {name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});
-                        AscendC::DataCopy({name}_GM, {src_name}, {length});
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = 1;
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = 0;
+                        {dst_name}Params.dstStride = 0;
+                        AscendC::DataCopy({name}_GM, {src_name}, {dst_name}Params);
                         queue_{src_name}.FreeTensor({src_name});"""
                     )
                 else:
@@ -890,6 +901,7 @@ using AscendC::Mmad;
                 beg1, end1, step1 = subset.ranges[0]
                 beg2, end2, step2 = subset.ranges[1]
                 assert(nodedesc.strides[1] == 1)
+                assert(nodedesc.strides[0] != 1)
                 assert step2 == 1
                 assert step1 == 1
                 width = (end2 + 1) - beg2
@@ -899,16 +911,20 @@ using AscendC::Mmad;
                     and dst_storage == dtypes.StorageType.Ascend_VECIN
                 ):
                     # Coupling Architecture
+                    #* @param [in] intriParams.blockCount number of blocks
+                    #* @param [in] intriParams.blockLen Length of blocks
+                    #* @param [in] intriParams.srcStride src block stride
+                    #* @param [in] intriParams.dstStride dst block stride
                     callsite_stream.write(
                         f"""// Global -> VECIN: Alloc Local, DataCopy, EnQue
                         {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
-                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {height} * {width});
-                        //AscendC::DataCopy({dst_name}, {name}_GM, {width});
-                        for  (int i =  0 ; i < {width} / 16 ; ++i)  {{
-                            const int  srcOffset = i * 16;
-                            const int  dstOffset = i * 16 * {height};
-                            AscendC::DataCopy({dst_name}[dstOffset],  {src_name}_GM[srcOffset], {{{height}, 1, uint16_t(({width} / 16) - 1), 0}});
-                        }}
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg1} * {nodedesc.strides[0]} + {beg2}], {height} * {width});
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = {height};
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = static_cast<uint16_t>(({width} / 16) - 1);
+                        {dst_name}Params.dstStride = 0;
+                        AscendC::DataCopy({dst_name}, {src_name}_GM, {dst_name}Params);
                         queue_{dst_name}.EnQue({dst_name});\n"""
                     )
                 elif (
@@ -929,12 +945,13 @@ using AscendC::Mmad;
                     callsite_stream.write(
                         f"""// VECOUT -> Global: DeQue, DataCopy, Free Prev.
                         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
-                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {height} * {width});
-                        for  (int i =  0 ; i < {width} / 16 ; ++i)  {{
-                            const int  srcOffset = i * 16;
-                            const int  dstOffset = i * 16 * {height};
-                            AscendC::DataCopy({dst_name}_GM[dstOffset],  {src_name}[srcOffset], {{{height}, 1, uint16_t(({width} / 16) - 1), 0}});
-                        }}
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[0]} + {beg1}], {height} * {width});
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = {height};
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = static_cast<uint16_t>(({width} / 16) - 1);
+                        {dst_name}Params.dstStride = 0;
+                        AscendC::DataCopy({dst_name}_GM, {src_name}, {dst_name}Params);
                         queue_{src_name}.FreeTensor({src_name});\n
                        """
                     )
@@ -966,12 +983,14 @@ using AscendC::Mmad;
                     callsite_stream.write(
                         f"""
                         {copy_str}
-                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[1]} + {beg1}], {width} * {height});
-                        for  (int i = 0; i < {width} / 16; ++i) {{
-                            int  {src_name}_srcOffset =  i * 16;
-                            int  {dst_name}_dstOffset =  i * 16 * {height};
-                            AscendC::DataCopy({dst_name}[{dst_name}_dstOffset], {src_name}_GM[{src_name}_srcOffset], {{{height}, 1,  uint16_t(({width} / 16)  -  1), 0 }});
-                        }}
+                        {name}_GM.SetGlobalBuffer(&{name}_typed[{beg2} * {nodedesc.strides[0]} + {beg1}], {width} * {height});
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = {height};
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = static_cast<uint16_t>(({nodedesc.strides[0]} / 16) - 1);
+                        {dst_name}Params.dstStride = 0;
+                        AscendC::DataCopy({dst_name}, {src_name}_GM, {dst_name}Params);
+                        queue_{dst_name}.EnQue({dst_name});\n
                         """
                     )
                 elif (
@@ -983,8 +1002,8 @@ using AscendC::Mmad;
                     src_storage_name = "B1" if src_storage == dtypes.StorageType.Ascend_B1 else "A1"
                     dst_storage_name = "B2" if dst_storage == dtypes.StorageType.Ascend_B2 else "A2"
                     copy_str = f"// {src_storage_name} -> {dst_storage_name}: Alloc Local, DataLoad, EnQue"
+                    """
                     callsite_stream.write(
-                        f"""
                         {copy_str}
                         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
                         uint32_t {dst_name}_dstOffset = CeilCubeBlock({width}) * CUBE_BLOCK_SIZE;
@@ -999,6 +1018,20 @@ using AscendC::Mmad;
                         }}
                         queue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
                         queue_{src_name}.FreeTensor({src_name});
+                    )
+                    """
+                    callsite_stream.write(
+                        f"""
+                        {copy_str}
+                        {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = {height};
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = static_cast<uint16_t>(({nodedesc.strides[0]} / 16) - 1);
+                        {dst_name}Params.dstStride = 0;
+                        AscendC::DataCopy({dst_name}, {src_name}, {dst_name}Params);
+                        queue_{dst_name}.EnQue({dst_name});
+                        queue_{src_name}.FreeTensor({src_name});\n
                         """
                     )
                 elif (
@@ -1018,15 +1051,16 @@ using AscendC::Mmad;
                         f"""
                         // {src_storage_name} -> {dst_storage_name}: DeQue, DataCopy, Free Prev.
                         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
-                        AscendC::DataCopyParams dataCopyParams;
-                        dataCopyParams.blockCount = {width} / 16;
-                        dataCopyParams.blockLen = {height};
-                        AscendC::DataCopyEnhancedParams enhancedParams;
-                        enhancedParams.blockMode = AscendC::BlockMode::BLOCK_MODE_MATRIX;
-                        AscendC::DataCopy({dst_name}, {src_name}, dataCopyParams, enhancedParams);
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = {height};
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = 0;
+                        {dst_name}Params.dstStride = static_cast<uint16_t>(({nodedesc.strides[0]} / 16) - 1);
+                        AscendC::DataCopy({dst_name}, {src_name}, {dst_name}Params);
+                        queue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
+                        queue_{src_name}.FreeTensor({src_name});
                         """
                     )
-                    callsite_stream.write(f"queue_{src_name}.FreeTensor({src_name});")
                 elif (
                     (src_storage == dtypes.StorageType.Ascend_CO2 and
                      dst_storage == dtypes.StorageType.Ascend_VECIN)
@@ -1040,8 +1074,8 @@ using AscendC::Mmad;
                     assert step1 == 1
                     width = (end2 + 1) - beg2
                     height = (end1 + 1) - beg1
+                    """
                     callsite_stream.write(
-                        f"""
                         // {src_storage_name} -> {dst_storage_name}: DeQue, DataCopy, Free Prev.
                         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
                         AscendC::DataCopyParams dataCopy{dst_name}Params;
@@ -1050,6 +1084,20 @@ using AscendC::Mmad;
                         AscendC::DataCopyEnhancedParams enhancedParams{dst_name};
                         enhancedParams{dst_name}.blockMode = AscendC::BlockMode::BLOCK_MODE_MATRIX;
                         AscendC::DataCopy({dst_name}, {src_name}, dataCopy{dst_name}Params, enhancedParams{dst_name});
+                        queue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
+                        queue_{src_name}.FreeTensor({src_name});
+                    )
+                    """
+                    callsite_stream.write(
+                        f"""
+                        // {src_storage_name} -> {dst_storage_name}: DeQue, DataCopy, Free Prev.
+                        {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+                        AscendC::DataCopyParams {dst_name}Params;
+                        {dst_name}Params.blockCount = {height};
+                        {dst_name}Params.blockLen = {width} / 16;
+                        {dst_name}Params.srcStride = 0;
+                        {dst_name}Params.dstStride = static_cast<uint16_t>(({nodedesc.strides[0]} / 16) - 1);
+                        AscendC::DataCopy({dst_name}, {src_name}, {dst_name}Params);
                         queue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
                         queue_{src_name}.FreeTensor({src_name});
                         """
@@ -1459,7 +1507,11 @@ using AscendC::Mmad;
         )
 
         # Comprehend grid/block dimensions from scopes
-        block_dims = self.get_kernel_dimensions(dfg_scope)
+        version = dace.config.Config.get("compiler", "ascendc", "soc_version")
+        if version == "ascend910":
+            block_dims = (32, 1, 1)
+        else:
+            block_dims = (20, 1, 1)
 
         # Get parameters of subgraph
         kernel_args = self._arglists[scope_entry]
@@ -1855,36 +1907,6 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 
         self._localwrappercode.write("}\n")
 
-    def get_tb_maps_recursive(self, subgraph):
-        res = []
-        for node in subgraph.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                for state in node.sdfg.states():
-                    tbmaps = self.get_tb_maps_recursive(state)
-                    for map, sym_map in tbmaps:
-                        for k in sym_map.values():
-                            for kk, vv in node.symbol_mapping.items():
-                                sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
-                        res.append((map, sym_map))
-            elif isinstance(node, nodes.MapEntry) and node.schedule in (
-                dtypes.ScheduleType.GPU_Device,
-                dtypes.ScheduleType.GPU_ThreadBlock,
-                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
-            ):
-                res.append(
-                    (
-                        node.map,
-                        {
-                            dace.symbol(k): dace.symbol(k)
-                            for k in node.map.range.free_symbols
-                        },
-                    )
-                )
-        return res
-
-    def get_kernel_dimensions(self, dfg_scope):
-        return (32, 1, 1)
-
     def generate_kernel_scope(
         self,
         sdfg: SDFG,
@@ -1945,7 +1967,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
                     NotImplementedError(
                         "2 Device Maps Within"
                     )
-        assert kernel_entry is not None, f"Could not find kernel map entry {kernel_map.label}, {kernel_map}, {type(kernel_map)}, {kentry}"
+        assert kernel_entry is not None, f"Could not find kernel map entry {kernel_map.label}, {kernel_map}, {type(kernel_map)}"
         for node in sdutil.dfs_topological_sort(state, kernel_entry):
             if (
                 isinstance(node, nodes.MapEntry)
@@ -1959,44 +1981,6 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             ):
                 map_entries.append(node)
 
-        #print(state.in_edges(aicore_group_map_entry))
-        #print(state.out_edges(aicore_group_map_entry))
-        """
-        for name, arr in self._used_arr_set:
-            if arr.storage in dace.dtypes.ASCEND_STORAGES:
-                que_name = self._storage_to_ascendc_que_name[arr.storage]
-
-                # Check the edges for the load/write granularity, if we do not want to array both
-                # in in or out edges, return an error
-                for m in map_entries:
-                    for e in state.out_edges(m):
-                        if isinstance(e.dst, dace.nodes.AccessNode):
-                            if e.dst.data == name:
-                                ranges: subsets.Range = e.data.subset
-                                assert ranges.dims() == 1
-                                kernel_stream.write(
-                                    f"pipe.InitBuffer(queue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
-                                )
-                                break
-                else:
-                    for m in map_entries:
-                        for e in state.in_edges(state.exit_node(m)):
-                            if isinstance(e.src, dace.nodes.AccessNode):
-                                if e.src.data == name:
-                                    ranges: subsets.Range = e.data.subset
-                                    assert ranges.dims() == 1
-                                    kernel_stream.write(
-                                        f"pipe.InitBuffer(queue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
-                                    )
-                                    break
-                                else:
-                                    #print(e, e.data, e.data.data, name)
-                                    pass
-                    else:
-                        raise Exception(
-                            f"One of the out edges need to cover this array we accessed, check impl for: {name}"
-                        )
-        """
         used_arrays_set = set()
         assert kernel_entry is not None
         assert kernel_entry in state.nodes()
@@ -2006,9 +1990,9 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 
         for arr_name in used_arrays_set:
             arr = sdfg.arrays[arr_name]
-            total_size = sympy.prod(arr.shape)
+            total_size_str = " * ".join([str(s) for s in arr.shape])
             kernel_stream.write(
-                f"pipe.InitBuffer(queue_{arr_name}, 1, {total_size} * sizeof({arr.dtype.ctype}));"
+                f"pipe.InitBuffer(queue_{arr_name}, 1, {total_size_str} * sizeof({arr.dtype.ctype}));"
             )
 
 
@@ -2191,7 +2175,10 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
                 varname = scope_map.params[-i - 1]
 
                 if i == 0:
-                    block_expr = f"(AscendC::GetBlockIdx() % {offsets[i+1]})"
+                    if len(offsets) > 1:
+                        block_expr = f"(AscendC::GetBlockIdx() % {offsets[i+1]})"
+                    else:
+                        block_expr = f"(AscendC::GetBlockIdx())"
                 else:
                     block_expr = f"(AscendC::GetBlockIdx() / {offsets[i]})"
 
