@@ -8,6 +8,7 @@ import copy
 import inspect
 import itertools
 import warnings
+import sympy
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type,
                     Union, overload)
 
@@ -3312,6 +3313,161 @@ class LoopRegion(ControlFlowRegion):
         sdfg.reset_cfg_list()
 
         return True, (init_state, guard_state, end_state)
+
+    def can_normalize(self) -> Tuple[bool, bool]:
+        """
+        Checks if the loop region can be normalized, meaning that it starts from 0 and increments by 1.
+
+        :return: A tuple of two booleans indicating if the loop init and step can be normalized.
+        """
+
+        # Avoid cyclic import
+        from dace.transformation.passes.analysis import loop_analysis
+
+        # If loop information cannot be determined, we cannot normalize
+        start = loop_analysis.get_init_assignment(self)
+        step = loop_analysis.get_loop_stride(self)
+        itervar = self.loop_variable
+        if start is None or step is None or itervar is None:
+            return False, False
+
+        # If we cannot symbolically match the loop condition, we cannot normalize
+        condition = symbolic.pystr_to_symbolic(self.loop_condition.as_string)
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sympy.Wild('a')
+        if (condition.match(itersym < a) is None and condition.match(itersym <= a) is None
+                and condition.match(itersym > a) is None and condition.match(itersym >= a) is None):
+            return False, False
+
+        # Get a list of all defined symbols in the loop body
+        defined_syms = set()
+        for edge, _ in self.all_edges_recursive():
+            if isinstance(edge.data, dace.InterstateEdge):
+                defined_syms.update(edge.data.assignments.keys())
+
+        # Check if we can normalize loop init
+        # Iteration variable not altered in the loop body and Init is not zero
+        can_norm_init = (itervar not in defined_syms and symbolic.resolve_symbol_to_constant(start, self.sdfg) != 0)
+
+        # Check if we can normalize loop step
+        # Iteration variable not altered in the loop body, increment not altered in body, step does not contain iteration variable, and Step is not one
+        step_free_syms = set([str(s) for s in step.free_symbols])
+        can_norm_step = (itervar not in defined_syms and step_free_syms.isdisjoint(defined_syms)
+                         and step_free_syms.isdisjoint({itervar})
+                         and symbolic.resolve_symbol_to_constant(step, self.sdfg) != 1)
+
+        # Return the results
+        return can_norm_init, can_norm_step
+
+    def normalize(self) -> bool:
+        """
+        Normalizes the loop region, meaning that it starts from 0 and increments by 1, if possible.
+        Partially normalizes if only one of the two is possible.
+
+        :return: True if the loop was normalized, False otherwise.
+        """
+
+        # Avoid cyclic import
+        from dace.transformation.passes.analysis import loop_analysis
+
+        # Check if the loop can be normalized
+        norm_init, norm_step = self.can_normalize()
+        if not (norm_init or norm_step):
+            return False
+
+        start = loop_analysis.get_init_assignment(self)
+        step = loop_analysis.get_loop_stride(self)
+        itervar = self.loop_variable
+
+        # Create the conversion expression
+        if norm_init and norm_step:
+            val = f"{itervar} * {step} + {start}"
+        elif norm_init:
+            val = f"{itervar} + {start}"
+        elif norm_step:
+            val = f"{itervar} * {step}"
+
+        # Replace each occurrence of the old iteration variable with the new one in the loop body, but not in the loop header
+        new_iter = self.sdfg.find_new_symbol(f"{itervar}_norm")
+        old_loop_init = copy.deepcopy(self.init_statement)
+        old_loop_cond = copy.deepcopy(self.loop_condition)
+        old_loop_step = copy.deepcopy(self.update_statement)
+
+        self.replace_dict({itervar: new_iter}, replace_keys=False)
+        self.init_statement = old_loop_init
+        self.loop_condition = old_loop_cond
+        self.update_statement = old_loop_step
+
+        # Add new state before the loop to compute the new iteration symbol
+        start_state = self.start_block
+        self.add_state_before(start_state, is_start_block=True, assignments={new_iter: val})
+
+        # Adjust loop header
+        if norm_init:
+            self.init_statement = CodeBlock(f"{itervar} = 0")
+        if norm_step:
+            self.update_statement = CodeBlock(f"{itervar} = {itervar} + 1")
+
+        # Compute new condition
+        condition = symbolic.pystr_to_symbolic(self.loop_condition.as_string)
+        itersym = symbolic.pystr_to_symbolic(itervar)
+
+        # Find condition by matching expressions
+        end: Optional[sympy.Expr] = None
+        a = sympy.Wild('a')
+        op = ''
+        match = condition.match(itersym < a)
+        if match:
+            op = '<'
+            end = match[a]
+        if end is None:
+            match = condition.match(itersym <= a)
+            if match:
+                op = '<='
+                end = match[a]
+        if end is None:
+            match = condition.match(itersym > a)
+            if match:
+                op = '>'
+                end = match[a]
+        if end is None:
+            match = condition.match(itersym >= a)
+            if match:
+                op = '>='
+                end = match[a]
+        if len(op) == 0:
+            raise ValueError('Cannot match loop condition for loop normalization')
+
+        # Invert the operator for reverse loops
+        is_reverse = step < 0
+        if is_reverse:
+            if op == '<':
+                op = '>='
+            elif op == '<=':
+                op = '>'
+            elif op == '>':
+                op = '<='
+            elif op == '>=':
+                op = '<'
+
+            # swap start and end
+            start, end = end, start
+
+            # negate step
+            step = -step
+
+        if norm_init and norm_step:
+            new_condition = f"{itersym} {op} (({end}) - ({start})) / {step}"
+        elif norm_init:
+            new_condition = f"{itersym} {op} ({end}) - ({start})"
+        elif norm_step:
+            new_condition = f"{itersym} {op} ({end}) / {step}"
+
+        if is_reverse:
+            new_condition = f"{new_condition} + 1"
+
+        self.loop_condition = CodeBlock(new_condition)
+        return True
 
     def get_meta_codeblocks(self):
         codes = [self.loop_condition]
