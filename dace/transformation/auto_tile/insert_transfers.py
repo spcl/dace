@@ -600,6 +600,7 @@ class InsertTransfers(ppl.Pass):
             dst_arr_name = dst_loc_prefix + "_" + (node.data.split("_")[-1] if "_" in node.data else node.data)
             if dst_arr_name not in sdfg.arrays:
                 datadesc = sdfg.arrays[node.data]
+                datadesc.storage = dst_loc
                 sdfg.add_datadesc(
                     name = dst_arr_name,
                     datadesc = copy.deepcopy(datadesc),

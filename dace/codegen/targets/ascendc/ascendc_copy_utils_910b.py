@@ -1,3 +1,5 @@
+import dace
+
 def write_vecin_from_global(callsite_stream, name, src_name, dst_name, beg, width, nodedesc):
     callsite_stream.write(
         f"""// Global -> VECIN: Alloc Local, DataCopy, EnQue
@@ -208,7 +210,10 @@ def write_tensor_copy(callsite_stream, memlet, src_name, dst_name, src_storage, 
         elif src_storage.name == "Ascend_CO1" and dst_storage.name == "Ascend_CO2":
             write_global_from_co1(callsite_stream, memlet.data, dst_name, src_name, beg1, beg2, width, height, nodedesc)
         else:
-            raise NotImplementedError(f"2D copy not implemented for {src_storage} -> {dst_storage}")
+            if src_storage == dst_storage and memlet == dace.memlet.Memlet.from_array(src_name, nodedesc) and src_name == dst_name:
+                print("Warning!: Trivial copy (same storage, complete array shape), {src_storage} -> {dst_storage}, Memlet({memlet}) == {nodedesc.shape}")
+            else:
+                raise NotImplementedError(f"2D copy not implemented for {src_storage} -> {dst_storage}, Memlet({memlet})")
     else:
         raise NotImplementedError("Only 1D and 2D copies are supported.")
 
