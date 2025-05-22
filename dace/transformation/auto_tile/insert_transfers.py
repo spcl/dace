@@ -311,60 +311,110 @@ class InsertTransfers(ppl.Pass):
         new_memlet = src_edge[-1]
         offset = [beg for beg, end, step in src_memlet.subset]
         # We need to replace all occurences within the map
-        assert isinstance(edge.dst, dace.nodes.MapEntry)
+        assert isinstance(edge.dst, dace.nodes.MapEntry) or isinstance(edge.dst, dace.nodes.MapExit)
         # do not include map entry and exit
-        all_nodes = list(state.all_nodes_between(edge.dst, state.exit_node(edge.dst)))
-        print(edge.dst, state.exit_node(edge.dst))
-        print(all_nodes)
-        for e in state.all_edges(*all_nodes):
-            # print(e)
-            # If data is what we replaced, replace
-            # print(e.data.data, src_memlet.data)
-            if e.data.data == src_memlet.data:
-                _tmp_memlet = dace.subsets.Range(
-                    [
-                        (beg - offset, end - offset, step)
-                        for ((beg, end, step), offset) in zip(e.data.subset, offset)
-                    ]
-                )
-                e.data = dace.memlet.Memlet(
-                    data=new_memlet.data, subset=_tmp_memlet, wcr=e.data.wcr
-                )
+        if isinstance(edge.dst, dace.nodes.MapEntry):
+            all_nodes = list(state.all_nodes_between(edge.dst, state.exit_node(edge.dst)))
+            print(edge.dst, state.exit_node(edge.dst))
+            print(all_nodes)
+            for e in state.all_edges(*all_nodes):
+                # print(e)
+                # If data is what we replaced, replace
+                # print(e.data.data, src_memlet.data)
+                if e.data.data == src_memlet.data:
+                    _tmp_memlet = dace.subsets.Range(
+                        [
+                            (beg - offset, end - offset, step)
+                            for ((beg, end, step), offset) in zip(e.data.subset, offset)
+                        ]
+                    )
+                    e.data = dace.memlet.Memlet(
+                        data=new_memlet.data, subset=_tmp_memlet, wcr=e.data.wcr
+                    )
+            for n in list(state.all_nodes_between(edge.dst, state.exit_node(edge.dst))) + [
+                edge.dst,
+                state.exit_node(edge.dst),
+            ]:
+                print(n.in_connectors, "IN_" + edge.data.data)
+                print(n.out_connectors, "OUT_" + edge.data.data)
 
-        for n in list(state.all_nodes_between(edge.dst, state.exit_node(edge.dst))) + [
-            edge.dst,
-            state.exit_node(edge.dst),
-        ]:
-            print(n.in_connectors, "IN_" + edge.data.data)
-            print(n.out_connectors, "OUT_" + edge.data.data)
+                for ie in state.in_edges_by_connector(n, "IN_" + edge.data.data):
+                    ie.dst_conn = "IN_" + new_memlet.data
+                for oe in state.out_edges_by_connector(n, "OUT_" + edge.data.data):
+                    oe.src_conn = "OUT_" + new_memlet.data
 
-            for ie in state.in_edges_by_connector(n, "IN_" + edge.data.data):
-                ie.dst_conn = "IN_" + new_memlet.data
-            for oe in state.out_edges_by_connector(n, "OUT_" + edge.data.data):
-                oe.src_conn = "OUT_" + new_memlet.data
+                for ea in list(
+                    edges_to_add
+                ):  # Convert to list to avoid modifying the set during iteration
+                    print("EA", ea[3], edge.data.data, new_memlet.data)
+                    if ea[2] == n or ea[0] == n:
+                        _ea = None
+                        if ea[3] == "IN_" + edge.data.data:
+                            _ea = (ea[0], ea[1], ea[2], "IN_" + new_memlet.data, ea[4])
+                        if ea[1] == "OUT_" + edge.data.data:
+                            _ea = (ea[0], "OUT_" + new_memlet.data, ea[2], ea[3], ea[4])
+                        if _ea is not None:
+                            edges_to_add.discard(ea)  # Remove old entry
+                            edges_to_add.add(_ea)  # Add updated entry
 
-            for ea in list(
-                edges_to_add
-            ):  # Convert to list to avoid modifying the set during iteration
-                print("EA", ea[3], edge.data.data, new_memlet.data)
-                if ea[2] == n or ea[0] == n:
-                    _ea = None
-                    if ea[3] == "IN_" + edge.data.data:
-                        _ea = (ea[0], ea[1], ea[2], "IN_" + new_memlet.data, ea[4])
-                    if ea[1] == "OUT_" + edge.data.data:
-                        _ea = (ea[0], "OUT_" + new_memlet.data, ea[2], ea[3], ea[4])
-                    if _ea is not None:
-                        edges_to_add.discard(ea)  # Remove old entry
-                        edges_to_add.add(_ea)  # Add updated entry
+                if "IN_" + edge.data.data in n.in_connectors:
+                    v = n.in_connectors["IN_" + edge.data.data]
+                    n.remove_in_connector("IN_" + edge.data.data)
+                    n.add_in_connector("IN_" + new_memlet.data, v)
+                if "OUT_" + edge.data.data in n.out_connectors:
+                    v = n.out_connectors["OUT_" + edge.data.data]
+                    n.remove_out_connector("OUT_" + edge.data.data)
+                    n.add_out_connector("OUT_" + new_memlet.data, v)
+        else:
+            all_nodes = [edge.dst]
+            for e in state.all_edges(*all_nodes):
+                # print(e)
+                # If data is what we replaced, replace
+                # print(e.data.data, src_memlet.data)
+                if e.data.data == src_memlet.data:
+                    _tmp_memlet = dace.subsets.Range(
+                        [
+                            (beg - offset, end - offset, step)
+                            for ((beg, end, step), offset) in zip(e.data.subset, offset)
+                        ]
+                    )
+                    e.data = dace.memlet.Memlet(
+                        data=new_memlet.data, subset=_tmp_memlet, wcr=e.data.wcr
+                    )
 
-            if "IN_" + edge.data.data in n.in_connectors:
-                v = n.in_connectors["IN_" + edge.data.data]
-                n.remove_in_connector("IN_" + edge.data.data)
-                n.add_in_connector("IN_" + new_memlet.data, v)
-            if "OUT_" + edge.data.data in n.out_connectors:
-                v = n.out_connectors["OUT_" + edge.data.data]
-                n.remove_out_connector("OUT_" + edge.data.data)
-                n.add_out_connector("OUT_" + new_memlet.data, v)
+            for n in [
+                edge.dst,
+            ]:
+                print(n.in_connectors, "IN_" + edge.data.data)
+                print(n.out_connectors, "OUT_" + edge.data.data)
+
+                for ie in state.in_edges_by_connector(n, "IN_" + edge.data.data):
+                    ie.dst_conn = "IN_" + new_memlet.data
+                for oe in state.out_edges_by_connector(n, "OUT_" + edge.data.data):
+                    oe.src_conn = "OUT_" + new_memlet.data
+
+                for ea in list(
+                    edges_to_add
+                ):  # Convert to list to avoid modifying the set during iteration
+                    print("EA", ea[3], edge.data.data, new_memlet.data)
+                    if ea[2] == n or ea[0] == n:
+                        _ea = None
+                        if ea[3] == "IN_" + edge.data.data:
+                            _ea = (ea[0], ea[1], ea[2], "IN_" + new_memlet.data, ea[4])
+                        if ea[1] == "OUT_" + edge.data.data:
+                            _ea = (ea[0], "OUT_" + new_memlet.data, ea[2], ea[3], ea[4])
+                        if _ea is not None:
+                            edges_to_add.discard(ea)  # Remove old entry
+                            edges_to_add.add(_ea)  # Add updated entry
+
+                if "IN_" + edge.data.data in n.in_connectors:
+                    v = n.in_connectors["IN_" + edge.data.data]
+                    n.remove_in_connector("IN_" + edge.data.data)
+                    n.add_in_connector("IN_" + new_memlet.data, v)
+                if "OUT_" + edge.data.data in n.out_connectors:
+                    v = n.out_connectors["OUT_" + edge.data.data]
+                    n.remove_out_connector("OUT_" + edge.data.data)
+                    n.add_out_connector("OUT_" + new_memlet.data, v)
 
         # raise Exception("Not implemented")
 
@@ -531,6 +581,47 @@ class InsertTransfers(ppl.Pass):
 
                     if arr.storage == dace.dtypes.StorageType.Register:
                         raise Exception(arr)
+
+    def _insert_move_to(
+        self, node, out_edge, shortest_path, sdfg: dace.SDFG, state: dace.SDFGState
+    ):
+        edges_to_add = set()
+        edges_to_rm = set()
+        locs = []
+        for loc_str in shortest_path:
+            loc_str_tokens = loc_str.split("@")
+            loc = dace.dtypes.StorageType[loc_str_tokens[-1].split(".")[-1]]
+            locs.append(loc)
+        added_nodes = [node]
+        for i in range(len(locs) - 2):
+            src_loc = locs[i]
+            dst_loc = locs[i + 1]
+            dst_loc_prefix = shortest_path[i + 1].split("@")[-1].split("_")[-1]
+            dst_arr_name = dst_loc_prefix + "_" + (node.data.split("_")[-1] if "_" in node.data else node.data)
+            if dst_arr_name not in sdfg.arrays:
+                datadesc = sdfg.arrays[node.data]
+                sdfg.add_datadesc(
+                    name = dst_arr_name,
+                    datadesc = copy.deepcopy(datadesc),
+                    find_new_name = False,
+                )
+            an = state.add_access(dst_arr_name)
+            added_nodes.append(an)
+            src_arr_name = added_nodes[-2].data
+            #if i != 0:
+            edges_to_add.add((added_nodes[-2], None, an, None, dace.memlet.Memlet.from_array(src_arr_name, sdfg.arrays[src_arr_name])))
+            #else:
+            #    ie = state.in_edges(node)[0]
+            #    edges_to_add.add((ie.src, ie.src_conn, an, None, dace.memlet.Memlet.from_array(src_arr_name, sdfg.arrays[src_arr_name])))
+            #    # Remove node at the end
+        # Last edge copies the out edge
+        edges_to_add.add((added_nodes[-1], None, out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data)))
+        #state.remove_node(out_edge.dst)
+        edges_to_rm.add(out_edge)
+        #state.remove_node(node)
+        #edges_to_rm = [e for e in edges_to_rm if e  in state.edges()]
+        return edges_to_add, edges_to_rm
+
 
     def _apply(self, state: SDFGState, sdfg: SDFG, device_map_entry: nodes.MapEntry):
         print(self._G)
@@ -715,6 +806,67 @@ class InsertTransfers(ppl.Pass):
                                     edges_to_rm = edges_to_rm.union(_e_rm)
         """
         # raise Exception("Not implemented")
+
+        edges_to_add = set()
+        edges_to_rm = set()
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.AccessNode):
+                if state.in_degree(node) == 1 and state.out_degree(node) == 1:
+                    # If we have a single in and out edge, we can remove the access node
+                    in_edge = state.in_edges(node)[0]
+                    out_edge = state.out_edges(node)[0]
+                    if (in_edge.data is not None and out_edge.data is not None and
+                        in_edge.data.data is not None and out_edge.data.data is not None and
+                        in_edge.data.data != out_edge.data.data and
+                        sdfg.arrays[in_edge.data.data].storage != sdfg.arrays[out_edge.data.data].storage):
+                        in_arr = sdfg.arrays[in_edge.data.data]
+                        out_arr = sdfg.arrays[out_edge.data.data]
+                        src_storage_str = self._construct_str_from_storage(
+                                            sdfg.arrays[in_edge.data.data].storage
+                                        )
+                        dst_storage_str = self._construct_str_from_storage(
+                                            sdfg.arrays[out_edge.data.data].storage
+                                        )
+                        paths = [
+                            p
+                            for p in self._paths
+                            if p[0]
+                            == self._construct_str_from_storage(
+                                in_arr.storage
+                            )
+                            and p[-1]
+                            == self._construct_str_from_storage(
+                                out_arr.storage
+                            )
+                        ]
+                        print("INFO!:", dst_storage_str in self._G[src_storage_str], self._G[src_storage_str], src_storage_str, dst_storage_str)
+                        if dst_storage_str not in self._G[src_storage_str] and isinstance(out_edge.dst, dace.nodes.MapExit):
+                            # Need to insert transfers until there
+                            print(paths)
+                            # Take the first shortest path
+                            shortest_path = min(paths, key=len)
+                            assert shortest_path is not None
+                            print(
+                                "S",
+                                shortest_path,
+                                self._construct_str_from_storage(
+                                    in_arr.storage
+                                ),
+                                self._entry_location_requirements[compute_unit],
+                            )
+                            src_edge = out_edge
+                            _e_add, _e_rm = self._insert_move_to(
+                                node, out_edge, shortest_path, sdfg, state
+                            )
+                            print("EA", _e_add)
+                            edges_to_add = edges_to_add.union(_e_add)
+                            edges_to_rm = edges_to_rm.union(_e_rm)
+
+        for e in edges_to_add:
+            state.add_edge(*e)
+        for e in edges_to_rm:
+            state.remove_edge(e)
+        sdfg.save("owo.sdfg")
 
     @staticmethod
     def annotates_memlets():
