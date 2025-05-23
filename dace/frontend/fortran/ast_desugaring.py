@@ -3138,7 +3138,10 @@ def const_eval_nodes(ast: Program) -> Program:
         assert not np.isnan(val)
         val = numpy_type_to_literal(val)
         if val.tostr().startswith('-'):
-            val = Parenthesis(f"({val})")
+            par = object.__new__(Parenthesis)
+            par.string = f'({val})'
+            par.init('(', val, ')')
+            val = par
         replace_node(n, val)
         return True
 
