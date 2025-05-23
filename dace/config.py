@@ -40,7 +40,7 @@ def temporary_config():
             Config.set("optimizer", "autooptimize", value=True)
             foo()
     """
-    with tempfile.NamedTemporaryFile(mode='w+t') as fp:
+    with tempfile.TemporaryFile(mode='w+t') as fp:
         Config.save(file=fp)
         yield
         fp.seek(0)  # rewind to the beginning of the file.
