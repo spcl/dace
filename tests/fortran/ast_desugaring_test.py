@@ -1747,8 +1747,8 @@ MODULE main
     IMPLICIT NONE
     REAL :: res1, res2, res3, unk
     REAL, PARAMETER :: x = - (7.0), y = - 4.0, z = 3.0
-    res1 = unk ** (-7.0)
-    res2 = unk ** (-4.0)
+    res1 = unk ** (- 7.0)
+    res2 = unk ** (- 4.0)
     res3 = unk ** 3.0
   END SUBROUTINE foo
 END MODULE main
