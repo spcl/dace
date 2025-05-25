@@ -24,8 +24,10 @@ def set_temporary(*path, value):
     """
     old_value = Config.get(*path)
     Config.set(*path, value=value)
-    yield
-    Config.set(*path, value=old_value)
+    try:
+        yield Config
+    finally:
+        Config.set(*path, value=old_value)
 
 
 @contextlib.contextmanager
@@ -42,9 +44,11 @@ def temporary_config():
     """
     with tempfile.NamedTemporaryFile(mode='w+t') as fp:
         Config.save(file=fp)
-        yield
-        fp.seek(0)  # rewind to the beginning of the file.
-        Config.load(file=fp)
+        try:
+            yield Config
+        finally:
+            fp.seek(0)  # rewind to the beginning of the file.
+            Config.load(file=fp)
 
 
 def _env2bool(envval):
