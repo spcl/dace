@@ -89,6 +89,13 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of GPU schedule types for ExperimentalCUDACodeGen
+GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
+    ScheduleType.GPU_Device,
+    ScheduleType.GPU_ThreadBlock,
+    ScheduleType.GPU_Warp,
+]
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
@@ -209,7 +216,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.Snitch: StorageType.Snitch_TCDM,
 
     #TODO: Approve.
-    # Usually used in the context with shared memory..
+    # Should be registers in my opinion
     ScheduleType.GPU_Warp: StorageType.Register,
 }
 

@@ -27,7 +27,7 @@ from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, has_dynamic_map_input
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-from dace.transformation import helpers as xfh
+from dace.transformation import helpers
 from dace.transformation.passes import analysis as ap
 
 if TYPE_CHECKING:
@@ -36,39 +36,18 @@ if TYPE_CHECKING:
 
 
 
+# TODO's:
+# 1. Yakup: Approval of dtypes extensions (e.g. mapping default sub scope scheduleTypes) 
+# 2. Berkay: Include constant expresssions
+# 3. Berkay: Warning if sync property in maps is used
+# 4. Berkay: Warning/Error that GPU_device must be used before other GPU schedule types
 
-# TODO: GENERAL, discuss with Yakup
-# 1. Approval of dtypes
-
-
-# TODO: I am not handling map with strided rights now,
-# why? because This is handled somewhere else than in the scope
-
-
-
-# My personal TODO's
-# TODO: when tired
-# include constant expressions + launch bounds logic
-# insert warnings that gpu device must be first
-# 4 dimensional example
 
 # TODO: depending on what happens next
 # change in_device_code to maybe in_kernel_code?
 
 
 
-
-# TODO : I got rid of ScheduleType.GPU_Persistent (not supported anymore). If this codeBase 
-# actually replaces the old one, this should be defined in dtypes.py and also accessed from 
-# there. Also change GPU_SCHEDULES accesses to dtypes.GPU_SCHEDULES 
-GPU_SCHEDULES = [
-    dace.ScheduleType.GPU_Device,
-    dace.ScheduleType.GPU_ThreadBlock,
-    dace.ScheduleType.GPU_Warp
-]
-
-
-THREADS_PER_WARP = 32
 
 @registry.autoregister_params(name='experimental_cuda')
 class ExperimentalCUDACodeGen(TargetCodeGenerator):
@@ -96,7 +75,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._block_dims = None
         self._grid_dims = None
 
-        # NOTE: Type may be wrong!
+
         self._kernel_map: Optional[nodes.MapEntry] = None  # Indicates whether the code generation is currently within a "kernel" map.
 
         # NOTE: Moved from preprossessing to here
@@ -148,10 +127,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
 
         self._dispatcher = frame_codegen.dispatcher
-        self._dispatcher.register_map_dispatcher(GPU_SCHEDULES, self)
+        self._dispatcher.register_map_dispatcher(dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN, self)
         self._dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
         self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
+        # TODO: Add this to dtypes as well
         gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
 
         self._dispatcher.register_array_dispatcher(gpu_storage, self)
@@ -335,7 +315,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     self.pool_release[(sdfg, arr)] = (sink, set())
 
 
-    # NOTE: Used during preprocess. Seems good as is
+    # NOTE: SHould be a transformation to some part
     def _compute_cudastreams(self, sdfg: SDFG, default_stream=0, default_event=0):
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
@@ -374,7 +354,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 if isinstance(node, nodes.NestedSDFG):
                     if node.schedule == dtypes.ScheduleType.GPU_Device:
                         continue
-                    if node.schedule not in dtypes.GPU_SCHEDULES:
+                    if node.schedule not in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
                         max_streams, max_events = self._compute_cudastreams(node.sdfg, max_streams, max_events + 1)
                 node._cuda_stream = max_streams
                 node._cs_childpath = False
@@ -382,6 +362,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             # Maintain the same CUDA stream in DFS order, add more when
             # possible.
+            # NOTE: Either all have an attribute or none, tell yakup if you see stuff like this
             for e in state.dfs_edges(source_nodes):
                 if hasattr(e.dst, '_cuda_stream'):
                     continue
@@ -400,11 +381,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     e.src._cs_childpath = True
 
                     # Do not create multiple streams within GPU scopes
-                    if (isinstance(e.src, nodes.EntryNode) and e.src.schedule in dtypes.GPU_SCHEDULES):
+                    if (isinstance(e.src, nodes.EntryNode) and e.src.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN):
                         e.src._cs_childpath = False
                     elif state.entry_node(e.src) is not None:
                         parent = state.entry_node(e.src)
-                        if parent.schedule in dtypes.GPU_SCHEDULES:
+                        if parent.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
                             e.src._cs_childpath = False
                 else:
                     c = max_streams
@@ -417,7 +398,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 if not hasattr(e.dst, '_cs_childpath'):
                     e.dst._cs_childpath = False
                 if isinstance(e.dst, nodes.NestedSDFG):
-                    if e.dst.schedule not in dtypes.GPU_SCHEDULES:
+                    if e.dst.schedule not in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
                         max_streams, max_events = self._compute_cudastreams(e.dst.sdfg, e.dst._cuda_stream,
                                                                             max_events + 1)
 
@@ -429,7 +410,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if isinstance(graph, SDFGState):
                 cur_sdfg = graph.parent
 
-                if (isinstance(node, (nodes.EntryNode, nodes.ExitNode)) and node.schedule in dtypes.GPU_SCHEDULES):
+                if (isinstance(node, (nodes.EntryNode, nodes.ExitNode)) and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN):
                     # Node must have GPU stream, remove childpath and continue
                     if hasattr(node, '_cs_childpath'):
                         delattr(node, '_cs_childpath')
@@ -504,7 +485,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             )
             
         
-            self._generate_gpu_bridge(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+            self._generate_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
 
             #--------------- Generate Kernel Function ----------------
 
@@ -521,7 +502,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if node.gpu_launch_bounds != '-1':
                 if node.gpu_launch_bounds == "0":
                     if not any(symbolic.issymbolic(b) for b in block_dims):
-                        launch_bounds = f'__launch_bounds__({prod(block_dims)})'
+                        launch_bounds = f'__launch_bounds__({product(block_dims)})'
                 else:
                     launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
 
@@ -586,6 +567,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         with KernelScopeManager(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id,
                                 function_stream=function_stream, callsite_stream=kernel_stream, comment="Kernel scope",) as scopeManager:
 
+            # TODO: If time allows, maybe rename in configs somehow, discuss with Yakup
             # Get the thread/block index type
             ttype = Config.get('compiler', 'cuda', 'thread_id_type')
             tidtype = getattr(dtypes, ttype, False)
@@ -711,19 +693,19 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 if dim < 3:
                     # First three dimensions: direct mapping or partial delinearization
                     if dim == 2 and map_dimensions > 3:
-                        tail_prod = prod(map_dim_sizes[3:])
+                        tail_prod = product(map_dim_sizes[3:])
                         base_expr = f"(threadIdx.z / ({symbolic_to_cpp(tail_prod)}))"
                     else:
                         base_expr = f"threadIdx.{_get_cuda_dim(dim)}"
                 else:
                     # Dimensions beyond the third: full delinearization
-                    tail_prod = prod(map_dim_sizes[dim + 1:])
+                    tail_prod = product(map_dim_sizes[dim + 1:])
                     base_expr = (f"(threadIdx.z / ({symbolic_to_cpp(tail_prod)})) % "f"({symbolic_to_cpp(map_dim_sizes[dim])})")
 
 
                 var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', base_expr)
                 kernel_stream.write(f'int {var_name} = {var_def};', cfg, state_id, node)
-                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int')
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int') # TODO: get varname type
 
             
 
@@ -777,8 +759,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                 function_stream=function_stream, callsite_stream=kernel_stream, comment="WarpLevel Scope") as scopeManager:
 
 
-
-            block_dims = self._current_kernel_spec.block_dims
+            # Get kernel specifications
+            kernel_spec = self._current_kernel_spec
+            block_dims = kernel_spec.block_dims
+            warpSize = kernel_spec.warpSize
 
             state_dfg = cfg.state(state_id)
             node = dfg_scope.source_nodes()[0]
@@ -788,9 +772,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             warp_dim = len(map_range)
             
             # The following sizes and bounds are be symbolic
-            num_threads_in_block = prod(block_dims) 
+            num_threads_in_block = product(block_dims) 
             warp_dim_bounds = [max_elem + 1 for max_elem in map_range.max_element()]
-            num_warps = prod(warp_dim_bounds)
+            num_warps = product(warp_dim_bounds)
 
 
 
@@ -820,11 +804,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             joined_terms = " + ".join(flattened_terms)
             flat_thread_idx_expr = f"({joined_terms})" if len(flattened_terms) > 1 else joined_terms
-            # NOTE: name too ugly? How shorter but still unique ?
+
             threadID_name = 'ThreadId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id, state_dfg.node_id(node))
 
-            kernel_stream.write(f"int {threadID_name} = ({flat_thread_idx_expr}) / {THREADS_PER_WARP};", cfg, state_id, node)
-            self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, 'int')
+            kernel_stream.write(f"int {threadID_name} = ({flat_thread_idx_expr}) / {warpSize};", cfg, state_id, node)
+            self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, 'int') # TODO: Fix type?
 
 
             
@@ -835,7 +819,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 previous_sizes = warp_dim_bounds[:i]
 
                 if len(previous_sizes) > 0:
-                    divisor = prod(previous_sizes)
+                    divisor = product(previous_sizes)
                     expr = f"({threadID_name} / {divisor}) % {warp_dim_bounds[i]}"
                 else:
                     expr = f"{threadID_name} % {warp_dim_bounds[i]}"
@@ -848,7 +832,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             # ----------------- Guard Conditions for Warp Execution -----------------------
 
 
-            if num_warps * THREADS_PER_WARP != num_threads_in_block:
+            if num_warps * warpSize != num_threads_in_block:
                 condition = f'{threadID_name} < {num_warps}'
                 scopeManager.open(condition)
 
@@ -886,9 +870,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                        scopeManager: 'KernelScopeManager'):
         
             #TODO: Move them to sdfg validation as well if possible
+
+            # Get warpSize from the kernel specification
+            warpSize = self._current_kernel_spec.warpSize
             
-            #TODO: rename xfh, to cryptic
-            parent_map, _ = xfh.get_parent_map(state_dfg, node)
+            parent_map, _ = helpers.get_parent_map(state_dfg, node)
             if parent_map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
                 raise ValueError("GPU_Warp map must be nested within a GPU_ThreadBlock map.")
 
@@ -902,50 +888,49 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             #   These will emit meaningful error messages and abort execution if violated.
             if isinstance(num_threads_in_block, symbolic.symbol):
                 condition = (
-                    f"{num_threads_in_block} % {THREADS_PER_WARP} != 0 || "
+                    f"{num_threads_in_block} % {warpSize} != 0 || "
                     f"{num_threads_in_block} > 1024 || "
-                    f"{num_warps} * {THREADS_PER_WARP} > {num_threads_in_block}"
+                    f"{num_warps} * {warpSize} > {num_threads_in_block}"
                 )
                 kernel_stream.write(f"""\
                 if ({condition}) {{
                     printf("CUDA error:\\n"
-                        "1. Block must be a multiple of {THREADS_PER_WARP} threads (DaCe requirement for GPU_Warp scheduling).\\n"
+                        "1. Block must be a multiple of {warpSize} threads (DaCe requirement for GPU_Warp scheduling).\\n"
                         "2. Block size must not exceed 1024 threads (CUDA hardware limit).\\n"
-                        "3. Number of warps x {THREADS_PER_WARP} must fit in the block (otherwise logic is unclear).\\n");
+                        "3. Number of warps x {warpSize} must fit in the block (otherwise logic is unclear).\\n");
                     asm("trap;");
                 }}
                 """)
 
             else:
                 if isinstance(num_warps, symbolic.symbol):
-                    condition = f"{num_warps} * {THREADS_PER_WARP} > {num_threads_in_block}"
+                    condition = f"{num_warps} * {warpSize} > {num_threads_in_block}"
                     scopeManager.open(condition=condition)
 
-                elif num_warps * THREADS_PER_WARP > num_threads_in_block:
-                    raise ValueError(f"Invalid configuration: {num_warps} warps x {THREADS_PER_WARP} threads exceed "
+                elif num_warps * warpSize > num_threads_in_block:
+                    raise ValueError(f"Invalid configuration: {num_warps} warps x {warpSize} threads exceed "
                                     f"{num_threads_in_block} threads in the block.")
 
-                if num_threads_in_block % THREADS_PER_WARP != 0:
-                    raise ValueError(f"Block must be a multiple of {THREADS_PER_WARP} threads for GPU_Warp scheduling "
+                if num_threads_in_block % warpSize != 0:
+                    raise ValueError(f"Block must be a multiple of {warpSize} threads for GPU_Warp scheduling "
                                      f"(got {num_threads_in_block}).")
     
                 if num_threads_in_block > 1024:
                     raise ValueError("CUDA does not support more than 1024 threads per block (hardware limit).")
                 
             
-            for x in map_range.min_element():
-                if isinstance(x, symbolic.symbol):
-                    kernel_stream.write(f'if ({x} < 0) {{\n'
-                                        f'    printf("Runtime error: Warp ID symbol {x} must be non-negative.\\n");\n'
+            for min_element in map_range.min_element():
+                if isinstance(min_element, symbolic.symbol):
+                    kernel_stream.write(f'if ({min_element} < 0) {{\n'
+                                        f'    printf("Runtime error: Warp ID symbol {min_element} must be non-negative.\\n");\n'
                                         f'    asm("trap;");\n'
                                         f'}}\n')
-                elif x < 0:
-                    raise ValueError(f"Warp ID value {x} must be non-negative.")
+                elif min_element < 0:
+                    raise ValueError(f"Warp ID value {min_element} must be non-negative.")
                 
     
 
-
-    def _generate_gpu_bridge(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
+    def _generate_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
                              state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
 
@@ -1107,7 +1092,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         return result
 
     def state_dispatch_predicate(self, sdfg, state):
-        if self._toplevel_schedule in dtypes.GPU_SCHEDULES:
+        if self._toplevel_schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             return True
         for node in state.sink_nodes():
             if hasattr(node, '_cuda_stream'):
@@ -1123,7 +1108,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
     def node_dispatch_predicate(self, sdfg, state, node):
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
-            if node.schedule in dtypes.GPU_SCHEDULES:
+            if node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
                 return True
         if ExperimentalCUDACodeGen._in_device_code:
             return True
@@ -1139,7 +1124,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # if it is not implemented, use generate node of cpu impl
         if gen is not False: 
             gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        elif type(node).__name__ == 'MapExit' and node.schedule in GPU_SCHEDULES:
+        elif type(node).__name__ == 'MapExit' and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             # Special case: It is a MapExit but from a GPU_schedule- the MapExit is already
             # handled by a KernelScopeManager instance. Otherwise cpu_codegen will close it
             return
@@ -1879,7 +1864,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             state = state_dfg
             while (schedule_node is None or not isinstance(schedule_node, nodes.MapEntry)
                    or schedule_node.map.schedule == dtypes.ScheduleType.Sequential):
-                ret = xfh.get_parent_map(state, schedule_node)
+                ret = helpers.get_parent_map(state, schedule_node)
                 if ret is None:
                     schedule_node = None
                     break
@@ -2003,8 +1988,15 @@ def _get_storagename(storage):
     return sname[sname.rindex('_') + 1:]
 
 
-# TODO: Just use product as name? 
-def prod(iterable):
+
+def product(iterable):
+    """
+    Computes the symbolic product of elements in the iterable using sympy.Mul.
+
+    This is equivalent to: ```functools.reduce(sympy.Mul, iterable, 1)```.
+
+    Purpose: This function is used to improve readability of the codeGen.
+    """
     return functools.reduce(sympy.Mul, iterable, 1)
 
 #########################################################################
@@ -2085,7 +2077,19 @@ class KernelSpec:
         self._bridge_args_typed: list[str] = state_param + self._args_typed
 
         # Kernel dimensions
-        self._grid_dims, self._block_dims, self._has_tbmap, self._has_dtbmap, _ = self._get_kernel_dimensions(dfg_scope)
+        self._grid_dims, self._block_dims, self._has_tbmap = self._get_kernel_dimensions(dfg_scope)
+
+
+        # Set warp size of the kernel
+        if cudaCodeGen.backend not in ['cuda', 'hip']:
+            raise ValueError(
+                f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "
+                "Only 'cuda' and 'hip' are supported."
+                )
+        
+        warp_size_key = 'cuda_warp_size' if cudaCodeGen.backend == 'cuda' else 'hip_warp_size'
+        self._warpSize = Config.get('compiler', 'cuda', warp_size_key)
+
 
     
 
@@ -2104,8 +2108,9 @@ class KernelSpec:
             3. If block size can be overapproximated, it is (for
                 dynamically-sized blocks that are bounded by a
                 predefined size).
-            4. If nested device maps exist, behavior is unknown but an error is thrown 
-               in the generate_scope function. This is not supported here
+            4. If nested device maps exist, behavior is an error is thrown 
+               in the generate_scope function. Nested device maps are not supported
+               anymore.
 
         :note: Kernel dimensions are separate from the map
                variables, and they should be treated as such.
@@ -2134,7 +2139,7 @@ class KernelSpec:
             block_size, grid_size = self._compute_block_and_grid_from_maps(threadblock_maps)
 
 
-        return grid_size, block_size, len(threadblock_maps) > 0, False, 0
+        return grid_size, block_size, len(threadblock_maps) > 0
 
 
     def _compute_default_block_and_grid(self):
@@ -2179,7 +2184,7 @@ class KernelSpec:
         active_grid_dims  = max(1, sum(1 for g in kernel_domain_size  if g != 1))
 
         if active_block_dims > active_grid_dims:
-            tail_product = prod(default_block_size[active_grid_dims:])
+            tail_product = product(default_block_size[active_grid_dims:])
             block_size = default_block_size[:active_grid_dims] + [1] * (3 - active_grid_dims)
             block_size[active_grid_dims - 1] *= tail_product
             warnings.warn(f'Default block size has more dimensions ({active_block_dims}) than kernel dimensions '
@@ -2275,7 +2280,7 @@ class KernelSpec:
 
         kernel_map_label = self._kernel_map.label
 
-        total_block_size = prod(block_size)
+        total_block_size = product(block_size)
         limit = Config.get('compiler', 'cuda', 'block_size_limit')
         lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
         
@@ -2310,7 +2315,7 @@ class KernelSpec:
         
         if len(dim_sizes) > 3:
             # multiply everything from the 3rd onward into d[2]
-            dim_sizes[2] = prod(dim_sizes[2:])
+            dim_sizes[2] = product(dim_sizes[2:])
             dim_sizes = dim_sizes[:3]
 
         # pad with 1s if necessary
@@ -2407,9 +2412,13 @@ class KernelSpec:
         return self._has_tbmap
 
     @property
-    def has_dtbmap(self) -> bool:
-        """Returns whether the kernel has a dynamic thread-block map."""
-        return self._has_dtbmap
+    def warpSize(self) -> int:
+        """
+        Returns the warp size used in this kernel.
+        This value depends on the selected backend (CUDA or HIP)
+        and is retrieved from the configuration.
+        """
+        return self._warpSize
 
 
 
