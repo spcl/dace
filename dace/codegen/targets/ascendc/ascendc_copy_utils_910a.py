@@ -85,7 +85,7 @@ def write_l1_from_global_2d(callsite_stream, dst_name, src_name, beg1, beg2, wid
         """
     )
 
-def write_l0_from_l1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc, storage_type):
+def write_a2_from_a1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc):
     """
     repeatTimes:
     The number of iterations. Each iteration can process 512B of data. Value range: repeatTimes∈[1, 255].
@@ -93,25 +93,61 @@ def write_l0_from_l1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, 
     The interval between the starting addresses of the previous fractal and the next fractal of the source operand between adjacent iterations, unit: 512B (16x16 block). Value range: src_stride∈[0, 65535]. The default value is 0.
     When the data type of the source operand/destination operand is uint16_t/int16_t/half/bfloat16_t, the size of the fractal matrix on A1/B1/A2/B2 is 16*16
     """
-    assert storage_type == "A2" or storage_type == "B2"
-    dst_storage_name = storage_type
-    src_storage_name = storage_type.replace("2", "1")
-    copy_str = f"// {src_storage_name} -> {dst_storage_name}: Alloc Local, DataLoad, EnQue"
     assert((width * height) % 256 == 0)
 
     callsite_stream.write(
         f"""
-        {copy_str}
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
-        AscendC::LoadData2dParams {dst_name}LoadDataParams;
-        {dst_name}LoadDataParams.repeatTimes = {(width * height) // 256};
-        {dst_name}LoadDataParams.srcStride = 1;
-        {dst_name}LoadDataParams.ifTranspose = {'false' if storage_type == 'A2' else 'true'};
-        AscendC::LoadData({dst_name}, {src_name}, {dst_name}LoadDataParams);
+        for (int i = 0; i < ({height} / 16); ++i) {{
+            int srcOffset  =  i * 16 * 16;
+            int dstOffset  =  i * 16 * 16;
+
+            AscendC::LoadData2DParams  {dst_name}LoadDataParams;
+            {dst_name}LoadDataParams.repeatTimes  =  {width} / 16;
+            {dst_name}LoadDataParams.srcStride  =  {height} / 16;
+            {dst_name}LoadDataParams.ifTranspose  =  true;
+
+            AscendC::LoadData({dst_name}[dstOffset], {src_name}[srcOffset], {dst_name}LoadDataParams);
+        }}
         queue_{dst_name}.EnQue({dst_name});
         queue_{src_name}.FreeTensor({src_name});\n
         """
     )
+
+def write_b2_from_b1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc):
+    """
+    repeatTimes:
+    The number of iterations. Each iteration can process 512B of data. Value range: repeatTimes∈[1, 255].
+    srcStride:
+    The interval between the starting addresses of the previous fractal and the next fractal of the source operand between adjacent iterations, unit: 512B (16x16 block). Value range: src_stride∈[0, 65535]. The default value is 0.
+    When the data type of the source operand/destination operand is uint16_t/int16_t/half/bfloat16_t, the size of the fractal matrix on A1/B1/A2/B2 is 16*16
+    """
+    assert((width * height) % 256 == 0)
+
+    callsite_stream.write(
+        f"""
+        {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+        for (int i = 0; i < ({width} / 16); ++i) {{
+            int srcOffset  =  i * 16 * 16;
+            int dstOffset  =  i * 16 * 16;
+
+            AscendC::LoadData2DParams  {dst_name}LoadDataParams;
+            {dst_name}LoadDataParams.repeatTimes  =  {height} / 16;
+            {dst_name}LoadDataParams.srcStride  =  {width} / 16;
+            {dst_name}LoadDataParams.ifTranspose  =  false;
+
+            AscendC::LoadData({dst_name}[dstOffset], {src_name}[srcOffset], {dst_name}LoadDataParams);
+        }}
+        queue_{dst_name}.EnQue({dst_name});
+        queue_{src_name}.FreeTensor({src_name});\n
+        """
+    )
+    """
+        AscendC :: LoadData2DParams  loadDataParams ;
+        loadDataParams . repeatTimes  =  kBlocks ;
+        loadDataParams . srcStride  =  nBlocks ;
+        loadDataParams . ifTranspose  =  true ;
+    """
 
 def write_co2_from_co1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc):
     src_storage_name = "CO1"
@@ -198,9 +234,9 @@ def write_tensor_copy(callsite_stream, memlet, src_name, dst_name, src_storage, 
         elif src_storage.name == "Ascend_Global" and dst_storage.name == "Ascend_B1":
             write_l1_from_global_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc, "B1")
         elif src_storage.name == "Ascend_A1" and dst_storage.name == "Ascend_A2":
-            write_l0_from_l1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc, "A2")
+            write_a2_from_a1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc)
         elif src_storage.name == "Ascend_B1" and dst_storage.name == "Ascend_B2":
-            write_l0_from_l1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc, "B2")
+            write_b2_from_b1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc)
         elif src_storage.name == "Ascend_CO1" and dst_storage.name == "Ascend_CO2":
             write_co2_from_co1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc)
         elif src_storage.name == "Ascend_CO2" and dst_storage.name == "Ascend_VECIN":
