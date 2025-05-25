@@ -1,6 +1,6 @@
 import dace
 
-def write_vecin_from_global(callsite_stream, src_name, dst_name, beg, width, nodedesc):
+def write_vecin_from_global(callsite_stream, dst_name, src_name, beg, width, nodedesc):
     callsite_stream.write(
         f"""// Global -> VECIN: Alloc Local, DataCopy, EnQue
         {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
@@ -14,7 +14,7 @@ def write_vecin_from_global(callsite_stream, src_name, dst_name, beg, width, nod
         queue_{dst_name}.EnQue({dst_name});\n"""
     )
 
-def write_vecout_from_vecin(callsite_stream, src_name, dst_name, beg, width, nodedesc):
+def write_vecout_from_vecin(callsite_stream, dst_name, src_name, beg, width, nodedesc):
     callsite_stream.write(
         f"""
         // Should be handled by a tasklet
@@ -26,7 +26,7 @@ def write_vecout_from_vecin(callsite_stream, src_name, dst_name, beg, width, nod
         queue_{src_name}.FreeTensor({src_name});\n"""
     )
 
-def write_global_from_vecout(callsite_stream, src_name, dst_name, beg, width, nodedesc):
+def write_global_from_vecout(callsite_stream, dst_name, src_name, beg, width, nodedesc):
     callsite_stream.write(
         f"""// VECOUT -> Global: DeQue, DataCopy, Free Prev.
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
@@ -41,7 +41,7 @@ def write_global_from_vecout(callsite_stream, src_name, dst_name, beg, width, no
     )
 
 
-def write_vecin_from_global_2d(callsite_stream, src_name, dst_name, beg1, beg2, width, height, nodedesc):
+def write_vecin_from_global_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc):
     # Coupling Architecture
     #* @param [in] intriParams.blockCount number of blocks
     #* @param [in] intriParams.blockLen Length of blocks
@@ -61,7 +61,7 @@ def write_vecin_from_global_2d(callsite_stream, src_name, dst_name, beg1, beg2, 
     )
 
 
-def write_global_from_vecout_2d(callsite_stream, src_name, dst_name, beg1, beg2, width, height, nodedesc):
+def write_global_from_vecout_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc):
     callsite_stream.write(
         f"""// VECOUT -> Global: DeQue, DataCopy, Free Prev.
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
@@ -76,7 +76,7 @@ def write_global_from_vecout_2d(callsite_stream, src_name, dst_name, beg1, beg2,
         """
     )
 
-def write_l1_from_global_2d(callsite_stream, src_name, dst_name, beg1, beg2, width, height, nodedesc, storage_type):
+def write_l1_from_global_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc, storage_type):
     assert storage_type == "A1" or storage_type == "B1"
     dst_storage_name = storage_type
     copy_str = f"// Global -> {dst_storage_name}: Alloc Local, DataCopy, EnQue"
@@ -94,7 +94,7 @@ def write_l1_from_global_2d(callsite_stream, src_name, dst_name, beg1, beg2, wid
         """
     )
 
-def write_l0_from_l1_2d(callsite_stream, src_name, dst_name, beg1, beg2, width, height, nodedesc, storage_type):
+def write_l0_from_l1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc, storage_type):
     assert storage_type == "A2" or storage_type == "B2"
     dst_storage_name = storage_type
     src_storage_name = storage_type.replace("2", "1")
@@ -114,7 +114,7 @@ def write_l0_from_l1_2d(callsite_stream, src_name, dst_name, beg1, beg2, width, 
         """
     )
 
-def write_co2_from_co1_2d(callsite_stream, src_name, dst_name, beg1, beg2, width, height, nodedesc):
+def write_co2_from_co1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc):
     src_storage_name = "CO1"
     dst_storage_name = "CO2"
     callsite_stream.write(
@@ -150,7 +150,7 @@ def write_vecin_from_co2_2d(callsite_stream,  src_name, dst_name, beg1, beg2, wi
         """
     )
 
-def write_global_from_co2_2d(callsite_stream, src_name, dst_name, beg1, beg2, width, height, nodedesc):
+def write_global_from_co2_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc):
     src_storage_name = "CO2"
     dst_storage_name = "Glb"
     callsite_stream.write(
@@ -163,7 +163,7 @@ def write_global_from_co2_2d(callsite_stream, src_name, dst_name, beg1, beg2, wi
         {dst_name}Params.blockLen = {width} / 16;
         {dst_name}Params.srcStride = 0;
         {dst_name}Params.dstStride = static_cast<uint16_t>(({nodedesc.strides[0]} / 16) - 1);
-        AscendC::DataCopy({dst_name}, {src_name}, {dst_name}Params);
+        AscendC::DataCopy({dst_name}_GM, {src_name}, {dst_name}Params);
         queue_{src_name}.FreeTensor({src_name});
         """
     )
@@ -178,7 +178,7 @@ def write_tensor_copy(callsite_stream, memlet, src_name, dst_name, src_storage, 
         if src_storage.name == "Ascend_Global" and dst_storage.name == "Ascend_VECIN":
             write_vecin_from_global(callsite_stream, dst_name, beg, length, width, nodedesc)
         elif src_storage.name == "Ascend_VECIN" and dst_storage.name == "Ascend_VECOUT":
-            write_vecout_from_vecin(callsite_stream, src_name, dst_name, nodedesc)
+            write_vecout_from_vecin(callsite_stream, dst_name, src_name, nodedesc)
         elif src_storage.name == "Ascend_VECOUT" and dst_storage.name == "Ascend_Global":
             write_global_from_vecout(callsite_stream, src_name, beg, length, width, nodedesc)
         else:
