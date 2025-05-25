@@ -6,11 +6,7 @@ def write_vecin_from_global(callsite_stream, dst_name, src_name, beg, width, nod
         {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
         {src_name}_GM.SetGlobalBuffer(&{src_name}_typed[{beg}], {width});
         AscendC::DataCopyParams {dst_name}Params;
-        {dst_name}Params.blockCount = 1;
-        {dst_name}Params.blockLen = {width} / 16;
-        {dst_name}Params.srcStride = 0;
-        {dst_name}Params.dstStride = 0;
-        AscendC::DataCopy({dst_name}, {src_name}_GM, {dst_name}Params);
+        AscendC::DataCopy({dst_name}, {src_name}_GM, {width});
         queue_{dst_name}.EnQue({dst_name});\n"""
     )
 
@@ -31,12 +27,7 @@ def write_global_from_vecout(callsite_stream, dst_name, src_name, beg, width, no
         f"""// VECOUT -> Global: DeQue, DataCopy, Free Prev.
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
         {dst_name}_GM.SetGlobalBuffer(&{dst_name}_typed[{beg}], {width});
-        AscendC::DataCopyParams {dst_name}Params;
-        {dst_name}Params.blockCount = 1;
-        {dst_name}Params.blockLen = {width} / 16;
-        {dst_name}Params.srcStride = 0;
-        {dst_name}Params.dstStride = 0;
-        AscendC::DataCopy({dst_name}_GM, {src_name}, {dst_name}Params);
+        AscendC::DataCopy({dst_name}_GM, {src_name}, {width});
         queue_{src_name}.FreeTensor({src_name});"""
     )
 
@@ -95,20 +86,28 @@ def write_l1_from_global_2d(callsite_stream, dst_name, src_name, beg1, beg2, wid
     )
 
 def write_l0_from_l1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, height, nodedesc, storage_type):
+    """
+    repeatTimes:
+    The number of iterations. Each iteration can process 512B of data. Value range: repeatTimes∈[1, 255].
+    srcStride:
+    The interval between the starting addresses of the previous fractal and the next fractal of the source operand between adjacent iterations, unit: 512B (16x16 block). Value range: src_stride∈[0, 65535]. The default value is 0.
+    When the data type of the source operand/destination operand is uint16_t/int16_t/half/bfloat16_t, the size of the fractal matrix on A1/B1/A2/B2 is 16*16
+    """
     assert storage_type == "A2" or storage_type == "B2"
     dst_storage_name = storage_type
     src_storage_name = storage_type.replace("2", "1")
     copy_str = f"// {src_storage_name} -> {dst_storage_name}: Alloc Local, DataLoad, EnQue"
+    assert((width * height) % 256 == 0)
+
     callsite_stream.write(
         f"""
         {copy_str}
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
-        AscendC::DataCopyParams {dst_name}Params;
-        {dst_name}Params.blockCount = {height};
-        {dst_name}Params.blockLen = {width} / 16;
-        {dst_name}Params.srcStride = static_cast<uint16_t>(({nodedesc.strides[0]} / 16) - 1);
-        {dst_name}Params.dstStride = 0;
-        AscendC::DataCopy({dst_name}, {src_name}, {dst_name}Params);
+        AscendC::LoadData2dParams {dst_name}LoadDataParams;
+        {dst_name}LoadDataParams.repeatTimes = {(width * height) // 256};
+        {dst_name}LoadDataParams.srcStride = 1;
+        {dst_name}LoadDataParams.ifTranspose = {'false' if storage_type == 'A2' else 'true'};
+        AscendC::LoadData({dst_name}, {src_name}, {dst_name}LoadDataParams);
         queue_{dst_name}.EnQue({dst_name});
         queue_{src_name}.FreeTensor({src_name});\n
         """
@@ -126,7 +125,9 @@ def write_co2_from_co1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width
         {dst_name}Params.blockLen = {width} / 16;
         {dst_name}Params.srcStride = 0;
         {dst_name}Params.dstStride = static_cast<uint16_t>(({nodedesc.strides[0]} / 16) - 1);
-        AscendC::DataCopy({dst_name}, {src_name}, {dst_name}Params);
+        AscendC::DataCopyEnhancedParams  {dst_name}EnhancedParams;
+        {dst_name}EnhancedParams.blockMode = AscendC::BlockMode::BLOCK_MODE_MATRIX;
+        AscendC::DataCopy({dst_name}, {src_name}, {dst_name}Params, {dst_name}EnhancedParams);
         queue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});
         queue_{src_name}.FreeTensor({src_name});
         """
