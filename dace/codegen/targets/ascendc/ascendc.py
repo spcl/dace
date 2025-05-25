@@ -561,7 +561,7 @@ using AscendC::Mmad;
         elif nodedesc.storage in dace.dtypes.ASCEND_STORAGES:
             ascend_type_decl = self._get_ascendc_type(nodedesc, nodedesc.storage)
             result_decl.write(f"// Declare {dataname}\n")
-            result_decl.write(f"{ascend_type_decl} {dataname};")
+            result_decl.write(f"{ascend_type_decl} {dataname};\n")
             if nodedesc.storage == dace.dtypes.StorageType.Ascend_CO1:
                 result_decl.write(f"{dataname} = queue_{dataname}.AllocTensor<{nodedesc.dtype.ctype}>();\n")
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
@@ -2263,11 +2263,10 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             for i in range(generated_preamble_scopes):
                 callsite_stream.write("}", cfg, state_id, node)
 
-        # TODO: what to do when inque repeated in outque
-        #for oconn, ctype in node.out_connectors.items():
-        #    out_edges = state.out_edges_by_connector(node, oconn)
-        #    for out_edge in out_edges:
-        #        callsite_stream.write(f"queue_{out_edge.data.data}.EnQue<{sdfg.arrays[out_edge.data.data].dtype.ctype}>({out_edge.data.data});")
+        for oconn, ctype in node.out_connectors.items():
+            out_edges = state.out_edges_by_connector(node, oconn)
+            for out_edge in out_edges:
+                callsite_stream.write(f"queue_{out_edge.data.data}.EnQue<{sdfg.arrays[out_edge.data.data].dtype.ctype}>({out_edge.data.data});")
 
         for iconn, ctype in node.in_connectors.items():
             if iconn in skip_in_conns:
@@ -2275,11 +2274,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             in_edges = state.in_edges_by_connector(node, iconn)
             for in_edge in in_edges:
                 callsite_stream.write(f"queue_{in_edge.data.data}.FreeTensor({in_edge.data.data});")
-        for oconn, ctype in node.out_connectors.items():
-            if oconn in reque_out_conns:
-                out_edges = state.out_edges_by_connector(node, oconn)
-                for out_edge in out_edges:
-                    callsite_stream.write(f"queue_{out_edge.data.data}.EnQue({out_edge.data.data});")
+
 
 
     def make_ptr_vector_cast(self, *args, **kwargs):
