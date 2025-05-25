@@ -561,7 +561,9 @@ using AscendC::Mmad;
         elif nodedesc.storage in dace.dtypes.ASCEND_STORAGES:
             ascend_type_decl = self._get_ascendc_type(nodedesc, nodedesc.storage)
             result_decl.write(f"// Declare {dataname}\n")
-            result_decl.write(f"{ascend_type_decl} {dataname} = queue_{dataname}.AllocTensor<{nodedesc.dtype.ctype}>();\n")
+            result_decl.write(f"{ascend_type_decl} {dataname};")
+            if nodedesc.storage == dace.dtypes.StorageType.Ascend_CO1:
+                result_decl.write(f"{dataname} = queue_{dataname}.AllocTensor<{nodedesc.dtype.ctype}>();\n")
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
         else:
             raise NotImplementedError(
