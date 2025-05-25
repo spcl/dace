@@ -176,11 +176,11 @@ def write_tensor_copy(callsite_stream, memlet, src_name, dst_name, src_storage, 
         length = (end + 1) - beg
         width = length
         if src_storage.name == "Ascend_Global" and dst_storage.name == "Ascend_VECIN":
-            write_vecin_from_global(callsite_stream, dst_name, beg, length, width, nodedesc)
+            write_vecin_from_global(callsite_stream, dst_name, src_name, beg, width, nodedesc)
         elif src_storage.name == "Ascend_VECIN" and dst_storage.name == "Ascend_VECOUT":
             write_vecout_from_vecin(callsite_stream, dst_name, src_name, nodedesc)
         elif src_storage.name == "Ascend_VECOUT" and dst_storage.name == "Ascend_Global":
-            write_global_from_vecout(callsite_stream, src_name, beg, length, width, nodedesc)
+            write_global_from_vecout(callsite_stream, dst_name, src_name, beg, width, nodedesc)
         else:
             raise NotImplementedError(f"1D copy not implemented for {src_storage} -> {dst_storage}")
     elif len(subset.ranges) == 2:
