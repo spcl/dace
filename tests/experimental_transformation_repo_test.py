@@ -1,6 +1,7 @@
 import sys
 import pathlib
 import shutil
+import importlib
 
 template_for_transformation = """
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
@@ -85,6 +86,9 @@ def test_experimental_transformation_import():
         exp.ExperimentalEmptyTransformation().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
         exp.ExperimentalEmptyTransformation2().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
 
+
+
+
     except Exception as e:
         print(f"An error occurred: {e}")
         raise e
@@ -97,6 +101,11 @@ def test_experimental_transformation_import():
                 file2.unlink()
             if generic_folder.exists():
                 shutil.rmtree(generic_folder)
+
+            # Delete the loaded modules and reload DaCe
+            del sys.modules[mod1_name]
+            del sys.modules[mod2_name]
+            importlib.reload(dace)
         except Exception as cleanup_err:
             print(f"Cleanup failed: {cleanup_err}")
 
