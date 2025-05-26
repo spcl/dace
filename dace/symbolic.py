@@ -70,6 +70,79 @@ class symbol(sympy.Symbol):
         self._constraints = []
         return self
 
+
+class UndefinedSymbol(symbol):
+    """ Defines an undefined symbolic expression whose value is deferred to runtime.
+    
+    Similar to NaN values, any operation on an undefined symbol results in an
+    undefined symbol. When used in code generation, an informative exception
+    will be raised.
+    """
+    
+    def __new__(cls, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
+        # Bypass the name validation 
+        self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
+        self.dtype = dtype
+        self._constraints = []
+        return self
+    
+    # Make undefined symbol behavior propagate through operations
+    def _eval_subs(self, old, new):
+        # Always remain an undefined symbol when substituting
+        if isinstance(old, UndefinedSymbol):
+            return self
+        return super()._eval_subs(old, new)
+    
+    def __add__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __radd__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __sub__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __rsub__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __mul__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __rmul__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __truediv__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __rtruediv__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __pow__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    def __rpow__(self, other):
+        return UndefinedSymbol(self.dtype)
+    
+    # Comparisons always return None (indeterminate)
+    def __eq__(self, other):
+        return None
+    
+    def __lt__(self, other):
+        return None
+    
+    def __gt__(self, other):
+        return None
+    
+    def __le__(self, other):
+        return None
+    
+    def __ge__(self, other):
+        return None
+    
+    def __hash__(self):
+        # Make UndefinedSymbol hashable as required by SymPy
+        return hash(self.name)
+
     def __getstate__(self):
         return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
@@ -337,6 +410,10 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
     if isinstance(expr, SymExpr):
         return evaluate(expr.expr, symbols)
     if issymbolic(expr, set(map(str, symbols.keys()))):
+        # Check for UndefinedSymbol
+        for atom in expr.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                raise TypeError(f'Cannot evaluate expression "{expr}" containing undefined symbol')
         raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
     if isinstance(expr, (int, float, numpy.number)):
         return expr
@@ -361,10 +438,14 @@ def issymbolic(value, constants=None):
     constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
+    if isinstance(value, UndefinedSymbol):
+        return True
     if isinstance(value, (sympy.Symbol, symbol)) and value.name not in constants:
         return True
     if isinstance(value, sympy.Basic):
         for atom in value.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return True
             if isinstance(atom, (sympy.Symbol, symbol)) and atom.name not in constants:
                 return True
     return False
@@ -1286,6 +1367,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Symbol(self, expr):
         if expr.name == 'NoneSymbol':
             return 'nullptr' if self.cpp_mode else 'None'
+        if isinstance(expr, UndefinedSymbol):
+            raise TypeError(f'Cannot generate code for undefined symbol: {expr}. '
+                          'This error indicates that a symbol has no concrete value.')
         return super()._print_Symbol(expr)
 
     def _print_Pow(self, expr):
@@ -1481,6 +1565,16 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
     """
+    # Check for UndefinedSymbol in either expression
+    if isinstance(a, sympy.Basic):
+        for atom in a.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return True
+    if isinstance(b, sympy.Basic):
+        for atom in b.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return True
+                
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
@@ -1503,6 +1597,16 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
     """
 
     args = [arg.expr if isinstance(arg, SymExpr) else arg for arg in (a, b)]
+
+    # Check for UndefinedSymbol in either expression
+    if isinstance(a, sympy.Basic):
+        for atom in a.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return None
+    if isinstance(b, sympy.Basic):
+        for atom in b.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return None
 
     if any([args is None for args in args]):
         return False
