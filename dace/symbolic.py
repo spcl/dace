@@ -77,6 +77,21 @@ class UndefinedSymbol(symbol):
     Similar to NaN values, any operation on an undefined symbol results in an
     undefined symbol. When used in code generation, an informative exception
     will be raised.
+    
+    This class is useful in situations where a symbol's value is not known
+    at compile time but symbolic analysis should continue. For example, when
+    a data container's size is undefined but other symbols with concrete
+    values should still be analyzed.
+    
+    Examples
+    --------
+    >>> from dace.symbolic import UndefinedSymbol, symbol
+    >>> N = symbol('N')
+    >>> undefined = UndefinedSymbol()
+    >>> N + undefined  # Returns an UndefinedSymbol
+    >>> 
+    >>> # This will eventually raise an exception during code generation:
+    >>> expr = N * undefined + 5
     """
     
     def __new__(cls, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
