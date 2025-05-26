@@ -2,6 +2,8 @@ import os
 import importlib.util
 import pkgutil
 import pathlib
+from dace.transformation.transformation import TransformationBase
+from dace.transformation import Pass
 
 
 def _recursive_import_transformations():
@@ -10,6 +12,7 @@ def _recursive_import_transformations():
     current_module = importlib.import_module(package_root)
 
     for path in base_path.rglob("*.py"):
+        print(path)
         if path.name == "__init__.py":
             continue
 
@@ -19,10 +22,11 @@ def _recursive_import_transformations():
         try:
             module = importlib.import_module(module_name)
 
-            # For every subclass of Transformation (except base class), attach to current module
+            # For every subclass of Transformation | Pass (except base class), attach to current module
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
-                if isinstance(attr, type):
+                if (isinstance(attr, type) and (issubclass(attr, TransformationBase) or issubclass(attr, Pass))
+                        and attr not in (TransformationBase, Pass) and not hasattr(current_module, attr_name)):
                     setattr(current_module, attr_name, attr)
                     print(f"[Experimental] Registered transformation: {attr_name}")
 
