@@ -108,6 +108,9 @@ class UndefinedSymbol(symbol):
             return self
         return super()._eval_subs(old, new)
     
+    def __abs__(self):
+        return UndefinedSymbol(self.dtype)
+    
     def __add__(self, other):
         return UndefinedSymbol(self.dtype)
     
@@ -665,6 +668,12 @@ def sympy_numeric_fix(expr):
                     return sympy.oo
                 else:
                     return -sympy.oo
+    
+    # Check if expression contains UndefinedSymbol and propagate it
+    for atom in expr.atoms():
+        if isinstance(atom, UndefinedSymbol):
+            return UndefinedSymbol()
+        
     return expr
 
 
@@ -1251,6 +1260,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
             return sympy.Float(float(expr))
         except ValueError:
             pass
+        if expr == '?':
+            return UndefinedSymbol()
         if dtypes.validate_name(expr):
             return symbol(expr)
 

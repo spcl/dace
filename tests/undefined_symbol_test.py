@@ -109,6 +109,32 @@ def test_undefined_symbol_propagation():
     assert symbolic.inequal_symbols(expr1, expr2) is True
 
 
+def test_undefined_symbol_math_functions():
+    """Tests that math functions with UndefinedSymbol propagate undefined status."""
+    
+    from dace.symbolic import UndefinedSymbol, symbol, inequal_symbols, int_ceil
+    import sympy
+    
+    us = UndefinedSymbol()
+    s = symbol('N')
+    
+    # Test that any operation with UndefinedSymbol produces undefined results
+    # These might not return UndefinedSymbol directly, but should be treated as undefined
+    
+    # Test inequal_symbols with expressions containing UndefinedSymbol
+    assert inequal_symbols(sympy.Abs(us), s) is True
+    assert inequal_symbols(s, sympy.sin(us + 5)) is True
+    
+    # Test internal UndefinedSymbol handling in int_ceil - should produce UndefinedSymbol
+    result = int_ceil(us, 2)
+    assert symbolic.issymbolic(result)
+    
+    # Test with sympy function application - should be treated as undefined
+    assert symbolic.issymbolic(sympy.sin(us))
+    with pytest.raises(TypeError):
+        symbolic.evaluate(sympy.sin(us), {})
+
+
 if __name__ == '__main__':
     test_undefined_symbol_creation()
     test_undefined_symbol_operations()
@@ -117,3 +143,4 @@ if __name__ == '__main__':
     test_undefined_symbol_in_evaluate()
     test_undefined_symbol_in_printing()
     test_undefined_symbol_propagation()
+    test_undefined_symbol_math_functions()
