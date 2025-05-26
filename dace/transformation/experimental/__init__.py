@@ -3,6 +3,7 @@ import importlib.util
 import pkgutil
 import pathlib
 
+
 def _recursive_import_transformations():
     base_path = pathlib.Path(__file__).parent
     package_root = ".".join(__name__.split("."))  # = "dace.transformation.experimental"
@@ -27,5 +28,6 @@ def _recursive_import_transformations():
 
         except Exception as e:
             print(f"Failed to import {module_name}: {e}")
+
 
 _recursive_import_transformations()

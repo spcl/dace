@@ -82,6 +82,8 @@ def test_experimental_imports():
         exp.ExperimentalEmptyTransformation().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
         exp.ExperimentalEmptyTransformation2().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
 
+        from dace import library
+
     finally:
         # Cleanup
         try:
