@@ -1,50 +1,68 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+from typing import Dict, Optional, Any
 
 from dace import sdfg as sd, properties
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ContinueBlock, ControlFlowRegion, ConditionalBlock
-from dace.transformation import transformation as xf
+from dace.sdfg.state import ContinueBlock, ControlFlowRegion, ConditionalBlock, LoopRegion
+from dace.transformation import transformation
+from dace.transformation import pass_pipeline as ppl
+from dace.sdfg.sdfg import SDFG
 
 
 @properties.make_properties
-@xf.explicit_cf_compatible
-class ContinueToCondition(xf.MultiStateTransformation):
+@transformation.explicit_cf_compatible
+class ContinueToCondition(ppl.Pass):
     """
-    Converts a continue statement in a loop to a condition in the loop.
+    Converts all continue statements in a loop to a condition in the loop.
     """
 
-    cb = xf.PatternNode(ContinueBlock)
+    CATEGORY: str = "Simplification"
 
-    @classmethod
-    def expressions(cls):
-        return [sdutil.node_path_graph(cls.cb)]
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        assert isinstance(self.cb, ContinueBlock)
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.CFG
 
-        pg = self.cb.parent_graph.parent_graph
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        for node, parent in sdfg.all_nodes_recursive():
+            if self.can_be_applied(node):
+                self.apply(node, sdfg)
 
+    def can_be_applied(self, cb: ContinueBlock) -> bool:
+        # Must be a continue block...
+        if not isinstance(cb, ContinueBlock):
+            return False 
+
+        # ...in a conditional block...
+        pg = cb.parent_graph.parent_graph
         if not isinstance(pg, ConditionalBlock):
             return False
         if len(pg.branches) != 1:
             return False
 
+        # ...with a single branch...
         code, cfg = pg.branches[0]
         if len(cfg.nodes()) != 1:
             return False
-        if cfg.nodes()[0] is not self.cb:
+        if cfg.nodes()[0] is not cb:
             return False
 
+        # ...and the parent graph must have a single successor..
         outer_cfg = pg.parent_graph
         if len(outer_cfg.successors(pg)) > 1:
+            return False
+        
+        # ..and the conditional block must be directly nested in a loop.
+        if not isinstance(outer_cfg, LoopRegion):
             return False
 
         return True
 
-    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+    def apply(self, cb: ContinueBlock, sdfg: sd.SDFG):
         # If there are no successors, we can just remove the continue node
-        pg: ConditionalBlock = self.cb.parent_graph.parent_graph
+        pg: ConditionalBlock = cb.parent_graph.parent_graph
         outer_cfg = pg.parent_graph
         if len(outer_cfg.successors(pg)) == 0:
             outer_cfg.add_state_after(pg)  # Replacement
@@ -53,7 +71,7 @@ class ContinueToCondition(xf.MultiStateTransformation):
 
         # Eliminate the continue node
         cfg = pg.branches[0][1]
-        cfg.remove_node(self.cb)
+        cfg.remove_node(cb)
 
         # Flip the condition
         pg.branches[0][0].as_string = f"not({pg.branches[0][0].as_string})"

@@ -3,9 +3,10 @@ import numpy as np
 import pytest
 import dace
 from dace import nodes
-from dace.transformation.interstate import ContinueToCondition
+from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.sdfg.state import ContinueBlock, LoopRegion, ConditionalBlock, ControlFlowRegion
 from dace.properties import CodeBlock
+from dace.transformation.pass_pipeline import FixedPointPipeline
 
 
 def test_regular_loop():
@@ -17,7 +18,8 @@ def test_regular_loop():
                 continue
             a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -25,7 +27,8 @@ def test_regular_loop():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was removed
@@ -43,7 +46,8 @@ def test_flipped():
             else:
                 continue
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -51,7 +55,8 @@ def test_flipped():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was not removed
@@ -67,7 +72,8 @@ def test_no_condition():
             continue
             a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -75,7 +81,8 @@ def test_no_condition():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was not removed
@@ -93,7 +100,8 @@ def test_prev_operation():
                 continue
             a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -101,7 +109,8 @@ def test_prev_operation():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was not removed
@@ -119,7 +128,8 @@ def test_succ_operation():
                 a[i] = a[i] + 10
             a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -127,7 +137,8 @@ def test_succ_operation():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was removed
@@ -145,7 +156,8 @@ def test_nested_loop():
                     continue
                 a[i, j] = a[i, j] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -153,7 +165,8 @@ def test_nested_loop():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was removed
@@ -201,12 +214,8 @@ def test_loop_in_nested_sdfg():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    xform = ContinueToCondition()
-    xform.cb = cont
-    if xform.can_be_applied(cfr, 0, sdfg2):
-        xform.apply(cfr, sdfg2)
-
-    # sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was removed
@@ -224,7 +233,8 @@ def test_multiple_branches():
             else:
                 a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -232,7 +242,8 @@ def test_multiple_branches():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was not removed
@@ -254,7 +265,8 @@ def test_multiple_branches2():
             else:
                 a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly two continue node
@@ -262,7 +274,8 @@ def test_multiple_branches2():
     assert len(cont_nodes) == 2
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue nodes were not removed
@@ -280,7 +293,8 @@ def test_nested_conditions():
                     continue
             a[i] = a[i] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly one continue node
@@ -288,12 +302,13 @@ def test_nested_conditions():
     assert len(cont_nodes) == 1
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node was removed
     cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
-    assert len(cont_nodes) == 0
+    assert len(cont_nodes) == 1
 
 
 def test_nested_loops():
@@ -310,7 +325,8 @@ def test_nested_loops():
                         continue
                 a[i, j] = a[i, j] + 1
 
-    sdfg = tester.to_sdfg(simplify=True)
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.simplify(skip=["ContinueToCondition"])
     sdfg.validate()
 
     # Should have exactly two continue node
@@ -318,12 +334,13 @@ def test_nested_loops():
     assert len(cont_nodes) == 2
 
     # Apply the transformation
-    sdfg.apply_transformations_repeated(ContinueToCondition)
+    ppl = FixedPointPipeline([ContinueToCondition()])
+    ppl.apply_pass(sdfg, {})
     sdfg.validate()
 
     # Check that the continue node were removed
     cont_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ContinueBlock)]
-    assert len(cont_nodes) == 0
+    assert len(cont_nodes) == 1
 
 
 if __name__ == '__main__':
