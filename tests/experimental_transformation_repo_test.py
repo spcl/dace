@@ -33,6 +33,7 @@ test_loaded_generic = "{GENERIC_TRANSFORMATION_LOADED}"
 TEMPLATE_STR_1 = "This is a generic transformation loaded from the experimental folder"
 TEMPLATE_STR_2 = "This is a generic transformation loaded from the experimental folder, but with a different name"
 
+
 def test_experimental_imports():
     try:
         base_dir = pathlib.Path(__file__).parent.parent / "dace" / "transformation" / "experimental"
@@ -44,12 +45,10 @@ def test_experimental_imports():
 
         template1 = template_for_transformation.format(
             ExperimentalEmptyTransformation="ExperimentalEmptyTransformation",
-            GENERIC_TRANSFORMATION_LOADED=TEMPLATE_STR_1
-        )
+            GENERIC_TRANSFORMATION_LOADED=TEMPLATE_STR_1)
         template2 = template_for_transformation.format(
             ExperimentalEmptyTransformation="ExperimentalEmptyTransformation2",
-            GENERIC_TRANSFORMATION_LOADED=TEMPLATE_STR_2
-        )
+            GENERIC_TRANSFORMATION_LOADED=TEMPLATE_STR_2)
 
         file1.write_text(template1)
         file2.write_text(template2)
