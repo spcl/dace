@@ -84,29 +84,36 @@ def _semantic_eq(program):
 
     assert np.allclose(A1, A2)
 
+
 def test_forward_loops_semantic_eq():
     _semantic_eq(forward_loop)
+
 
 def test_backward_loops_semantic_eq():
     _semantic_eq(backward_loop)
 
+
 def test_multiple_edges():
     _semantic_eq(multiple_edges)
+
 
 def test_itervar_in_map_range():
     sdfg = should_not_apply_1.to_sdfg(simplify=True)
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
 
+
 def test_itervar_in_data():
     sdfg = should_not_apply_2.to_sdfg(simplify=True)
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
 
+
 def test_non_injective_index():
     sdfg = should_not_apply_3.to_sdfg(simplify=True)
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
+
 
 def test_apply_multiple_times():
     sdfg = apply_multiple_times.to_sdfg(simplify=True)
@@ -127,6 +134,7 @@ def test_apply_multiple_times():
 
     assert np.allclose(val, ref)
 
+
 def test_apply_multiple_times_1():
     sdfg = apply_multiple_times_1.to_sdfg(simplify=True)
     overall = 0
@@ -145,6 +153,7 @@ def test_apply_multiple_times_1():
     apply_multiple_times_1.f(ref)
 
     assert np.allclose(val, ref)
+
 
 def test_more_than_a_map():
     """ `out` is read and written indirectly by the MapExit, potentially leading to a RW dependency.
@@ -177,6 +186,7 @@ def test_more_than_a_map():
     body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
+
 
 def test_more_than_a_map_1():
     """
@@ -220,6 +230,7 @@ def test_more_than_a_map_1():
     ref = reference(A, B)
     assert np.allclose(val, ref)
 
+
 def test_more_than_a_map_2():
     """ `out` is written indirectly by the MapExit with a subset dependent on the loop variable. This creates a RW
         dependency.
@@ -247,6 +258,7 @@ def test_more_than_a_map_2():
     body.add_nedge(twrite, owrite, dace.Memlet('out[k%3, (k+1)%3]', other_subset='(k+1)%3, k%3'))
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
+
 
 def test_more_than_a_map_3():
     """ There are more than one connected components in the loop body. The transformation should not apply. """
@@ -276,6 +288,7 @@ def test_more_than_a_map_3():
     body.add_nedge(aread2, owrite2, dace.Memlet.from_array('out', oarr))
     count = sdfg.apply_transformations(MoveLoopIntoMap)
     assert count == 0
+
 
 def test_more_than_a_map_4():
     """
@@ -322,7 +335,6 @@ def test_more_than_a_map_4():
     for name in sdfg_args_ref.keys():
         assert np.allclose(sdfg_args_ref[name], sdfg_args_res[name])
     assert count == 0
-
 
 
 if __name__ == '__main__':

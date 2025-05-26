@@ -77,6 +77,7 @@ class InstrumentationReport(object):
 
     Instrumentation reports are stored as JSON files, in the Chrome Tracing format.
     """
+
     @staticmethod
     def get_event_uuid_and_other_info(event) -> Tuple[UUIDType, Dict[str, Any]]:
         uuid = (-1, -1, -1)
@@ -392,7 +393,7 @@ class InstrumentationReport(object):
 
     def as_csv(self) -> Tuple[str, str]:
         """
-        Generates a CSV version of the report.        
+        Generates a CSV version of the report.
 
         :return: A tuple of two strings: (durations CSV, counters CSV).
         """
@@ -411,7 +412,8 @@ class InstrumentationReport(object):
                         cnt = len(runtimes)
                         mint, meant, mediant, maxt = np.min(nptimes), np.mean(nptimes), np.median(nptimes), np.max(
                             nptimes)
-                        durations_csv.write(f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
+                        durations_csv.write(
+                            f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
 
         # Create counters CSV
         if len(self.counters) > 0:

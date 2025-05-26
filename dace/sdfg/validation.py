@@ -264,7 +264,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             elif const_name in sdfg.symbols:
                 if const_type.dtype != sdfg.symbols[const_name]:
                     # This should actually be an error, but there is a lots of code that depends on it.
-                    warnings.warn(f'Mismatch between constant and symobl type of "{const_name}", '
+                    warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
             else:
                 warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
@@ -765,11 +765,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
                         "Memlet subset does not match node dimension "
-                        "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()),
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                        "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()), sdfg, state_id, eid)
 
                 # Bounds
                 if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
@@ -792,24 +788,21 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if e.data.other_subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
                         "Memlet other_subset does not match node dimension "
-                        "(expected %d, got %d)" % (len(arr.shape), e.data.other_subset.dims()),
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                        "(expected %d, got %d)" % (len(arr.shape), e.data.other_subset.dims()), sdfg, state_id, eid)
 
                 # Bounds
                 if any(
                     ((minel + off) < 0) == True for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
-                    raise InvalidSDFGEdgeError(
-                        "Memlet other_subset negative out-of-bounds",
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential negative out-of-bounds memlet other_subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet other_subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
                        for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
-                    raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential out-of-bounds memlet other_subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
 
             # Test subset and other_subset for undefined symbols
             if Config.get_bool('experimental', 'validate_undefs'):

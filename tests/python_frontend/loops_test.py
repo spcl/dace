@@ -5,6 +5,7 @@ import numpy as np
 
 from dace.frontend.python.common import DaceSyntaxError
 
+
 @dace.program
 def for_loop():
     A = dace.ndarray([10], dtype=dace.int32)

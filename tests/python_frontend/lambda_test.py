@@ -6,6 +6,7 @@ import pytest
 
 
 def test_inline_lambda_tasklet():
+
     @dace.program
     def lamb(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
         for i in dace.map[0:20]:
@@ -25,6 +26,7 @@ def test_inline_lambda_tasklet():
 
 @pytest.mark.skip('Syntax is not yet supported')
 def test_inline_lambda_scalar():
+
     @dace.program
     def lamb(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
         f = lambda a, b: a + b
@@ -40,6 +42,7 @@ def test_inline_lambda_scalar():
 
 @pytest.mark.skip('Syntax is not yet supported')
 def test_inline_lambda_array():
+
     @dace.program
     def lamb(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20]):
         f = lambda a, b: a + b
@@ -69,6 +72,7 @@ def test_lambda_global():
 
 @pytest.mark.skip('Syntax is not yet supported')
 def test_lambda_call_jit():
+
     @dace.program
     def lamb(A, B, C, f):
         A[:] = f(B, C)
@@ -83,6 +87,7 @@ def test_lambda_call_jit():
 
 @pytest.mark.skip('Syntax is not yet supported')
 def test_lambda_nested_call():
+
     @dace.program
     def lamb2(A, B, C, f):
         A[:] = f(B, C)

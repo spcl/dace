@@ -4,6 +4,7 @@ from dace.sdfg.validation import InvalidSDFGEdgeError
 import pytest
 
 
+
 def test_add_scope_connectors():
     sdfg = dace.SDFG("add_scope_connectors_sdfg")
     state = sdfg.add_state(is_start_block=True)

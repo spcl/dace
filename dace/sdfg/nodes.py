@@ -1039,6 +1039,19 @@ class Map(object):
             raise ValueError(f'There are {self.get_param_num()} parameters but the range'
                              f' has {self.range.dims()} dimensions.')
 
+        # The only thing that makes sense, at least on GPU and CPU is a positive
+        #  increment and a positive range of iteration. We could handle sequential
+        #  Maps a bit more liberal, but we should probably not.
+        if any((ss <= 0) == True for ss in self.range.size()):
+            # The CPU and GPU backend tolerate such maps.
+            warnings.warn(f'The iteration range of Map {self.label} is {self.range}, which contains a zero'
+                          ' or negative sized range, which is allowed but not recommended.'
+                          ' The Map will be turned into a no-ops.')
+        if any((inc <= 0) == True for (_, _, inc) in self.range):
+            # Should this be turned into an error?
+            warnings.warn(f'An increment of Map {self.label} was negative, which is allowerd'
+                          ' but probably not useful.')
+
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
         return len(self.params)

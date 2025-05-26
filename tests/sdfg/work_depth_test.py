@@ -208,8 +208,8 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
 
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
-    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False and
-        test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
+    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False
+            and test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
         pytest.skip('Malformed loop when not simplifying')
     test, correct = work_depth_test_cases[test_name]
     w_d_map: Dict[str, sp.Expr] = {}
@@ -230,10 +230,7 @@ def test_work_depth(test_name):
     # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
     reps = {s: sp.Symbol(s.name) for s in (res[0].free_symbols | res[1].free_symbols)}
     res = (res[0].subs(reps), res[1].subs(reps))
-    reps = {
-        s: sp.Symbol(s.name)
-        for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)
-    }
+    reps = {s: sp.Symbol(s.name) for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)}
     correct = (sp.sympify(correct[0]).subs(reps), sp.sympify(correct[1]).subs(reps))
     # check result
     assert correct == res
@@ -258,10 +255,11 @@ tests_cases_avg_par = {
     'gemm_library_node_symbolic': (gemm_library_node_symbolic, 2 * M * K * N / sp.log(K)),
 }
 
+
 @pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
 def test_avg_par(test_name: str):
-    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False and
-        test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
+    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False
+            and test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
         pytest.skip('Malformed loop when not simplifying')
 
     test, correct = tests_cases_avg_par[test_name]

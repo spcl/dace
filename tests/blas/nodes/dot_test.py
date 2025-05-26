@@ -86,7 +86,8 @@ def run_test(target, size, vector_length):
 
     diff = abs(result[0] - ref)
     if diff >= 1e-6 * ref:
-        raise ValueError("Unexpected result returned from dot product: " "got {}, expected {}".format(result[0], ref))
+        raise ValueError("Unexpected result returned from dot product: "
+                         "got {}, expected {}".format(result[0], ref))
 
     return sdfg
 

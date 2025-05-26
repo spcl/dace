@@ -64,10 +64,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
-    
+
         * Size of data must be 1, it must not be a stream and must be transient.
         * Only inputs to candidate scalars must be either arrays or tasklets.
-        * All tasklets that lead to it must have one statement, one output, 
+        * All tasklets that lead to it must have one statement, one output,
           and may have zero or more **array** inputs and not be in a scope.
         * Scalar must not be accessed with a write-conflict resolution.
         * Scalar must not be written to more than once in a state.
@@ -318,7 +318,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
                  defined_syms: Set[str]) -> None:
         """
         Initializes AST transformer.
-        
+
         """
         self.in_edges = in_edges
         self.out_edges = out_edges
@@ -343,10 +343,21 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         arrname, tasklet_slice = astutils.subscript_to_ast_slice(node)
         arrname = arrname if arrname in self.arrays else None
         if len(tasklet_slice) < len(memlet_subset):
+            new_tasklet_slice = [(None, None, None)] * len(memlet_subset)
             # Unsqueeze all index dimensions from orig_subset into tasklet_subset
-            for i, (start, end, _) in reversed(list(enumerate(memlet_subset.ndrange()))):
-                if start == end:
-                    tasklet_slice.insert(i, (None, None, None))
+            j = 0
+            for i, (start, end, _) in enumerate(memlet_subset.ndrange()):
+                if start != end:
+                    new_tasklet_slice[i] = tasklet_slice[j]
+                    j += 1
+
+            # Sanity check
+            if j != len(tasklet_slice):
+                raise IndexError(f'Only {j} out of {len(tasklet_slice)} indices were provided in subset expression '
+                                 f'"{astutils.unparse(node)}", found during composing with memlet of subset '
+                                 f'"{memlet_subset}".')
+            tasklet_slice = new_tasklet_slice
+
         tasklet_subset = subsets.Range(astutils.astrange_to_symrange(tasklet_slice, self.arrays, arrname))
         return memlet_subset.compose(tasklet_subset)
 
@@ -389,9 +400,9 @@ def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
 
 def _handle_connectors(state: sd.SDFGState, node: nodes.Tasklet, mapping: Dict[str, Tuple[str, subsets.Range]],
                        ignore: Set[str], in_edges: bool) -> bool:
-    """ 
+    """
     Adds new connectors and removes unused connectors after indirection
-    promotion. 
+    promotion.
     """
     if in_edges:
         orig_edges = {e.dst_conn: e for e in state.in_edges(node)}
@@ -533,7 +544,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
     This removes each read-only access node as well as all of its descendant
     edges (in memlet trees) and connectors. Descends recursively to nested
     SDFGs and modifies tasklets (Python and C++).
-    
+
     :param sdfg: The SDFG to operate on.
     :param array_names: Mapping between scalar names to replace and their
                         replacement symbol name.
@@ -576,7 +587,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
 
                         # Descend recursively to remove scalar
                         remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
-                        for ise in dst.sdfg.edges():
+                        for ise in dst.sdfg.all_interstate_edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
                             for aname, aval in ise.data.assignments.items():
@@ -584,6 +595,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                                 vast = astutils.RemoveSubscripts({tmp_symname}).visit(vast)
                                 ise.data.assignments[aname] = astutils.unparse(vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
+                        promo = TaskletPromoterDict({e.dst_conn: tmp_symname})
+                        for reg in dst.sdfg.all_control_flow_regions():
+                            meta_codes = reg.get_meta_codeblocks()
+                            for cd in meta_codes:
+                                for stmt in cd.code:
+                                    promo.visit(stmt)
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
@@ -637,7 +654,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         to be used within states as part of memlets, and allows further
         transformations (such as loop detection) to use the information for
         optimization.
-        
+
         :param sdfg: The SDFG to run the pass on.
         :param ignore: An optional set of strings of scalars to ignore.
         :param transients_only: If False, also considers global data descriptors (e.g., arguments).
