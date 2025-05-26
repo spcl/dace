@@ -1,7 +1,6 @@
 import sys
 import pathlib
-
-import dace.transformation
+import shutil
 
 template_for_transformation = """
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
@@ -33,8 +32,8 @@ test_loaded_generic = "{GENERIC_TRANSFORMATION_LOADED}"
 TEMPLATE_STR_1 = "This is a generic transformation loaded from the experimental folder"
 TEMPLATE_STR_2 = "This is a generic transformation loaded from the experimental folder, but with a different name"
 
-
-def test_experimental_imports():
+# Create some dummy experimental transformations, ensure they can be loaded, can call some methods of transformations
+def test_experimental_transformation_import():
     try:
         base_dir = pathlib.Path(__file__).parent.parent / "dace" / "transformation" / "experimental"
         generic_folder = base_dir / "generic_folder"
@@ -52,6 +51,9 @@ def test_experimental_imports():
 
         file1.write_text(template1)
         file2.write_text(template2)
+
+        assert file1.exists(), f"{file1} does not exist after writing!"
+        assert file2.exists(), f"{file2} does not exist after writing!"
 
         sys.modules.pop("dace", None)
         for name in list(sys.modules):
@@ -82,8 +84,9 @@ def test_experimental_imports():
         exp.ExperimentalEmptyTransformation().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
         exp.ExperimentalEmptyTransformation2().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
 
-        from dace import library
-
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        raise e
     finally:
         # Cleanup
         try:
@@ -92,6 +95,29 @@ def test_experimental_imports():
             if file2.exists():
                 file2.unlink()
             if generic_folder.exists():
-                generic_folder.rmdir()
+                shutil.rmtree(generic_folder)
         except Exception as cleanup_err:
             print(f"Cleanup failed: {cleanup_err}")
+
+# A simple test to check DaCe calls function without having and files in the experimental folder
+# Other tests should get it too
+def test_no_experimental_transformation_import():
+    import dace
+    sdfg = dace.SDFG("test_sdfg")
+    state = sdfg.add_state("test_state")
+    a1_name, a1 = sdfg.add_array(name="A", shape=(10,), dtype=dace.float64, transient=False)
+    a2_name, a2 = sdfg.add_array(name="B", shape=(10,), dtype=dace.float64, transient=False)
+    an1 = state.add_access(a1_name)
+    an2 = state.add_access(a2_name)
+    state.add_edge(
+        an1, None, an2, None, dace.Memlet.from_array(
+            dataname=a1_name, datadesc=a1
+        )
+    )
+    sdfg.compile()
+
+
+if __name__ == "__main__":
+    test_experimental_transformation_import()
+    test_no_experimental_transformation_import()
+    print("Test completed successfully.")
