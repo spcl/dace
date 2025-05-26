@@ -98,6 +98,7 @@ def write_a2_from_a1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, 
     callsite_stream.write(
         f"""
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
         for (int i = 0; i < ({height} / 16); ++i) {{
             int srcOffset  =  i * 16 * 16;
             int dstOffset  =  i * 16 * 16;
@@ -105,7 +106,7 @@ def write_a2_from_a1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, 
             AscendC::LoadData2DParams  {dst_name}LoadDataParams;
             {dst_name}LoadDataParams.repeatTimes  =  {width} / 16;
             {dst_name}LoadDataParams.srcStride  =  {height} / 16;
-            {dst_name}LoadDataParams.ifTranspose  =  true;
+            {dst_name}LoadDataParams.ifTranspose  =  false;
 
             AscendC::LoadData({dst_name}[dstOffset], {src_name}[srcOffset], {dst_name}LoadDataParams);
         }}
@@ -127,6 +128,7 @@ def write_b2_from_b1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, 
     callsite_stream.write(
         f"""
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
         for (int i = 0; i < ({width} / 16); ++i) {{
             int srcOffset  =  i * 16 * 16;
             int dstOffset  =  i * 16 * 16;
@@ -134,7 +136,7 @@ def write_b2_from_b1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width, 
             AscendC::LoadData2DParams  {dst_name}LoadDataParams;
             {dst_name}LoadDataParams.repeatTimes  =  {height} / 16;
             {dst_name}LoadDataParams.srcStride  =  {width} / 16;
-            {dst_name}LoadDataParams.ifTranspose  =  false;
+            {dst_name}LoadDataParams.ifTranspose  =  true;
 
             AscendC::LoadData({dst_name}[dstOffset], {src_name}[srcOffset], {dst_name}LoadDataParams);
         }}
@@ -156,6 +158,7 @@ def write_co2_from_co1_2d(callsite_stream, dst_name, src_name, beg1, beg2, width
         f"""
         // {src_storage_name} -> {dst_storage_name}: DeQue, DataCopy, Free Prev.
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
         AscendC::DataCopyParams {dst_name}Params;
         {dst_name}Params.blockCount = {height};
         {dst_name}Params.blockLen = {width} / 16;
@@ -176,6 +179,7 @@ def write_vecin_from_co2_2d(callsite_stream,  src_name, dst_name, beg1, beg2, wi
         f"""
         // {src_storage_name} -> {dst_storage_name}: DeQue, DataCopy, Free Prev.
         {src_name} = queue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();
+        {dst_name} = queue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();
         AscendC::DataCopyParams {dst_name}Params;
         {dst_name}Params.blockCount = {height};
         {dst_name}Params.blockLen = {width} / 16;

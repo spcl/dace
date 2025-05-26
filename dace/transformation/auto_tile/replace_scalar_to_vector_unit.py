@@ -27,8 +27,8 @@ class ReplaceScalarToVectorUnit(transformation.SingleStateTransformation):
         value_type=str,
         default={"add": "AscendC::Add({c}, {a}, {b}, {size});", "gemm": "{params}\n AscendC::Mmad({c}, {a}, {b}, {param_name});"},
     )
-    mmu_size = Property(dtype=int, default=32)
-    vector_unit_size = Property(dtype=int, default=32)
+    mmu_size = Property(dtype=int, default=16)
+    vector_unit_size = Property(dtype=int, default=16)
 
     def __init__(self):
         super().__init__()
