@@ -12,7 +12,6 @@ def _recursive_import_transformations():
     current_module = importlib.import_module(package_root)
 
     for path in base_path.rglob("*.py"):
-        print(path)
         if path.name == "__init__.py":
             continue
 
