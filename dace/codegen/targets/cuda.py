@@ -355,6 +355,8 @@ class CUDACodeGen(TargetCodeGenerator):
 
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
 {other_globalcode}
 
@@ -417,7 +419,7 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
+bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
 {{
     if (streamid < 0 || streamid >= {nstreams})
         return false;
@@ -427,7 +429,7 @@ DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streami
     return true;
 }}
 
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
+void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
 {{
     for (int i = 0; i < {nstreams}; ++i)
         __state->gpu_context->streams[i] = stream;
