@@ -32,6 +32,7 @@ test_loaded_generic = "{GENERIC_TRANSFORMATION_LOADED}"
 TEMPLATE_STR_1 = "This is a generic transformation loaded from the experimental folder"
 TEMPLATE_STR_2 = "This is a generic transformation loaded from the experimental folder, but with a different name"
 
+
 # Create some dummy experimental transformations, ensure they can be loaded, can call some methods of transformations
 def test_experimental_transformation_import():
     try:
@@ -99,21 +100,18 @@ def test_experimental_transformation_import():
         except Exception as cleanup_err:
             print(f"Cleanup failed: {cleanup_err}")
 
+
 # A simple test to check DaCe calls function without having and files in the experimental folder
 # Other tests should get it too
 def test_no_experimental_transformation_import():
     import dace
     sdfg = dace.SDFG("test_sdfg")
     state = sdfg.add_state("test_state")
-    a1_name, a1 = sdfg.add_array(name="A", shape=(10,), dtype=dace.float64, transient=False)
-    a2_name, a2 = sdfg.add_array(name="B", shape=(10,), dtype=dace.float64, transient=False)
+    a1_name, a1 = sdfg.add_array(name="A", shape=(10, ), dtype=dace.float64, transient=False)
+    a2_name, a2 = sdfg.add_array(name="B", shape=(10, ), dtype=dace.float64, transient=False)
     an1 = state.add_access(a1_name)
     an2 = state.add_access(a2_name)
-    state.add_edge(
-        an1, None, an2, None, dace.Memlet.from_array(
-            dataname=a1_name, datadesc=a1
-        )
-    )
+    state.add_edge(an1, None, an2, None, dace.Memlet.from_array(dataname=a1_name, datadesc=a1))
     sdfg.compile()
 
 
