@@ -23,6 +23,9 @@ from .symbolic import symbol
 # Run Jupyter notebook code
 from .jupyter import *
 
+# Trigger import of experimental transformations
+import dace.transformation.experimental
+
 # Import hooks from config last (as it may load classes from within dace)
 hooks._install_hooks_from_config()
 
