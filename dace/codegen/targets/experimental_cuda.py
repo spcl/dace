@@ -43,8 +43,6 @@ if TYPE_CHECKING:
 # 4. Berkay: Warning/Error that GPU_device must be used before other GPU schedule types
 
 
-# TODO: depending on what happens next
-# change in_device_code to maybe in_kernel_code?
 
 
 
@@ -55,7 +53,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     target_name = 'experimental_cuda'
     title = 'CUDA'
 
-    _in_device_code = False
 
     ######################## Initilization and Preprocessing related start #########################################################
 
@@ -64,19 +61,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._frame: DaCeCodeGenerator = frame_codegen # creates the frame code, orchestrates the code generation for targets
         self._dispatcher: TargetDispatcher= frame_codegen.dispatcher # responsible for dispatching code generation to the appropriate target
 
-        # dispatcher = self._dispatcher
 
-        self.create_grid_barrier: bool = False # Used for grid level synchronization
-
-        self.dynamic_tbmap_type = None
-        self.extra_nsdfg_args = []
-        ExperimentalCUDACodeGen._in_device_code = False  # TODO: Isn't this double?
+        ExperimentalCUDACodeGen._in_kernel_code = False  # TODO: Isn't this double?
         self._cpu_codegen: Optional['CPUCodeGen'] = None
-        self._block_dims = None
-        self._grid_dims = None
 
 
-        self._kernel_map: Optional[nodes.MapEntry] = None  # Indicates whether the code generation is currently within a "kernel" map.
 
         # NOTE: Moved from preprossessing to here
         self.backend: str = common.get_gpu_backend() 
@@ -89,8 +78,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                       'CUDA',
                                       target_type=target_type)
 
-        self._kernel_state = None
-        self._kernel_grid_conditions: List[str] = []
+
+
         self._scope_has_collaborative_copy = False
 
         self._localcode = CodeIOStream()
@@ -477,7 +466,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                        function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         
         # Are we generating host (launch) code or device (kernel) code?
-        if not ExperimentalCUDACodeGen._in_device_code:
+        if not ExperimentalCUDACodeGen._in_kernel_code:
 
             # Prepare and cache kernel metadata (name, grid dims, arguments, etc.)
             self._current_kernel_spec = KernelSpec(
@@ -489,7 +478,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             #--------------- Generate Kernel Function ----------------
 
-            ExperimentalCUDACodeGen._in_device_code = True
+            ExperimentalCUDACodeGen._in_kernel_code = True
             kernel_stream = CodeIOStream()
 
             kernel_name = self._current_kernel_spec.kernel_name
@@ -519,7 +508,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             )
 
             self._localcode.write(kernel_stream.getvalue() + '\n')
-            ExperimentalCUDACodeGen._in_device_code = False 
+            ExperimentalCUDACodeGen._in_kernel_code = False 
             # --------------------------------------------------------------
 
             # Generate the actual launch call (host-side)
@@ -552,101 +541,100 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def _generate_kernel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                               function_stream: CodeIOStream, kernel_stream: CodeIOStream) -> None:
         
-        
-        # Get the Map Node (sould be a Map Node?)
-        node = dfg_scope.source_nodes()[0]
-
-        # Get kernel specifications
-        kernel_spec = self._current_kernel_spec
-        kernel_map = kernel_spec.kernel_map
-        has_tbmap = kernel_spec.has_tbmap
-        block_dims = kernel_spec.block_dims
-
 
         
         with KernelScopeManager(cudaCodeGen=self, sdfg=sdfg, cfg=cfg, dfg_scope=dfg_scope, state_id=state_id,
                                 function_stream=function_stream, callsite_stream=kernel_stream, comment="Kernel scope",) as scopeManager:
-
-            # TODO: If time allows, maybe rename in configs somehow, discuss with Yakup
-            # Get the thread/block index type
-            ttype = Config.get('compiler', 'cuda', 'thread_id_type')
-            tidtype = getattr(dtypes, ttype, False)
-            if not isinstance(tidtype, dtypes.typeclass):
-                raise ValueError(f'Configured type "{ttype}" for ``thread_id_type`` does not match any DaCe data type. '
-                                'See ``dace.dtypes`` for available types (for example ``int32``).')
             
 
-            # Generate all index arguments for kernel grid
-            krange = subsets.Range(kernel_map.range[::-1])
-            kdims = krange.size()
-            dsym = [symbolic.symbol(f'__DAPB{i}', nonnegative=True, integer=True) for i in range(len(krange))]
-            bidx = krange.coord_at(dsym)
+             # ----------------- Retrieve kernel configuration -----------------------
+            kernel_spec = self._current_kernel_spec
+            kernel_entry_node = kernel_spec._kernel_entry_node # = dfg_scope.source_nodes()[0]
+            kernel_map = kernel_spec.kernel_map
+            has_tbmap = kernel_spec.has_tbmap
+            kernel_block_dims = self._current_kernel_spec.block_dims
 
 
-            # First three dimensions are evaluated directly
-            for i in range(min(len(krange), 3)):
-                varname = kernel_map.params[-i - 1]
+            # ----------------- Kernel/Map Range Preprocessing -----------------------
 
-                # If we defaulted to a fixed number of threads per block, offset by thread ID
-                block_expr = f'blockIdx.{_get_cuda_dim(min(i, 2))}'
-                if not has_tbmap:
-                    block_expr = f'({block_expr} * {symbolic_to_cpp(block_dims[i])} + threadIdx.{_get_cuda_dim(i)})'
-
-                # Delinearize third dimension if necessary
-                if i == 2 and len(krange) > 3:
-                    block_expr = f'({block_expr} / ({symbolic_to_cpp(functools.reduce(sympy.Mul, kdims[3:], 1))}))'
-
-                expr = symbolic_to_cpp(bidx[i]).replace(f'__DAPB{i}', block_expr)
-
-                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
+            reversed_kernel_range = kernel_map.range[::-1] # also reverse it 
+            kernel_range = subsets.Range(reversed_kernel_range)
+            kernel_dimensions = len(kernel_range)
+            kernel_dim_sizes = kernel_range.size()
 
 
-            # Delinearize beyond the third dimension
-            if len(krange) > 3:
-                for i in range(3, len(krange)):
-                    varname = kernel_map.params[-i - 1]
+            # ----------------- Set up symbolic index expressions -----------------------
 
-                    block_expr = 'blockIdx.z'
-                    if not has_tbmap:
-                        block_expr = f'({block_expr} * {symbolic_to_cpp(block_dims[2])} + threadIdx.z)'
-
-                    block_expr = '((%s / (%s)) %% (%s))' % (
-                        block_expr,
-                        symbolic_to_cpp(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
-                        symbolic_to_cpp(kdims[i]),
-                    )
-
-                    expr = symbolic_to_cpp(bidx[i]).replace(f'__DAPB{i}', block_expr)
-                    kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
+            symbolic_indices = [ symbolic.symbol(f'__SYM_IDX{dim}', nonnegative=True, integer=True) for dim in range(kernel_dimensions)]
+            symbolic_index_bounds = [ idx + block_dim - 1 for idx, block_dim in zip(symbolic_indices, kernel_block_dims)]
+            symbolic_coordinates = kernel_range.coord_at(symbolic_indices)
 
 
-                
-            # handle conditions 
+            # ----------------- Generate Thread or Block index Definitions -----------------------
+
+
+            thread_id_ctype = kernel_spec.gpu_index_ctype # Data type of CUDA thread/block indices
+
+
+            # In case there is no ThreadBlock map used in a submap, the map variables will
+            # be mapped to thread IDs instead of block IDs
+            for dim in range(kernel_dimensions):
+
+                var_name = kernel_map.params[-dim - 1] # also reverse it here!
+
+                # Compute index expressions for up to 3 dimensions (x, y, z)
+                if dim < 3:
+                    if has_tbmap:
+                        index_expr = f'blockIdx.{_get_cuda_dim(dim)}'
+                    else:
+                        index_expr = f'(blockIdx.{_get_cuda_dim(dim)} * {symbolic_to_cpp(kernel_block_dims[dim])} + threadIdx.{_get_cuda_dim(dim)})'
+
+                    # Delinearize third dimension if more than 3D (used in 3D+ mapping)
+                    if dim == 2 and kernel_dimensions > 3:
+                        tail_prod = product(kernel_dim_sizes[3:])
+                        index_expr = f"({index_expr} / ({symbolic_to_cpp(tail_prod)}))"
+
+                else:  # Handle dimensions beyond the third (delinearize and modulo)
+                    if has_tbmap:
+                        index_expr = f'blockIdx.z'
+                    else:
+                        index_expr = f'(blockIdx.z * {symbolic_to_cpp(kernel_block_dims[2])} + threadIdx.z)'
+
+                    tail_prod = product(kernel_dim_sizes[dim + 1:])
+                    index_expr = (f"({index_expr} / ({symbolic_to_cpp(tail_prod)})) % ({symbolic_to_cpp(kernel_dim_sizes[dim])})")
+
+
+                # Define thread/Block index
+                var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', index_expr)
+                kernel_stream.write(f'{thread_id_ctype} {var_name} = {var_def};', cfg, state_id, kernel_entry_node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, thread_id_ctype) 
+
+
+            # ----------------- Guard Conditions for Block Execution -----------------------
+
             if not has_tbmap:
-                dsym_end = [d + bs - 1 for d, bs in zip(dsym, block_dims)]
-                minels = krange.min_element()
-                maxels = krange.max_element()
-                for i, (v, minel, maxel) in enumerate(zip(kernel_map.params[::-1], minels, maxels)):
+                minels = kernel_range.min_element()
+                maxels = kernel_range.max_element()
+
+                for dim, (var_name, start, end) in enumerate(zip(kernel_map.params[::-1], minels, maxels)):
                     condition = ''
 
                     # Optimize conditions if they are always true
-                    if i >= 3 or (dsym[i] >= minel) != True:
-                        condition += f'{v} >= {symbolic_to_cpp(minel)}' 
+                    if dim >= 3 or (symbolic_indices[dim] >= start) != True:
+                        condition += f'{var_name} >= {symbolic_to_cpp(start)}' 
 
-                    if (i >= 3 or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % block_dims[i]) != 0) == True)
-                        or (block_dims[i] > maxel) == True):
+                    if (dim >= 3 or ((symbolic_index_bounds[dim] < end) != False 
+                            and ((symbolic_index_bounds[dim] % kernel_block_dims[dim]) != 0) == True) or (kernel_block_dims[dim] > end) == True):
 
                         if len(condition) > 0:
                             condition += ' && '
-                        condition += f'{v} < {symbolic_to_cpp(maxel + 1)}'
+                        condition += f'{var_name} < {symbolic_to_cpp(end + 1)}'
 
                     if len(condition) > 0:
-                        scopeManager.open(condition= condition)
+                        scopeManager.open(condition=condition)
 
 
-
+            # ----------------- Dispatch Subgraph code generation -----------------------
 
             self._dispatcher.dispatch_subgraph(sdfg, cfg, dfg_scope, state_id, function_stream, 
                                                kernel_stream, skip_entry_node=True)
@@ -686,8 +674,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             # ----------------- Generate Index Variable Definitions -----------------------
 
-            for dim in range(map_dimensions):
+            # Get the block's index dace data type
+            block_id_ctype = self._current_kernel_spec.gpu_index_ctype
 
+            for dim in range(map_dimensions):
                 var_name = scope_map.params[-dim - 1] # also reverse it here!
 
                 if dim < 3:
@@ -704,10 +694,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 
                 var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', base_expr)
-                kernel_stream.write(f'int {var_name} = {var_def};', cfg, state_id, node)
-                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int') # TODO: get varname type
+                kernel_stream.write(f'{block_id_ctype} {var_name} = {var_def};', cfg, state_id, node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, block_id_ctype) 
 
-            
 
             # ----------------- Guard Conditions for Block Execution -----------------------
 
@@ -777,12 +766,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             num_warps = product(warp_dim_bounds)
 
 
+            # The C type used to define the (flat) threadId and warpId variables
+            ids_ctype = kernel_spec.gpu_index_ctype
 
             # ----------------- Guard checks -----------------------
 
             
             # handles checks either at compile time or runtime (i.e. checks in the generated code)
-            self._hanlde_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
+            self._handle_GPU_Warp_scope_guards(state_dfg, node, map_range, warp_dim, num_threads_in_block, num_warps,
                                                kernel_stream, scopeManager)
                         
 
@@ -807,8 +798,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             threadID_name = 'ThreadId_%s_%d_%d_%d' % (scope_map.label, cfg.cfg_id, state_dfg.block_id, state_dfg.node_id(node))
 
-            kernel_stream.write(f"int {threadID_name} = ({flat_thread_idx_expr}) / {warpSize};", cfg, state_id, node)
-            self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, 'int') # TODO: Fix type?
+            kernel_stream.write(f"{ids_ctype} {threadID_name} = ({flat_thread_idx_expr}) / {warpSize};", cfg, state_id, node)
+            self._dispatcher.defined_vars.add(threadID_name, DefinedType.Scalar, ids_ctype)
 
 
             
@@ -824,8 +815,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 else:
                     expr = f"{threadID_name} % {warp_dim_bounds[i]}"
 
-                kernel_stream.write(f"int {var_name} = {expr};", cfg, state_id, node)
-                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, 'int')
+                kernel_stream.write(f"{ids_ctype} {var_name} = {expr};", cfg, state_id, node)
+                self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ids_ctype)
 
 
 
@@ -865,7 +856,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 
 
-    def _hanlde_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
+    def _handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
                                        warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
                                        scopeManager: 'KernelScopeManager'):
         
@@ -938,16 +929,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             kernel_spec: KernelSpec = self._current_kernel_spec
             kernel_name = kernel_spec.kernel_name
-            kernel_bridge_args = kernel_spec.bridge_args
-            kernel_bridge_args_typed = kernel_spec.bridge_args_typed
+            kernel_wrapper_args = kernel_spec.kernel_wrapper_args
+            kernel_wrapper_args_typed = kernel_spec.kernel_wrapper_args_typed
 
             # Declaration of the function which launches the kernel (C++ code)
             function_stream.write('DACE_EXPORTED void __dace_runkernel_%s(%s);\n' % 
-                                (kernel_name, ', '.join(kernel_bridge_args_typed)), cfg, state_id, scope_entry)
+                                (kernel_name, ', '.join(kernel_wrapper_args_typed)), cfg, state_id, scope_entry)
 
             # Calling he function which launches the kernel (C++ code)
             callsite_stream.write( '__dace_runkernel_%s(%s);\n' %
-                                (kernel_name, ', '.join(kernel_bridge_args)), cfg, state_id, scope_entry)
+                                (kernel_name, ', '.join(kernel_wrapper_args)), cfg, state_id, scope_entry)
         
 
 
@@ -964,7 +955,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             kernel_spec: KernelSpec = self._current_kernel_spec
             kernel_name = kernel_spec.kernel_name
             kernel_args_as_input = kernel_spec.args_as_input
-            kernel_launch_args_typed = kernel_spec.bridge_args_typed
+            kernel_launch_args_typed = kernel_spec.kernel_wrapper_args_typed
 
             # get kernel dimensions and transform into a c++ string
             grid_dims = kernel_spec.grid_dims
@@ -1052,7 +1043,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = False) -> None:
         
-        if ExperimentalCUDACodeGen._in_device_code:
+        if ExperimentalCUDACodeGen._in_kernel_code:
             self.generate_devicelevel_state(sdfg, cfg, state, function_stream, callsite_stream)
         else:
             self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
@@ -1110,7 +1101,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
                 return True
-        if ExperimentalCUDACodeGen._in_device_code:
+        if ExperimentalCUDACodeGen._in_kernel_code:
             return True
         return False
     
@@ -1136,13 +1127,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False)
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_call(sdfg,
-                                                     cfg,
-                                                     state,
-                                                     node,
-                                                     memlet_references,
-                                                     sdfg_label,
-                                                     state_struct=False)
+        return self._cpu_codegen.generate_nsdfg_call(sdfg, cfg, state, node, memlet_references,
+                                                     sdfg_label, state_struct=False)
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state, node)
@@ -1168,7 +1154,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     # Rather Minor "actual" changes, but much nicer to extend and maintain
 
 
-    # For Yakup: I like it when we first "guard" and then implement the logic sorrow free
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                     node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                     declaration_stream: CodeIOStream) -> None:
@@ -1357,7 +1342,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # ------------------- Initialization -------------------
         if node.setzero:
             allocation_stream.write(
-                f'dace::ResetShared<{nodedesc.dtype.ctype}, {", ".join(symbolic_to_cpp(self._block_dims))}, {symbolic_to_cpp(arrsize)}, '
+                f'dace::ResetShared<{nodedesc.dtype.ctype}, {", ".join(symbolic_to_cpp(self._current_kernel_spec.block_dims))}, {symbolic_to_cpp(arrsize)}, '
                 f'1, false>::Reset({dataname});\n',
                 cfg, state_id, node
             )
@@ -1389,7 +1374,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 
 
-    # I could also do deallocate based on type.. good for modularity, but may be an overkill here
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
@@ -1430,7 +1414,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             callsite_stream.write(
-                'DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
+                f'DACE_GPU_CHECK({self.backend}FreeHost({dataname}));\n', cfg, state_id, node)
             
         elif nodedesc.storage in {dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register}:
             # No deallocation needed
@@ -1670,7 +1654,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             raise LookupError('Memlet does not point to any of the nodes')
 
         if (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
-                and not ExperimentalCUDACodeGen._in_device_code
+                and not ExperimentalCUDACodeGen._in_kernel_code
                 and (src_storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]
                      or dst_storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned])
                 and not (src_storage in cpu_storage_types and dst_storage in cpu_storage_types)):
@@ -1988,7 +1972,6 @@ def _get_storagename(storage):
     return sname[sname.rindex('_') + 1:]
 
 
-
 def product(iterable):
     """
     Computes the symbolic product of elements in the iterable using sympy.Mul.
@@ -2028,7 +2011,7 @@ def ptr(name: str, desc: dace.data.Data, sdfg: SDFG = None, framecode=None) -> s
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
-        elif not ExperimentalCUDACodeGen._in_device_code:  # GPU kernels cannot access state
+        elif not ExperimentalCUDACodeGen._in_kernel_code:  # GPU kernels cannot access state
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'
@@ -2070,15 +2053,17 @@ class KernelSpec:
         self._args_typed: list[str] = [adata.as_arg(name=aname) for aname, adata in self._args.items()]
         self._args_as_input: list[str] = [ptr(aname, adata, sdfg, cudaCodeGen._frame) for aname, adata in self._args.items()]
 
-        # Used for the bridging function, be careful: a change in the name __state will probably lead to compilation errors
+        # Used for the kernel wrapper function, be careful: a change in the name __state will probably lead to compilation errors
         state_param: list[str] = [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state']
 
-        self._bridge_args: list[str] = ['__state'] + self._args_as_input
-        self._bridge_args_typed: list[str] = state_param + self._args_typed
+        self._kernel_wrapper_args: list[str] = ['__state'] + self._args_as_input
+        self._kernel_wrapper_args_typed: list[str] = state_param + self._args_typed
 
         # Kernel dimensions
         self._grid_dims, self._block_dims, self._has_tbmap = self._get_kernel_dimensions(dfg_scope)
 
+        # C type (as string) of thread, block and warp indices
+        self._gpu_index_ctype: str = self.get_gpu_index_ctype()
 
         # Set warp size of the kernel
         if cudaCodeGen.backend not in ['cuda', 'hip']:
@@ -2091,7 +2076,29 @@ class KernelSpec:
         self._warpSize = Config.get('compiler', 'cuda', warp_size_key)
 
 
-    
+    def get_gpu_index_ctype(self, config_key='gpu_index_type') -> str:
+        """
+        Retrieves the GPU index data type as a C type string (for thread, block, warp indices)
+        from the configuration and if it matches a DaCe data type.
+
+        Raises:
+            ValueError: If the configured type does not match a DaCe data type.
+
+        Returns:
+            str: 
+                The C type string corresponding to the configured GPU index type. 
+                Used for defining thread, block, and warp indices in the generated code.
+        """
+        type_name = Config.get('compiler', 'cuda', config_key)
+        dtype = getattr(dtypes, type_name, None)
+        if not isinstance(dtype, dtypes.typeclass):
+            raise ValueError(
+                f'Invalid {config_key} "{type_name}" configured (used for thread, block, and warp indices): '
+                'no matching DaCe data type found.\n'
+                'Please use a valid type from dace.dtypes (e.g., "int32", "uint64").'
+            )
+        return dtype.ctype
+
 
     def _get_kernel_dimensions(self, dfg_scope: ScopeSubgraphView):
         """
@@ -2368,6 +2375,11 @@ class KernelSpec:
     def kernel_name(self) -> list[str]:
         """Returns the kernel name."""
         return self._kernel_name
+
+    @property
+    def kernel_entry_node(self) -> nodes.MapEntry:
+        """Returns the kernels entry node"""
+        return self._kernel_entry_node
     
     @property
     def kernel_map(self) -> nodes.Map:
@@ -2389,12 +2401,12 @@ class KernelSpec:
         return self._args_typed
     
     @property
-    def bridge_args(self) -> list[str]:
-        return self._bridge_args
+    def kernel_wrapper_args(self) -> list[str]:
+        return self._kernel_wrapper_args
 
     @property
-    def bridge_args_typed(self) -> list[str]:
-        return self._bridge_args_typed
+    def kernel_wrapper_args_typed(self) -> list[str]:
+        return self._kernel_wrapper_args_typed
 
     @property
     def grid_dims(self) -> list:
@@ -2419,6 +2431,15 @@ class KernelSpec:
         and is retrieved from the configuration.
         """
         return self._warpSize
+
+    @property
+    def gpu_index_ctype(self) -> str:
+        """
+        Returns the C data type used for GPU indices (thread, block, warp)
+        in generated code. This type is determined by the 'gpu_index_type'
+        setting in the configuration and matches with a DaCe typeclass.
+        """
+        return self._gpu_index_ctype
 
 
 
