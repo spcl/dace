@@ -33,7 +33,7 @@ class ContinueToCondition(ppl.Pass):
     def can_be_applied(self, cb: ContinueBlock) -> bool:
         # Must be a continue block...
         if not isinstance(cb, ContinueBlock):
-            return False 
+            return False
 
         # ...in a conditional block...
         pg = cb.parent_graph.parent_graph
@@ -53,7 +53,7 @@ class ContinueToCondition(ppl.Pass):
         outer_cfg = pg.parent_graph
         if len(outer_cfg.successors(pg)) > 1:
             return False
-        
+
         # ..and the conditional block must be directly nested in a loop.
         if not isinstance(outer_cfg, LoopRegion):
             return False
