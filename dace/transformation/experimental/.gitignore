@@ -1,0 +1,11 @@
+# Ignore everything in this directory
+*
+
+# But keep these specific files
+!registry_usage.md
+!registry.py
+!experimental_transformation_repositories.json
+!__init__.py
+
+# Ignore all subdirectories (this ensures cloned repos are ignored)
+*/
