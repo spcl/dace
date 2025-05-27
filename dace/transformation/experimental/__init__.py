@@ -1,17 +1,17 @@
-import os
-import importlib.util
-import pkgutil
 import pathlib
-
-from dace.config import Config
-from dace.transformation.transformation import TransformationBase
-from dace.transformation import Pass
+import importlib
 
 
 def _recursive_import_transformations():
+    from dace.config import Config
+    from dace.transformation.transformation import TransformationBase
+    from dace.transformation import Pass
+    import dace.transformation.experimental as experimental_module
+
     base_path = pathlib.Path(__file__).parent
     package_root = ".".join(__name__.split("."))  # = "dace.transformation.experimental"
-    current_module = importlib.import_module(package_root)
+
+    # current_module = importlib.import_module(package_root)
 
     debug_print = Config.get_bool('debugprint')
 
@@ -21,6 +21,8 @@ def _recursive_import_transformations():
 
         rel_path = path.relative_to(base_path)
         module_name = ".".join([package_root] + list(rel_path.with_suffix("").parts))
+        if debug_print:
+            print(f"[Experimental] Experimental transformation module: {module_name}")
 
         try:
             module = importlib.import_module(module_name)
@@ -29,10 +31,12 @@ def _recursive_import_transformations():
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
                 if (isinstance(attr, type) and (issubclass(attr, TransformationBase) or issubclass(attr, Pass))
-                        and attr not in (TransformationBase, Pass) and not hasattr(current_module, attr_name)):
-                    setattr(current_module, attr_name, attr)
+                        and attr not in (TransformationBase, Pass) and not hasattr(experimental_module, attr_name)
+                        and getattr(attr, "__module__", "").startswith("dace.")):
+                    setattr(experimental_module, attr_name, attr)
+
                     if debug_print:
-                        print(f"[Experimental] Registered transformation: {attr_name}")
+                        print(f"[Experimental] Registered transformation: {attr_name} to module: {experimental_module}")
 
         except Exception as e:
             if debug_print:
