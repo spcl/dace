@@ -19,7 +19,8 @@ python transformation_manager.py add https://github.com/username/my-transformati
 # 2. List all registered repositories
 python transformation_manager.py list
 
-# 3. Load all suggested transformation repositories (from experimental_transformation_repositories)
+# 3. Load all suggested transformation repositories (from experimental_transformation_repositories.json)
+# Locally added repos are saved in local_experimental_transformation_repositories.json
 python transformation_manager.py load-all-suggested
 ```
 
@@ -52,8 +53,7 @@ Display all registered transformation repositories and their status.
 Remove a transformation repository from both filesystem and registry.
 
 1. Removes the repository directory
-2. Removes entry from `transformation_repos.json`
-
+2. Removes entry from `local_experimental_transformation_repositories.json`
 ---
 
 ### `load-all-suggested` - Load All Repositories
