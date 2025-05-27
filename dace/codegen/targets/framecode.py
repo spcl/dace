@@ -235,7 +235,6 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
-        import dace.library
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
@@ -989,7 +988,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             # Get all environments used in the generated code, including
             # dependent environments
-            import dace.library  # Avoid import loops
             from dace.codegen.targets.cpp import mangle_dace_state_struct_name
             self.environments = dace.library.get_environments_and_dependencies(self._dispatcher.used_environments)
 
