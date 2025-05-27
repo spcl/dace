@@ -1,0 +1,38 @@
+name: "Copilot Setup Steps"
+on: workflow_dispatch
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up C++ compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ build-essential
+
+      - name: Set up CMake
+        run: |
+          sudo apt-get install -y cmake
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install additional testing dependencies
+          python -m pip install pytest pytest-cov
+          python -m pip install flake8 pytest-xdist coverage
+
+      - name: Install DaCe in development mode
+        run: |
+          python -m pip install --editable ".[testing,linting]"
