@@ -33,14 +33,20 @@ test_loaded_generic = "{GENERIC_TRANSFORMATION_LOADED}"
 TEMPLATE_STR_1 = "This is a generic transformation loaded from the experimental folder"
 TEMPLATE_STR_2 = "This is a generic transformation loaded from the experimental folder, but with a different name"
 
-
 # Create some dummy experimental transformations, ensure they can be loaded, can call some methods of transformations
+
+
 def test_experimental_transformation_import():
+    # Store original state for restoration
+    original_modules = set(sys.modules.keys())
+    file1 = None
+    file2 = None
+    generic_folder = None
+
     try:
         base_dir = pathlib.Path(__file__).parent.parent / "dace" / "transformation" / "experimental"
         generic_folder = base_dir / "generic_folder"
         generic_folder.mkdir(parents=True, exist_ok=True)
-
         file1 = generic_folder / "empty_transformation.py"
         file2 = base_dir / "empty_transformation_2.py"
 
@@ -57,10 +63,10 @@ def test_experimental_transformation_import():
         assert file1.exists(), f"{file1} does not exist after writing!"
         assert file2.exists(), f"{file2} does not exist after writing!"
 
-        sys.modules.pop("dace", None)
-        for name in list(sys.modules):
-            if name.startswith("dace.transformation.experimental"):
-                del sys.modules[name]
+        # Clear existing dace modules
+        modules_to_clear = [name for name in sys.modules if name.startswith("dace")]
+        for name in modules_to_clear:
+            del sys.modules[name]
 
         import dace
 
@@ -70,41 +76,89 @@ def test_experimental_transformation_import():
         assert mod1_name in sys.modules, f"{mod1_name} not in sys.modules"
         assert mod2_name in sys.modules, f"{mod2_name} not in sys.modules"
 
+        sdfg = dace.SDFG("test_sdfg")
+        state = sdfg.add_state("test_state")
+
+        import dace.transformation.experimental as exp
+        exp.ExperimentalEmptyTransformation().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
+        exp.ExperimentalEmptyTransformation2().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
+
         mod1 = sys.modules[mod1_name]
         mod2 = sys.modules[mod2_name]
 
         assert getattr(mod1, "test_loaded_generic") == TEMPLATE_STR_1
         assert getattr(mod2, "test_loaded_generic") == TEMPLATE_STR_2
 
-        sdfg = dace.SDFG("test_sdfg")
-        state = sdfg.add_state("test_state")
-
         mod1.ExperimentalEmptyTransformation().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
         mod2.ExperimentalEmptyTransformation2().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
-
-        import dace.transformation.experimental as exp
-        exp.ExperimentalEmptyTransformation().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
-        exp.ExperimentalEmptyTransformation2().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
 
     except Exception as e:
         print(f"An error occurred: {e}")
         raise e
     finally:
-        # Cleanup
-        try:
-            if file1.exists():
-                file1.unlink()
-            if file2.exists():
-                file2.unlink()
-            if generic_folder.exists():
-                shutil.rmtree(generic_folder)
+        # Comprehensive cleanup
+        cleanup_errors = []
 
-            # Delete the loaded modules and reload DaCe
-            del sys.modules[mod1_name]
-            del sys.modules[mod2_name]
-            importlib.reload(dace)
-        except Exception as cleanup_err:
-            print(f"Cleanup failed: {cleanup_err}")
+        # 1. Remove files
+        try:
+            if file1 and file1.exists():
+                file1.unlink()
+        except Exception as e:
+            cleanup_errors.append(f"Failed to remove {file1}: {e}")
+
+        try:
+            if file2 and file2.exists():
+                file2.unlink()
+        except Exception as e:
+            cleanup_errors.append(f"Failed to remove {file2}: {e}")
+
+        try:
+            if generic_folder and generic_folder.exists():
+                shutil.rmtree(generic_folder)
+        except Exception as e:
+            cleanup_errors.append(f"Failed to remove {generic_folder}: {e}")
+
+        # 2. Remove all modules that weren't there originally
+        try:
+            current_modules = set(sys.modules.keys())
+            modules_to_remove = current_modules - original_modules
+            for module_name in modules_to_remove:
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+        except Exception as e:
+            cleanup_errors.append(f"Failed to clean up modules: {e}")
+
+        # 3. Force reimport of core dace modules if they existed originally
+        try:
+            if "dace" in original_modules:
+                # Remove and reimport dace to reset its state
+                dace_modules = [name for name in sys.modules if name.startswith("dace")]
+                for name in dace_modules:
+                    if name in sys.modules:
+                        del sys.modules[name]
+                import dace
+                # Do not import experimental transformations again
+        except Exception as e:
+            cleanup_errors.append(f"Failed to reload dace: {e}")
+
+        # 4. Clear any class registrations from the experimental module
+        try:
+            import dace.transformation.experimental as exp_mod
+            # Remove any dynamically added attributes
+            for attr_name in dir(exp_mod):
+                if not attr_name.startswith('_'):
+                    attr = getattr(exp_mod, attr_name)
+                    if hasattr(attr, '__module__') and ('empty_transformation' in getattr(attr, '__module__', '')
+                                                        or 'empty_transformation_2' in getattr(attr, '__module__', '')):
+                        delattr(exp_mod, attr_name)
+        except Exception as e:
+            cleanup_errors.append(f"Failed to clean experimental module: {e}")
+
+        # Report cleanup errors but don't fail the test
+        if cleanup_errors:
+            print("Cleanup warnings:")
+            for error in cleanup_errors:
+                print(f"  - {error}")
 
 
 # A simple test to check DaCe calls function without having and files in the experimental folder
@@ -114,7 +168,7 @@ def test_no_experimental_transformation_import():
     sdfg = dace.SDFG("test_sdfg")
     state = sdfg.add_state("test_state")
     a1_name, a1 = sdfg.add_array(name="A", shape=(10, ), dtype=dace.float64, transient=False)
-    a2_name, a2 = sdfg.add_array(name="B", shape=(10, ), dtype=dace.float64, transient=False)
+    a2_name, _ = sdfg.add_array(name="B", shape=(10, ), dtype=dace.float64, transient=False)
     an1 = state.add_access(a1_name)
     an2 = state.add_access(a2_name)
     state.add_edge(an1, None, an2, None, dace.Memlet.from_array(dataname=a1_name, datadesc=a1))

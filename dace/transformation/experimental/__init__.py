@@ -1,5 +1,6 @@
 import pathlib
 import importlib
+import sys
 
 
 def _recursive_import_transformations():
@@ -10,9 +11,6 @@ def _recursive_import_transformations():
 
     base_path = pathlib.Path(__file__).parent
     package_root = ".".join(__name__.split("."))  # = "dace.transformation.experimental"
-
-    # current_module = importlib.import_module(package_root)
-
     debug_print = Config.get_bool('debugprint')
 
     for path in base_path.rglob("*.py"):
@@ -25,7 +23,11 @@ def _recursive_import_transformations():
             print(f"[Experimental] Experimental transformation module: {module_name}")
 
         try:
-            module = importlib.import_module(module_name)
+            # Check if module is already imported to avoid reimporting
+            if module_name in sys.modules:
+                module = sys.modules[module_name]
+            else:
+                module = importlib.import_module(module_name)
 
             # For every subclass of Transformation | Pass (except base class), attach to current module
             for attr_name in dir(module):
@@ -36,7 +38,7 @@ def _recursive_import_transformations():
                     setattr(experimental_module, attr_name, attr)
 
                     if debug_print:
-                        print(f"[Experimental] Registered transformation: {attr_name} to module: {experimental_module}")
+                        print(f"[Experimental] Registered transformation: {attr_name} to module: {attr.__module__}")
 
         except Exception as e:
             if debug_print:
