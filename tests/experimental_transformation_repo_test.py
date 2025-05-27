@@ -86,9 +86,6 @@ def test_experimental_transformation_import():
         exp.ExperimentalEmptyTransformation().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
         exp.ExperimentalEmptyTransformation2().can_be_applied(sdfg=sdfg, graph=state, expr_index=0)
 
-
-
-
     except Exception as e:
         print(f"An error occurred: {e}")
         raise e
