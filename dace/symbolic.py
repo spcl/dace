@@ -73,90 +73,90 @@ class symbol(sympy.Symbol):
 
 class UndefinedSymbol(symbol):
     """ Defines an undefined symbolic expression whose value is deferred to runtime.
-    
+
     Similar to NaN values, any operation on an undefined symbol results in an
     undefined symbol. When used in code generation, an informative exception
     will be raised.
-    
+
     This class is useful in situations where a symbol's value is not known
     at compile time but symbolic analysis should continue. For example, when
     a data container's size is undefined but other symbols with concrete
     values should still be analyzed.
-    
+
     Examples
     --------
     >>> from dace.symbolic import UndefinedSymbol, symbol
     >>> N = symbol('N')
     >>> undefined = UndefinedSymbol()
     >>> N + undefined  # Returns an UndefinedSymbol
-    >>> 
+    >>>
     >>> # This will eventually raise an exception during code generation:
     >>> expr = N * undefined + 5
     """
-    
+
     def __new__(cls, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
-        # Bypass the name validation 
+        # Bypass the name validation
         self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
         self.dtype = dtype
         self._constraints = []
         return self
-    
+
     # Make undefined symbol behavior propagate through operations
     def _eval_subs(self, old, new):
         # Always remain an undefined symbol when substituting
         if isinstance(old, UndefinedSymbol):
             return self
         return super()._eval_subs(old, new)
-    
+
     def __abs__(self):
         return UndefinedSymbol(self.dtype)
-    
+
     def __add__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __radd__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __sub__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __rsub__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __mul__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __rmul__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __truediv__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __rtruediv__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __pow__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     def __rpow__(self, other):
         return UndefinedSymbol(self.dtype)
-    
+
     # Comparisons always return None (indeterminate)
     def __eq__(self, other):
         return None
-    
+
     def __lt__(self, other):
         return None
-    
+
     def __gt__(self, other):
         return None
-    
+
     def __le__(self, other):
         return None
-    
+
     def __ge__(self, other):
         return None
-    
+
     def __hash__(self):
         # Make UndefinedSymbol hashable as required by SymPy
         return hash(self.name)
@@ -668,12 +668,12 @@ def sympy_numeric_fix(expr):
                     return sympy.oo
                 else:
                     return -sympy.oo
-    
+
     # Check if expression contains UndefinedSymbol and propagate it
     for atom in expr.atoms():
         if isinstance(atom, UndefinedSymbol):
             return UndefinedSymbol()
-        
+
     return expr
 
 
@@ -1395,7 +1395,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return 'nullptr' if self.cpp_mode else 'None'
         if isinstance(expr, UndefinedSymbol):
             raise TypeError(f'Cannot generate code for undefined symbol: {expr}. '
-                          'This error indicates that a symbol has no concrete value.')
+                            'This error indicates that a symbol has no concrete value.')
         return super()._print_Symbol(expr)
 
     def _print_Pow(self, expr):
@@ -1433,7 +1433,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
 
 @lru_cache(maxsize=16384)
-def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
+def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False, allow_undefined=False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 
@@ -1442,25 +1442,43 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
                        user-functions back to array expressions.
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
+    :param allow_undefined: If True, replace UndefinedSymbols with a placeholder instead of
+                           raising an error, useful when the symbol is unused in computation.
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
 
     if isinstance(sym, SymExpr):
-        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
+        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode, allow_undefined=allow_undefined)
+
+    # Direct handling for UndefinedSymbol
+    if isinstance(sym, UndefinedSymbol):
+        if allow_undefined:
+            return '0' if cpp_mode else '"undefined"'
+        else:
+            raise TypeError(
+                f'Cannot generate code for undefined symbol: {sym}. '
+                'This error indicates that a symbol has no concrete value.')
 
     try:
         sym = sympy_numeric_fix(sym)
         sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
-        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
+        try:
+            sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
+        except TypeError as ex:
+            # Check if this is an UndefinedSymbol error
+            if allow_undefined and 'undefined symbol' in str(ex).lower():
+                # Return a placeholder value
+                return '0' if cpp_mode else '"undefined"'
+            raise
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
                 sym, sympy.Number) or dtypes.isconstant(sym):
             return sstr
         else:
             return '(' + sstr + ')'
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
         return '(' + sstr + ')'
 
@@ -1600,7 +1618,7 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
         for atom in b.atoms():
             if isinstance(atom, UndefinedSymbol):
                 return True
-                
+
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:

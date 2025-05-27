@@ -481,11 +481,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on heap instead of '
-                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                                  '%s' % (name, cpp.sym2cpp(arrsize, allow_undefined=True), nodedesc.storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
-                                      name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
+                                      name, cpp.sym2cpp(arrsize_bytes, allow_undefined=True), nodedesc.storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
@@ -493,15 +493,15 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
             allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
+                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize, allow_undefined=True)), cfg,
                 state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
-                                        (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
+                                        (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize, allow_undefined=True)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', cfg, state_id, node)
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset, allow_undefined=True)};\n', cfg, state_id, node)
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
@@ -510,7 +510,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError('Start offset unsupported for registers')
             if node.setzero:
                 declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize, allow_undefined=True)),
                     cfg,
                     state_id,
                     node,
@@ -518,7 +518,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize, allow_undefined=True)),
                 cfg,
                 state_id,
                 node,
@@ -544,16 +544,16 @@ class CPUCodeGen(TargetCodeGenerator):
                 {{
                     {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
                                                                               name=alloc_name,
-                                                                              arrsize=cpp.sym2cpp(arrsize)),
+                                                                              arrsize=cpp.sym2cpp(arrsize, allow_undefined=True)),
                 cfg,
                 state_id,
                 node,
             )
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
-                                        (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
+                                        (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize, allow_undefined=True)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', cfg, state_id, node)
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset, allow_undefined=True)};\n', cfg, state_id, node)
 
             # Close OpenMP parallel section
             allocation_stream.write('}')
@@ -567,7 +567,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
-            alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
+            alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset, allow_undefined=True)})'
 
         if self._dispatcher.declared_arrays.has(alloc_name):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,

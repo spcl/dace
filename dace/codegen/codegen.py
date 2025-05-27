@@ -57,7 +57,7 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
-            dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
+            dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1), allow_undefined=True)
             basetype = str(arg.dtype)
             allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
                             dims_mul + ", sizeof(" + basetype + ")" + ");\n")

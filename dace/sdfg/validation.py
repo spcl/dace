@@ -284,7 +284,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 raise InvalidSDFGError(
                     f'Cannot use scalar data descriptor ("{name}") as return value of a top-level function.', sdfg,
                     None)
-                    
+
             # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
             if hasattr(desc, 'shape') and desc.transient:
                 for i, dim in enumerate(desc.shape):
@@ -341,14 +341,13 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
-                
+
         # Check for UndefinedSymbol in argument list or nested SDFG parameters
         for argname, arg in sdfg.arglist().items():
             if isinstance(arg, symbolic.UndefinedSymbol):
                 raise InvalidSDFGError(
-                    f'Argument "{argname}" is an undefined symbol, which is required for SDFG execution',
-                    sdfg, None)
-                
+                    f'Argument "{argname}" is an undefined symbol, which is required for SDFG execution', sdfg, None)
+
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:
