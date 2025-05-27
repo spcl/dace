@@ -23,12 +23,16 @@ from .symbolic import symbol
 # Run Jupyter notebook code
 from .jupyter import *
 
-# Trigger import of experimental transformations
-import dace.transformation.experimental
 
 # Import hooks from config last (as it may load classes from within dace)
 hooks._install_hooks_from_config()
 
+from pkgutil import extend_path
+from pathlib import Path
+import sys
+
+__experimental_transformations_path__ = config.Config.get("experimental_transformations_path").replace('$HOME', str(Path.home()))
+sys.path.insert(0, __experimental_transformations_path__)
 
 # Hack that enables using @dace as a decorator
 # See https://stackoverflow.com/a/48100440/6489142
@@ -39,3 +43,4 @@ class DaceModule(sys.modules[__name__].__class__):
 
 
 sys.modules[__name__].__class__ = DaceModule
+
