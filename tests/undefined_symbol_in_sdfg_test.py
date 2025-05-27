@@ -54,18 +54,9 @@ def test_undefined_symbol_in_sdfg():
     state.add_edge(read_tasklet, None, inner_map_exit, None, dace.Memlet())
     state.add_edge(inner_map_exit, None, outer_map_exit, None, dace.Memlet())
     
-    # Skip validation in CI environment due to missing modules
-    # But we can still verify the exceptions are raised by our code in symbolic.py
-    try:
-        # Try to generate code - this should fail because of the undefined symbol
-        with pytest.raises(TypeError, match="undefined symbol"):
-            sdfg.compile(validate=False)
-    except ModuleNotFoundError as e:
-        if "dace.external.rtllib.templates" in str(e):
-            # Skip the test if we're missing modules
-            pytest.skip("Missing required modules for compiling")
-        else:
-            raise
+    # Try to generate code - this should fail because of the undefined symbol
+    with pytest.raises((TypeError, dace.sdfg.InvalidSDFGError), match=r"undefined symbol|contains undefined symbol"):
+        sdfg.compile()
 
 
 def test_undefined_symbol_in_unused_dimension():
@@ -108,16 +99,8 @@ def test_undefined_symbol_in_unused_dimension():
     state.add_edge(tasklet_read, 'b', B, None, dace.Memlet('B[i]'))
     state.add_edge(tasklet_read, None, map_exit, None, dace.Memlet())
     
-    # Skip validation in CI environment due to missing modules
-    try:
-        # This should compile successfully since the undefined dimension is never used
-        sdfg.compile(validate=False)
-    except ModuleNotFoundError as e:
-        if "dace.external.rtllib.templates" in str(e):
-            # Skip the test if we're missing modules
-            pytest.skip("Missing required modules for compiling")
-        else:
-            raise
+    # This should compile successfully since the undefined dimension is never used
+    sdfg.compile()
 
 
 def test_undefined_symbol_value_assignment():
@@ -185,16 +168,8 @@ def test_undefined_symbol_value_assignment():
                     new_ranges[k] = (start, end, step)
                 node.map.range = new_ranges
     
-    # Skip validation in CI environment due to missing modules
-    try:
-        # This should compile successfully since we've replaced the undefined symbols
-        sdfg.compile(validate=False)
-    except ModuleNotFoundError as e:
-        if "dace.external.rtllib.templates" in str(e):
-            # Skip the test if we're missing modules
-            pytest.skip("Missing required modules for compiling")
-        else:
-            raise
+    # This should compile successfully since we've replaced the undefined symbols
+    sdfg.compile()
 
 
 def test_legitimate_undefined_symbol_in_argument():
@@ -232,16 +207,8 @@ def test_legitimate_undefined_symbol_in_argument():
     state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
     state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
     
-    # Skip validation in CI environment due to missing modules
-    try:
-        # This should compile successfully since we only use constant index
-        sdfg.compile(validate=False)
-    except ModuleNotFoundError as e:
-        if "dace.external.rtllib.templates" in str(e):
-            # Skip the test if we're missing modules
-            pytest.skip("Missing required modules for compiling")
-        else:
-            raise
+    # This should compile successfully since we only use constant index
+    sdfg.compile()
 
 
 def test_undefined_symbols_not_in_arglist():
