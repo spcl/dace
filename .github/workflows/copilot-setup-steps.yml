@@ -36,3 +36,4 @@ jobs:
       - name: Install DaCe in development mode
         run: |
           python -m pip install --editable ".[testing,linting]"
+          pre-commit install
