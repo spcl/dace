@@ -1455,9 +1455,8 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False, allow_und
         if allow_undefined:
             return '0' if cpp_mode else '"undefined"'
         else:
-            raise TypeError(
-                f'Cannot generate code for undefined symbol: {sym}. '
-                'This error indicates that a symbol has no concrete value.')
+            raise TypeError(f'Cannot generate code for undefined symbol: {sym}. '
+                            'This error indicates that a symbol has no concrete value.')
 
     try:
         sym = sympy_numeric_fix(sym)
