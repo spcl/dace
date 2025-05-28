@@ -493,15 +493,17 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
             allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize, allow_undefined=True)), cfg,
-                state_id, node)
+                "%s = new %s DACE_ALIGN(64)[%s];\n" %
+                (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize, allow_undefined=True)), cfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize, allow_undefined=True)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset, allow_undefined=True)};\n', cfg, state_id, node)
+                allocation_stream.write(
+                    f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset, allow_undefined=True)};\n', cfg, state_id,
+                    node)
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
@@ -510,7 +512,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError('Start offset unsupported for registers')
             if node.setzero:
                 declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize, allow_undefined=True)),
+                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
+                    (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize, allow_undefined=True)),
                     cfg,
                     state_id,
                     node,
@@ -518,7 +521,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize, allow_undefined=True)),
+                "%s %s[%s]  DACE_ALIGN(64);\n" %
+                (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize, allow_undefined=True)),
                 cfg,
                 state_id,
                 node,
@@ -544,7 +548,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 {{
                     {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
                                                                               name=alloc_name,
-                                                                              arrsize=cpp.sym2cpp(arrsize, allow_undefined=True)),
+                                                                              arrsize=cpp.sym2cpp(
+                                                                                  arrsize, allow_undefined=True)),
                 cfg,
                 state_id,
                 node,
@@ -553,7 +558,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize, allow_undefined=True)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset, allow_undefined=True)};\n', cfg, state_id, node)
+                allocation_stream.write(
+                    f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset, allow_undefined=True)};\n', cfg, state_id,
+                    node)
 
             # Close OpenMP parallel section
             allocation_stream.write('}')
