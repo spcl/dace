@@ -70,6 +70,75 @@ class symbol(sympy.Symbol):
         self._constraints = []
         return self
 
+    def __getstate__(self):
+        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
+
+    def _eval_subs(self, old, new):
+        """
+        From sympy: Override this stub if you want to do anything more than
+        attempt a replacement of old with new in the arguments of self.
+
+        See also
+        ========
+
+        _subs
+        """
+        try:
+            # Compare DaCe symbols by name rather than type/assumptions
+            if self.name == old.name:
+                return new
+            return None
+        except AttributeError:
+            return None
+
+    def set_constraints(self, constraint_list):
+        try:
+            iter(constraint_list)
+            self._constraints = constraint_list
+        except TypeError:  # constraint_list is not iterable
+            self._constraints = [constraint_list]
+
+        # Check for the new constraints and reset symbol value if necessary
+        if symbol.s_values[self.name] is not None:
+            try:
+                self.check_constraints(symbol.s_values[self.name])
+            except RuntimeError:
+                self.reset()  # Reset current value
+                raise
+
+    def add_constraints(self, constraint_list):
+        try:
+            iter(constraint_list)
+            symbol.s_constraints[self.name].extend(constraint_list)
+        except TypeError:  # constraint_list is not iterable
+            symbol.s_constraints[self.name].append(constraint_list)
+
+        # Check for the new constraints and reset symbol value if necessary
+        if symbol.s_values[self.name] is not None:
+            try:
+                self.check_constraints(symbol.s_values[self.name])
+            except RuntimeError:
+                self.reset()  # Reset current value
+                raise
+
+    @property
+    def constraints(self):
+        return self._constraints
+
+    def check_constraints(self, value):
+        fail = None
+        for constraint in self.constraints:
+            try:
+                eval_cons = constraint.subs({self: value})
+                if not eval_cons:
+                    fail = constraint
+                    break
+            except (AttributeError, TypeError, ValueError):
+                raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
+        if fail is not None:
+            raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
+
+
 
 class UndefinedSymbol(symbol):
     """ Defines an undefined symbolic expression whose value is deferred to runtime.
@@ -161,75 +230,6 @@ class UndefinedSymbol(symbol):
     def __hash__(self):
         # Make UndefinedSymbol hashable as required by SymPy
         return hash(self.name)
-
-    def __getstate__(self):
-        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
-
-    def _eval_subs(self, old, new):
-        """
-        From sympy: Override this stub if you want to do anything more than
-        attempt a replacement of old with new in the arguments of self.
-
-        See also
-        ========
-
-        _subs
-        """
-        try:
-            # Compare DaCe symbols by name rather than type/assumptions
-            if self.name == old.name:
-                return new
-            return None
-        except AttributeError:
-            return None
-
-    def set_constraints(self, constraint_list):
-        try:
-            iter(constraint_list)
-            self._constraints = constraint_list
-        except TypeError:  # constraint_list is not iterable
-            self._constraints = [constraint_list]
-
-        # Check for the new constraints and reset symbol value if necessary
-        if symbol.s_values[self.name] is not None:
-            try:
-                self.check_constraints(symbol.s_values[self.name])
-            except RuntimeError:
-                self.reset()  # Reset current value
-                raise
-
-    def add_constraints(self, constraint_list):
-        try:
-            iter(constraint_list)
-            symbol.s_constraints[self.name].extend(constraint_list)
-        except TypeError:  # constraint_list is not iterable
-            symbol.s_constraints[self.name].append(constraint_list)
-
-        # Check for the new constraints and reset symbol value if necessary
-        if symbol.s_values[self.name] is not None:
-            try:
-                self.check_constraints(symbol.s_values[self.name])
-            except RuntimeError:
-                self.reset()  # Reset current value
-                raise
-
-    @property
-    def constraints(self):
-        return self._constraints
-
-    def check_constraints(self, value):
-        fail = None
-        for constraint in self.constraints:
-            try:
-                eval_cons = constraint.subs({self: value})
-                if not eval_cons:
-                    fail = constraint
-                    break
-            except (AttributeError, TypeError, ValueError):
-                raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
-        if fail is not None:
-            raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
-
 
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
