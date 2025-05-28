@@ -37,3 +37,4 @@ jobs:
         run: |
           python -m pip install --editable ".[testing,linting]"
           pre-commit install
+          pre-commit run
