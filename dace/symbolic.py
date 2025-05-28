@@ -139,7 +139,6 @@ class symbol(sympy.Symbol):
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
 
 
-
 class UndefinedSymbol(symbol):
     """ Defines an undefined symbolic expression whose value is deferred to runtime.
 
@@ -230,6 +229,7 @@ class UndefinedSymbol(symbol):
     def __hash__(self):
         # Make UndefinedSymbol hashable as required by SymPy
         return hash(self.name)
+
 
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
