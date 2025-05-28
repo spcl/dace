@@ -17,23 +17,39 @@ from urllib.parse import urlparse
 
 
 class TransformationRepoManager:
+    def _set_path(self):
+        import dace
+        from dace import config
+        # Get default path for external transformations, eval $HOME if present
+        base_path_home_unevaluated_str = config.Config.get("external_transformations_path")
+        home_str = str(Path.home())
+        base_path_str = base_path_home_unevaluated_str.replace('$HOME', home_str)
+        base_path = Path(base_path_str)
+        self.module_root_path = Path(dace.__file__).resolve().parent.parent
+        if not base_path.is_absolute():
+            base_path = self.module_root_path / base_path
+        self.base_path = base_path
+        self.external_path = self.base_path
+        self.registry_file = self.module_root_path / "external_transformation_repositories.json"
+        self.local_registry_file = self.base_path / "local_external_transformation_repositories.json"
 
-    def __init__(self):
-        base_path = os.path.dirname(os.path.abspath(__file__))
-        self.base_path = Path(base_path)
-        self.experimental_path = self.base_path
-        self.registry_file = self.base_path / "experimental_transformation_repositories.json"
-        self.local_registry_file = self.base_path / "local_experimental_transformation_repositories.json"
-
-        # Ensure experimental directory exists
-        self.experimental_path.mkdir(parents=True, exist_ok=True)
+        # Ensure external directory exists
+        self.external_path.mkdir(parents=True, exist_ok=True)
 
         # Initialize empty __init__.py if it doesn't exist
-        init_file = self.experimental_path / "__init__.py"
+        init_file = self.external_path / "__init__.py"
         if not init_file.exists():
             init_file.touch()
+        base_init_file = self.external_path / ".." / "__init__.py"
+        if not base_init_file.exists():
+            base_init_file.touch()
+
+    def __init__(self):
+        self._set_path() # In a function as we might need to re-read it, if someone changed the config
+
 
     def _load_registry(self, local: bool) -> Dict:
+        self._set_path()
         reg_file = self.local_registry_file if local else self.registry_file
         if not reg_file.exists():
             return {}
@@ -46,6 +62,7 @@ class TransformationRepoManager:
             return {}
 
     def _save_registry(self, registry: Dict, local: bool) -> None:
+        self._set_path()
         reg_file = self.local_registry_file if local else self.registry_file
         try:
             with open(reg_file, 'w') as f:
@@ -55,6 +72,7 @@ class TransformationRepoManager:
             sys.exit(1)
 
     def _get_repo_name(self, url: str) -> str:
+        self._set_path()
         """Extract repository name from URL."""
         parsed = urlparse(url)
         if parsed.path:
@@ -73,6 +91,7 @@ class TransformationRepoManager:
         raise ValueError(f"Could not extract repository name from URL: {url}")
 
     def _clone_repository(self, url: str, target_path: Path) -> bool:
+        self._set_path()
         """Clone a git repository to the target path."""
         try:
             # Remove existing directory if it exists
@@ -99,7 +118,8 @@ class TransformationRepoManager:
             print(f"Error cloning repository: {e}")
             return False
 
-    def add_repository(self, url: str, name: Optional[str] = None) -> bool:
+    def add_repository(self, url: str, name: Optional[str] = None, force = False) -> bool:
+        self._set_path()
         # Get repository name
         if name is None:
             try:
@@ -112,12 +132,12 @@ class TransformationRepoManager:
         registry = self._load_registry(local=True)
 
         # Check if repository already exists
-        if name in registry:
-            print(f"Repository '{name}' already exists. Use --force to overwrite.")
+        if name in registry and not force:
+            print(f"Repository '{name}' already exists, use --force.")
             return False
 
         # Clone repository
-        target_path = self.experimental_path / name
+        target_path = self.external_path / name
         print(f"Cloning repository '{name}' to {target_path}...")
 
         if not self._clone_repository(url, target_path):
@@ -135,6 +155,7 @@ class TransformationRepoManager:
         return True
 
     def remove_repository(self, name: str) -> bool:
+        self._set_path()
         registry = self._load_registry(local=True)
 
         if name not in registry:
@@ -142,7 +163,7 @@ class TransformationRepoManager:
             return False
 
         # Remove directory
-        target_path = self.experimental_path / name
+        target_path = self.external_path / name
         if target_path.exists():
             import shutil
             shutil.rmtree(target_path)
@@ -155,6 +176,7 @@ class TransformationRepoManager:
         return True
 
     def list_repositories(self) -> None:
+        self._set_path()
         registry = self._load_registry(local=True)
 
         if not registry:
@@ -164,13 +186,14 @@ class TransformationRepoManager:
         print("Locally registered transformation repositories:")
         print("-" * 50)
         for name, info in registry.items():
-            status = "✓" if (self.experimental_path / name).exists() else "✗"
+            status = "✓" if (self.external_path / name).exists() else "✗"
             print(f"{status} {name}")
             print(f"  URL: {info['url']}")
             print(f"  Path: {info['path']}")
             print()
 
     def load_all_repositories(self, local: bool) -> bool:
+        self._set_path()
         """Load all repositories from the registry (clone missing ones).
 
         Returns:
@@ -184,7 +207,7 @@ class TransformationRepoManager:
 
         success = True
         for name, info in registry.items():
-            target_path = self.experimental_path / name
+            target_path = self.external_path / name
 
             if target_path.exists():
                 print(f"Repository '{name}' already exists, skipping...")
@@ -246,7 +269,7 @@ Examples:
 
     # Execute command
     if args.command == 'add':
-        success = manager.add_repository(args.url, args.name)
+        success = manager.add_repository(args.url, args.name, args.force)
         sys.exit(0 if success else 1)
 
     elif args.command == 'remove':
