@@ -56,12 +56,17 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
 
     # allocate the array args using calloc
     for argname, arg in al.items():
-        if isinstance(arg, data.Array):
-            dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
-            basetype = str(arg.dtype)
-            allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
-                            dims_mul + ", sizeof(" + basetype + ")" + ");\n")
-            deallocations += "    free(" + argname + ");\n"
+        try:
+            if isinstance(arg, data.Array):
+                dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
+                basetype = str(arg.dtype)
+                allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype +
+                                "*) calloc(" + dims_mul + ", sizeof(" + basetype + ")" + ");\n")
+                deallocations += "    free(" + argname + ");\n"
+        except TypeError:
+            # TypeError may occur, for example, when the shape has undefined symbols.
+            # In this case, we cannot allocate the array, so we skip it.
+            pass
 
     return f'''#include <cstdlib>
 #include "../include/{sdfg.name}.h"

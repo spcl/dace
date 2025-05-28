@@ -380,14 +380,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                                         f'Symbol "{argname}" is used in the SDFG but is an undefined symbol', sdfg,
                                         node)
 
-            # Check if argument array shapes contain UndefinedSymbol
-            if hasattr(arg, 'shape'):
-                for i, dim in enumerate(arg.shape):
-                    if symbolic.is_undefined(dim):
-                        raise InvalidSDFGError(
-                            f'Argument array "{argname}" contains undefined symbol in dimension {i}, '
-                            'which is required for SDFG execution', sdfg, None)
-
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:

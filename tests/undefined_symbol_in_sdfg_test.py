@@ -100,10 +100,11 @@ def test_undefined_symbol_in_unused_dimension():
     state.add_edge(tasklet_read, 'b', B, None, dace.Memlet('B[i]'))
     state.add_edge(tasklet_read, None, map_exit, None, dace.Memlet())
 
-    # Even though we only access A[0, i] (a constant in the first dimension),
-    # validation should still fail because the UndefinedSymbol appears in the argument
-    with pytest.raises(InvalidSDFGError, match="undefined symbol in dimension"):
-        sdfg.validate()
+    # Make sure we can now validate the SDFG
+    sdfg.validate()
+
+    # It should also compile successfully
+    sdfg.compile()
 
 
 def test_undefined_symbol_validation_failure():
@@ -241,9 +242,11 @@ def test_undefined_symbol_in_argument_validation_failure():
     state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
     state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
 
-    # This should fail validation because argument array contains undefined symbol
-    with pytest.raises(InvalidSDFGError, match="undefined symbol in dimension"):
-        sdfg.validate()
+    # Make sure we can now validate the SDFG
+    sdfg.validate()
+
+    # It should also compile successfully
+    sdfg.compile()
 
 
 def test_undefined_symbols_not_in_arglist():
@@ -305,9 +308,11 @@ def test_undefined_symbol_numpy_frontend():
     # Convert to SDFG
     sdfg = program_with_undefined_symbol.to_sdfg()
 
-    # Validation should fail because undefined_dim is in the argument list
-    with pytest.raises(InvalidSDFGError, match="undefined symbol"):
-        sdfg.validate()
+    # Make sure we can now validate the SDFG
+    sdfg.validate()
+
+    # It should also compile successfully
+    sdfg.compile()
 
 
 def test_undefined_symbol_in_arglist():
