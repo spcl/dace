@@ -37,7 +37,7 @@ def test_undefined_symbol_operations():
 
 
 def test_undefined_symbol_comparisons():
-    # Test that comparisons with UndefinedSymbol yield None (indeterminate)
+    # Test that comparisons with UndefinedSymbol using inequal_symbols return True
     us = symbolic.UndefinedSymbol()
     s = symbolic.symbol('N')
 

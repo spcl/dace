@@ -103,9 +103,10 @@ class UndefinedSymbol(symbol):
 
     # Make undefined symbol behavior propagate through operations
     def _eval_subs(self, old, new):
-        # Always remain an undefined symbol when substituting
+        # Consolidated logic for substitution
         if isinstance(old, UndefinedSymbol):
             return self
+        # Additional logic from the second _eval_subs definition (if any)
         return super()._eval_subs(old, new)
 
     def __abs__(self):
@@ -141,9 +142,9 @@ class UndefinedSymbol(symbol):
     def __rpow__(self, other):
         return UndefinedSymbol(self.dtype)
 
-    # Comparisons always return None (indeterminate)
+    # Comparisons always return False to indicate indeterminate equality
     def __eq__(self, other):
-        return None
+        return False
 
     def __lt__(self, other):
         return None
