@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 
 class TransformationRepoManager:
+
     def _set_path(self):
         import dace
         from dace import config
@@ -45,8 +46,7 @@ class TransformationRepoManager:
             base_init_file.touch()
 
     def __init__(self):
-        self._set_path() # In a function as we might need to re-read it, if someone changed the config
-
+        self._set_path()  # In a function as we might need to re-read it, if someone changed the config
 
     def _load_registry(self, local: bool) -> Dict:
         self._set_path()
@@ -118,7 +118,7 @@ class TransformationRepoManager:
             print(f"Error cloning repository: {e}")
             return False
 
-    def add_repository(self, url: str, name: Optional[str] = None, force = False) -> bool:
+    def add_repository(self, url: str, name: Optional[str] = None, force=False) -> bool:
         self._set_path()
         # Get repository name
         if name is None:
