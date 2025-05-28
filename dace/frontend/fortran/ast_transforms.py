@@ -914,13 +914,14 @@ class FunctionToSubroutineDefiner(NodeTransformer):
                         if k.name == ret.name:
                             j.vardecl[j.vardecl.index(k)].name = ret_name
                             found = True
+                            break
                     if k.name == node.name.name:
                         j.vardecl[j.vardecl.index(k)].name = ret_name
                         found = True
                         break
 
         if not found:
-            var = ast_internal_classes.Var_Decl_Node(name=ret_name, type='VOID')
+            var = ast_internal_classes.Var_Decl_Node(name=ret_name, type=node.type if node.type else 'VOID')
             stmt_node = ast_internal_classes.Decl_Stmt_Node(vardecl=[var], line_number=node.line_number)
 
             if node.specification_part is not None:
@@ -944,6 +945,7 @@ class FunctionToSubroutineDefiner(NodeTransformer):
         return ast_internal_classes.Subroutine_Subprogram_Node(
             name=ast_internal_classes.Name_Node(name=subr_name, type=node.type),
             args=args,
+            type=node.type,
             specification_part=node.specification_part,
             execution_part=execution_part,
             internal_subprogram_part=node.internal_subprogram_part,
@@ -1006,6 +1008,11 @@ class CallExtractor(NodeTransformer):
     def __init__(self, ast, count=0):
         self.count = count
 
+        self.functions_by_name: Dict[str, ast_internal_classes.Subroutine_Subprogram_Node] = {
+            f.name.name: f for f in mywalk(
+                ast, (ast_internal_classes.Subroutine_Subprogram_Node,
+                      ast_internal_classes.Function_Subprogram_Node))}
+
         ParentScopeAssigner().visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
@@ -1027,7 +1034,11 @@ class CallExtractor(NodeTransformer):
         #    # Ensure we allow to extract function calls from arguments
         #    node.args[i] = self.visit(arg)
 
-        return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
+        ftype = 'VOID'
+        if node.name.name in self.functions_by_name:
+            fn = self.functions_by_name[node.name.name]
+            ftype = fn.type
+        return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1), type=ftype)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
@@ -1049,6 +1060,9 @@ class CallExtractor(NodeTransformer):
                     # We go in reverse order, counting from end-1 to 0.
                     temp = self.count + len(res) - 1
                     for i in reversed(range(0, len(res))):
+                        if res[i].type == 'VOID' and res[i].name.name in self.functions_by_name:
+                            fn = self.functions_by_name[res[i].name.name]
+                            res[i].type = fn.type
                         node.parent.specification_part.specifications.append(
                             ast_internal_classes.Decl_Stmt_Node(vardecl=[
                                 ast_internal_classes.Var_Decl_Node(
@@ -2320,6 +2334,8 @@ class TypeInference(NodeTransformer):
         self.assert_voids = assert_voids
 
         self.ast = ast
+        self.functions_by_name: Dict[str, ast_internal_classes.Subroutine_Subprogram_Node] = {
+            f.name.name: f for f in mywalk(ast, ast_internal_classes.Subroutine_Subprogram_Node)}
         if assign_scopes:
             ParentScopeAssigner().visit(ast)
         # if scope_vars is None:
@@ -2606,6 +2622,11 @@ class TypeInference(NodeTransformer):
 
         if return_type != 'VOID':
             node.type = return_type
+        # Not sure if this is even needed as we need type inference for
+        # __POW_ and other intrinsics
+        elif node.name.name in self.functions_by_name:
+            fn = self.functions_by_name[node.name.name]
+            node.type = fn.type
 
         return node
 
