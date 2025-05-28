@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Dict, List, Set
 import networkx as nx
 
 from dace import dtypes, subsets, symbolic
+from dace.symbolic import symbols_in_code
 from dace.dtypes import DebugInfo
 
 if TYPE_CHECKING:
@@ -287,11 +288,26 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
             # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
             if hasattr(desc, 'shape') and desc.transient:
+                # Check dimensions
                 for i, dim in enumerate(desc.shape):
-                    if isinstance(dim, symbolic.UndefinedSymbol):
+                    if symbolic.is_undefined(dim):
                         raise InvalidSDFGError(
                             f'Transient data container "{name}" contains undefined symbol in dimension {i}, '
                             f'which is required for memory allocation', sdfg, None)
+
+                # Check strides if array
+                if hasattr(desc, 'strides'):
+                    for i, stride in enumerate(desc.strides):
+                        if symbolic.is_undefined(stride):
+                            raise InvalidSDFGError(
+                                f'Transient data container "{name}" contains undefined symbol in stride {i}, '
+                                f'which is required for memory allocation', sdfg, None)
+
+                # Check total size
+                if hasattr(desc, 'total_size') and symbolic.is_undefined(desc.total_size):
+                    raise InvalidSDFGError(
+                        f'Transient data container "{name}" has undefined total size, '
+                        f'which is required for memory allocation', sdfg, None)
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
@@ -347,6 +363,23 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             if isinstance(arg, symbolic.UndefinedSymbol):
                 raise InvalidSDFGError(
                     f'Argument "{argname}" is an undefined symbol, which is required for SDFG execution', sdfg, None)
+
+            # Check if symbol is used in the SDFG
+            if argname in sdfg.symbols:
+                # Check for UndefinedSymbol
+                if isinstance(sdfg.symbols[argname], symbolic.UndefinedSymbol) or symbolic.is_undefined(
+                        sdfg.symbols[argname]):
+                    # Find if this symbol is used in code anywhere
+                    symbol_found = False
+                    for state in sdfg.nodes():
+                        for node in state.nodes():
+                            if isinstance(node, dace.nodes.Tasklet):
+                                if argname in symbols_in_code(node.code.as_string, {argname}):
+                                    symbol_found = True
+                                    raise InvalidSDFGError(
+                                        f'Symbol "{argname}" is used in the SDFG but is an undefined symbol', sdfg,
+                                        node)
+
             # Check if argument array shapes contain UndefinedSymbol
             if hasattr(arg, 'shape'):
                 for i, dim in enumerate(arg.shape):
@@ -354,15 +387,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                         raise InvalidSDFGError(
                             f'Argument array "{argname}" contains undefined symbol in dimension {i}, '
                             'which is required for SDFG execution', sdfg, None)
-
-        # Check for UndefinedSymbol in transient data shapes (needed for memory allocation)
-        for name, desc in sdfg.arrays.items():
-            if desc.transient:
-                for i, dim in enumerate(desc.shape):
-                    if symbolic.is_undefined(dim):
-                        raise InvalidSDFGError(
-                            f'Transient data container "{name}" contains undefined symbol in dimension {i}, '
-                            'which is required for memory allocation', sdfg, None)
 
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 

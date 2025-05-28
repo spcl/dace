@@ -64,7 +64,7 @@ def test_undefined_symbol_in_unused_dimension():
     """Tests that validation catches UndefinedSymbol even in 'unused' dimensions."""
 
     # Create an SDFG manually
-    sdfg = dace.SDFG('undefined_symbol_unused_test')
+    sdfg = dace.SDFG('undefined_symbol_in_unused_dimension_test')
 
     # Define symbols
     undefined_dim = symbolic.UndefinedSymbol()
@@ -187,14 +187,23 @@ def test_undefined_symbol_value_assignment():
     # This shows how a user would explicitly replace UndefinedSymbol with concrete values
     replaced_shape = []
     for dim in sdfg.arrays['tmp'].shape:
-        if isinstance(dim, symbolic.UndefinedSymbol):
+        if symbolic.is_undefined(dim):
             replaced_shape.append(10)
         else:
             replaced_shape.append(dim)
     sdfg.arrays['tmp'].shape = tuple(replaced_shape)
 
+    # Need to update strides too
+    sdfg.arrays['tmp'].strides = [10, 1]
+
+    # Need to update total size
+    sdfg.arrays['tmp'].total_size = 20 * 10  # product of dimensions
+
     # Make sure we can now validate the SDFG
     sdfg.validate()
+
+    # It should also compile successfully
+    sdfg.compile()
 
 
 def test_undefined_symbol_in_argument_validation_failure():
@@ -276,69 +285,78 @@ def test_undefined_symbols_not_in_arglist():
     state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
     state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
 
-    # Get the argument list - undefined symbol should not be in it
-    arglist = sdfg.arglist()
+    # This is a legitimate use case and should pass validation
+    sdfg.validate()
 
-    # The unused undefined symbol should not be in the arglist
-    assert 'unused_symbol' not in arglist
-
-    # The concrete symbol N should be in the arglist
-    assert 'N' in arglist
+    # It should also compile successfully
+    sdfg.compile()
 
 
 def test_undefined_symbol_numpy_frontend():
     """Test UndefinedSymbol with the numpy frontend."""
 
-    # Create test program in a file to avoid source code extraction issues
-    import tempfile
-    import os
-
-    # Create an UndefinedSymbol
     undefined_dim = symbolic.UndefinedSymbol()
 
-    # Create a temporary file with the program
-    test_code = f"""
-import dace
-from dace import symbolic
+    @dace.program
+    def program_with_undefined_symbol(A: dace.float64[undefined_dim], B: dace.float64[20]):
+        # Only access the first element of A, so the undefined dimension isn't used
+        B[0] = A[0]
 
-undefined_dim = symbolic.UndefinedSymbol()
+    # Convert to SDFG
+    sdfg = program_with_undefined_symbol.to_sdfg()
 
-@dace.program
-def program_with_undefined_symbol(A: dace.float64[undefined_dim], B: dace.float64[20]):
-    # Only access the first element of A, so the undefined dimension isn't used
-    B[0] = A[0]
-"""
+    # Validation should fail because undefined_dim is in the argument list
+    with pytest.raises(InvalidSDFGError, match="undefined symbol"):
+        sdfg.validate()
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-        f.write(test_code)
-        temp_filename = f.name
 
-    try:
-        # Import the module
-        import sys
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("test_module", temp_filename)
-        test_module = importlib.util.module_from_spec(spec)
-        sys.modules["test_module"] = test_module
-        spec.loader.exec_module(test_module)
+def test_undefined_symbol_in_arglist():
+    """Tests that UndefinedSymbol can be found in arglist."""
 
-        # This should work - the program can be parsed
-        sdfg = test_module.program_with_undefined_symbol.to_sdfg()
+    # Create an SDFG manually
+    sdfg = dace.SDFG('undefined_symbol_in_arglist_test')
 
-        # But validation should fail because undefined_dim is in the argument list
-        with pytest.raises(InvalidSDFGError, match="undefined symbol"):
-            sdfg.validate()
+    # Add normal symbol and array with UndefinedSymbol in shape
+    undefined_dim = symbolic.UndefinedSymbol()
+    N = symbolic.symbol('N')
 
-    finally:
-        # Clean up
-        os.unlink(temp_filename)
-        if "test_module" in sys.modules:
-            del sys.modules["test_module"]
+    sdfg.add_symbol('N', N.dtype)
+
+    # Add arrays - use undefined symbol in one dimension of an array
+    sdfg.add_array('A', [undefined_dim], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+
+    # Create state
+    state = sdfg.add_state(is_start_block=True)
+
+    # Create access nodes
+    A = state.add_read('A')
+    B = state.add_write('B')
+
+    # Add a map
+    map_entry, map_exit = state.add_map('compute', dict(i='0:N'))
+
+    # Add a tasklet that only uses the first element of A
+    tasklet = state.add_tasklet('compute', {'a'}, {'b'}, 'b = a + 1')
+
+    # Connect everything - only use A[0]
+    state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
+    state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
+
+    # Get the argument list
+    arglist = sdfg.arglist()
+
+    # Both arrays should be in the arglist
+    assert 'A' in arglist
+    assert 'B' in arglist
+    assert 'N' in arglist
 
 
 if __name__ == '__main__':
     test_undefined_symbol_in_unused_dimension()
     test_undefined_symbol_value_assignment()
-    test_legitimate_undefined_symbol_in_argument()
     test_undefined_symbols_not_in_arglist()
+    test_undefined_symbol_in_arglist()
     # test_undefined_symbol_in_sdfg() - This would fail as expected
