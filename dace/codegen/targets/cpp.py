@@ -569,7 +569,7 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
     if packed_veclen > 1:
         index /= packed_veclen
 
-    return sym2cpp(index, allow_undefined=True)
+    return sym2cpp(index)
 
 
 def cpp_array_expr(sdfg,

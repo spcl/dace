@@ -3,6 +3,7 @@
 
 import pytest
 import numpy as np
+import sympy
 
 import dace
 from dace import symbolic
@@ -127,17 +128,54 @@ def test_undefined_symbol_math_functions():
 
     # Test internal UndefinedSymbol handling in int_ceil - should produce UndefinedSymbol
     result = int_ceil(us, 2)
-    assert symbolic.issymbolic(result)
+    assert symbolic.is_undefined(result)
 
     # Test with sympy function application - should be treated as undefined
-    assert symbolic.issymbolic(sympy.sin(us))
+    assert symbolic.is_undefined(sympy.sin(us))
     with pytest.raises(TypeError):
         symbolic.evaluate(sympy.sin(us), {})
+
+
+def test_is_undefined_function():
+    """Test the is_undefined function works correctly."""
+    us = symbolic.UndefinedSymbol()
+    s = symbolic.symbol('N')
+
+    # Test with UndefinedSymbol directly
+    assert symbolic.is_undefined(us) is True
+
+    # Test with regular symbol
+    assert symbolic.is_undefined(s) is False
+
+    # Test with constants
+    assert symbolic.is_undefined(5) is False
+    assert symbolic.is_undefined(5.5) is False
+
+    # Test with expressions containing UndefinedSymbol
+    assert symbolic.is_undefined(s + us) is True
+    assert symbolic.is_undefined(s * us) is True
+    assert symbolic.is_undefined(sympy.sin(us)) is True
+
+    # Test with expressions not containing UndefinedSymbol
+    assert symbolic.is_undefined(s + 5) is False
+    assert symbolic.is_undefined(s * s) is False
+    assert symbolic.is_undefined(sympy.sin(s)) is False
+
+    # Test with string inputs
+    assert symbolic.is_undefined("?") is True
+    assert symbolic.is_undefined("N") is False
 
 
 if __name__ == '__main__':
     test_undefined_symbol_creation()
     test_undefined_symbol_operations()
+    test_undefined_symbol_comparisons()
+    test_undefined_symbol_in_issymbolic()
+    test_undefined_symbol_in_evaluate()
+    test_undefined_symbol_in_printing()
+    test_undefined_symbol_propagation()
+    test_undefined_symbol_math_functions()
+    test_is_undefined_function()
     test_undefined_symbol_comparisons()
     test_undefined_symbol_in_issymbolic()
     test_undefined_symbol_in_evaluate()

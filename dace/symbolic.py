@@ -649,6 +649,34 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
     return result
 
 
+def is_undefined(expr: Union[SymbolicType, str]) -> bool:
+    """
+    Checks if a symbolic expression contains any UndefinedSymbol atoms.
+
+    :param expr: The expression to check.
+    :return: True if the expression contains undefined symbols, False otherwise.
+    """
+    if isinstance(expr, str):
+        if not dtypes.validate_name(expr):
+            expr = pystr_to_symbolic(expr)
+        else:
+            # It's just a name, check if it's "?"
+            return expr == "?"
+
+    if isinstance(expr, UndefinedSymbol):
+        return True
+
+    if not isinstance(expr, sympy.Basic):
+        return False
+
+    # Check all atoms in the expression
+    for atom in expr.atoms():
+        if isinstance(atom, UndefinedSymbol):
+            return True
+
+    return False
+
+
 def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
@@ -1434,7 +1462,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
 
 @lru_cache(maxsize=16384)
-def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False, allow_undefined=False) -> str:
+def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
     """
     Convert a symbolic expression to a compilable expression.
 
@@ -1443,42 +1471,25 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False, allow_und
                        user-functions back to array expressions.
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
-    :param allow_undefined: If True, replace UndefinedSymbols with a placeholder instead of
-                           raising an error, useful when the symbol is unused in computation.
     :return: Expression in string format depending on the value of ``cpp_mode``.
     """
 
     if isinstance(sym, SymExpr):
-        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode, allow_undefined=allow_undefined)
-
-    # Direct handling for UndefinedSymbol
-    if isinstance(sym, UndefinedSymbol):
-        if allow_undefined:
-            return '0' if cpp_mode else '"undefined"'
-        else:
-            raise TypeError(f'Cannot generate code for undefined symbol: {sym}. '
-                            'This error indicates that a symbol has no concrete value.')
+        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
 
     try:
         sym = sympy_numeric_fix(sym)
         sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
-        try:
-            sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
-        except TypeError as ex:
-            # Check if this is an UndefinedSymbol error
-            if allow_undefined and 'undefined symbol' in str(ex).lower():
-                # Return a placeholder value
-                return '0' if cpp_mode else '"undefined"'
-            raise
+        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
                 sym, sympy.Number) or dtypes.isconstant(sym):
             return sstr
         else:
             return '(' + sstr + ')'
-    except (AttributeError, ValueError):
+    except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
         return '(' + sstr + ')'
 

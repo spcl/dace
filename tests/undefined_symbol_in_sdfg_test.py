@@ -6,6 +6,7 @@ import numpy as np
 
 import dace
 from dace import symbolic
+from dace.sdfg.validation import InvalidSDFGError
 
 
 def test_undefined_symbol_in_sdfg():
@@ -60,7 +61,7 @@ def test_undefined_symbol_in_sdfg():
 
 
 def test_undefined_symbol_in_unused_dimension():
-    """Tests that an UndefinedSymbol in an unused dimension allows code generation to proceed."""
+    """Tests that validation catches UndefinedSymbol even in 'unused' dimensions."""
 
     # Create an SDFG manually
     sdfg = dace.SDFG('undefined_symbol_unused_test')
@@ -99,12 +100,55 @@ def test_undefined_symbol_in_unused_dimension():
     state.add_edge(tasklet_read, 'b', B, None, dace.Memlet('B[i]'))
     state.add_edge(tasklet_read, None, map_exit, None, dace.Memlet())
 
-    # This should compile successfully since the undefined dimension is never used
-    sdfg.compile()
+    # Even though we only access A[0, i] (a constant in the first dimension),
+    # validation should still fail because the UndefinedSymbol appears in the argument
+    with pytest.raises(InvalidSDFGError, match="undefined symbol in dimension"):
+        sdfg.validate()
+
+
+def test_undefined_symbol_validation_failure():
+    """Tests that UndefinedSymbol in transient data shapes causes validation failure."""
+
+    # Create an SDFG manually
+    sdfg = dace.SDFG('undefined_symbol_validation_test')
+
+    # Define symbols
+    undefined_dim = symbolic.UndefinedSymbol()
+
+    # Add arrays to SDFG - use the undefined symbol in the transient shape
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+    sdfg.add_transient('tmp', [20, undefined_dim], dace.float64)
+
+    # Create state
+    state = sdfg.add_state()
+
+    # Create access nodes
+    A = state.add_read('A')
+    tmp = state.add_access('tmp')
+    B = state.add_write('B')
+
+    # Add map
+    map_entry, map_exit = state.add_map('compute', dict(i='0:20', j='0:10'))
+
+    # Add tasklet
+    tasklet = state.add_tasklet('compute', {'a'}, {'b', 't'}, 'b = a; t = a')
+
+    # Connect with edges that use the undefined symbol
+    state.add_edge(A, None, map_entry, None, dace.Memlet())
+    state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[i, j]'))
+    state.add_edge(tasklet, 't', tmp, None, dace.Memlet('tmp[i, j]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
+    state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
+
+    # This should fail validation because the transient has an undefined dimension
+    with pytest.raises(InvalidSDFGError, match="undefined symbol in dimension"):
+        sdfg.validate()
 
 
 def test_undefined_symbol_value_assignment():
-    """Tests that an UndefinedSymbol can be assigned a value before code generation."""
+    """Tests that an UndefinedSymbol can be assigned a value before validation to avoid errors."""
 
     # Create an SDFG manually
     sdfg = dace.SDFG('undefined_symbol_assignment_test')
@@ -151,17 +195,16 @@ def test_undefined_symbol_value_assignment():
 
     # Make sure we can now validate the SDFG
     sdfg.validate()
-    # Skip compilation to avoid issues in CI
 
 
-def test_legitimate_undefined_symbol_in_argument():
+def test_undefined_symbol_in_argument_validation_failure():
     """
-    Test a legitimate use of undefined symbols: a 1D array argument with runtime-defined
-    size that is only read at a constant index.
+    Test that UndefinedSymbol in argument array shapes fails validation,
+    even when only accessed at constant indices.
     """
 
     # Create an SDFG manually
-    sdfg = dace.SDFG('undefined_symbol_legitimate_test')
+    sdfg = dace.SDFG('undefined_symbol_argument_test')
 
     # Define symbols
     undefined_dim = symbolic.UndefinedSymbol()
@@ -189,8 +232,9 @@ def test_legitimate_undefined_symbol_in_argument():
     state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
     state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
 
-    # This should compile successfully since we only use constant index
-    sdfg.compile()
+    # This should fail validation because argument array contains undefined symbol
+    with pytest.raises(InvalidSDFGError, match="undefined symbol in dimension"):
+        sdfg.validate()
 
 
 def test_undefined_symbols_not_in_arglist():
@@ -240,6 +284,56 @@ def test_undefined_symbols_not_in_arglist():
 
     # The concrete symbol N should be in the arglist
     assert 'N' in arglist
+
+
+def test_undefined_symbol_numpy_frontend():
+    """Test UndefinedSymbol with the numpy frontend."""
+
+    # Create test program in a file to avoid source code extraction issues
+    import tempfile
+    import os
+
+    # Create an UndefinedSymbol
+    undefined_dim = symbolic.UndefinedSymbol()
+
+    # Create a temporary file with the program
+    test_code = f"""
+import dace
+from dace import symbolic
+
+undefined_dim = symbolic.UndefinedSymbol()
+
+@dace.program
+def program_with_undefined_symbol(A: dace.float64[undefined_dim], B: dace.float64[20]):
+    # Only access the first element of A, so the undefined dimension isn't used
+    B[0] = A[0]
+"""
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(test_code)
+        temp_filename = f.name
+
+    try:
+        # Import the module
+        import sys
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("test_module", temp_filename)
+        test_module = importlib.util.module_from_spec(spec)
+        sys.modules["test_module"] = test_module
+        spec.loader.exec_module(test_module)
+
+        # This should work - the program can be parsed
+        sdfg = test_module.program_with_undefined_symbol.to_sdfg()
+
+        # But validation should fail because undefined_dim is in the argument list
+        with pytest.raises(InvalidSDFGError, match="undefined symbol"):
+            sdfg.validate()
+
+    finally:
+        # Clean up
+        os.unlink(temp_filename)
+        if "test_module" in sys.modules:
+            del sys.modules["test_module"]
 
 
 if __name__ == '__main__':

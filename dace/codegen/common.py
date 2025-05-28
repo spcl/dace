@@ -38,24 +38,22 @@ def find_outgoing_edges(node, dfg):
 
 
 @lru_cache(maxsize=16384)
-def _sym2cpp(s, arrayexprs, allow_undefined=False):
-    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True, allow_undefined=allow_undefined))
+def _sym2cpp(s, arrayexprs):
+    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
 
 
-def sym2cpp(s, arrayexprs: Optional[Set[str]] = None, allow_undefined: bool = False) -> Union[str, List[str]]:
+def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
     """
     Converts an array of symbolic variables (or one) to C++ strings.
 
     :param s: Symbolic expression to convert.
     :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
-    :param allow_undefined: If True, replace UndefinedSymbols with a placeholder
-                           instead of raising an error.
     :return: C++-compilable expression or list thereof.
     """
     if not isinstance(s, list):
-        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs), allow_undefined)
-    return [sym2cpp(d, arrayexprs, allow_undefined) for d in s]
+        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
+    return [sym2cpp(d, arrayexprs) for d in s]
 
 
 def codeblock_to_cpp(cb: CodeBlock):
