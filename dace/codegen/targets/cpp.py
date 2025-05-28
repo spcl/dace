@@ -234,6 +234,20 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
+def is_cuda_codegen_in_device(framecode) -> bool:
+    from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+    if framecode is None:
+        cuda_codegen_in_device = False
+    else:
+        for codegen in framecode.targets:
+            if isinstance(codegen, CUDACodeGen):
+                cuda_codegen_in_device = codegen._in_device_code
+                break
+        else:
+            cuda_codegen_in_device = False
+    return cuda_codegen_in_device
+
+
 def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
@@ -253,11 +267,10 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
-        elif not CUDACodeGen._in_device_code.get():  # GPU kernels cannot access state
+        elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'

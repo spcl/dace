@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import contextvars
 import ctypes
 import functools
 import warnings
@@ -61,7 +60,6 @@ class CUDACodeGen(TargetCodeGenerator):
     """ GPU (CUDA/HIP) code generator. """
     target_name = 'cuda'
     title = 'CUDA'
-    _in_device_code = contextvars.ContextVar('_in_device_code')
 
     def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
         self._frame = frame_codegen
@@ -71,7 +69,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self.create_grid_barrier = False
         self.dynamic_tbmap_type = None
         self.extra_nsdfg_args = []
-        CUDACodeGen._in_device_code.set(False)
+        self._in_device_code = False
         self._cpu_codegen: Optional['CPUCodeGen'] = None
         self._block_dims = None
         self._grid_dims = None
@@ -450,7 +448,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
-        if CUDACodeGen._in_device_code.get():
+        if self._in_device_code:
             return True
         return False
 
@@ -917,7 +915,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             raise LookupError('Memlet does not point to any of the nodes')
 
         if (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)
-                and not CUDACodeGen._in_device_code.get()
+                and not self._in_device_code
                 and (src_storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]
                      or dst_storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned])
                 and not (src_storage in cpu_storage_types and dst_storage in cpu_storage_types)):
@@ -1243,7 +1241,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = False) -> None:
         # Two modes: device-level state and if this state has active streams
-        if CUDACodeGen._in_device_code.get():
+        if self._in_device_code:
             self.generate_devicelevel_state(sdfg, cfg, state, function_stream, callsite_stream)
         else:
             # Active streams found. Generate state normally and sync with the
@@ -1468,9 +1466,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     outer_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
 
                     # Create name from within kernel
-                    token = CUDACodeGen._in_device_code.set(True)
+                    oldval = self._in_device_code
+                    self._in_device_code = True
                     inner_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
-                    CUDACodeGen._in_device_code.reset(token)
+                    self._in_device_code = oldval
 
                     self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
                     self._dispatcher.defined_vars.add(inner_name,
@@ -1530,9 +1529,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     if not defined_type:
                         defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
-                    token = CUDACodeGen._in_device_code.set(True)
+                    oldval = self._in_device_code
+                    self._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                    CUDACodeGen._in_device_code.reset(token)
+                    self._in_device_code = oldval
 
                     self._dispatcher.defined_vars.add(inner_ptrname,
                                                       defined_type,
@@ -1549,9 +1549,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                        dtypes.AllocationLifetime.Persistent,
                                                        dtypes.AllocationLifetime.External)
                     defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
-                    token = CUDACodeGen._in_device_code.set(True)
+                    oldval = self._in_device_code
+                    self._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                    CUDACodeGen._in_device_code.reset(token)
+                    self._in_device_code = oldval
                     self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
 
                     # Rename argument in kernel prototype as necessary
@@ -2059,8 +2060,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
         # Dispatch internal code
-        assert CUDACodeGen._in_device_code.get() is False
-        CUDACodeGen._in_device_code.set(True)
+        assert not self._in_device_code
+        self._in_device_code = True
         self._kernel_map = node
         self._kernel_state = cfg.node(state_id)
         self._block_dims = block_dims
@@ -2113,7 +2114,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         self._block_dims = None
         self._kernel_map = None
         self._kernel_state = None
-        CUDACodeGen._in_device_code.set(False)
+        self._in_device_code = False
         self._grid_dims = None
         self.dynamic_tbmap_type = None
 
@@ -2138,7 +2139,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def generate_devicelevel_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView,
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Sanity check
-        assert CUDACodeGen._in_device_code.get() == True
+        assert self._in_device_code
 
         dfg = cfg.state(state_id)
         scope_entry = dfg_scope.source_nodes()[0]
@@ -2568,14 +2569,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
                 return
 
-        if not CUDACodeGen._in_device_code.get():
+        if not self._in_device_code:
             self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
             return
 
         if isinstance(node, nodes.ExitNode):
             self._locals.clear_scope(self._code_state.indentation + 1)
 
-        if CUDACodeGen._in_device_code.get() and isinstance(node, nodes.MapExit):
+        if self._in_device_code and isinstance(node, nodes.MapExit):
             return  # skip
 
         self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
@@ -2697,7 +2698,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         generated_preamble_scopes = 0
-        if self._in_device_code.get():
+        if self._in_device_code:
             # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
             # add condition
             generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(),
