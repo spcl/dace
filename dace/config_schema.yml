@@ -833,7 +833,7 @@ required:
 
     debugprint:
         type: bool
-        default: true
+        default: false
         title: Debug printing
         description: Enable verbose printouts.
 
