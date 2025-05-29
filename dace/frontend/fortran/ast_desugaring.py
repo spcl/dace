@@ -29,7 +29,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Deallocate_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, \
     Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, \
     Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt, \
-    Equiv_Operand
+    Equiv_Operand, Case_Value_Range_List
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase, BlockBase
 
@@ -3144,6 +3144,16 @@ def const_eval_nodes(ast: Program) -> Program:
         lv, op, rv = asgn.children
         assert op == '='
         _const_eval_node(rv)
+    for rngl in reversed(walk(ast, Case_Value_Range_List)):
+        rng = len(rngl.children)
+        assert rng <= 2
+        # We currently do not yet support two children in Case_Value_Range,
+        # but this implementation should be future-proof.
+        for v in rngl.children:
+            if _const_eval_node(v):
+                continue
+            for nm in reversed(walk(rngl, Name)):
+                _const_eval_node(nm)
     for expr in reversed(walk(ast, EXPRESSION_CLASSES)):
         # Try to const-eval the expression.
         if _const_eval_node(expr):
