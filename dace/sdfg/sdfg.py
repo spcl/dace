@@ -18,6 +18,7 @@ import dace
 from dace.sdfg.graph import generate_element_id
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
+from dace.symbolic import DEFAULT_SYMBOL_TYPE
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
@@ -1422,7 +1423,17 @@ class SDFG(ControlFlowRegion):
 
         # Add global free symbols used in the generated code to scalar arguments
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
-        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
+        for k in free_symbols:
+            if not k.startswith('__dace'):
+                if k in self.symbols:
+                    scalar_args[k] = dt.Scalar(self.symbols[k])
+                else:
+                    # Symbol is used but not in symbols dict - add it with default type
+                    import warnings
+                    warnings.warn(f"Symbol '{k}' is used in SDFG but not registered in symbols. "
+                                  f"Adding with default type {DEFAULT_SYMBOL_TYPE}.")
+                    self.add_symbol(k, DEFAULT_SYMBOL_TYPE)
+                    scalar_args[k] = dt.Scalar(self.symbols[k])
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()

@@ -98,28 +98,12 @@ class symbol(sympy.Symbol):
         except TypeError:  # constraint_list is not iterable
             self._constraints = [constraint_list]
 
-        # Check for the new constraints and reset symbol value if necessary
-        if symbol.s_values[self.name] is not None:
-            try:
-                self.check_constraints(symbol.s_values[self.name])
-            except RuntimeError:
-                self.reset()  # Reset current value
-                raise
-
     def add_constraints(self, constraint_list):
         try:
             iter(constraint_list)
-            symbol.s_constraints[self.name].extend(constraint_list)
+            self._constraints.extend(constraint_list)
         except TypeError:  # constraint_list is not iterable
-            symbol.s_constraints[self.name].append(constraint_list)
-
-        # Check for the new constraints and reset symbol value if necessary
-        if symbol.s_values[self.name] is not None:
-            try:
-                self.check_constraints(symbol.s_values[self.name])
-            except RuntimeError:
-                self.reset()  # Reset current value
-                raise
+            self._constraints.append(constraint_list)
 
     @property
     def constraints(self):
