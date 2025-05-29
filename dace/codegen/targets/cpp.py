@@ -235,7 +235,10 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
 
 
 def is_cuda_codegen_in_device(framecode) -> bool:
-    from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+    """
+    Check the state of the CUDA code generator, whether it is inside device code.
+    """
+    from dace.codegen.targets.cuda import CUDACodeGen
     if framecode is None:
         cuda_codegen_in_device = False
     else:
