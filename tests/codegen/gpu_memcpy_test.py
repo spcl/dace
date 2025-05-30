@@ -406,7 +406,7 @@ def test_gpu_pseudo_1d_copy_f_order():
 def test_gpu_strided_2D_copy():
     """
     Tests a use case where a strided copy is performed on a 2D array.
-    The copy should be contiguous and should be performed using `Memcpy2DAsync`.
+    The copy should be performed using ``Memcpy2DAsync``.
     Test adapted from vertical advection benchmark in NPBench.
     """
     sdfg = dace.SDFG("gpu_strided_2d_copy_sdfg")
