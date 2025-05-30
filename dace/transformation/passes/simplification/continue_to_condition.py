@@ -77,8 +77,9 @@ class ContinueToCondition(ppl.Pass):
         pg.branches[0][0].as_string = f"not({pg.branches[0][0].as_string})"
 
         # Insert all the nodes after the conditional block into the conditional block
+        state_name = sdfg._find_new_name("c2c_init")
         to_process = list(outer_cfg.successors(pg))
-        old_new_mapping = {}
+        old_new_mapping = {pg: cfg.add_state(state_name)}
         to_remove = []
         while to_process:
             node = to_process.pop(0)
@@ -88,8 +89,6 @@ class ContinueToCondition(ppl.Pass):
             cfg.add_node(new_node)
 
             for edge in outer_cfg.in_edges(node):
-                if edge.src is pg:
-                    continue
                 cfg.add_edge(
                     old_new_mapping[edge.src],
                     new_node,
