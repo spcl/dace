@@ -227,7 +227,7 @@ class TransformationRepoManager:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Manage Dace transformation repositories",
+    parser = argparse.ArgumentParser(description="Manage DaCe transformation repositories",
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      epilog="""
 Examples:
