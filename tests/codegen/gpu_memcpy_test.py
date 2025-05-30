@@ -402,11 +402,77 @@ def test_gpu_pseudo_1d_copy_f_order():
     _perform_pseudo_1d_copy_test(c_order=False)
 
 
+@pytest.mark.gpu
+def test_gpu_strided_2D_copy():
+    """
+    Tests a use case where a strided copy is performed on a 2D array.
+    The copy should be contiguous and should be performed using `Memcpy2DAsync`.
+    Test adapted from vertical advection benchmark in NPBench.
+    """
+    sdfg = dace.SDFG("gpu_strided_2d_copy_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    # NOTE: Special case of continuous copy
+    # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
+    # with copy shape [I, J] and strides [J*K, K], [J, 1]
+
+    I = dace.symbol('I')
+    J = dace.symbol('J')
+    K = dace.symbol('K')
+
+    # Create 3D array (IxJxK)
+    sdfg.add_array(
+        name="A",
+        shape=(I, J, K),
+        dtype=dace.float64,
+        storage=dace.StorageType.GPU_Global,
+        transient=False,
+    )
+
+    # Create 2D array (IxJ)
+    sdfg.add_array(
+        name="B",
+        shape=(I, J),
+        dtype=dace.float64,
+        storage=dace.StorageType.GPU_Global,
+        transient=False,
+    )
+
+    # Copy from A[0:I, 0:J, k] to B[0:I, 0:J] for some fixed k
+    k = 5  # Example: copy from slice at k=5
+    state.add_nedge(
+        state.add_access("A"),
+        state.add_access("B"),
+        dace.Memlet(f"A[0:{I}, 0:{J}, {k}] -> [0:{I}, 0:{J}]"),
+    )
+    sdfg.validate()
+
+    csdfg = sdfg.compile()
+    assert count_node(csdfg.sdfg, dace_nodes.AccessNode) == 2
+    assert count_node(csdfg.sdfg, dace_nodes.MapEntry) == 0
+
+    code = sdfg.generate_code()[0].clean_code
+    m = re.search(r'(cuda|hip)Memcpy2DAsync\b', code)
+    assert m is not None
+
+    # Now run the sdfg.
+    ref = {
+        "A": cp.array(cp.random.rand(10, 20, 30), dtype=cp.float64),
+        "B": cp.array(cp.random.rand(10, 20), dtype=cp.float64),
+    }
+    res = {k: v.copy() for k, v in ref.items()}
+
+    ref["B"][0:10, 0:20] = ref["A"][0:10, 0:20, 5]  # Copy from slice at k=5
+    csdfg(**res, I=10, J=20, K=30)
+
+    assert all(cp.all(ref[k] == res[k]) for k in ref.keys())
+
+
 if __name__ == '__main__':
     test_gpu_shared_to_global_1D()
     test_gpu_shared_to_global_1D_accumulate()
-    test_2d_c_order_copy()
-    test_2d_f_order_copy()
+    test_2d_c_order_gpu_copy()
+    test_2d_f_order_gpu_copy()
     test_gpu_1d_copy_row_row()
     test_gpu_1d_copy_row_col()
     test_gpu_1d_copy_col_row()
@@ -414,3 +480,4 @@ if __name__ == '__main__':
     test_gpu_1d_copy()
     test_gpu_pseudo_1d_copy_c_order()
     test_gpu_pseudo_1d_copy_f_order()
+    test_gpu_strided_2D_copy()
