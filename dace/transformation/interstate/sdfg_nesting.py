@@ -336,6 +336,16 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge is not None and not InlineSDFG._check_strides(array.strides, sdfg.arrays[edge.data.data].strides,
                                                                   edge.data, nsdfg_node):
                 reshapes.add(aname)
+        # Among the nodes needing reshapes are any input/output nodes directly being used by library nodes. The shape
+        # influences the behavior of the access nodes and thus the reshapes through views are necessary.
+        for node in nstate.nodes():
+            if isinstance(node, nodes.LibraryNode):
+                for ie in nstate.in_edges(node):
+                    if isinstance(ie.src, nodes.AccessNode) and ie.src.data in inputs:
+                        reshapes.add(ie.src.data)
+                for oe in nstate.out_edges(node):
+                    if isinstance(oe.dst, nodes.AccessNode) and oe.dst.data in outputs:
+                        reshapes.add(oe.dst.data)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)

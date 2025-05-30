@@ -22,7 +22,7 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
         # Get metadata from parent SDFG
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
+        ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
         outedge = parent_state.out_edges(node)[0]
         cdesc = parent_sdfg.arrays[outedge.data.data]
@@ -52,7 +52,7 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
 
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=storage)
 
         # Add an initialization state
         init_state = sdfg.add_state()
@@ -93,7 +93,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(node, state, sdfg)
         cdesc: dt.Array = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
@@ -162,7 +162,7 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _, _), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
@@ -449,10 +449,7 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
                 f'may not match', UserWarning)
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
-        out_subset = dc(out_memlet.subset)
-        out_subset.squeeze()
-        size2 = out_subset.size()
-        if len(size2) != 3:
+        if len(out_memlet.subset) != 3:
             raise ValueError("batched matrix-matrix product only supported on matrices")
 
 
