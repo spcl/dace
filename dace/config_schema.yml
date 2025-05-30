@@ -921,6 +921,7 @@ required:
     external_transformations_path:
         type: str
         default: '$HOME/dace_transformations/external_transformations'
+        default_Windows: '%USERPROFILE%\\dace_transformations\\external_transformations'
         title: External transformations path
         description: >
             Path to a directory containing external transformations that are not
