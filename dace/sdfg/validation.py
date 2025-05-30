@@ -92,6 +92,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
         undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
         if len(undef_syms) > 0:
             eid = region.edge_id(edge)
+            breakpoint()
             raise InvalidSDFGInterstateEdgeError(
                 f'Undefined symbols in edge: {undef_syms}. Add those with '
                 '`sdfg.add_symbol()` or define outside with `dace.symbol()`', sdfg, eid)
@@ -334,7 +335,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
-        validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
+        # validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it

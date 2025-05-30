@@ -8,7 +8,7 @@ from typing import Any, List, Optional, Tuple, Union
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
     ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, NeedsTypeInferenceException
-from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes, mywalk, is_literal
+from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes, mywalk, is_literal, duplicate_ast_element
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
 from dace.libraries.standard.nodes import Transpose
@@ -599,7 +599,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
             # replace the array subscript node in the binary operation
             # ignore this when the operand is a scalar
-            cond = copy.deepcopy(arg)
+            cond = duplicate_ast_element(arg)
             if first_array is not None:
                 cond.lval = dominant_array
             if second_array is not None:
@@ -615,7 +615,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                 raise TypeError("Can't parse Fortran binary op with different array ranks!")
 
         # Now, we need to convert the array to a proper subscript node
-        cond = copy.deepcopy(arg)
+        cond = duplicate_ast_element(arg)
         cond.lval = first_array
         cond.rval = second_array
 
@@ -1007,7 +1007,7 @@ class Any(LoopBasedReplacement):
 
         def _result_loop_update(self, node: ast_internal_classes.FNode):
             return ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
+                lval=duplicate_ast_element(node.lval),
                 op="=",
                 rval=ast_internal_classes.Int_Literal_Node(value="1"),
                 line_number=node.line_number
@@ -1046,7 +1046,7 @@ class All(LoopBasedReplacement):
 
         def _result_loop_update(self, node: ast_internal_classes.FNode):
             return ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
+                lval=duplicate_ast_element(node.lval),
                 op="=",
                 rval=ast_internal_classes.Int_Literal_Node(value="0"),
                 line_number=node.line_number
@@ -1090,13 +1090,13 @@ class Count(LoopBasedReplacement):
 
         def _result_loop_update(self, node: ast_internal_classes.FNode):
             update = ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
+                lval=duplicate_ast_element(node.lval),
                 op="+",
                 rval=ast_internal_classes.Int_Literal_Node(value="1"),
                 line_number=node.line_number
             )
             return ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(node.lval),
+                lval=duplicate_ast_element(node.lval),
                 op="=",
                 rval=update,
                 line_number=node.line_number
@@ -1184,7 +1184,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         body_if = ast_internal_classes.BinOp_Node(
             lval=node.lval,
             op="=",
-            rval=copy.deepcopy(self.argument_variable),
+            rval=duplicate_ast_element(self.argument_variable),
             line_number=node.line_number
         )
         return ast_internal_classes.If_Stmt_Node(
@@ -1430,7 +1430,7 @@ class Merge(LoopBasedReplacement):
             if array_decl.sizes is None or len(array_decl.sizes) == 0:
 
                 first_input = self.get_var_declaration(node.parent, node.rval.args[0])
-                array_decl.sizes = copy.deepcopy(first_input.sizes)
+                array_decl.sizes = duplicate_ast_element(first_input.sizes)
                 array_decl.offsets = [1] * len(array_decl.sizes)
                 array_decl.type = first_input.type
 
@@ -1472,14 +1472,14 @@ class Merge(LoopBasedReplacement):
             """
 
             copy_first = ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(self.destination_array),
+                lval=duplicate_ast_element(self.destination_array),
                 op="=",
                 rval=self.first_array,
                 line_number=node.line_number
             )
 
             copy_second = ast_internal_classes.BinOp_Node(
-                lval=copy.deepcopy(self.destination_array),
+                lval=duplicate_ast_element(self.destination_array),
                 op="=",
                 rval=self.second_array,
                 line_number=node.line_number
