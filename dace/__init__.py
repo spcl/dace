@@ -30,8 +30,10 @@ from pathlib import Path
 import sys
 from dace import config
 
-__external_transformations_path__ = config.Config.get("external_transformations_path").replace(
-    '$HOME', str(Path.home()))
+import os
+
+raw_path = config.Config.get("external_transformations_path")
+__external_transformations_path__ = os.path.expanduser(os.path.expandvars(raw_path))
 sys.path.insert(0, __external_transformations_path__)
 
 
