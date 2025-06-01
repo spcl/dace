@@ -1,5 +1,4 @@
 import dace
-import random
 import cupy as cp
 import pytest
 

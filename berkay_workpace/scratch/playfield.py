@@ -14,42 +14,25 @@ from IPython.display import Code
 from dace.config import Config
 
 
+bs = 512
+ns = 1024
+BS = dace.symbol('BS')
+NS = dace.symbol('NS')
+
+START = dace.symbol('START')
+WS = dace.symbol('WS')
+STRIDE = dace.symbol('STRIDE')
+
+start = 2
+stride = 3
+ws = 16
 @dace.program
-def reduce_add_sync(mask: dace.uint32, value: dace.uint32):
+def symbolic_warp_map(A: dace.uint32[NS] @ dace.dtypes.StorageType.GPU_Global, B: dace.uint32[NS] @ dace.dtypes.StorageType.GPU_Global):
+    """
+    Focus is in the use of symbolic variables in the MAP.
+    """
+    A[:] = B[:]
 
-    result = dace.define_local_scalar(dace.uint32)
-    
-    with dace.tasklet(dace.Language.CPP):
-        inp_mask << mask
-        inp_value << value
-        out_result >> result
-        """
-        out_result = __reduce_add_sync(inp_mask, inp_value);
-        """
-    return result
+sdfg = symbolic_warp_map.to_sdfg()
 
-
-
-@dace.program
-def warpLevel(A: dace.uint32[512] @ dace.dtypes.StorageType.GPU_Global, B: dace.uint32[512] @ dace.dtypes.StorageType.GPU_Global):
-    for _ in dace.map[0:512:512] @ dace.dtypes.ScheduleType.GPU_Device:
-        for j in dace.map[0:512] @ dace.dtypes.ScheduleType.GPU_ThreadBlock:
-
-            value = A[j]
-            mask = 0xffffffff
-            result = 0
-
-            for _ in dace.map[0:16] @ dace.dtypes.ScheduleType.GPU_Warp:
-                
-                result = reduce_add_sync(mask, value)
-            
-            B[j] = result
-
-
-A = cp.ones(512, cp.uint32)
-B = cp.random.rand(512).astype(cp.uint32)
-
-sdfg = warpLevel.to_sdfg()
-sdfg(A=A, B=B)
-
-print(B)
+Code(sdfg.generate_code()[0].clean_code, language='cpp')

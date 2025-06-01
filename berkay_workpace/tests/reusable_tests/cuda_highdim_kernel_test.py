@@ -202,12 +202,12 @@ def test_highdim_block_size_too_large():
 
 
 if __name__ == "__main__":
-    test_cpu()
-    test_gpu()
+    # test_cpu()
+    # test_gpu()
     test_highdim_implicit_block()
-    test_highdim_implicit_block_threadsplit()
-    test_highdim_default_block_size()
-    test_block_size_mismatch_warning()
-    test_block_size_mismatch_error()
-    test_block_size_too_large()
-    test_highdim_block_size_too_large()
+    # test_highdim_implicit_block_threadsplit()
+    # test_highdim_default_block_size()
+    # test_block_size_mismatch_warning()
+    # test_block_size_mismatch_error()
+    # test_block_size_too_large()
+    # test_highdim_block_size_too_large()

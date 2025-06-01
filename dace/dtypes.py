@@ -75,9 +75,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
-
-    # TODO: Aprove
-    # Scope introduced in ExperimentalCudaCodeGen
     GPU_Warp = ()
 
 
@@ -214,9 +211,6 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM,
-
-    #TODO: Approve.
-    # Should be registers in my opinion
     ScheduleType.GPU_Warp: StorageType.Register,
 }
 
@@ -239,9 +233,6 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
-
-    #TODO: Approve.
-    # Usually no lower scopes
     ScheduleType.GPU_Warp: ScheduleType.Sequential, 
 }
 

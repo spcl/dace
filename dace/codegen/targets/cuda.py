@@ -1263,7 +1263,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 ptrname = cpp.ptr(name, desc, sd, self._frame)
                 if isinstance(desc, dt.Array) and desc.start_offset != 0:
                     ptrname = f'({ptrname} - {cpp.sym2cpp(desc.start_offset)})'
-
                 callsite_stream.write(f'DACE_GPU_CHECK({backend}Free({ptrname}));\n', sd)
                 self._emit_sync(callsite_stream)
                 to_remove.add((sd, name))
