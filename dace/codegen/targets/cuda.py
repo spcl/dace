@@ -180,6 +180,20 @@ class CUDACodeGen(TargetCodeGenerator):
                         is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
                         if is_c_order or is_fortran_order:
                             continue
+
+                        # NOTE: Special case of continuous copy
+                        # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
+                        # with copy shape [I, J] and strides [J*K, K], [J, 1]
+                        if src_strides[-1] != 1 or dst_strides[-1] != 1:
+                            try:
+                                is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
+                                is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
+                            except (TypeError, ValueError):
+                                is_src_cont = False
+                                is_dst_cont = False
+                            if is_src_cont and is_dst_cont:
+                                continue
+
                     elif dims > 2:
                         # Any higher dimensional copies must be C order. If not turn it
                         #  into a copy map.
@@ -983,9 +997,31 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # In 1D there is no difference between FORTRAN or C order, thus we will set them
             #  to the same value. The value indicates if the stride is `1`
-            # TODO: Figuring out if this is enough for views.
             is_fortran_order = src_strides[0] == 1 and dst_strides[0] == 1
             is_c_order = src_strides[-1] == 1 and dst_strides[-1] == 1
+
+            if dims == 2 and (not (is_fortran_order or is_c_order)):
+                # See `preprocess()` for more information.
+                try:
+                    is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
+                    is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
+                except (TypeError, ValueError):
+                    is_src_cont = False
+                    is_dst_cont = False
+                if is_src_cont and is_dst_cont:
+                    dims = 1
+                    copy_shape = [copy_shape[0] * copy_shape[1]]
+                    src_strides = [src_strides[1]]
+                    dst_strides = [dst_strides[1]]
+                    assert (src_strides[0] == 1) == True or (dst_strides[0] == 1) == True
+                    # We have to set them to `False` to force the generation of a 2D
+                    # copy instruction.
+                    is_c_order = False
+                    is_fortran_order = False
+
+                else:
+                    # This indicates that `preprocess()` has an error.
+                    raise RuntimeError('Found a not natively supported Memlet that was not turned into a Map')
 
             # Test if it is possible to transform a 2D copy into a 1D copy, this is possible if
             #  the allocation happens to be contiguous.
