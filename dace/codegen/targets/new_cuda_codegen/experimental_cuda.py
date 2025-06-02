@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 # 3. Berkay: Warning if sync property in maps is used
 # 4. Berkay: Warning/Error that GPU_device must be used before other GPU schedule types
 
+# Ask yakup:
+# How would you seperate it into several files? 
 
 
 
@@ -1231,9 +1233,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 
 
-    #######################################################################
-    # Copy-pasted, might be changed in future
-
+#######################################################################
+# Copy-pasted, might be changed in future
 
     def get_generated_codeobjects(self):
 
@@ -1441,20 +1442,31 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                     edge: Tuple[nodes.Node, str, nodes.Node, str, Memlet], 
                     function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         
-        from dace.codegen.targets.new_cuda_codegen.copy_strategies import CopyContext, OutOfKernelCopyStrategy
-        
-        context = CopyContext(self, self._cuda_stream_manager, state_id, src_node, dst_node, edge,
-                              sdfg, cfg, dfg, callsite_stream)
-        
-        strategy = OutOfKernelCopyStrategy()
+        from dace.codegen.targets.new_cuda_codegen.copy_strategies import (
+            CopyContext, CopyStrategy, OutOfKernelCopyStrategy,
+            WithinGPUCopyStrategy, FallBackGPUCopyStrategy)
 
-        if strategy.applicable(context):
-            strategy.generate_copy(context)
-        else:
-            self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+        context = CopyContext(self, self._cuda_stream_manager, state_id, src_node, dst_node, edge,
+                            sdfg, cfg, dfg, callsite_stream)
+
+        # Order matters: fallback must come last
+        strategies: List[CopyStrategy] = [
+            OutOfKernelCopyStrategy(),
+            WithinGPUCopyStrategy(),
+            FallBackGPUCopyStrategy()
+        ]
+
+        for strategy in strategies:
+            if strategy.applicable(context):
+                strategy.generate_copy(context)
+                return
+
+        raise RuntimeError("No applicable GPU memory copy strategy found (this should not happen).")
+
+
 
 #########################################################################
-# helper functions from old CUDACodeGen
+# helper classes and functions
 
 def symbolic_to_cpp(arr):
     """ Converts an array of symbolic variables (or one) to C++ strings. """
@@ -1478,9 +1490,7 @@ def product(iterable):
     """
     return functools.reduce(sympy.Mul, iterable, 1)
 
-#########################################################################
 # Functions I had to redefine locally to not modify other files and ensure backwards compatibility
-
 def ptr(name: str, desc: dace.data.Data, sdfg: SDFG = None, framecode=None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
@@ -1516,11 +1526,6 @@ def ptr(name: str, desc: dace.data.Data, sdfg: SDFG = None, framecode=None) -> s
         return f'__{sdfg.cfg_id}_{name}'
 
     return name
-
-
-#########################################################################
-# helper class
-
 
 
 class KernelSpec:

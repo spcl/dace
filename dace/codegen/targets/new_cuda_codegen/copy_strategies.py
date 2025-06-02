@@ -16,7 +16,8 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.codegen.targets.cpp import memlet_copy_to_absolute_strides
 
 
-# TODO: Adapt documentation if src strides is None!
+# TODO: Review Documentation once done here. And also, take care of the other
+# two strategies below.
 class CopyContext:
     """
     Stores and derives all information required for memory copy operations on GPUs.
@@ -161,8 +162,12 @@ class CopyContext:
         """
         return (self.src_strides[-1] == 1) and (self.dst_strides[-1] == 1)
 
+    def get_memory_location(self) -> Tuple[str, str]:
+        src_location = 'Device' if self.src_storage == dtypes.StorageType.GPU_Global else 'Host'
+        dst_location = 'Device' if self.dst_storage == dtypes.StorageType.GPU_Global else 'Host'
 
-    
+        return src_location, dst_location
+
 
 class CopyStrategy(ABC):
 
@@ -228,20 +233,22 @@ class OutOfKernelCopyStrategy(CopyStrategy):
     def generate_copy(self, copy_context: CopyContext) -> None:
         """Execute host-device copy with CUDA memory operations"""
 
+        # guard
+        _, _, _, _, memlet = copy_context.edge
+        if memlet.wcr is not None:
+            src_location, dst_location = copy_context.get_memory_location()
+            raise NotImplementedError(f'Accumulate {src_location} to {dst_location} not implemented')
         
+        # call corresponding helper function
         num_dims = copy_context.num_dims
-
         if num_dims == 1:
             self._generate_1d_copy(copy_context)
         elif num_dims == 2:
             self._generate_2d_copy(copy_context)
-        elif num_dims > 2:
+        else:
+            # sanity check
+            assert num_dims > 2, f"Expected copy shape with more than 2 dimensions, but got {num_dims}."
             self._generate_nd_copy(copy_context)
-        else: # num_dims = 0
-            raise NotImplementedError(
-                f"ExternalCudaCopyStrategy does not support memory copies with {num_dims} dimensions "
-                f"(copy shape: {copy_context.copy_shape}). "
-            )
             
     def _generate_1d_copy(self, copy_context: CopyContext) -> None:
         """
@@ -374,3 +381,64 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         for d in range(num_dims - 2):
                 callsite_stream.write("}")
 
+
+################ TODO, just here out of completeness for now #############
+
+
+class WithinGPUCopyStrategy(CopyStrategy):
+          
+    def applicable(self, copy_context: CopyContext) -> bool:
+
+        from dace.sdfg import scope_contains_scope
+        from dace.transformation import helpers 
+        
+        gpu_storage_types = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]
+        cond1 = copy_context.src_storage in gpu_storage_types and copy_context.dst_storage in gpu_storage_types
+        
+        state_id = copy_context.state_id
+        cfg = copy_context.cfg
+        src_node = copy_context.src_node
+        dst_node = copy_context.dst_node
+
+        state_dfg = cfg.state(state_id)
+        sdict = state_dfg.scope_dict()
+        schedule_node = copy_context.src_node
+        if scope_contains_scope(sdict, src_node, dst_node):
+            schedule_node = dst_node
+
+        state = state_dfg
+        while (schedule_node is None or not isinstance(schedule_node, nodes.MapEntry)
+                or schedule_node.map.schedule == dtypes.ScheduleType.Sequential):
+            ret = helpers.get_parent_map(state, schedule_node)
+            if ret is None:
+                schedule_node = None
+                break
+            schedule_node, state = ret
+
+        if schedule_node is None:
+            inner_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[None]
+        else:
+            inner_schedule = schedule_node.map.schedule
+
+        # Collaborative load
+        cond2 = inner_schedule == dtypes.ScheduleType.GPU_Device
+
+        return cond1 and cond2
+    
+    def generate_copy(self, copy_context: CopyContext) -> None:
+        raise NotImplementedError(f'WithinGPUCopy not yet implemented in ExperimentalCUDACodeGen')
+    
+
+class FallBackGPUCopyStrategy(CopyStrategy):
+
+    def applicable(self, copy_context: CopyContext)-> bool:
+        return True
+    
+    def generate_copy(self, copy_context: CopyContext):
+        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
+        sdfg = copy_context.sdfg
+        dfg = copy_context.dfg
+        edge = copy_context.edge
+        cpu_codegen = copy_context.codegen._cpu_codegen
+        cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+    

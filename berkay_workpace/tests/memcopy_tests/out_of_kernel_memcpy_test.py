@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from dace.codegen import common
-from IPython.display import Code
 
 """
 NOTE:
@@ -226,7 +225,6 @@ def test_2d_oofkmemcpy_two_strided_fail():
         sdfg(src=src, dst=dst)
 
 # ---------- Higher-Dimensional (>2D) Memory Copy Tests --------
-
 @pytest.mark.gpu
 def test_3d_oofkmemcpy():
     """
