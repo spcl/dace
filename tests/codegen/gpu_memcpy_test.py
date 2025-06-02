@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests code generation for array copy on GPU target. """
 import dace
 from dace.transformation.auto import auto_optimize
