@@ -534,6 +534,9 @@ class Memlet(object):
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
+        # NOTE: We do not check here is the subsets have a negative size, because such as subset
+        #  is valid, in certain cases, for example if an AccessNode is connected to a MapEntry,
+        #  because the Map is not executed. Thus we do the check in the `validate_state()` function.
 
     def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
         """

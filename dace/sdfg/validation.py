@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, List, Set
 
 import networkx as nx
 
-from dace import dtypes, subsets, symbolic
+from dace import dtypes, subsets, symbolic, data
 from dace.dtypes import DebugInfo
 
 if TYPE_CHECKING:
@@ -656,7 +656,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
         ########################################
 
-    # Memlet checks
     for eid, e in enumerate(state.edges()):
         # Reference check
         if id(e) in references:
@@ -679,6 +678,27 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise
         except Exception as ex:
             raise InvalidSDFGEdgeError("Edge validation failed: " + str(ex), sdfg, state_id, eid)
+
+        # If the edge is a connection between two AccessNodes check if the subset has negative size.
+        # NOTE: We _should_ do this check in `Memlet.validate()` however, this is not possible,
+        #  because the connection between am AccessNode and a MapEntry, with a negative size, is
+        #  legal because, the Map will not run in that case. However, this constellation can not
+        #  be tested for in the Memlet's validation function, so we have to do it here.
+        # NOTE: Zero size is explicitly allowed because it is essentially `memcpy(dst, src, 0)`
+        #  which is save.
+        # TODO: The AN to AN connection is the most obvious one, but it should be extended.
+        if isinstance(e.src, nd.AccessNode) and isinstance(e.dst, nd.AccessNode):
+            e_memlet: dace.Memlet = e.data
+            if e_memlet.subset is not None:
+                if any((ss < 0) == True for ss in e_memlet.subset.size()):
+                    raise InvalidSDFGEdgeError(
+                        f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was {e_memlet.subset.size()}',
+                        sdfg, state_id, eid)
+            if e_memlet.other_subset is not None:
+                if any((ss < 0) == True for ss in e_memlet.other_subset.size()):
+                    raise InvalidSDFGEdgeError(
+                        f'`other_subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was {e_memlet.other_subset.size()}',
+                        sdfg, state_id, eid)
 
         # For every memlet, obtain its full path in the DFG
         path = state.memlet_path(e)
