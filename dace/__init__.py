@@ -32,10 +32,34 @@ from dace import config
 
 import os
 
-raw_path = config.Config.get("external_transformations_path")
-__external_transformations_path__ = os.path.expanduser(os.path.expandvars(raw_path))
-sys.path.insert(0, __external_transformations_path__)
+def _setup_external_transformations_path():
+    raw_path = config.Config.get("external_transformations_path")
 
+    if not raw_path:
+        raise ValueError("external_transformations_path value does not exist in the configuration.")
+
+    expanded_path = os.path.expanduser(raw_path)
+    expanded_path = os.path.expandvars(expanded_path)
+
+    path_obj = Path(expanded_path).resolve()
+
+    if not path_obj.exists():
+        raise FileNotFoundError(f"External transformations path does not exist: {path_obj}")
+
+    if not path_obj.is_dir():
+        raise NotADirectoryError(f"External transformations path is not a directory: {path_obj}")
+
+    external_transformations_path = str(path_obj)
+    if external_transformations_path not in sys.path:
+        sys.path.insert(0, external_transformations_path)
+
+    return external_transformations_path
+
+# Usage
+try:
+    _setup_external_transformations_path()
+except (ValueError, FileNotFoundError, NotADirectoryError) as e:
+    print(f"Failed to setup external transformations path: {e}")
 
 # Hack that enables using @dace as a decorator
 # See https://stackoverflow.com/a/48100440/6489142
