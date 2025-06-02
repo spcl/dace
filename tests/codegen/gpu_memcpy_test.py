@@ -59,7 +59,9 @@ def _make_2d_gpu_copy_sdfg(c_order: bool, ) -> dace.SDFG:
     return sdfg
 
 
-def _perform_2d_gpu_copy_test(c_order: bool, ):
+@pytest.mark.gpu
+@pytest.mark.parametrize("c_order", [True, False])
+def test_2d_gpu_copy(c_order: bool):
     """Check 2D strided copies are handled by the `Memcpy2D` family.
     """
     sdfg = _make_2d_gpu_copy_sdfg(c_order=c_order)
@@ -132,7 +134,10 @@ def _make_1d_gpu_copy(
     return sdfg
 
 
-def _perform_1d_gpu_copy(
+@pytest.mark.gpu
+@pytest.mark.parametrize("src_row", [True, False])
+@pytest.mark.parametrize("dst_row", [True, False])
+def test_1d_gpu_copy(
     src_row: bool,
     dst_row: bool,
 ):
@@ -205,7 +210,9 @@ def _make_pseudo_1d_copy_sdfg(c_order: bool, ) -> dace.SDFG:
     return sdfg
 
 
-def _perform_pseudo_1d_copy_test(c_order: bool):
+@pytest.mark.gpu
+@pytest.mark.parametrize("c_order", [True, False])
+def test_pseudo_1d_copy_test(c_order: bool):
     sdfg = _make_pseudo_1d_copy_sdfg(c_order=c_order)
     assert count_node(sdfg, dace_nodes.AccessNode) == 2
     assert count_node(sdfg, dace_nodes.MapEntry) == 0
@@ -363,46 +370,6 @@ def test_gpu_1d_copy():
 
 
 @pytest.mark.gpu
-def test_2d_c_order_gpu_copy():
-    _perform_2d_gpu_copy_test(c_order=True)
-
-
-@pytest.mark.gpu
-def test_2d_f_order_gpu_copy():
-    _perform_2d_gpu_copy_test(c_order=False)
-
-
-@pytest.mark.gpu
-def test_gpu_1d_copy_row_row():
-    _perform_1d_gpu_copy(src_row=True, dst_row=True)
-
-
-@pytest.mark.gpu
-def test_gpu_1d_copy_row_col():
-    _perform_1d_gpu_copy(src_row=True, dst_row=False)
-
-
-@pytest.mark.gpu
-def test_gpu_1d_copy_col_col():
-    _perform_1d_gpu_copy(src_row=False, dst_row=False)
-
-
-@pytest.mark.gpu
-def test_gpu_1d_copy_col_row():
-    _perform_1d_gpu_copy(src_row=False, dst_row=True)
-
-
-@pytest.mark.gpu
-def test_gpu_pseudo_1d_copy_c_order():
-    _perform_pseudo_1d_copy_test(c_order=True)
-
-
-@pytest.mark.gpu
-def test_gpu_pseudo_1d_copy_f_order():
-    _perform_pseudo_1d_copy_test(c_order=False)
-
-
-@pytest.mark.gpu
 def test_gpu_strided_2D_copy():
     """
     Tests a use case where a strided copy is performed on a 2D array.
@@ -471,13 +438,5 @@ def test_gpu_strided_2D_copy():
 if __name__ == '__main__':
     test_gpu_shared_to_global_1D()
     test_gpu_shared_to_global_1D_accumulate()
-    test_2d_c_order_gpu_copy()
-    test_2d_f_order_gpu_copy()
-    test_gpu_1d_copy_row_row()
-    test_gpu_1d_copy_row_col()
-    test_gpu_1d_copy_col_row()
-    test_gpu_1d_copy_col_col()
     test_gpu_1d_copy()
-    test_gpu_pseudo_1d_copy_c_order()
-    test_gpu_pseudo_1d_copy_f_order()
     test_gpu_strided_2D_copy()
