@@ -16,6 +16,7 @@ from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
+from dace.codegen.instrumentation.gpu_tx_markers import GPUTXMarkersProvider
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.tools.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -257,6 +258,13 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
 
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            # Need to make sure that the necessary includes for GPU_TX_MARKERS are present
+            # in the generated code.
+            gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
+            if gpu_tx_markers_provider:
+                gpu_tx_markers_provider.print_include(callsite_stream)
+
         # Write awkward footer to avoid 'extern "C"' issues
         params_comma = (', ' + params) if params else ''
         initparams_comma = (', ' + initparams) if initparams else ''
@@ -282,11 +290,18 @@ DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__s
         callsite_stream.write(
             f"""
 DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams})
-{{
-    int __result = 0;
-    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};
+{{""", sdfg)
 
-            """, sdfg)
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
+            # cannot push rocTX markers before initializing HIP
+            if gpu_tx_markers_provider and not gpu_tx_markers_provider.enable_rocTX:
+                gpu_tx_markers_provider.print_range_push(f'init_{sdfg.name}', sdfg, callsite_stream)
+
+        callsite_stream.write(
+            f"""
+    int __result = 0;
+    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};""", sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
@@ -307,17 +322,30 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
-        callsite_stream.write(
-            f"""
+        callsite_stream.write(f"""
     if (__result) {{
         delete __state;
         return nullptr;
     }}
+""", sdfg)
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
+            # cannot push rocTX markers before initializing HIP
+            if gpu_tx_markers_provider and not gpu_tx_markers_provider.enable_rocTX:
+                gpu_tx_markers_provider.print_range_pop(callsite_stream)
+        callsite_stream.write(
+            f"""
     return __state;
 }}
 
 DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state)
 {{
+""", sdfg)
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
+            if gpu_tx_markers_provider:
+                gpu_tx_markers_provider.print_range_push(f'exit_{sdfg.name}', sdfg, callsite_stream)
+        callsite_stream.write(f"""
     int __err = 0;
 """, sdfg)
 
@@ -352,6 +380,10 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
                 callsite_stream.write("}")
 
         callsite_stream.write('delete __state;\n', sdfg)
+        if sdfg.instrument is dtypes.InstrumentationType.GPU_TX_MARKERS:
+            gpu_tx_markers_provider = self._dispatcher.instrumentation.get(dtypes.InstrumentationType.GPU_TX_MARKERS)
+            if gpu_tx_markers_provider:
+                gpu_tx_markers_provider.print_range_pop(callsite_stream)
         callsite_stream.write('return __err;\n}\n', sdfg)
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
