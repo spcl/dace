@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dace Transformation Repository Manager
+DaCe Transformation Repository Manager
 
 CLI tool for managing external transformation repositories.
 Allows users to register, clone, and manage transformation packages.
@@ -227,7 +227,7 @@ class TransformationRepoManager:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Manage Dace transformation repositories",
+    parser = argparse.ArgumentParser(description="Manage DaCe transformation repositories",
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      epilog="""
 Examples:
