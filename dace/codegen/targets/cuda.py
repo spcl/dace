@@ -204,12 +204,12 @@ class CUDACodeGen(TargetCodeGenerator):
                             f'Tried to implicitly convert edge "{e}" into a Map, but this is not allowed.')
 
                     try:
-                        memlet_utils.memlet_to_map(
-                            edge=e,
-                            state=state,
-                            sdfg=nsdfg,
-                            ignore_strides=True,
-                        )
+                        CopyToMap.apply_to(nsdfg,
+                                           save=False,
+                                           annotate=False,
+                                           a=e.src,
+                                           b=e.dst,
+                                           options={"ignore_strides": True})
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
