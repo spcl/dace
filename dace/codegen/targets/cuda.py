@@ -994,7 +994,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             #   code generator should look at it. There are even tests for that, see
             #   `cuda_memcopy_test.py::test_gpu_pseudo_1d_copy_f_order`, but they most likely
             #   do not test the code below but the `memlet_copy_to_absolute_strides()` function.
-            # TODO: Figuring out if this can be removed.
             if dims == 2 and (is_fortran_order or is_c_order):
                 try:
                     if is_c_order:
@@ -1093,7 +1092,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             elif dims == 1 and not is_c_order:
                 # This is the case that generated for expressions such as `A[::3]`, we reduce it
-                #  to a 2D copy.
+                # to a 2D copy.
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
                     .format(
@@ -1133,8 +1132,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 )
             elif dims == 2 and is_fortran_order:
                 # Copying a 2D array into a 2D array that is in FORTRAN order, i.e. first stride
-                #  is one. The CUDA API can not handle such cases directly, however, by "transposing"
-                #  it is possible to use `Memcyp2DAsync`.
+                # is one. The CUDA API can not handle such cases directly, however, by "transposing"
+                # it is possible to use `Memcpy2DAsync`.
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
                     .format(
