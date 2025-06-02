@@ -43,8 +43,7 @@ def _get_base_path():
     from dace import config
 
     base_path_home_unevaluated_str = config.Config.get("external_transformations_path")
-    home_str = str(Path.home())
-    base_path_str = base_path_home_unevaluated_str.replace('$HOME', home_str)
+    base_path_str = os.path.expanduser(os.path.expandvars(base_path_home_unevaluated_str))
     base_path = Path(base_path_str)
     if not base_path.is_absolute():
         dace_root = Path(dace.__file__).resolve().parent.parent
