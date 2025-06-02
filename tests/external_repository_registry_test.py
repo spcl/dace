@@ -13,6 +13,7 @@ EXPECTED_FILE = "empty_transformation.py"
 EXPECTED_CLASS = "EmptyTransformation"
 ENV_KEY = "DACE_external_transformations_path"
 
+
 def run_cli(env_key, env_value, *args):
     """Run the CLI script with a single environment variable."""
     cmd = ["dace-external-transformation-registry", *args]
@@ -86,10 +87,12 @@ def test_add_repository_and_check_file():
     _test_add_repository_and_check_file(ENV_KEY, None)
     _test_remove_repository(ENV_KEY, None)
 
+
 def test_add_repository_and_check_file_with_env_var():
     base_path = _get_base_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
+
 
 def _test_import_empty_transformation(env_key, env_value):
     _test_add_repository_and_check_file(env_key, env_value)
@@ -112,11 +115,13 @@ def test_import_empty_transformation():
     _test_import_empty_transformation(ENV_KEY, None)
     _test_remove_repository(ENV_KEY, None)
 
+
 def test_import_empty_transformation_with_env_var():
     base_path = _get_base_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_import_empty_transformation(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
+
 
 def _test_remove_repository(env_key, env_value):
     base_path = _get_base_path()
@@ -129,6 +134,7 @@ def _test_remove_repository(env_key, env_value):
 def test_remove_repository():
     _test_add_repository_and_check_file(ENV_KEY, None)
     _test_remove_repository(ENV_KEY, None)
+
 
 def test_remove_repository_with_env_var():
     base_path = _get_base_path()
@@ -146,6 +152,7 @@ def test_add_repository_and_check_file_non_default_path():
     _test_remove_repository(ENV_KEY, str(base_path))
     _set_default_path()
 
+
 def test_import_empty_transformation_non_default_path():
     base_path = _set_and_get_non_default_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
@@ -153,11 +160,13 @@ def test_import_empty_transformation_non_default_path():
     _test_remove_repository(ENV_KEY, str(base_path))
     _set_default_path()
 
+
 def test_remove_repository_non_default_path():
     base_path = _set_and_get_non_default_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
     _set_default_path()
+
 
 if __name__ == "__main__":
     test_add_repository_and_check_file()
