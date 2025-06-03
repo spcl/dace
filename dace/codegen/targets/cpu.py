@@ -1678,6 +1678,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = cfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
