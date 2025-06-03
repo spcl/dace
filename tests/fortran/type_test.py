@@ -564,6 +564,78 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
+def test_fortran_frontend_func_type_prefix():
+    """
+    Tests that the Fortran frontend can infer the type of a function in a mathematical expression.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  real function custom_sum(d)
+    real :: d(5, 5)
+    integer :: i, j
+    do i = 1, 5
+      do j = 1, 5
+        custom_sum = custom_sum + d(i, j)
+      end do
+    end do
+  end function custom_sum
+end module lib
+
+subroutine main(d)
+  use lib
+  implicit none
+  real :: norm
+  real :: d(5, 5)
+  d(1, 1) = custom_sum(d) ** 2.0
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.validate()
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 1, order="F", dtype=np.float32)
+    sdfg(d=a)
+    assert (a[0, 0] == 625)
+
+
+def test_fortran_frontend_func_type_body():
+    """
+    Tests that the Fortran frontend can infer the type of a function in a mathematical expression.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  function custom_sum(d)
+    real :: custom_sum
+    real :: d(5, 5)
+    integer :: i, j
+    do i = 1, 5
+      do j = 1, 5
+        custom_sum = custom_sum + d(i, j)
+      end do
+    end do
+  end function custom_sum
+end module lib
+
+subroutine main(d)
+  use lib
+  implicit none
+  real :: norm
+  real :: d(5, 5)
+  d(1, 1) = custom_sum(d) ** 2.0
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.validate()
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 1, order="F", dtype=np.float32)
+    sdfg(d=a)
+    assert (a[0, 0] == 625)
+
+
+
 if __name__ == "__main__":
     test_fortran_frontend_basic_type()
     test_fortran_frontend_basic_type2()
@@ -578,3 +650,5 @@ if __name__ == "__main__":
     test_fortran_frontend_type_arg()
     test_fortran_frontend_type_view()
     test_fortran_frontend_type_arg2()
+    test_fortran_frontend_func_type_prefix()
+    test_fortran_frontend_func_type_body()

@@ -914,6 +914,7 @@ class FunctionToSubroutineDefiner(NodeTransformer):
                         if k.name == ret.name:
                             j.vardecl[j.vardecl.index(k)].name = ret_name
                             found = True
+                            break
                     if k.name == node.name.name:
                         j.vardecl[j.vardecl.index(k)].name = ret_name
                         found = True
@@ -1006,6 +1007,11 @@ class CallExtractor(NodeTransformer):
     def __init__(self, ast, count=0):
         self.count = count
 
+        self.functions_by_name: Dict[str, ast_internal_classes.Subroutine_Subprogram_Node] = {
+            f.name.name: f for f in mywalk(
+                ast, (ast_internal_classes.Subroutine_Subprogram_Node,
+                      ast_internal_classes.Function_Subprogram_Node))}
+
         ParentScopeAssigner().visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
@@ -1049,6 +1055,9 @@ class CallExtractor(NodeTransformer):
                     # We go in reverse order, counting from end-1 to 0.
                     temp = self.count + len(res) - 1
                     for i in reversed(range(0, len(res))):
+                        if res[i].type == 'VOID' and res[i].name.name in self.functions_by_name:
+                            fn = self.functions_by_name[res[i].name.name]
+                            res[i].type = fn.type
                         node.parent.specification_part.specifications.append(
                             ast_internal_classes.Decl_Stmt_Node(vardecl=[
                                 ast_internal_classes.Var_Decl_Node(
