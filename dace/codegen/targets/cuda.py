@@ -339,7 +339,7 @@ class CUDACodeGen(TargetCodeGenerator):
     cudaMemPool_t mempool;
     cudaDeviceGetDefaultMemPool(&mempool, 0);
     uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);            
+    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
 '''
 
         function_suffix = ""
@@ -601,7 +601,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams{function_suffix}({sdfg_state_name}
             if nodedesc.pool:
                 cudastream = getattr(node, '_cuda_stream', 'nullptr')
                 if cudastream != 'nullptr':
-                    
+
                     max_streams = Config.get_int('compiler', 'cuda', 'max_streams')
                     if cudastream >= max_streams and max_streams > 0:
                         warnings.warn(
@@ -768,7 +768,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
-            
+
             :param sdfg: The sdfg to modify.
             :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).
@@ -951,7 +951,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     # Copy after which data is needed by the host
                     is_sync = True
                 elif dst_node._cuda_stream != src_node._cuda_stream:
-                    
+
                     dst_node_stream = dst_node._cuda_stream
                     if max_streams > 0 and dst_node_stream >= max_streams:
                         warnings.warn(
@@ -993,7 +993,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             warnings.warn(
                                 f"CUDA: Stream ID {e_dst_stream} out of bounds ({max_streams}).")
                             e_dst_stream = e_dst_stream % max_streams
-                    
+
                         if e_dst_stream != cudastream:
                           syncwith[e_dst_stream] = e._cuda_event
 
@@ -1323,7 +1323,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         # Synchronize sink-node copies at the end of the state
                         for e in state.in_edges(node):
                             if hasattr(e.src, '_cuda_stream') and e.src._cuda_stream != 'nullptr':
-                                
+
                                 e_src_stream = e.src._cuda_stream
                                 if max_streams > 0 and e.src._cuda_stream >= max_streams:
                                     warnings.warn(
@@ -1331,7 +1331,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                     e_src_stream = e_src_stream % max_streams
 
                                 streams_to_sync.add(e_src_stream)
-                
+
 
                 # Relaxed condition for skipping synchronization:
                 # if ALL the immediately reachable non-empty states (i.e.,
@@ -1779,10 +1779,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
             self._localcode.write(
                 f'''
-                if ({dimcheck}) {{
-                    {emptygrid_warning}
-                    return;
-                }}''', cfg, state_id, scope_entry)
+                //if ({dimcheck}) {{
+                //    {emptygrid_warning}
+                //    return;
+                //}}''', cfg, state_id, scope_entry)
 
         self._localcode.write(
             '''
