@@ -919,7 +919,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # set the stream to a local variable.
         max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
-                                                              or connected_to_gpu_memory(node, state_dfg, sdfg)):
+                                                              and connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'

@@ -29,6 +29,8 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers
 from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.gpustream_scheduling import NaiveGPUStreamScheduler
+
 
 
 if TYPE_CHECKING:
@@ -36,16 +38,32 @@ if TYPE_CHECKING:
     from dace.codegen.targets.cpu import CPUCodeGen
 
 
+# TODO's easy:
+# 1. Handle memory pools release
+# 2. Handle sync properties
+# 3. Warning/Error that GPU_deive must be used before other GPU schedules
+# 4. Emit sync
 
-# TODO's:
-# 2. Berkay: Include constant expresssions
-# 3. Berkay: Warning if sync property in maps is used
-# 4. Berkay: Warning/Error that GPU_device must be used before other GPU schedule types
+# TODO's harder:
+# 2. Include constant expressions
+
+
 
 # Ask yakup:
-# How would you seperate it into several files? 
+# 1. Show copy_strategy and ask about WithinGPU
+# 2. How would you seperate it into several files?
+# 3. Should I implement scope also using Strategy? Allocation is Dispatcher style 
+
+# 4. How to handle "_compute_pool_release"? It also uses "getattr()" 
+# issues I have with it -> I messed this up because it was not obvious where deallocation happens
+# I could leave it be for the most part and just implement the release (currently not needed, no test needs it)
+# Or I could again add a helper class. We might then just have quite a number of helper classes
+
+# 5. Cudastream: Should I maybe document (once I have nothing todo/am tired) what exactly will be needed to do there?
+# 6. shared memory, how is it handled now, how should it be handled in future? 
 
 
+# cudastream: as a pass, tasklet to synchronize
 
 @registry.autoregister_params(name='experimental_cuda')
 class ExperimentalCUDACodeGen(TargetCodeGenerator):
@@ -126,14 +144,22 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 
         ################## New variables ##########################
-        self._current_kernel_spec: Optional[KernelSpec] = None
 
-        self._cuda_stream_manager: CUDAStreamManager = CUDAStreamManager(sdfg)
+        self._current_kernel_spec: Optional[KernelSpec] = None
+        self._gpu_stream_manager: Optional[GPUStreamManager]  = None
 
 
 
 
     def preprocess(self, sdfg: SDFG) -> None:
+        """
+        Preprocess the SDFG to prepare it for GPU code generation. This includes:
+        - Handling GPU<->GPU strided copies.
+        - Assigning backend GPU streams (e.g., CUDA streams) and creating the GPUStreamManager.
+        - Handling memory pool management 
+        """
+        
+        #------------------------- Hanlde GPU<->GPU strided copies --------------------------
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         from dace.transformation.dataflow import CopyToMap
@@ -174,12 +200,28 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
-        
+
+        #------------------------- GPU Stream related Logic --------------------------
+
+        # Register GPU context in state struct
+        self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
+
+        # Define backend stream access expression (e.g., CUDA stream handle)
+        gpu_stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"  
+
+        # Initialize and configure GPU stream scheduling pass
+        gpu_stream_pass = NaiveGPUStreamScheduler()
+        gpu_stream_pass.set_gpu_stream_access_template(gpu_stream_access_template)
+        assigned_streams = gpu_stream_pass.apply_pass(sdfg, None)
+
+        # Initialize runtime GPU stream manager
+        self._gpu_stream_manager = GPUStreamManager(sdfg, assigned_streams, gpu_stream_access_template)
+
+        #------------------------- Memory Pool related Logic --------------------------
+
         # Find points where memory should be released to the memory pool
         self._compute_pool_release(sdfg)
 
-        # Write GPU context to state structure
-        self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
 
     def _compute_pool_release(self, top_sdfg: SDFG):
@@ -784,7 +826,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             gdims = ', '.join(symbolic_to_cpp(grid_dims))
             bdims = ', '.join(symbolic_to_cpp(block_dims))
 
-
+            # cuda/hip stream the kernel belongs to
+            gpu_stream = self._gpu_stream_manager.get_stream_node(scope_entry)
 
             # ----------------- Kernel Launch Function Declaration -----------------------
             self._localcode.write(
@@ -836,7 +879,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     gdims=gdims,
                     bdims=bdims,
                     dynsmem='0',
-                    stream='__state->gpu_context->streams[0]',
+                    stream=gpu_stream,
                     backend=self.backend
                 ), 
                 cfg, state_id, scope_entry
@@ -1231,8 +1274,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             raise NotImplementedError(f'Deallocation not implemented for storage type: {nodedesc.storage.name}')
 
 
-
-
 #######################################################################
 # Copy-pasted, might be changed in future
 
@@ -1381,8 +1422,8 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
            other_globalcode=self._globalcode.getvalue(),
            localcode=self._localcode.getvalue(),
            file_header=fileheader.getvalue(),
-           nstreams=max(1, self._cuda_stream_manager.cuda_streams),
-           nevents=max(1, self._cuda_stream_manager.cuda_events),
+           nstreams=self._gpu_stream_manager.num_gpu_streams,
+           nevents=self._gpu_stream_manager.num_gpu_events,
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
@@ -1442,11 +1483,14 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                     edge: Tuple[nodes.Node, str, nodes.Node, str, Memlet], 
                     function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         
+        # NOTE:
+        # There should be additional cudastream handling implemented- I can make this a TODO
+
         from dace.codegen.targets.new_cuda_codegen.copy_strategies import (
             CopyContext, CopyStrategy, OutOfKernelCopyStrategy,
             WithinGPUCopyStrategy, FallBackGPUCopyStrategy)
 
-        context = CopyContext(self, self._cuda_stream_manager, state_id, src_node, dst_node, edge,
+        context = CopyContext(self, self._gpu_stream_manager, state_id, src_node, dst_node, edge,
                             sdfg, cfg, dfg, callsite_stream)
 
         # Order matters: fallback must come last
@@ -1462,6 +1506,12 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                 return
 
         raise RuntimeError("No applicable GPU memory copy strategy found (this should not happen).")
+
+
+
+
+
+
 
 
 
@@ -2025,28 +2075,54 @@ class KernelScopeManager:
 
 
 
-class CUDAStreamManager:
+class GPUStreamManager:
+    """
+    Manages GPU backend streams (e.g., CUDA or HIP streams) for nodes in an SDFG.
+    Assumes that the initialization inputs come from the NaiveGPUScheduler pass.
 
-    def __init__(self, sdfg: SDFG):  
+    NOTE: "Stream" here refers to backend GPU streams, not DaCe data streams.
+    """
 
-        self.cuda_streams = 0
-        self.cuda_events = 0
-    
+    def __init__(self, sdfg: SDFG, assigned_streams: Dict[nodes.Node, Union[int, str]], stream_access_template: str):
+        self.sdfg = sdfg
+        self.assigned_streams = assigned_streams
+        self.stream_access_template = stream_access_template
 
-    def get_stream_node(self, node: nodes.Node) -> Any:
+        # Placeholder for future support of backend events (e.g., CUDA events)
+        self.num_gpu_events = 0
+
+        # Determine the number of streams used (stream IDs start from 0)
+        # Only count integer stream IDs (ignore string values like "nullptr")
+        int_stream_ids = [v for v in assigned_streams.values() if isinstance(v, int)]
+        self.num_gpu_streams = max(int_stream_ids, default=0)
+
+    def get_stream_node(self, node: nodes.Node) -> str:
         """
-        Returns the CUDA stream assigned to the given node.
-        Currently just uses the default (0) cudastream.
+        Returns the GPU stream access expression for a given node.
+
+        If the node has an assigned stream not equal the default "nullptr", returns
+        the formatted stream expression. Otherwise, returns "nullptr".
         """
-        return '__state->gpu_context->streams[0]'
+        if node in self.assigned_streams and self.assigned_streams[node] != "nullptr":
+            return self.stream_access_template.format(gpu_stream=self.assigned_streams[node])
+        return "nullptr"
     
-    def get_stream_edge(self, src_node: nodes.Node, dst_node: nodes.Node) -> Any:
+    def get_stream_edge(self, src_node: nodes.Node, dst_node: nodes.Node) -> str:
         """
-        Returns the CUDA stream assigned to the given edge.
-        Currently just uses the default (0) cudastream.
+        Returns the stream access expression for an edge based on either the
+        source or destination node. If one of the nodes has an assigned stream not equal
+        to the default 'nullptr', that stream is returned (should be symmetric
+        when using the NaiveGPUStreamScheduler pass). Otherwise, returns 'nullptr'.
         """
-        return '__state->gpu_context->streams[0]'
-    
+        if src_node in self.assigned_streams and self.assigned_streams[src_node] != "nullptr":
+            stream_id = self.assigned_streams[src_node]
+            return self.stream_access_template.format(gpu_stream=stream_id)
+        elif dst_node in self.assigned_streams and self.assigned_streams[dst_node] != "nullptr":
+            stream_id = self.assigned_streams[dst_node]
+            return self.stream_access_template.format(gpu_stream=stream_id)
+        else:
+            return "nullptr"
+
 
 
 

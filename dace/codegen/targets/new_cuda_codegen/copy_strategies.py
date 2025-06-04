@@ -4,7 +4,7 @@ from typing import Tuple
 from dace import symbolic
 from dace import Memlet, dtypes
 from dace.dtypes import StorageType
-from dace.codegen.targets.new_cuda_codegen.experimental_cuda import ExperimentalCUDACodeGen, CUDAStreamManager, product
+from dace.codegen.targets.new_cuda_codegen.experimental_cuda import ExperimentalCUDACodeGen, GPUStreamManager, product
 
 
 
@@ -30,7 +30,7 @@ class CopyContext:
     what values are needed for code generation and why. This improves readability,
     simplifies copy emission logic, and makes future extensions easier.
     """
-    def __init__(self, codegen: ExperimentalCUDACodeGen, cuda_stream_manager: CUDAStreamManager, state_id: int,
+    def __init__(self, codegen: ExperimentalCUDACodeGen, gpu_stream_manager: GPUStreamManager, state_id: int,
                  src_node: Node, dst_node: Node, edge: Tuple[Node, str, Node, str, Memlet], sdfg: SDFG, 
                  cfg: ControlFlowRegion, dfg: StateSubgraphView, callsite_stream: CodeIOStream):
         
@@ -51,7 +51,7 @@ class CopyContext:
         # Additional information frequently needed
         self.backend = codegen.backend
         self.state_dfg = cfg.state(state_id)
-        self.cudastream = cuda_stream_manager.get_stream_edge(src_node, dst_node)
+        self.cudastream = gpu_stream_manager.get_stream_edge(src_node, dst_node)
         self.src_storage = self.get_storage_type(src_node)
         self.dst_storage = self.get_storage_type(dst_node)
 
