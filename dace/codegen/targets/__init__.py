@@ -9,4 +9,4 @@ from .unroller import UnrollCodeGen
 from .mlir.mlir import MLIRCodeGen
 from .sve.codegen import SVECodeGen
 from .snitch import SnitchCodeGen
-from .new_cuda_codegen.experimental_cuda import ExperimentalCUDACodeGen
+from .experimental_cuda import ExperimentalCUDACodeGen

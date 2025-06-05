@@ -4,8 +4,8 @@ from typing import Tuple
 from dace import symbolic
 from dace import Memlet, dtypes
 from dace.dtypes import StorageType
-from dace.codegen.targets.new_cuda_codegen.experimental_cuda import ExperimentalCUDACodeGen, GPUStreamManager, product
-
+from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, GPUStreamManager
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import product
 
 
 from dace.codegen.prettycode import CodeIOStream
