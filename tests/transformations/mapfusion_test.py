@@ -10,7 +10,7 @@ import pytest
 import gc
 import uuid
 
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, data as dace_data
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusion, MapExpansion
 
@@ -2172,8 +2172,82 @@ def _make_consolidation_sdfg_merge(consume_same_range: bool, ) -> Tuple[dace.SDF
     return sdfg, state, a
 
 
-def test_map_fusion_consolidate_if_not_increasing_true():
-    sdfg, state, a = _make_consolidation_sdfg_merge()
+def test_map_fusion_consolidate_consume_same_range_not_allowed():
+    sdfg, state, a = _make_consolidation_sdfg_merge(consume_same_range=True)
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+        map_fusion_opt={
+            "never_consolidate_edges": True,
+        },
+    )
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+    assert state.degree(a) == 2
+
+
+def test_map_fusion_consolidate_consume_same_range_if_not_extending():
+    sdfg, state, a = _make_consolidation_sdfg_merge(consume_same_range=True)
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+        map_fusion_opt={
+            "consolidate_edges_only_if_not_extending": True,
+        },
+    )
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+    # Because they consume the same range the edges are consolidated.
+    assert state.degree(a) == 1
+
+
+def test_map_fusion_consolidate_consume_not_same_range_if_not_extending():
+    sdfg, state, a = _make_consolidation_sdfg_merge(consume_same_range=False)
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+        map_fusion_opt={
+            "consolidate_edges_only_if_not_extending": True,
+        },
+    )
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+    # Because they consume different ranges and we only allow if not extending,
+    #  the edges are not consolidated.
+    assert state.degree(a) == 2
+
+
+def test_map_fusion_consolidate_consume_not_same_range_default():
+    sdfg, state, a = _make_consolidation_sdfg_merge(consume_same_range=False)
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+    )
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+    assert state.degree(a) == 1
 
 
 if __name__ == '__main__':
@@ -2212,3 +2286,7 @@ if __name__ == '__main__':
     test_possible_cycle_if_fuesed_sdfg()
     test_multi_producer_sdfg()
     test_reuse_connector()
+    test_map_fusion_consolidate_consume_not_same_range_default()
+    test_map_fusion_consolidate_consume_same_range_not_allowed()
+    test_map_fusion_consolidate_consume_same_range_if_not_extending()
+    test_map_fusion_consolidate_consume_not_same_range_if_not_extending()
