@@ -288,9 +288,11 @@ class InterstateEdge(object):
         :param all_symbols: If True, returns all symbols used in the edge, including those on the LHS.
         :return: A set of symbols names.
         """
-        symbols = self.used_symbols(all_symbols=all_symbols)
-        real_symbols = set([s for s in symbols if s not in arrays])
-        return real_symbols
+        symbol_names = self.used_symbols(all_symbols=all_symbols)
+        assert all([isinstance(s, str) for s in symbol_names])
+        real_symbol_names = set([s for s in symbol_names if s not in arrays])
+        assert all([isinstance(s, str) for s in real_symbol_names])
+        return real_symbol_names
 
     def used_arrays(self, arrays: Dict[str, dt.Data], all_symbols: bool = False) -> Set[str]:
         """
@@ -299,8 +301,10 @@ class InterstateEdge(object):
         :param all_symbols: If True, returns all symbols used in the edge, including those on the LHS.
         :return: A set of array names.
         """
-        symbols = self.used_symbols(arrays, all_symbols=all_symbols)
-        used_array_names = set([s for s in symbols if s in arrays])
+        symbol_names = self.used_symbols(all_symbols=all_symbols)
+        assert all([isinstance(s, str) for s in symbol_names])
+        used_array_names = set([s for s in symbol_names if s in arrays])
+        assert all([isinstance(s, str) for s in used_array_names])
         return used_array_names
 
     @property
