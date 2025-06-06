@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from dataclasses import dataclass, field
-from dace import nodes, data, subsets
+from dace import nodes, data, subsets, dtypes
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg.memlet_utils import MemletSet
@@ -189,7 +189,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     """
     name: str
     containers: Dict[str, data.Data] = field(default_factory=dict)
-    symbols: Dict[str, symbol] = field(default_factory=dict)
+    symbols: Dict[str, dtypes.typeclass] = field(default_factory=dict)
     constants: Dict[str, Tuple[data.Data, Any]] = field(default_factory=dict)
     callback_mapping: Dict[str, str] = field(default_factory=dict)
     arg_names: List[str] = field(default_factory=list)
