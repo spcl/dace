@@ -69,8 +69,12 @@ class MapFusion(transformation.SingleStateTransformation):
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
     :param assume_always_shared: Assume that all intermediates are shared.
-    :param consolidate_edges: If `True`, the default, try to remove edges on the fused Map if they
-        refer to the same data, this will increase the subset size.
+    :param consolidate_edges_only_if_not_extending: If `True`, the default is `False`,
+        the transformation will only consolidate edges if this does not lead to an
+        extension of the subset.
+    :param never_consolidate_edges: If `False`, the default, the function will never
+        try to consolidate the edges. Thus Maps might have multiple connectors that
+        goes to the same AccessNode.
 
     :note: This transformation modifies more nodes than it matches.
     :note: If `assume_always_shared` is `True` then the transformation will assume that
@@ -105,10 +109,15 @@ class MapFusion(transformation.SingleStateTransformation):
         default=False,
         desc="If `True` then all intermediates will be classified as shared.",
     )
-    consolidate_edges = properties.Property(
+    never_consolidate_edges = properties.Property(
         dtype=bool,
-        default=True,
-        desc="If `True`, the default, try to remove edges referring to the same data on the fused Map.",
+        default=False,
+        desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
+    )
+    consolidate_edges_only_if_not_extending = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 
     def __init__(
@@ -117,7 +126,8 @@ class MapFusion(transformation.SingleStateTransformation):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
-        consolidate_edges: Optional[bool] = None,
+        consolidate_edges_only_if_not_extending: Optional[bool] = None,
+        never_consolidate_edges: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -129,8 +139,10 @@ class MapFusion(transformation.SingleStateTransformation):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
-        if consolidate_edges is not None:
-            self.consolidate_edges = consolidate_edges
+        if never_consolidate_edges is not None:
+            self.never_consolidate_edges = never_consolidate_edges
+        if consolidate_edges_only_if_not_extending is not None:
+            self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
         # See comment in `is_shared_data()` for more information.
         self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
@@ -695,23 +707,26 @@ class MapFusion(transformation.SingleStateTransformation):
         name that should be used. The second element is a boolean that indicates if
         the connector name is already present on `to_node`, `True`, or if a new
         connector was created.
-        If `self.consolidate_edges` is `False` the function will always reuse, creating
-        a new connector at `to_node`. This will lead to minimal subsets at the cost of
-        multiple edges to the same data.
+
+        The function honors the `self.never_consolidate_edges`, in which case
+        a new connector is generated every time, leading to minimal subset but
+        many connections. Furthermore, it will also consider
+        `self.consolidate_edges_only_if_not_extending`. If it is set it will only
+        create a new connection if this would lead to an increased subset.
+
+        :note: In case `to_node` a MapExit or a nested map, the function will always
+            generate a new connector.
         """
         assert edge_to_move.dst_conn.startswith("IN_")
         old_conn = edge_to_move.dst_conn[3:]
 
-        # In case `to_node` is nested, a `MapExit` (pure simplification) or the edge
-        #  consolidation is disabled, we will always reuse the connector. The main
-        #  reason is to simplify things, because we do not have to modify enclosing
-        #  Maps.
-        # TODO(phimuell): Make this more intelligent, i.e. consolidate if one edge
-        #   is for example a subset of the other.
-        if (isinstance(to_node, nodes.MapExit) or (not self.consolidate_edges) or (scope_dict[to_node] is not None)):
+        # If we have a MapExit or have a nested Map we never consolidate or if
+        #  especially requested.
+        if (isinstance(to_node, nodes.MapExit) or scope_dict[to_node] is not None or self.never_consolidate_edges):
             return to_node.next_connector(old_conn), False
 
-        # The Map is not nested, so we look if we can reuse an Edge.
+        # Now look for an edge that already referees to the data of the edge.
+        edge_that_is_already_present = None
         for iedge in state.in_edges(to_node):
             if iedge.data.is_empty() or iedge.dst_conn is None:
                 continue
@@ -719,10 +734,33 @@ class MapFusion(transformation.SingleStateTransformation):
                 continue
             if iedge.data.data == edge_to_move.data.data:
                 # The same data is used so we reuse that connection.
-                return iedge.dst_conn[3:], True
+                edge_that_is_already_present = iedge
 
-        # The data is not used, so we create a new one.
-        return to_node.next_connector(old_conn), False
+        # No edge is there that is using the data, so create a new connector.
+        #  TODO(phimuell): Probably should reuse the connector at `from_node`?
+        if edge_that_is_already_present is None:
+            return to_node.next_connector(old_conn), False
+
+        # We also do not care if the consolidation leads to the extension of the
+        #  subsets, thus we are done.
+        if not self.consolidate_edges_only_if_not_extending:
+            return edge_that_is_already_present.dst_conn[3:], True
+
+        # We can only do the check for extension if both have a valid subset.
+        edge_to_move_subset = edge_to_move.data.src_subset
+        edge_that_is_already_present_subset = edge_that_is_already_present.data.src_subset
+        if edge_to_move_subset is None or edge_that_is_already_present_subset is None:
+            return to_node.next_connector(old_conn), False
+
+        # The consolidation will not lead to an extension if either the edge that is
+        #  there or the new edge covers each other.
+        # NOTE: One could also say that we should only do that if `edge_that_is_already_there`
+        #   covers the new one, but since the order, is kind of arbitrary, we test if
+        #   either one covers.
+        return ((edge_that_is_already_present.dst_conn[3:],
+                 True) if edge_that_is_already_present_subset.covers(edge_to_move_subset)
+                or edge_to_move_subset.covers(edge_that_is_already_present_subset) else
+                (to_node.next_connector(old_conn), False))
 
     def handle_intermediate_set(
         self,
