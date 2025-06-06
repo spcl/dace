@@ -290,7 +290,7 @@ class InterstateEdge(object):
         """
         symbol_names = self.used_symbols(all_symbols=all_symbols)
         assert all([isinstance(s, str) for s in symbol_names])
-        real_symbol_names = set([s for s in symbol_names if s not in arrays])
+        real_symbol_names = {s for s in symbol_names if s not in arrays}
         assert all([isinstance(s, str) for s in real_symbol_names])
         return real_symbol_names
 
