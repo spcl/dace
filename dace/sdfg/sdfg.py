@@ -249,7 +249,7 @@ class InterstateEdge(object):
 
         return result
 
-    def used_symbols(self, all_symbols:bool, union_lhs_symbols: bool = False) -> Set[str]:
+    def used_symbols(self, all_symbols: bool, union_lhs_symbols: bool = False) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
         # NOTE: The former algorithm for computing an edge's free symbols was:
         #       `self.read_symbols() - set(self.assignments.keys())`
