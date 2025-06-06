@@ -303,7 +303,7 @@ class InterstateEdge(object):
         """
         symbol_names = self.used_symbols(all_symbols=all_symbols)
         assert all([isinstance(s, str) for s in symbol_names])
-        used_array_names = set([s for s in symbol_names if s in arrays])
+        used_array_names = {s for s in symbol_names if s in arrays}
         assert all([isinstance(s, str) for s in used_array_names])
         return used_array_names
 
