@@ -199,6 +199,11 @@ class CUDACodeGen(TargetCodeGenerator):
                         #  into a copy map.
                         if src_strides[-1] == 1 and dst_strides[-1] == 1:
                             continue
+
+                    if not Config.get('compiler', 'cuda', 'implicit_memlet_to_map'):
+                        raise RuntimeError(
+                            f'Tried to implicitly convert edge "{e}" into a Map, but this is not allowed.')
+
                     try:
                         memlet_utils.memlet_to_map(
                             edge=e,
