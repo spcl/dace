@@ -249,7 +249,7 @@ class InterstateEdge(object):
 
         return result
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
+    def used_symbols(self, all_symbols: bool = False) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
         # NOTE: The former algorithm for computing an edge's free symbols was:
         #       `self.read_symbols() - set(self.assignments.keys())`
@@ -275,7 +275,33 @@ class InterstateEdge(object):
             if lhs not in cond_symbols and lhs not in rhs_symbols:
                 lhs_symbols.add(lhs)
         # Return the set of candidate free symbols minus the set of candidate defined symbols
-        return (cond_symbols | rhs_symbols) - lhs_symbols
+        if all_symbols:
+            return (cond_symbols | rhs_symbols | lhs_symbols)
+        else:
+            return (cond_symbols | rhs_symbols) - lhs_symbols
+
+    def used_sdfg_symbols(self, arrays: Dict[str, dt.Data], all_symbols: bool = False) -> Set[str]:
+        """
+        Returns a set of symbols used in this edge's properties (i.e., condition and assignments) that are not
+        registers as data descriptors to the SDFG.
+        :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
+        :param all_symbols: If True, returns all symbols used in the edge, including those on the LHS.
+        :return: A set of symbols names.
+        """
+        symbols = self.used_symbols(all_symbols=all_symbols)
+        real_symbols = set([s for s in symbols if s not in arrays])
+        return real_symbols
+
+    def used_arrays(self,  arrays: Dict[str, dt.Data], all_symbols: bool = False) -> Set[str]:
+        """
+        Returns a set of arrays used in this edge's properties (i.e., condition and assignments).
+        :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
+        :param all_symbols: If True, returns all symbols used in the edge, including those on the LHS.
+        :return: A set of array names.
+        """
+        symbols = self.used_symbols(arrays, all_symbols=all_symbols)
+        used_array_names = set([s for s in symbols if s in arrays])
+        return used_array_names
 
     @property
     def free_symbols(self) -> Set[str]:
