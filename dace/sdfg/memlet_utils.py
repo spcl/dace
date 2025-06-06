@@ -135,7 +135,7 @@ class MemletSet(Set[Memlet]):
         # TODO(later): Consider other_subset as well
         for existing_memlet in self.internal_set[elem.data]:
             try:
-                if existing_memlet.subset.intersects(elem.subset) == True:  # Definitely intersects
+                if subsets.intersects(existing_memlet.subset, elem.subset) == True:  # Definitely intersects
                     if existing_memlet.subset.covers(elem.subset):
                         break  # Nothing to do
 
@@ -161,7 +161,7 @@ class MemletSet(Set[Memlet]):
                 return True
             if self.intersection_is_contained:
                 try:
-                    if existing_memlet.subset.intersects(elem.subset) == False:
+                    if subsets.intersects(existing_memlet.subset, elem.subset) == False:
                         continue
                     else:  # May intersect or indeterminate
                         return True
@@ -211,7 +211,7 @@ class MemletDict(Dict[Memlet, T]):
             if is_covered:
                 return existing_memlet
             try:
-                if existing_memlet.subset.intersects(elem.subset) == False:  # Definitely does not intersect
+                if subsets.intersects(existing_memlet.subset, elem.subset) == False:  # Definitely does not intersect
                     continue
             except TypeError:
                 pass
