@@ -292,7 +292,7 @@ class InterstateEdge(object):
         real_symbols = set([s for s in symbols if s not in arrays])
         return real_symbols
 
-    def used_arrays(self,  arrays: Dict[str, dt.Data], all_symbols: bool = False) -> Set[str]:
+    def used_arrays(self, arrays: Dict[str, dt.Data], all_symbols: bool = False) -> Set[str]:
         """
         Returns a set of arrays used in this edge's properties (i.e., condition and assignments).
         :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
