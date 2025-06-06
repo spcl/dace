@@ -30,6 +30,8 @@ class CopyToMap(xf.SingleStateTransformation):
         a_b_edges = graph.edges_between(self.a, self.b)
         if len(a_b_edges) == 0:
             return False
+        # NOTE: Technically it would be enough to check only one edge, but this would
+        #   impose a restriction on `can_memlet_be_turned_into_a_map()`.
         if not any(
                 mutils.can_memlet_be_turned_into_a_map(
                     edge=a_b_edge, state=graph, sdfg=sdfg, ignore_strides=self.ignore_strides)
@@ -39,7 +41,7 @@ class CopyToMap(xf.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        a_b_edges = graph.edges_between(self.a, self.b)
+        a_b_edges = list(graph.edges_between(self.a, self.b))
         for a_b_edge in a_b_edges:
             _ = mutils.memlet_to_map(
                 edge=a_b_edge,
