@@ -283,7 +283,7 @@ class InterstateEdge(object):
     def used_sdfg_symbols(self, arrays: Dict[str, dt.Data], all_symbols: bool = False) -> Set[str]:
         """
         Returns a set of symbols used in this edge's properties (i.e., condition and assignments) that are not
-        registers as data descriptors to the SDFG.
+        registered as data descriptors to the SDFG.
         :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
         :param all_symbols: If True, returns all symbols used in the edge, including those on the LHS.
         :return: A set of symbols names.
