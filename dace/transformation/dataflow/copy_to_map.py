@@ -3,8 +3,6 @@
 from dace import dtypes, symbolic, data, subsets, Memlet, properties
 from dace.transformation import transformation as xf
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil, memlet_utils as mutils
-from typing import Tuple
-import itertools
 
 
 @properties.make_properties

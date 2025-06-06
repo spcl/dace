@@ -1,7 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from dace import data, Memlet, subsets
+import itertools
+from dace import data, Memlet, subsets, symbolic, dtypes
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.sdfg.graph import MultiConnectorEdge
@@ -102,7 +103,7 @@ def memlet_to_map(
     :param sdfg: The SDFG on which we operate.
     :param ignore_strides: If `True`, the default, also check for stride compatibility.
     """
-    if can_memlet_be_turned_into_a_map(edge=edge, state=state, sdfg=sdfg, ignore_strides=ignore_strides):
+    if not can_memlet_be_turned_into_a_map(edge=edge, state=state, sdfg=sdfg, ignore_strides=ignore_strides):
         raise ValueError(f'Tried to turn edge "{edge}" into a Map, but this is not possible.')
 
     avnode = edge.src
