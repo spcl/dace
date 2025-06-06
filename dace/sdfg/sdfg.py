@@ -283,14 +283,14 @@ class InterstateEdge(object):
     def used_sdfg_symbols(self, arrays: Dict[str, dt.Data], union_lhs_symbols: bool = False) -> Set[str]:
         """
         Returns a set of symbols used in this edge's properties (i.e., condition and assignments) that are not
-        registers as data descriptors to the SDFG.
+        registered as data descriptors to the SDFG.
         :param arrays: A dictionary mapping names to their corresponding data descriptors (`sdfg.arrays`)
         :param union_lhs_symbols: If True, returns all symbols used in the edge, including those on the LHS.
         :return: A set of symbols names.
         """
         symbol_names = self.used_symbols(union_lhs_symbols=union_lhs_symbols)
         assert all([isinstance(s, str) for s in symbol_names])
-        real_symbol_names = set([s for s in symbol_names if s not in arrays])
+        real_symbol_names = {s for s in symbol_names if s not in arrays}
         assert all([isinstance(s, str) for s in real_symbol_names])
         return real_symbol_names
 
@@ -303,7 +303,7 @@ class InterstateEdge(object):
         """
         symbol_names = self.used_symbols(union_lhs_symbols=union_lhs_symbols)
         assert all([isinstance(s, str) for s in symbol_names])
-        used_array_names = set([s for s in symbol_names if s in arrays])
+        used_array_names = {s for s in symbol_names if s in arrays}
         assert all([isinstance(s, str) for s in used_array_names])
         return used_array_names
 
