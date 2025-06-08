@@ -20,7 +20,7 @@ class ProcessGrid(object):
 
     The boolean property `is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
     create with `MPI_Cart_create`) and sub-grids (equivalent to communicators created with `MPI_Cart_sub`).
-    
+
     If `is_subgrid` is false, a "parent" process-grid is created. The `shape` property is equivalent to the `dims`
     parameter of `MPI_Cart_create`. The other properties are ignored. All "parent" process-grids spawn out of
     `MPI_COMM_WORLD`, while their `periods` and `reorder` parameters are set to False.
@@ -29,7 +29,7 @@ class ProcessGrid(object):
     details, see the documentation of `MPI_Cart_sub`). The `parent_grid` property is equivalent to the `comm` parameter
     of `MPI_Cart_sub`. The `color` property corresponds to the `remain_dims` parameter of `MPI_Cart_sub`, i.e., the i-th
     entry specifies whether the i-th dimension is kep in the sub-grid or is dropped.
-    
+
     The following properties store information used in the redistribution of data:
 
     The `exact_grid` property is either None or the rank of an MPI process in the `parent_grid`. If set then, out of all
@@ -95,6 +95,10 @@ class ProcessGrid(object):
         if self.color and any(c < 0 or c > 1 for c in self.color):
             raise ValueError('Color must have only logical true (1) or false (0) values.')
         return True
+
+    @property
+    def dtype(self):
+        return type(self)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -322,7 +326,7 @@ class SubArray(object):
                             displ -= data_strides[idx] * (__state->{self.pgrid}_dims[corr[idx]] - 1);
                             idx--;
                         }}
-                        if (idx >= 0) {{ 
+                        if (idx >= 0) {{
                             block_id[idx] += 1;
                             displ += data_strides[idx];
                         }} else {{

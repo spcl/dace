@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeScope
 
 
 class NestedDict(dict):
@@ -101,6 +102,9 @@ def _nested_arrays_from_json(obj, context=None):
 
 
 def _replace_dict_keys(d, old, new):
+    if old == new:
+        warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
+        return
     if old in d:
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
@@ -171,8 +175,7 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
+    assignments = Property(dtype=dict, desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
     guid = Property(dtype=str, allow_none=False)
 
@@ -204,6 +207,16 @@ class InterstateEdge(object):
             super().__setattr__('_cond_sympy', None)
             super().__setattr__('_uncond', None)
         return super().__setattr__(name, value)
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid':  # Skip ID
+                continue
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
     @staticmethod
     def _convert_assignment(assignment) -> str:
@@ -402,7 +415,11 @@ class SDFG(ControlFlowRegion):
 
     name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
-    constants_prop = Property(dtype=dict, default={}, desc="Compile-time constants")
+    constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
+        dtype=dict,
+        default={},
+        desc='Compile-time constants. The dictionary maps between a constant name to '
+        'a tuple of its type and the actual constant data.')
     _arrays = Property(dtype=NestedDict,
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
@@ -449,8 +466,9 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
-    using_experimental_blocks = Property(dtype=bool, default=False,
-                                         desc="Whether the SDFG contains experimental control flow blocks")
+    using_explicit_control_flow = Property(dtype=bool,
+                                           default=False,
+                                           desc="Whether the SDFG contains explicit control flow constructs")
 
     def __init__(self,
                  name: str,
@@ -598,9 +616,7 @@ class SDFG(ControlFlowRegion):
 
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret,
-                                                json_obj,
-                                                ignore_properties={'constants_prop', 'name', 'hash'})
+        dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -723,6 +739,11 @@ class SDFG(ControlFlowRegion):
         :param replace_in_graph: Whether to replace in SDFG nodes / edges.
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
+
+        repldict = {k: v for k, v in repldict.items() if k != v}
+        if symrepl:
+            symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
+
         symrepl = symrepl or {
             symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
@@ -761,13 +782,13 @@ class SDFG(ControlFlowRegion):
             if name in self.symbols:
                 raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
             if name in self.arrays:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a data descriptor.')
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
             if name in self._subarrays:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a subarray.')
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a subarray.')
             if name in self._rdistrarrays:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a RedistrArray.')
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
             if name in self._pgrids:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a ProcessGrid.')
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
@@ -791,6 +812,14 @@ class SDFG(ControlFlowRegion):
     @start_state.setter
     def start_state(self, state_id):
         self.start_block = state_id
+
+    @property
+    def regenerate_code(self):
+        return self._regenerate_code
+
+    @regenerate_code.setter
+    def regenerate_code(self, value):
+        self._regenerate_code = value
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
@@ -893,7 +922,7 @@ class SDFG(ControlFlowRegion):
 
     def append_transformation(self, transformation):
         """
-        Appends a transformation to the treansformation history of this SDFG.
+        Appends a transformation to the transformation history of this SDFG.
         If this is the first transformation being applied, it also saves the
         initial state of the SDFG to return to and play back the history.
 
@@ -949,7 +978,11 @@ class SDFG(ControlFlowRegion):
         Clears the instrumentation report folder of this SDFG.
         """
         path = os.path.join(self.build_folder, 'perf')
-        for fname in os.listdir(path):
+        try:
+            files = os.listdir(path)
+        except FileNotFoundError:
+            return
+        for fname in files:
             if not fname.startswith('report-'):
                 continue
             os.unlink(os.path.join(path, fname))
@@ -1028,7 +1061,7 @@ class SDFG(ControlFlowRegion):
 
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
-        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
@@ -1055,6 +1088,24 @@ class SDFG(ControlFlowRegion):
         return binaryobj(*args, **kwargs)
 
     ##########################################
+
+    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeScope':
+        """
+        Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
+        the execution order of the SDFG.
+        Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
+        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+
+        It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
+        erasing an empty if branch, or merging two consecutive for-loops.
+
+        :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might
+                         not be usable after the conversion if ``in_place`` is True!
+        :return: A schedule tree representing the given SDFG.
+        """
+        # Avoid import loop
+        from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
+        return s2t.as_schedule_tree(self, in_place=in_place)
 
     @property
     def build_folder(self) -> str:
@@ -1167,7 +1218,7 @@ class SDFG(ControlFlowRegion):
             if isinstance(dtype, dt.Array):
                 return value
             elif isinstance(dtype, dt.Scalar):
-                return dtype.dtype(value)
+                return dtype.dtype.type(value)
             raise TypeError('Unsupported data type %s' % dtype)
 
         result.update({k: cast(*v) for k, v in self.constants_prop.items()})
@@ -1265,7 +1316,8 @@ class SDFG(ControlFlowRegion):
                                defined_syms: Optional[Set] = None,
                                free_syms: Optional[Set] = None,
                                used_before_assignment: Optional[Set] = None,
-                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               keep_defined_in_mapping: bool = False,
+                               with_contents: bool = True) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1286,7 +1338,8 @@ class SDFG(ControlFlowRegion):
                                               keep_defined_in_mapping=keep_defined_in_mapping,
                                               defined_syms=defined_syms,
                                               free_syms=free_syms,
-                                              used_before_assignment=used_before_assignment)
+                                              used_before_assignment=used_before_assignment,
+                                              with_contents=with_contents)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
@@ -1323,12 +1376,20 @@ class SDFG(ControlFlowRegion):
         read_set = set()
         write_set = set()
         for state in self.states():
-            for edge in self.in_edges(state):
-                read_set |= edge.data.free_symbols & self.arrays.keys()
             # Get dictionaries of subsets read and written from each state
             rs, ws = state._read_and_write_sets()
             read_set |= rs.keys()
             write_set |= ws.keys()
+
+        array_names = self.arrays.keys()
+        for edge in self.all_interstate_edges():
+            read_set |= edge.data.free_symbols & array_names
+
+        # By definition, data that is referenced by symbolic condition expressions
+        # (branching condition, loop condition, ...) is also part of the read set.
+        for cfr in self.all_control_flow_regions():
+            read_set |= cfr.used_symbols(all_symbols=True, with_contents=False) & array_names
+
         return read_set, write_set
 
     def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
@@ -1460,9 +1521,11 @@ class SDFG(ControlFlowRegion):
     var sdfg_{uid} = {sdfg};
 </script>
 <script>
-    var sdfv_{uid} = new SDFV();
-    var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
-        document.getElementById('contents_{uid}'));
+    new SDFGRenderer(
+        checkCompatLoad(parse_sdfg(sdfg_{uid})),
+        document.getElementById("contents_{uid}"),
+        undefined, null, null, false, null, null
+    );
 </script>""".format(
             # Dumping to a string so that Jupyter Javascript can parse it
             # recursively
@@ -1479,7 +1542,7 @@ class SDFG(ControlFlowRegion):
         result = {}
         tstate = {}
 
-        for (i, state) in enumerate(self.nodes()):
+        for (i, state) in enumerate(self.states()):
             scope_dict = state.scope_dict()
             for node in state.nodes():
                 if isinstance(node, nd.AccessNode) and node.desc(self).transient:
@@ -1909,6 +1972,20 @@ class SDFG(ControlFlowRegion):
         self._temp_transients += 1
         return name
 
+    def refresh_temp_transients(self):
+        """
+        Updates the temporary transient counter of this SDFG by querying the maximum number among the
+        ``__tmp###`` data descriptors.
+        """
+        temp_transients = [k[5:] for k in self.arrays.keys() if k.startswith('__tmp')]
+        max_temp_transient = 0
+        for arr_suffix in temp_transients:
+            try:
+                max_temp_transient = max(max_temp_transient, int(arr_suffix))
+            except ValueError:  # Not of the form __tmp###
+                continue
+        self._temp_transients = max_temp_transient + 1
+
     def add_temp_transient(self,
                            shape,
                            dtype,
@@ -2250,14 +2327,15 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True) -> 'CompiledSDFG':
+    def compile(self, output_file=None, validate=True, return_program_handle=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
-            :return: A callable CompiledSDFG object.
+            :param return_program_handle: If False, does not load the generated library.
+            :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
 
         # Importing these outside creates an import loop
@@ -2275,12 +2353,16 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
-        if self._regenerate_code or not os.path.isdir(build_folder):
+        if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
             # Fix the build folder name on the copied SDFG to avoid it changing
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
+
+            # Ensure external nested SDFGs are loaded.
+            for _ in sdfg.all_sdfgs_recursive(load_ext=True):
+                pass
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
@@ -2288,8 +2370,8 @@ class SDFG(ControlFlowRegion):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name:
-                warnings.warn('SDFG "%s" is already loaded by another object, '
-                              'recompiling under a different name.' % self.name)
+                warnings.warn(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                              f"name '{sdfg.name}'.")
 
             try:
                 # Fill in scope entry/exit connectors
@@ -2320,7 +2402,8 @@ class SDFG(ControlFlowRegion):
             shutil.copyfile(shared_library, output_file)
 
         # Get the function handle
-        return compiler.get_program_handle(shared_library, sdfg)
+        if return_program_handle:
+            return compiler.get_program_handle(shared_library, sdfg)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG
@@ -2434,7 +2517,7 @@ class SDFG(ControlFlowRegion):
         warnings.warn('SDFG.apply_strict_transformations is deprecated, use SDFG.simplify instead.', DeprecationWarning)
         return self.simplify(validate, validate_all)
 
-    def simplify(self, validate=True, validate_all=False, verbose=False):
+    def simplify(self, validate=True, validate_all=False, verbose=False, skip: Optional[Set[str]] = None, options=None):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -2442,7 +2525,43 @@ class SDFG(ControlFlowRegion):
             :note: This is an in-place operation on the SDFG.
         """
         from dace.transformation.passes.simplify import SimplifyPass
-        return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
+        return SimplifyPass(validate=validate,
+                            validate_all=validate_all,
+                            verbose=verbose,
+                            skip=skip,
+                            pass_options=options).apply_pass(self, {})
+
+    def auto_optimize(self,
+                      device: dtypes.DeviceType,
+                      validate: bool = True,
+                      validate_all: bool = False,
+                      symbols: Dict[str, int] = None,
+                      use_gpu_storage: bool = False):
+        """
+        Runs a basic sequence of transformations to optimize a given SDFG to decent
+        performance. In particular, performs the following:
+
+            * Simplify
+            * Auto-parallelization (loop-to-map)
+            * Greedy application of SubgraphFusion
+            * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
+            * Tiled stream accumulation (MapTiling -> AccumulateTransient)
+            * Collapse all maps to parallelize across all dimensions
+            * Set all library nodes to expand to ``fast`` expansion, which calls
+              the fastest library on the target device
+
+        :param device: the device to optimize for.
+        :param validate: If True, validates the SDFG after all transformations
+                         have been applied.
+        :param validate_all: If True, validates the SDFG after every step.
+        :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
+        :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+        :note: Operates in-place on this SDFG.
+        :note: This function is still experimental and may harm correctness in
+               certain cases. Please report an issue if it does.
+        """
+        from dace.transformation.auto.auto_optimize import auto_optimize
+        auto_optimize(self, device, validate, validate_all, symbols, use_gpu_storage)
 
     def _initialize_transformations_from_type(
         self,
@@ -2598,7 +2717,7 @@ class SDFG(ControlFlowRegion):
                                               print_report: Optional[bool] = None,
                                               order_by_transformation: bool = True,
                                               progress: Optional[bool] = None) -> int:
-        """ 
+        """
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
@@ -2646,7 +2765,9 @@ class SDFG(ControlFlowRegion):
                                   permissive=False,
                                   sequential_innermaps=True,
                                   register_transients=True,
-                                  simplify=True):
+                                  simplify=True,
+                                  host_maps=None,
+                                  host_data=None):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 
@@ -2663,7 +2784,9 @@ class SDFG(ControlFlowRegion):
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
                                                 register_trans=register_transients,
-                                                simplify=simplify),
+                                                simplify=simplify,
+                                                host_maps=host_maps,
+                                                host_data=host_data),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,
@@ -2714,7 +2837,7 @@ class SDFG(ControlFlowRegion):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
-        
+
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
@@ -2742,14 +2865,14 @@ class SDFG(ControlFlowRegion):
         """
         return dace.Memlet.from_array(array, self.data(array))
 
-    def recheck_using_experimental_blocks(self) -> bool:
-        found_experimental_block = False
+    def recheck_using_explicit_control_flow(self) -> bool:
+        found_explicit_cf_block = False
         for node, graph in self.root_sdfg.all_nodes_recursive():
             if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
             if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
-        self.root_sdfg.using_experimental_blocks = found_experimental_block
-        return found_experimental_block
+        self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
+        return found_explicit_cf_block

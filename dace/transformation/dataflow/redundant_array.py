@@ -196,6 +196,10 @@ class RedundantArray(pm.SingleStateTransformation):
         if not in_desc.transient:
             return False
 
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
+            return False
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         try:
@@ -456,11 +460,10 @@ class RedundantArray(pm.SingleStateTransformation):
         in_array.add_out_connector('views', force=True)
         e1._src_conn = 'views'
 
-
     def _is_reshaping_memlet(
-            self,
-            graph: SDFGState,
-            edge: graph.MultiConnectorEdge,
+        self,
+        graph: SDFGState,
+        edge: graph.MultiConnectorEdge,
     ) -> bool:
         """Test if Memlet between `input_node` and `output_node` is reshaping.
 
@@ -563,11 +566,8 @@ class RedundantArray(pm.SingleStateTransformation):
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if (
-                reduction
-                or len(a_dims_to_pop) == len(in_desc.shape)
-                or any(m != a for m, a in zip(a1_subset.size(), in_desc.shape))
-        ):
+        if (reduction or len(a_dims_to_pop) == len(in_desc.shape)
+                or any(m != a for m, a in zip(a1_subset.size(), in_desc.shape))):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
@@ -703,6 +703,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # Make sure that the candidate is a transient variable
         if not out_desc.transient:
+            return False
+
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
             return False
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
@@ -1528,6 +1532,8 @@ class RemoveSliceView(pm.SingleStateTransformation):
         # Ensure view
         if not isinstance(desc, data.View):
             return False
+        if isinstance(desc, data.StructureView):
+            return False
 
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)
@@ -1665,7 +1671,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):
     """ Moves intermediate writes insde a Map's subgraph outside the Map.
-    
+
     Currently, the transformation supports only the case `WriteAccess -> MapExit`, where the edge has an empty Memlet.
     """
 

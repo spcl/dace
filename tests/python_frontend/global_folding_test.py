@@ -9,6 +9,7 @@ from dace.frontend.python.parser import DaceProgram
 
 
 class MyConfiguration:
+
     def __init__(self, parameter):
         self.p = parameter * 2
 
@@ -76,6 +77,7 @@ def test_nested_globals():
     """
     Tests constant/symbolic values with multiple nesting levels.
     """
+
     @dace.program
     def instantiated_global2(A):
         A[cfg.q] = cfg.cloned.p
@@ -155,6 +157,7 @@ def test_dead_code_elimination_unreachable():
     """
     Tests dead code elimination with unreachable code.
     """
+
     @dace.program
     def test(A):
         if A[5] > 1:

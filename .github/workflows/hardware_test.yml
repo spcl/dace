@@ -4,7 +4,7 @@ jobs:
   test-rtl:
     runs-on: [self-hosted, linux, xilinx-fpga]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
     - name: Install dependencies

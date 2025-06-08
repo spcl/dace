@@ -276,10 +276,10 @@ def run_jacobi(w: int, h: int, t: int, p: int, specialize_all: bool = False):
         print("Specializing H and T...")
 
     jacobi = make_sdfg(specialize_all, h, w, t, p)
-    jacobi.specialize(dict(W=W, P=P))
+    jacobi.specialize(dict(W=w, P=p))
 
     if specialize_all:
-        jacobi.specialize(dict(H=H, T=T))
+        jacobi.specialize(dict(H=h, T=t))
 
     if t % p != 0:
         raise ValueError("Iteration must be divisable by number of processing elements")
@@ -301,7 +301,7 @@ def run_jacobi(w: int, h: int, t: int, p: int, specialize_all: bool = False):
     if specialize_all:
         jacobi(A=A)
     else:
-        jacobi(A=A, H=H, T=T)
+        jacobi(A=A, H=h, T=t)
 
     # Regression
     kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]], dtype=np.float32)

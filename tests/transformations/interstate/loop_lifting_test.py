@@ -16,7 +16,7 @@ def test_lift_regular_for_loop():
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
     start_state = sdfg.add_state('start', is_start_block=True)
     init_state = sdfg.add_state('init')
     guard_state = sdfg.add_state('guard')
@@ -40,12 +40,12 @@ def test_lift_regular_for_loop():
     final_state.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_experimental_blocks == True
+    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -61,7 +61,7 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
 
     entry = sdfg.add_state('entry', is_start_block=True)
     guard = sdfg.add_state('guard')
@@ -96,12 +96,12 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     exitstate.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_experimental_blocks == True
+    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -114,7 +114,7 @@ def test_lift_loop_llvm_canonical_while():
     N = dace.symbol('N')
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
     sdfg.add_scalar('i', dace.int32, transient=True)
 
     entry = sdfg.add_state('entry', is_start_block=True)
@@ -129,7 +129,7 @@ def test_lift_loop_llvm_canonical_while():
     sdfg.add_edge(guard, exitstate, InterstateEdge(condition='N <= 0'))
     sdfg.add_edge(guard, preheader, InterstateEdge(condition='N > 0'))
     sdfg.add_edge(preheader, body, InterstateEdge(assignments={'k': 0}))
-    sdfg.add_edge(body, latch, InterstateEdge(assignments={'j':  'j + 1'}))
+    sdfg.add_edge(body, latch, InterstateEdge(assignments={'j': 'j + 1'}))
     sdfg.add_edge(latch, body, InterstateEdge(condition='i < N - 2'))
     sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N - 2', assignments={'k': 2}))
     sdfg.add_edge(loopexit, exitstate, InterstateEdge())
@@ -153,12 +153,12 @@ def test_lift_loop_llvm_canonical_while():
     exitstate.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_experimental_blocks == True
+    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -167,12 +167,12 @@ def test_lift_loop_llvm_canonical_while():
 
 
 def test_do_while():
-    sdfg = SDFG('regular_for')
+    sdfg = SDFG('do_while')
     N = dace.symbol('N')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
     start_state = sdfg.add_state('start', is_start_block=True)
     init_state = sdfg.add_state('init')
     guard_state = sdfg.add_state('guard')
@@ -196,12 +196,53 @@ def test_do_while():
     final_state.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_experimental_blocks == True
+    assert sdfg.using_explicit_control_flow == True
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    sdfg(A=A, N=N)
+
+    assert np.allclose(A_valid, A)
+
+
+def test_inverted_loop_with_additional_increment_assignment():
+    sdfg = SDFG('inverted_loop_with_additional_increment_assignment')
+    N = dace.symbol('N')
+    sdfg.add_scalar('i', dace.int32, transient=True)
+    sdfg.add_symbol('k', dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
+    a_state = sdfg.add_state('a_state', is_start_block=True)
+    b_state = sdfg.add_state('b_state')
+    c_state = sdfg.add_state('c_state')
+    d_state = sdfg.add_state('d_state')
+    sdfg.add_edge(a_state, b_state, InterstateEdge(assignments={'k': 0}))
+    sdfg.add_edge(b_state, c_state, InterstateEdge())
+    sdfg.add_edge(c_state, b_state, InterstateEdge(condition='i < N', assignments={'k': 'k + 1'}))
+    sdfg.add_edge(c_state, d_state, InterstateEdge(condition='i >= N'))
+    a_access = b_state.add_access('A')
+    w_tasklet = b_state.add_tasklet('t1', {}, {'out'}, 'out = 1')
+    b_state.add_edge(w_tasklet, 'out', a_access, None, Memlet('A[i]'))
+    i_read = c_state.add_access('i')
+    i_write = c_state.add_access('i')
+    iw_tasklet = c_state.add_tasklet('t2', {'in1'}, {'out'}, 'out = in1 + 2')
+    c_state.add_edge(i_read, None, iw_tasklet, 'in1', Memlet('i[0]'))
+    c_state.add_edge(iw_tasklet, 'out', i_write, None, Memlet('i[0]'))
+    a_access_2 = d_state.add_access('A')
+    w_tasklet_2 = d_state.add_tasklet('t1', {}, {'out'}, 'out = k')
+    d_state.add_edge(w_tasklet_2, 'out', a_access_2, None, Memlet('A[1]'))
+
+    N = 30
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
+    sdfg(A=A_valid, N=N)
+
+    sdfg.apply_transformations_repeated([LoopLifting])
+
+    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -215,3 +256,4 @@ if __name__ == '__main__':
     test_lift_loop_llvm_canonical(False)
     test_lift_loop_llvm_canonical_while()
     test_do_while()
+    test_inverted_loop_with_additional_increment_assignment()

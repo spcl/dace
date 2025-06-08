@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import re
 from typing import Any, Callable, Dict, List, Set, Tuple, TypeVar, Union
+import warnings
 
 import dace
 from dace.config import Config
@@ -56,6 +57,18 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
         basename = "{}.{}".format(name, extension)
         code_path = os.path.join(target_folder, basename)
         clean_code = code_object.clean_code
+
+        if Config.get_bool('compiler', 'format_code'):
+            config_file = Config.get('compiler', 'format_config_file')
+            if config_file is not None and config_file != "":
+                run_arg_list = ['clang-format', f"-style=file:{config_file}"]
+            else:
+                run_arg_list = ['clang-format']
+            result = subprocess.run(run_arg_list, input=clean_code, text=True, capture_output=True)
+            if result.returncode or result.stderr:
+                warnings.warn(f'clang-format failed to run: {result.stderr}')
+            else:
+                clean_code = result.stdout
 
         # Save the file only if it changed (keeps old timestamps and saves
         # build time)
@@ -213,7 +226,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
             print('Cleaning CMake build folder and retrying...')
-        shutil.rmtree(build_folder)
+        shutil.rmtree(build_folder, ignore_errors=True)
         os.makedirs(build_folder)
         try:
             _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
@@ -260,7 +273,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     """
     Returns the CMake environment and linkage flags associated with the
     given input environments/libraries.
-    
+
     :param environments: A list of ``@dace.library.environment``-decorated
                          classes.
     :return: A 2-tuple of (environment CMake flags, linkage CMake flags)
@@ -381,7 +394,7 @@ def load_from_file(sdfg, binary_filename):
     lib = csd.ReloadableDLL(binary_filename, sdfg.name)
 
     # Load and return the compiled function
-    return csd.CompiledSDFG(sdfg, lib)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
 def get_binary_name(object_folder, object_name, lib_extension=Config.get('compiler', 'library_extension')):

@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Code I/O stream that automates indentation and mapping of code to SDFG 
+""" Code I/O stream that automates indentation and mapping of code to SDFG
     nodes. """
 
 import inspect
@@ -10,11 +10,12 @@ from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 class CodeIOStream(StringIO):
-    """ Code I/O stream that automates indentation and mapping of code to SDFG 
+    """ Code I/O stream that automates indentation and mapping of code to SDFG
         nodes. """
+
     def __init__(self, base_indentation=0):
         super(CodeIOStream, self).__init__()
-        self._indent = 0
+        self._indent = base_indentation
         self._spaces = int(Config.get('compiler', 'indentation_spaces'))
         self._lineinfo = Config.get_bool('compiler', 'codegen_lineinfo')
 

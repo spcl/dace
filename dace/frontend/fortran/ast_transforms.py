@@ -42,6 +42,7 @@ class NodeVisitor(object):
     XXX is the class name you want to visit with these
     methods.
     """
+
     def visit(self, node: ast_internal_classes.FNode):
         method = 'visit_' + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
@@ -63,8 +64,9 @@ class NodeTransformer(NodeVisitor):
     A base node visitor that walks the abstract syntax tree and allows
     modification of nodes.
     The `NodeTransformer` will walk the AST and use the return value of the
-    visitor methods to replace old nodes. 
+    visitor methods to replace old nodes.
     """
+
     def as_list(self, x):
         if isinstance(x, list):
             return x
@@ -100,6 +102,7 @@ class FindFunctionAndSubroutines(NodeVisitor):
     Finds all function and subroutine names in the AST
     :return: List of names
     """
+
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -115,6 +118,7 @@ class FindInputs(NodeVisitor):
     Finds all inputs (reads) in the AST node and its children
     :return: List of names
     """
+
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -144,6 +148,7 @@ class FindOutputs(NodeVisitor):
     Finds all outputs (writes) in the AST node and its children
     :return: List of names
     """
+
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -161,6 +166,7 @@ class FindFunctionCalls(NodeVisitor):
     Finds all function calls in the AST node and its children
     :return: List of names
     """
+
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -174,9 +180,10 @@ class CallToArray(NodeTransformer):
     """
     Fortran does not differentiate between arrays and functions.
     We need to go over and convert all function calls to arrays.
-    So, we create a closure of all math and defined functions and 
+    So, we create a closure of all math and defined functions and
     create array expressions for the others.
     """
+
     def __init__(self, funcs=None):
         if funcs is None:
             funcs = []
@@ -184,8 +191,8 @@ class CallToArray(NodeTransformer):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
-            "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min", "__dace_sign", "tanh",
-            "__dace_epsilon", *FortranIntrinsics.function_names()
+            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2", "__dace_epsilon",
+            *FortranIntrinsics.function_names()
         ]
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
@@ -206,6 +213,7 @@ class CallExtractorNodeLister(NodeVisitor):
     """
     Finds all function calls in the AST node and its children that have to be extracted into independent expressions
     """
+
     def __init__(self):
         self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
 
@@ -220,7 +228,7 @@ class CallExtractorNodeLister(NodeVisitor):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             self.nodes.append(node)
         return self.generic_visit(node)
@@ -235,13 +243,16 @@ class CallExtractor(NodeTransformer):
     in the AST node and its children that have to be extracted into independent expressions
     It then creates a new temporary variable for each of them and replaces the call with the variable.
     """
+
     def __init__(self, count=0):
         self.count = count
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in [
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+        ]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -251,6 +262,11 @@ class CallExtractor(NodeTransformer):
         else:
             self.count = self.count + 1
         tmp = self.count
+
+        for i, arg in enumerate(node.args):
+            # Ensure we allow to extract function calls from arguments
+            node.args[i] = self.visit(arg)
+
         return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
@@ -263,17 +279,18 @@ class CallExtractor(NodeTransformer):
             for i in res:
                 if i == child:
                     res.pop(res.index(i))
-            temp = self.count
             if res is not None:
-                for i in range(0, len(res)):
+                # Variables are counted from 0...end, starting from main node, to all calls nested
+                # in main node arguments.
+                # However, we need to define nested ones first.
+                # We go in reverse order, counting from end-1 to 0.
+                temp = self.count + len(res) - 1
+                for i in reversed(range(0, len(res))):
 
                     newbody.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
-                                name="tmp_call_" + str(temp),
-                                type=res[i].type,
-                                sizes=None
-                            )
+                                name="tmp_call_" + str(temp), type=res[i].type, sizes=None)
                         ]))
                     newbody.append(
                         ast_internal_classes.BinOp_Node(op="=",
@@ -282,7 +299,7 @@ class CallExtractor(NodeTransformer):
                                                                                             type=res[i].type),
                                                         rval=res[i],
                                                         line_number=child.line_number))
-                    temp = temp + 1
+                    temp = temp - 1
             if isinstance(child, ast_internal_classes.Call_Expr_Node):
                 new_args = []
                 if hasattr(child, "args"):
@@ -298,6 +315,7 @@ class CallExtractor(NodeTransformer):
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
+
 class ParentScopeAssigner(NodeVisitor):
     """
         For each node, it assigns its parent scope - program, subroutine, function.
@@ -306,16 +324,15 @@ class ParentScopeAssigner(NodeVisitor):
         Otherwise, we look for the parent of my parent to cover nested AST nodes within
         a single scope.
     """
+
     def __init__(self):
         pass
 
     def visit(self, node: ast_internal_classes.FNode, parent_node: Optional[ast_internal_classes.FNode] = None):
 
         parent_node_types = [
-            ast_internal_classes.Subroutine_Subprogram_Node,
-            ast_internal_classes.Function_Subprogram_Node,
-            ast_internal_classes.Main_Program_Node,
-            ast_internal_classes.Module_Node
+            ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Function_Subprogram_Node,
+            ast_internal_classes.Main_Program_Node, ast_internal_classes.Module_Node
         ]
 
         if parent_node is not None and type(parent_node) in parent_node_types:
@@ -333,6 +350,7 @@ class ParentScopeAssigner(NodeVisitor):
                 self.visit(value, node)
 
         return node
+
 
 class ScopeVarsDeclarations(NodeVisitor):
     """
@@ -360,15 +378,18 @@ class ScopeVarsDeclarations(NodeVisitor):
         else:
             return scope.name.name
 
+
 class IndexExtractorNodeLister(NodeVisitor):
     """
     Finds all array subscript expressions in the AST node and its children that have to be extracted into independent expressions
     """
+
     def __init__(self):
         self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
             return
@@ -390,6 +411,7 @@ class IndexExtractor(NodeTransformer):
     - ParentScopeAssigner to ensure that each node knows its scope assigner.
     - ScopeVarsDeclarations to aggregate all variable declarations for each function.
     """
+
     def __init__(self, ast: ast_internal_classes.FNode, normalize_offsets: bool = False, count=0):
 
         self.count = count
@@ -401,7 +423,8 @@ class IndexExtractor(NodeTransformer):
             self.scope_vars.visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
             return node
@@ -427,7 +450,6 @@ class IndexExtractor(NodeTransformer):
             lister.visit(child)
             res = lister.nodes
             temp = self.count
-
 
             if res is not None:
                 for j in res:
@@ -485,6 +507,7 @@ class SignToIf(NodeTransformer):
     """
     Transforms all sign expressions into if statements
     """
+
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if isinstance(node.rval, ast_internal_classes.Call_Expr_Node) and node.rval.name.name == "__dace_sign":
             args = node.rval.args
@@ -530,6 +553,7 @@ class RenameArguments(NodeTransformer):
     Renames all arguments of a function to the names of the arguments of the function call
     Used when eliminating function statements
     """
+
     def __init__(self, node_args: list, call_args: list):
         self.node_args = node_args
         self.call_args = call_args
@@ -545,6 +569,7 @@ class ReplaceFunctionStatement(NodeTransformer):
     """
     Replaces a function statement with its content, similar to propagating a macro
     """
+
     def __init__(self, statement, replacement):
         self.name = statement.name
         self.content = replacement
@@ -560,6 +585,7 @@ class ReplaceFunctionStatementPass(NodeTransformer):
     """
     Replaces a function statement with its content, similar to propagating a macro
     """
+
     def __init__(self, statefunc: list):
         self.funcs = statefunc
 
@@ -680,6 +706,7 @@ class ArrayLoopNodeLister(NodeVisitor):
     """
     Finds all array operations that have to be transformed to loops in the AST
     """
+
     def __init__(self):
         self.nodes: List[ast_internal_classes.FNode] = []
         self.range_nodes: List[ast_internal_classes.FNode] = []
@@ -746,9 +773,9 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     lower_boundary = ast_internal_classes.Int_Literal_Node(value="1")
 
                 upper_boundary = ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
-                                                        type="INTEGER",
-                                                        arrname=node.name,
-                                                        pos=currentindex)
+                                                                      type="INTEGER",
+                                                                      arrname=node.name,
+                                                                      pos=currentindex)
                 """
                     When there's an offset, we add MAX_RANGE + offset.
                     But since the generated loop has `<=` condition, we need to subtract 1.
@@ -757,13 +784,9 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     upper_boundary = ast_internal_classes.BinOp_Node(
                         lval=upper_boundary,
                         op="+",
-                        rval=ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
-                    )
+                        rval=ast_internal_classes.Int_Literal_Node(value=str(offsets[idx])))
                     upper_boundary = ast_internal_classes.BinOp_Node(
-                        lval=upper_boundary,
-                        op="-",
-                        rval=ast_internal_classes.Int_Literal_Node(value="1")
-                    )
+                        lval=upper_boundary, op="-", rval=ast_internal_classes.Int_Literal_Node(value="1"))
                 ranges.append([lower_boundary, upper_boundary])
                 rangeslen.append(-1)
 
@@ -802,6 +825,7 @@ class ArrayToLoop(NodeTransformer):
     """
     Transforms the AST by removing array expressions and replacing them with loops
     """
+
     def __init__(self, ast):
         self.count = 0
 
@@ -830,7 +854,8 @@ class ArrayToLoop(NodeTransformer):
                         rangeposrval = []
                         rangesrval = []
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, False)
+                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars,
+                                              False)
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
@@ -899,7 +924,9 @@ def mywalk(node):
         todo.extend(iter_child_nodes(node))
         yield node
 
+
 class RenameVar(NodeTransformer):
+
     def __init__(self, oldname: str, newname: str):
         self.oldname = oldname
         self.newname = newname
@@ -912,6 +939,7 @@ class ForDeclarer(NodeTransformer):
     """
     Ensures that each loop iterator is unique by extracting the actual iterator and assigning it to a uniquely named local variable
     """
+
     def __init__(self):
         self.count = 0
 

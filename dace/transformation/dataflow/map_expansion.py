@@ -49,13 +49,12 @@ class MapExpansion(pm.SingleStateTransformation):
         # includes an N-dimensional map, with N greater than one.
         return self.map_entry.map.get_param_num() > 1
 
-    def generate_new_maps(self,
-                          current_map: nodes.Map):
+    def generate_new_maps(self, current_map: nodes.Map):
         if self.expansion_limit is None:
             full_expand = True
         elif isinstance(self.expansion_limit, int):
             full_expand = False
-            if self.expansion_limit <= 0:   # These are invalid, so we make a full expansion
+            if self.expansion_limit <= 0:  # These are invalid, so we make a full expansion
                 full_expand = True
             elif (self.map_entry.map.get_param_num() - self.expansion_limit) <= 1:
                 full_expand = True
@@ -65,11 +64,10 @@ class MapExpansion(pm.SingleStateTransformation):
         inner_schedule = self.inner_schedule or current_map.schedule
         if full_expand:
             new_maps = [
-                nodes.Map(
-                    current_map.label + '_' + str(param), [param],
-                    subsets.Range([param_range]),
-                    schedule=inner_schedule if dim != 0 else current_map.schedule)
-                for dim, param, param_range in zip(range(len(current_map.params)), current_map.params, current_map.range)
+                nodes.Map(current_map.label + '_' + str(param), [param],
+                          subsets.Range([param_range]),
+                          schedule=inner_schedule if dim != 0 else current_map.schedule) for dim, param, param_range in
+                zip(range(len(current_map.params)), current_map.params, current_map.range)
             ]
             for i, new_map in enumerate(new_maps):
                 new_map.range.tile_sizes[0] = current_map.range.tile_sizes[i]
@@ -82,25 +80,23 @@ class MapExpansion(pm.SingleStateTransformation):
             for dim in range(0, k):
                 dim_param = current_map.params[dim]
                 dim_range = current_map.range.ranges[dim]
-                dim_tile  = current_map.range.tile_sizes[dim]
+                dim_tile = current_map.range.tile_sizes[dim]
                 new_maps.append(
-                    nodes.Map(
-                        current_map.label + '_' + str(dim_param),
-                        [dim_param],
-                        subsets.Range([dim_range]),
-                        schedule=inner_schedule if dim != 0 else current_map.schedule ))
+                    nodes.Map(current_map.label + '_' + str(dim_param), [dim_param],
+                              subsets.Range([dim_range]),
+                              schedule=inner_schedule if dim != 0 else current_map.schedule))
                 new_maps[-1].range.tile_sizes[0] = dim_tile
 
             # Multidimensional maps
             mdim_params = current_map.params[k:]
             mdim_ranges = current_map.range.ranges[k:]
-            mdim_tiles  = current_map.range.tile_sizes[k:]
+            mdim_tiles = current_map.range.tile_sizes[k:]
             new_maps.append(
-                    nodes.Map(
-                        current_map.label,  # The original name
-                        mdim_params,
-                        mdim_ranges,
-                        schedule=inner_schedule ))
+                nodes.Map(
+                    current_map.label,  # The original name
+                    mdim_params,
+                    mdim_ranges,
+                    schedule=inner_schedule))
             new_maps[-1].range.tile_sizes = mdim_tiles
         return new_maps
 
@@ -113,12 +109,12 @@ class MapExpansion(pm.SingleStateTransformation):
         # Generate the new maps that we should use.
         new_maps = self.generate_new_maps(current_map)
 
-        if not new_maps:        # No changes should be made -> noops
+        if not new_maps:  # No changes should be made -> noops
             return
 
         # Reuse the map that is already existing for the first one.
         current_map.params = new_maps[0].params
-        current_map.range  = new_maps[0].range
+        current_map.range = new_maps[0].range
         new_maps.pop(0)
 
         # Create new map entries and exits
@@ -136,13 +132,16 @@ class MapExpansion(pm.SingleStateTransformation):
             graph.add_edge(entries[-1], edge.src_conn, edge.dst, edge.dst_conn, memlet=copy.deepcopy(edge.data))
             graph.remove_edge(edge)
 
-        if graph.in_degree(map_entry) == 0:
+        if graph.in_degree(map_entry) == 0 or all(e.dst_conn is None or not e.dst_conn.startswith("IN_")
+                                                  for e in graph.in_edges(map_entry)):
             graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
         else:
             for edge in graph.in_edges(map_entry):
+                if edge.dst_conn is None:
+                    continue
                 if not edge.dst_conn.startswith("IN_"):
                     continue
-                
+
                 in_conn = edge.dst_conn
                 out_conn = "OUT_" + in_conn[3:]
                 if in_conn not in entries[-1].in_connectors:

@@ -1,10 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
-from __future__ import print_function
 import ctypes
 import aenum
 import inspect
-import itertools
 import numpy
 import re
 from collections import OrderedDict
@@ -252,12 +250,12 @@ _CTYPES = {
     numpy.int16: "short",
     numpy.int32: "int",
     numpy.intc: "int",
-    numpy.int64: "long long",
-    numpy.uint8: "unsigned char",
-    numpy.uint16: "unsigned short",
-    numpy.uint32: "unsigned int",
-    numpy.uintc: "unsigned int",
-    numpy.uint64: "unsigned long long",
+    numpy.int64: "int64_t",
+    numpy.uint8: "uint8_t",
+    numpy.uint16: "uint16_t",
+    numpy.uint32: "uint32_t",
+    numpy.uintc: "dace::uint",
+    numpy.uint64: "uint64_t",
     numpy.float16: "dace::float16",
     numpy.float32: "float",
     numpy.float64: "double",
@@ -277,15 +275,35 @@ _OCL_TYPES = {
     numpy.int32: "int",
     numpy.intc: "int",
     numpy.int64: "long",
-    numpy.uint8: "unsigned char",
-    numpy.uint16: "unsigned short",
-    numpy.uint32: "unsigned int",
-    numpy.uint64: "unsigned long",
-    numpy.uintc: "unsigned int",
+    numpy.uint8: "uchar",
+    numpy.uint16: "ushort",
+    numpy.uint32: "uint",
+    numpy.uint64: "ulong",
+    numpy.uintc: "uint",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "complex float",
     numpy.complex128: "complex double",
+}
+
+_CTYPES_TO_OCLTYPES = {
+    "void": "void",
+    "int": "int",
+    "float": "float",
+    "double": "double",
+    "dace::complex64": "complex float",
+    "dace::complex128": "complex double",
+    "bool": "bool",
+    "char": "char",
+    "short": "short",
+    "int": "int",
+    "int64_t": "long",
+    "uint8_t": "uchar",
+    "uint16_t": "ushort",
+    "uint32_t": "uint",
+    "dace::uint": "uint",
+    "uint64_t": "ulong",
+    "dace::float16": "half",
 }
 
 # Translation of types to OpenCL vector types
@@ -371,7 +389,6 @@ class typeclass(object):
         # Convert python basic types
         if isinstance(wrapped_type, str):
             try:
-
                 if wrapped_type == "bool":
                     wrapped_type = numpy.bool_
                 else:
@@ -406,6 +423,8 @@ class typeclass(object):
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
+        elif wrapped_type is type(None):
+            wrapped_type = None
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
@@ -743,7 +762,7 @@ class vector(typeclass):
 
 class stringtype(pointer):
     """
-    A specialization of the string data type to improve 
+    A specialization of the string data type to improve
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
@@ -980,7 +999,7 @@ class callback(typeclass):
     def is_scalar_function(self) -> bool:
         """
         Returns True if the callback is a function that returns a scalar
-        value (or nothing). Scalar functions are the only ones that can be 
+        value (or nothing). Scalar functions are the only ones that can be
         used within a `dace.tasklet` explicitly.
         """
         from dace import data
@@ -1295,7 +1314,7 @@ def dtype_to_typeclass(dtype=None):
 bool = bool_
 
 TYPECLASS_TO_STRING = {
-    bool: "dace::bool",
+    bool: "dace::bool_",
     bool_: "dace::bool_",
     uint8: "dace::uint8",
     uint16: "dace::uint16",
@@ -1575,7 +1594,7 @@ def is_array(obj: Any) -> bool:
 
 def is_gpu_array(obj: Any) -> bool:
     """
-    Returns True if an object is a GPU array, i.e., implements the 
+    Returns True if an object is a GPU array, i.e., implements the
     ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
     etc.). If the interface is supported, pointers can be directly obtained using the
     ``_array_interface_ptr`` function.

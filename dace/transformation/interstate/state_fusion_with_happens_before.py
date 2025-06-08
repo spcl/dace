@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
 from typing import Dict, List, Set
@@ -9,12 +9,13 @@ from dace import data as dt, sdfg, subsets, memlet
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import transformation
 
 
 # Helper class for finding connected component correspondences
 class CCDesc:
+
     def __init__(self, first_input_nodes: Set[nodes.AccessNode], first_output_nodes: Set[nodes.AccessNode],
                  second_input_nodes: Set[nodes.AccessNode], second_output_nodes: Set[nodes.AccessNode]) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
@@ -31,11 +32,11 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-@transformation.single_level_sdfg_only
+@transformation.explicit_cf_compatible
 class StateFusionExtended(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
         An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.
-        The merge is made by identifying the source in the first state and the sink in the second state, 
+        The merge is made by identifying the source in the first state and the sink in the second state,
         and linking the bottom of the appropriate source subgraph in the first state with the top of the
         appropriate sink subgraph in the second state.
 
@@ -91,7 +92,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         Performs an all-pairs check for subset intersection on two
         groups of nodes. If group intersects or result is indeterminate,
         returns True as a precaution.
-        
+
         :param graph_a: The graph in which the first set of nodes reside.
         :param group_a: The first set of nodes to check.
         :param inputs_a: If True, checks inputs of the first group.
@@ -323,8 +324,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 ]
                 # Those nodes will be the connection points upon fusion
                 match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order
-                         if n.data == match): next(n for n in fused_cc.second_input_nodes if n.data == match)
+                    next(n for n in order if n.data == match):
+                    next(n for n in fused_cc.second_input_nodes if n.data == match)
                     for match in (fused_cc.first_outputs
                                   & fused_cc.second_inputs)
                 }
@@ -461,33 +462,33 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph: ControlFlowRegion, sdfg):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
         # Remove interstate edge(s)
-        edges = sdfg.edges_between(first_state, second_state)
+        edges = graph.edges_between(first_state, second_state)
         for edge in edges:
             if edge.data.assignments:
-                for src, dst, other_data in sdfg.in_edges(first_state):
+                for src, dst, other_data in graph.in_edges(first_state):
                     other_data.assignments.update(edge.data.assignments)
-            sdfg.remove_edge(edge)
+            graph.remove_edge(edge)
 
         # Special case 1: first state is empty
         if first_state.is_empty():
-            sdutil.change_edge_dest(sdfg, first_state, second_state)
-            sdfg.remove_node(first_state)
-            if sdfg.start_state == first_state:
-                sdfg.start_state = sdfg.node_id(second_state)
+            sdutil.change_edge_dest(graph, first_state, second_state)
+            graph.remove_node(first_state)
+            if graph.start_block == first_state:
+                graph.start_block = graph.node_id(second_state)
             return
 
         # Special case 2: second state is empty
         if second_state.is_empty():
-            sdutil.change_edge_src(sdfg, second_state, first_state)
-            sdutil.change_edge_dest(sdfg, second_state, first_state)
-            sdfg.remove_node(second_state)
-            if sdfg.start_state == second_state:
-                sdfg.start_state = sdfg.node_id(first_state)
+            sdutil.change_edge_src(graph, second_state, first_state)
+            sdutil.change_edge_dest(graph, second_state, first_state)
+            graph.remove_node(second_state)
+            if graph.start_block == second_state:
+                graph.start_block = graph.node_id(first_state)
             return
 
         # Normal case: both states are not empty
@@ -495,7 +496,6 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # Find source/sink (data) nodes
         first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
         first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
-        second_input = [node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)]
 
         top2 = top_level_nodes(second_state)
 
@@ -585,7 +585,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             merged_nodes.add(n)
 
         # Redirect edges and remove second state
-        sdutil.change_edge_src(sdfg, second_state, first_state)
-        sdfg.remove_node(second_state)
-        if sdfg.start_state == second_state:
-            sdfg.start_state = sdfg.node_id(first_state)
+        sdutil.change_edge_src(graph, second_state, first_state)
+        graph.remove_node(second_state)
+        if graph.start_block == second_state:
+            graph.start_block = graph.node_id(first_state)

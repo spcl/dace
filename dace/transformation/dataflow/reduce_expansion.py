@@ -35,9 +35,11 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transient" "in registers", dtype=bool, default=False)
+    create_in_transient = Property(desc="Create local in-transient"
+                                   "in registers", dtype=bool, default=False)
 
-    create_out_transient = Property(desc="Create local out-transient" "in registers", dtype=bool, default=False)
+    create_out_transient = Property(desc="Create local out-transient"
+                                    "in registers", dtype=bool, default=False)
 
     reduce_implementation = Property(desc="Reduce implementation of inner reduce. If specified,"
                                      "overrides any existing implementations",
@@ -333,9 +335,10 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
             output_size = outedge.data.subset.size()
 
-            ome, omx = nstate.add_map(
-                'reduce_output', {'_o%d' % i: '0:%s' % symstr(sz)
-                                  for i, sz in enumerate(outedge.data.subset.size())})
+            ome, omx = nstate.add_map('reduce_output', {
+                '_o%d' % i: '0:%s' % symstr(sz)
+                for i, sz in enumerate(outedge.data.subset.size())
+            })
             outm = Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = Memlet.simple('_in', ','.join(input_subset))
         else:
@@ -345,10 +348,10 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
-        ime, imx = nstate.add_map(
-            'reduce_values',
-            {'_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
-             for i, axis in enumerate(sorted(axes))})
+        ime, imx = nstate.add_map('reduce_values', {
+            '_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
+            for i, axis in enumerate(sorted(axes))
+        })
 
         # Add identity tasklet for reduction
         t = nstate.add_tasklet('identity', {'inp'}, {'out'}, 'out = inp')

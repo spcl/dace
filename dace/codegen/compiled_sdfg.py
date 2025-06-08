@@ -26,7 +26,7 @@ class ReloadableDLL(object):
     def __init__(self, library_filename, program_name):
         """
         Creates a new reloadable shared object.
-        
+
         :param library_filename: Path to library file.
         :param program_name: Name of the DaCe program (for use in finding
                              the stub library loader).
@@ -174,7 +174,7 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
 
 
 class CompiledSDFG(object):
-    """ A compiled SDFG object that can be called through Python. 
+    """ A compiled SDFG object that can be called through Python.
 
     Todo:
         Scalar return values are not handled properly, this is a code gen issue.
@@ -210,6 +210,10 @@ class CompiledSDFG(object):
         self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
 
+        if self.argnames is None and len(sdfg.arg_names) != 0:
+            warnings.warn('You passed `None` as `argnames` to `CompiledSDFG`, but the SDFG you passed has positional'
+                          ' arguments. This is allowed but deprecated.')
+
         self.has_gpu_code = False
         self.external_memory_types = set()
         for _, _, aval in self._sdfg.arrays_recursive():
@@ -242,7 +246,7 @@ class CompiledSDFG(object):
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
             encountered, the method exits early. All fields defined until then will nevertheless be available in the
             structure.
-            
+
             :return: the ctypes.Structure representation of the state struct.
         """
         if not self._libhandle:
@@ -342,7 +346,7 @@ class CompiledSDFG(object):
 
     def initialize(self, *args, **kwargs):
         """
-        Initializes the compiled SDFG without invoking it. 
+        Initializes the compiled SDFG without invoking it.
 
         :param args: Arguments to call SDFG with.
         :param kwargs: Keyword arguments to call SDFG with.
@@ -402,8 +406,10 @@ class CompiledSDFG(object):
         elif len(args) > 0 and self.argnames is not None:
             kwargs.update(
                 # `_construct_args` will handle all of its arguments as kwargs.
-                {aname: arg
-                 for aname, arg in zip(self.argnames, args)})
+                {
+                    aname: arg
+                    for aname, arg in zip(self.argnames, args)
+                })
         argtuple, initargtuple = self._construct_args(kwargs)  # Missing arguments will be detected here.
         # Return values are cached in `self._lastargs`.
         return self.fast_call(argtuple, initargtuple, do_gpu_check=True)
@@ -498,6 +504,8 @@ class CompiledSDFG(object):
                     raise KeyError("Missing program argument \"{}\"".format(a))
 
         else:
+            if len(sig) > 0:
+                raise KeyError(f"Missing program arguments: {', '.join(sig)}")
             arglist = []
             argtypes = []
             argnames = []
@@ -518,6 +526,9 @@ class CompiledSDFG(object):
                     # Otherwise, None values are passed as null pointers below
                 elif isinstance(arg, ctypes._Pointer):
                     pass
+                elif isinstance(arg, str):
+                    # Cast to bytes
+                    arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
                 else:
                     raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
             elif is_array and not is_dtArray:
@@ -550,6 +561,8 @@ class CompiledSDFG(object):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
                     pass
+                elif isinstance(arg, bool) and atype.dtype.type == np.bool_:
+                    pass
                 elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
                     if arg is None:
                         arglist[i] = ctypes.c_char_p(None)
@@ -575,7 +588,7 @@ class CompiledSDFG(object):
         arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
 
         constants = self.sdfg.constants
-        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
+        callparams = tuple((arg, actype, atype, aname)
                            for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
                            if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
 

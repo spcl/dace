@@ -46,6 +46,7 @@ def has_vector_accessnode(inf: vector_inference.VectorInferenceGraph):
 
 
 def test_simple():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -61,6 +62,7 @@ def test_simple():
 
 
 def test_always_scalar_output():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -79,6 +81,7 @@ def test_always_scalar_output():
 
 
 def test_scalar_accessnode_vector():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -104,6 +107,7 @@ def test_scalar_accessnode_vector():
 
 
 def test_scalar_accessnode_scalar():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -131,6 +135,7 @@ def test_scalar_accessnode_scalar():
 
 
 def test_array_accessnode_scalar():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -156,6 +161,7 @@ def test_array_accessnode_scalar():
 
 
 def test_array_accessnode_violation():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -176,6 +182,7 @@ def test_array_accessnode_violation():
 
 
 def test_array_accessnode_complicated():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -210,6 +217,7 @@ def test_array_accessnode_complicated():
 
 
 def test_multi_input():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:
@@ -243,6 +251,7 @@ def test_multi_input():
 
 
 def test_multi_input_violation():
+
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         for i in dace.map[0:N]:

@@ -22,8 +22,10 @@ def test_call_multiple_sdfgs():
     exp_minus_max.add_array("output", out_tmp_shape, out_tmp_dtype)
     exp_minus_max.add_state().add_mapped_tasklet(
         "_softmax_exp_",
-        map_ranges={"__i" + str(i): "0:" + str(shape)
-                    for i, shape in enumerate(inparr.shape)},
+        map_ranges={
+            "__i" + str(i): "0:" + str(shape)
+            for i, shape in enumerate(inparr.shape)
+        },
         inputs={
             '__max': dace.Memlet.simple("tmp_max",
                                         ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)),
@@ -42,8 +44,10 @@ def test_call_multiple_sdfgs():
 
     out_tmp_div_sum.add_state().add_mapped_tasklet(
         "_softmax_div_",
-        map_ranges={"__i" + str(i): "0:" + str(shape)
-                    for i, shape in enumerate(inparr.shape)},
+        map_ranges={
+            "__i" + str(i): "0:" + str(shape)
+            for i, shape in enumerate(inparr.shape)
+        },
         inputs={
             '__sum': dace.Memlet.simple("tmp_sum",
                                         ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)),
@@ -68,8 +72,8 @@ def test_call_multiple_sdfgs():
 
     sdfg = multiple_nested_sdfgs.to_sdfg(simplify=False)
     state = None
-    for node in sdfg.nodes():
-        if re.fullmatch(r"out_tmp_div_sum_\d+_call.*", node.label):
+    for node in sdfg.states():
+        if re.fullmatch(r"call_out_tmp_div_sum_\d+.*", node.label):
             assert state is None, "Two states match the regex, cannot decide which one should be used"
             state = node
     assert state is not None

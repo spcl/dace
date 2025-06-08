@@ -2,6 +2,7 @@
 
 import pytest
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 import numpy as np
@@ -69,7 +70,9 @@ def test_simple_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
     # Test tasklets
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
@@ -91,7 +94,9 @@ def test_cprop_inside_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test tasklets
     i_found = 0
@@ -118,7 +123,10 @@ def test_cprop_outside_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i', 'j'}
+    assert 'j' in sdfg.symbols
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test memlet
     last_state = sdfg.sink_nodes()[0]
@@ -187,7 +195,9 @@ def test_complex_case():
     sdfg.add_edge(usei, merge, dace.InterstateEdge(assignments={'j': 'j+1'}))
     sdfg.add_edge(merge, last, dace.InterstateEdge('j >= 2'))
 
-    propagated = ConstantPropagation().collect_constants(sdfg)  #, reachability
+    propagated = {}
+    arrays = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
+    ConstantPropagation()._collect_constants_for_region(sdfg, arrays, propagated, {}, {}, {})
     assert len(propagated[init]) == 0
     assert propagated[branch2]['i'] == '7'
     assert propagated[guard]['i'] is _UnknownValue
@@ -525,12 +535,8 @@ def test_dependency_change():
     sdfg.add_edge(entry, body, dace.InterstateEdge())
     sdfg.add_edge(
         body, body2,
-        dace.InterstateEdge(assignments=dict(t_next='(t + irev)',
-                                                irev_next='(irev + (- 1))',
-                                                i_next='i + 1'), ))
-    sdfg.add_edge(
-        body2, exiting,
-        dace.InterstateEdge(assignments=dict(cont='i_next == 2500'), ))
+        dace.InterstateEdge(assignments=dict(t_next='(t + irev)', irev_next='(irev + (- 1))', i_next='i + 1'), ))
+    sdfg.add_edge(body2, exiting, dace.InterstateEdge(assignments=dict(cont='i_next == 2500'), ))
     sdfg.add_edge(exiting, final, dace.InterstateEdge('cont'))
     sdfg.add_edge(exiting, latch, dace.InterstateEdge('not cont', dict(
         irev='irev_next',

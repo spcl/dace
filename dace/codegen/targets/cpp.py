@@ -26,7 +26,7 @@ from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.sdfg import nodes, graph as gr, utils
+from dace.sdfg import nodes, graph as gr, utils, propagation
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.codegen.targets import fpga
@@ -234,6 +234,23 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
+def is_cuda_codegen_in_device(framecode) -> bool:
+    """
+    Check the state of the CUDA code generator, whether it is inside device code.
+    """
+    from dace.codegen.targets.cuda import CUDACodeGen
+    if framecode is None:
+        cuda_codegen_in_device = False
+    else:
+        for codegen in framecode.targets:
+            if isinstance(codegen, CUDACodeGen):
+                cuda_codegen_in_device = codegen._in_device_code
+                break
+        else:
+            cuda_codegen_in_device = False
+    return cuda_codegen_in_device
+
+
 def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
@@ -253,11 +270,10 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
-        elif not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
+        elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'
@@ -418,9 +434,10 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
     dims = len(copy_shape)
 
     reduced_tile_sizes = [ts for ts, s in zip(subset.tile_sizes, original_copy_shape) if s != 1]
+    reduced_tile_sizes += [1] * (dims - len(reduced_tile_sizes))  # Pad the remainder with 1s to maintain dimensions.
 
     reshaped_copy = copy_shape + [ts for ts in subset.tile_sizes if ts != 1]
-    reshaped_copy[:len(copy_shape)] = [s / ts for s, ts in zip(copy_shape, reduced_tile_sizes)]
+    reshaped_copy[:len(copy_shape)] = [s // ts for s, ts in zip(copy_shape, reduced_tile_sizes)]
 
     new_strides = [0] * len(reshaped_copy)
     elements_remaining = functools.reduce(sp.Mul, copy_shape, 1)
@@ -713,6 +730,31 @@ def _check_map_conflicts(map, edge):
     return True
 
 
+def _check_neighbor_conflicts(dfg, edge):
+    """
+    Checks for other memlets writing to edges that may overlap in subsets.
+
+    Returns True if there are no conflicts, False if there may be.
+    """
+    outer = propagation.propagate_memlet(dfg, edge.data, edge.dst, False)
+    siblings = dfg.in_edges(edge.dst)
+    for sibling in siblings:
+        if sibling is edge:
+            continue
+        if sibling.data.data != edge.data.data:
+            continue
+        # Check if there is definitely no overlap in the propagated memlet
+        sibling_outer = propagation.propagate_memlet(dfg, sibling.data, edge.dst, False)
+        if subsets.intersects(outer.subset, sibling_outer.subset) == False:
+            # In that case, continue
+            continue
+
+        # Other cases are indeterminate and will be atomic
+        return False
+    # No overlaps in current scope
+    return True
+
+
 def write_conflicted_map_params(map, edge):
     result = []
     for itervar, (_, _, mapskip) in zip(map.params, map.range):
@@ -738,7 +780,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
     the decision.
-    
+
     :return: None if the conflict is nonatomic, otherwise returns the scope entry
              node or SDFG that caused the decision to be made.
     """
@@ -769,6 +811,8 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
         for e in path:
             if (isinstance(e.dst, nodes.ExitNode) and (e.dst.map.schedule != dtypes.ScheduleType.Sequential
                                                        and e.dst.map.schedule != dtypes.ScheduleType.Snitch)):
+                if not _check_neighbor_conflicts(dfg, e):
+                    return e.dst
                 if _check_map_conflicts(e.dst.map, e):
                     # This map is parallel w.r.t. WCR
                     # print('PAR: Continuing from map')
@@ -984,9 +1028,10 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
     defined_symbols = state_dfg.symbols_defined_at(node)
 
-    defined_symbols.update(
-        {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-         for k, v in sdfg.constants.items()})
+    defined_symbols.update({
+        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+        for k, v in sdfg.constants.items()
+    })
 
     for connector, (memlet, _, _, conntype) in memlets.items():
         if connector is not None:
@@ -1036,7 +1081,18 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
-        self.write(ptr(t.id, desc, self.sdfg, self.codegen))
+        ref = '' if not isinstance(desc, data.View) else '*'
+        self.write(ref + ptr(t.id, desc, self.sdfg, self.codegen))
+
+    def _Attribute(self, t: ast.Attribute):
+        from dace.frontend.python.astutils import rname
+        name = rname(t)
+        if name not in self.sdfg.arrays:
+            return super()._Attribute(t)
+
+        # Replace values with their code-generated names (for example, persistent arrays)
+        desc = self.sdfg.arrays[name]
+        self.write(ptr(name, desc, self.sdfg, self.codegen))
 
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
@@ -1143,7 +1199,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
 
         if len(strides) != 1:
-            raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
+            raise SyntaxError('Missing dimensions in expression (expected one, got %d)' % len(strides))
 
         try:
             return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
@@ -1280,8 +1336,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             if memlet.data in self.sdfg.arrays and self.sdfg.arrays[memlet.data].dtype == dtype:
                 return self.generic_visit(node)
             return ast.parse(f"{name}[0]").body[0].value
-        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray))
-              and memlet.dynamic):
+        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray)) and memlet.dynamic):
             return ast.parse(f"{name}.pop()").body[0].value
         else:
             return self.generic_visit(node)
@@ -1315,8 +1370,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (
-                        value.value if sys.version_info >= (3, 8) else value.n):
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (value.value if sys.version_info
+                                                                                     >= (3, 8) else value.n):
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
@@ -1329,6 +1384,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         attrname = rname(node)
         module_name = attrname[:attrname.rfind(".")]
         func_name = attrname[attrname.rfind(".") + 1:]
+        if module_name == 'dace' and isinstance(getattr(dace, func_name, False), dtypes.typeclass):
+            # A type definition
+            dtype: dtypes.typeclass = getattr(dace, func_name)
+            return ast.copy_location(ast.Name(id=dtype.ctype, ctx=ast.Load), node)
         if module_name in dtypes._ALLOWED_MODULES:
             cppmodname = dtypes._ALLOWED_MODULES[module_name]
             return ast.copy_location(ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
@@ -1369,8 +1428,8 @@ class StructInitializer(ExtNodeTransformer):
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                           node: nodes.Node, callsite_stream: CodeIOStream):
+def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                           callsite_stream: CodeIOStream):
     state_dfg: SDFGState = cfg.nodes()[state_id]
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return

@@ -23,7 +23,6 @@ T = TypeVar('T')
 # External interface to guarantee correct usage
 ###############################################################################
 
-
 ###############################################################################
 # Property base implementation
 ###############################################################################
@@ -54,7 +53,7 @@ class Property(Generic[T]):
             indirected=False,  # This property belongs to a different class
             category='General',
             desc="",
-            serialize_if=lambda _: True): # By default serialize always
+            serialize_if=lambda _: True):  # By default serialize always
 
         self._getter = getter
         self._setter = setter
@@ -329,7 +328,7 @@ def make_properties(cls):
         for name, prop in own_properties.items():
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
-            if hasattr(obj, name):
+            if hasattr(obj, '_' + name):
                 raise PropertyError("Property {} already assigned in {}".format(name, type(obj).__name__))
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
@@ -528,7 +527,7 @@ class DictProperty(Property):
         The type of each element in the dictionary can be given as a type class,
         or as a function that converts an element to the wanted type (e.g.,
         `dace.symbolic.pystr_to_symbolic` for symbolic expressions).
-        
+
         :param key_type: The type of the keys in the dictionary.
         :param value_type: The type of the values in the dictionary.
         :param args: Other arguments (inherited from Property).
@@ -560,8 +559,10 @@ class DictProperty(Property):
         elif isinstance(val, (tuple, list)):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
-            val = {(k if self.is_key(k) else self.key_type(k)): (v if self.is_value(v) else self.value_type(v))
-                   for k, v in val.items()}
+            val = {
+                (k if self.is_key(k) else self.key_type(k)): (v if self.is_value(v) else self.value_type(v))
+                for k, v in val.items()
+            }
         super(DictProperty, self).__set__(obj, val)
 
     @staticmethod
@@ -844,7 +845,7 @@ class SetProperty(Property):
     def __set__(self, obj, val):
         if val is None:
             return super(SetProperty, self).__set__(obj, val)
-        
+
         # Check for uniqueness
         if isinstance(val, (frozenset, set)):
             pass
@@ -1096,7 +1097,8 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices) and not isinstance(val, sbs.SubsetUnion)):
+        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)
+                and not isinstance(val, sbs.SubsetUnion)):
             raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
         super(SubsetProperty, self).__set__(obj, val)
 

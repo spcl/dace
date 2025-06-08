@@ -82,7 +82,7 @@ namespace dace
                     CopyND<T, VECLEN, ALIGNED, OTHER_COPYDIMS...>::template ConstDst<OTHER_DSTDIMS...>::Copy(
                         src + i * src_stride, dst + i * DST_STRIDE, src_otherdims...);
             }
-            
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc, const int& src_stride, const Args&... src_otherdims)
             {
@@ -91,7 +91,7 @@ namespace dace
                     CopyND<T, VECLEN, ALIGNED, OTHER_COPYDIMS...>::template ConstDst<OTHER_DSTDIMS...>::Accumulate(
                         src + i * src_stride, dst + i * DST_STRIDE, acc, src_otherdims...);
             }
-                        
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc, const int& src_stride, const Args&... src_otherdims)
             {
@@ -129,7 +129,7 @@ namespace dace
                     CopyND<T, VECLEN, ALIGNED, OTHER_COPYDIMS...>::Dynamic::Accumulate(
                         src + i * src_stride, dst + i * dst_stride, acc, otherdims...);
             }
-            
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc, const int& src_stride, const int& dst_stride, const Args&... otherdims)
             {
@@ -140,7 +140,7 @@ namespace dace
             }
         };
     };
-    
+
     // Specialization for actual copy / accumulation
     template <typename T, int VECLEN, int ALIGNED>
     struct CopyND<T, VECLEN, ALIGNED>
@@ -179,7 +179,7 @@ namespace dace
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
-            
+
             template <typename ACCUMULATE>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
@@ -199,7 +199,7 @@ namespace dace
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
-            
+
             template <typename ACCUMULATE>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
@@ -239,7 +239,7 @@ namespace dace
                     CopyNDDynamic<T, VECLEN, ALIGNED, N-1>::template ConstSrc<OTHER_SRCDIMS...>::Accumulate(
                         src + i * SRC_STRIDE, dst + i * dst_stride, acc, otherdims...);
             }
-            
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc, const int& copydim, const int& dst_stride, const Args&... otherdims)
             {
@@ -278,7 +278,7 @@ namespace dace
                     CopyNDDynamic<T, VECLEN, ALIGNED, N-1>::template ConstDst<OTHER_DSTDIMS...>::Accumulate(
                         src + i * src_stride, dst + i * DST_STRIDE, acc, otherdims...);
             }
-            
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc, const int& copydim, const int& src_stride, const Args&... otherdims)
             {
@@ -319,7 +319,7 @@ namespace dace
                     CopyNDDynamic<T, VECLEN, ALIGNED, N - 1>::Dynamic::Accumulate(
                         src + i * src_stride, dst + i * dst_stride, acc, otherdims...);
             }
-            
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc, const int& copydim, const int& src_stride, const int& dst_stride, const Args&... otherdims)
             {
@@ -348,7 +348,7 @@ namespace dace
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
-            
+
             template <typename ACCUMULATE, typename... Args>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
@@ -369,7 +369,7 @@ namespace dace
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
-                        
+
             template <typename ACCUMULATE>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
@@ -389,7 +389,7 @@ namespace dace
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
-                        
+
             template <typename ACCUMULATE>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {

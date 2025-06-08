@@ -95,7 +95,7 @@ namespace dace {
                 int old = *iptr, assumed;
                 do {
                     assumed = old;
-                    old = atomicCAS(iptr, assumed, 
+                    old = atomicCAS(iptr, assumed,
                         __float_as_int(wcr(__int_as_float(assumed), value)));
                 } while (assumed != old);
                 return __int_as_float(old);
@@ -161,7 +161,7 @@ namespace dace {
 
     template <typename T>
     struct _wcr_fixed<ReductionType::Sum, T> {
-       
+
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicAdd(ptr, value);
@@ -170,7 +170,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr += value; 
+                    *ptr += value;
                 }
                 return old;
             #else
@@ -205,22 +205,34 @@ namespace dace {
 
 #if defined(DACE_USE_GPU_ATOMICS)
     template <>
-    struct _wcr_fixed<ReductionType::Sum, long long> {
-       
-        static DACE_HDFI long long reduce_atomic(long long *ptr, const long long& value) {
+    struct _wcr_fixed<ReductionType::Sum, int64_t> {
+
+        static DACE_HDFI int64_t reduce_atomic(int64_t *ptr, const int64_t& value) {
             return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic((
-                unsigned long long *)ptr, 
+                unsigned long long *)ptr,
                 static_cast<unsigned long long>(value));
         }
 
-        DACE_HDFI long long operator()(const long long &a, const long long &b) const { return a + b; }
+        DACE_HDFI int64_t operator()(const int64_t &a, const int64_t &b) const { return a + b; }
+    };
+
+    template <>
+    struct _wcr_fixed<ReductionType::Sum, uint64_t> {
+
+        static DACE_HDFI uint64_t reduce_atomic(uint64_t *ptr, const uint64_t& value) {
+            return _wcr_fixed<ReductionType::Sum, unsigned long long>::reduce_atomic((
+                unsigned long long *)ptr,
+                static_cast<unsigned long long>(value));
+        }
+
+        DACE_HDFI uint64_t operator()(const uint64_t &a, const uint64_t &b) const { return a + b; }
     };
 #endif
 
     template <typename T>
     struct _wcr_fixed<ReductionType::Product, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return wcr_custom<T>::reduce(
                     _wcr_fixed<ReductionType::Product, T>(), ptr, value);
@@ -229,7 +241,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr *= value; 
+                    *ptr *= value;
                 }
                 return old;
             #else
@@ -246,7 +258,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Min, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicMin(ptr, value);
             #else
@@ -258,11 +270,11 @@ namespace dace {
 
         DACE_HDFI T operator()(const T &a, const T &b) const { return ::min(a, b); }
     };
-    
+
     template <typename T>
     struct _wcr_fixed<ReductionType::Max, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicMax(ptr, value);
             #else
@@ -279,7 +291,7 @@ namespace dace {
     template <>
     struct _wcr_fixed<ReductionType::Min, float> {
 
-        static DACE_HDFI float reduce_atomic(float *ptr, const float& value) { 
+        static DACE_HDFI float reduce_atomic(float *ptr, const float& value) {
             return wcr_custom<float>::reduce_atomic(
                 _wcr_fixed<ReductionType::Min, float>(), ptr, value);
         }
@@ -287,11 +299,11 @@ namespace dace {
 
         DACE_HDFI float operator()(const float &a, const float &b) const { return ::min(a, b); }
     };
-    
+
     template <>
     struct _wcr_fixed<ReductionType::Max, float> {
 
-        static DACE_HDFI float reduce_atomic(float *ptr, const float& value) { 
+        static DACE_HDFI float reduce_atomic(float *ptr, const float& value) {
             return wcr_custom<float>::reduce_atomic(
                 _wcr_fixed<ReductionType::Max, float>(), ptr, value);
         }
@@ -302,7 +314,7 @@ namespace dace {
     template <>
     struct _wcr_fixed<ReductionType::Min, double> {
 
-        static DACE_HDFI double reduce_atomic(double *ptr, const double& value) { 
+        static DACE_HDFI double reduce_atomic(double *ptr, const double& value) {
             return wcr_custom<double>::reduce_atomic(
                 _wcr_fixed<ReductionType::Min, double>(), ptr, value);
         }
@@ -310,11 +322,11 @@ namespace dace {
 
         DACE_HDFI double operator()(const double &a, const double &b) const { return ::min(a, b); }
     };
-    
+
     template <>
     struct _wcr_fixed<ReductionType::Max, double> {
 
-        static DACE_HDFI double reduce_atomic(double *ptr, const double& value) { 
+        static DACE_HDFI double reduce_atomic(double *ptr, const double& value) {
             return wcr_custom<double>::reduce_atomic(
                 _wcr_fixed<ReductionType::Max, double>(), ptr, value);
         }
@@ -326,7 +338,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Logical_And, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicAnd(ptr, value ? T(1) : T(0));
             #elif defined (_OPENMP) && _OPENMP >= 201107
@@ -335,7 +347,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr &= val; 
+                    *ptr &= val;
                 }
                 return old;
             #else
@@ -353,7 +365,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Bitwise_And, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicAnd(ptr, value);
             #elif defined (_OPENMP) && _OPENMP >= 201107
@@ -361,7 +373,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr &= value; 
+                    *ptr &= value;
                 }
                 return old;
             #else
@@ -378,7 +390,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Logical_Or, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicOr(ptr, value ? T(1) : T(0));
             #elif defined (_OPENMP) && _OPENMP >= 201107
@@ -387,7 +399,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr |= val; 
+                    *ptr |= val;
                 }
                 return old;
             #else
@@ -405,7 +417,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Bitwise_Or, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicOr(ptr, value);
             #elif defined (_OPENMP) && _OPENMP >= 201107
@@ -413,7 +425,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr |= value; 
+                    *ptr |= value;
                 }
                 return old;
             #else
@@ -430,7 +442,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Logical_Xor, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicXor(ptr, value ? T(1) : T(0));
             #elif defined (_OPENMP) && _OPENMP >= 201107
@@ -439,7 +451,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr ^= val; 
+                    *ptr ^= val;
                 }
                 return old;
             #else
@@ -457,7 +469,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Bitwise_Xor, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicXor(ptr, value);
             #elif defined (_OPENMP) && _OPENMP >= 201107
@@ -465,7 +477,7 @@ namespace dace {
                 #pragma omp atomic capture
                 {
                     old = *ptr;
-                    *ptr ^= value; 
+                    *ptr ^= value;
                 }
                 return old;
             #else
@@ -482,7 +494,7 @@ namespace dace {
     template <typename T>
     struct _wcr_fixed<ReductionType::Exchange, T> {
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) {
             #ifdef DACE_USE_GPU_ATOMICS
                 return atomicExch(ptr, value);
             #else
@@ -506,7 +518,7 @@ namespace dace {
     template<typename T>
     using EnableIfScalar = typename std::enable_if<std::is_scalar<T>::value>::type;
 
-    // Any vector type that is not of length 1, or struct/complex types 
+    // Any vector type that is not of length 1, or struct/complex types
     // do not support atomics. In these cases, we regress to locked updates.
     template <ReductionType REDTYPE, typename T, typename SFINAE = void>
     struct wcr_fixed
@@ -518,9 +530,9 @@ namespace dace {
             return old;
         }
 
-        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) 
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value)
         {
-            return wcr_custom<T>::template reduce_atomic(
+            return wcr_custom<T>::template reduce_atomic<decltype(_wcr_fixed<REDTYPE, T>())>(
                 _wcr_fixed<REDTYPE, T>(), ptr, value);
         }
     };
@@ -568,7 +580,7 @@ namespace dace {
             __DACE_UNROLL
             for (int i = 1; i < N; ++i)
               scal = _wcr_fixed<REDTYPE, T>()(scal, value[i]);
-            
+
             return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, scal);
         }
     };

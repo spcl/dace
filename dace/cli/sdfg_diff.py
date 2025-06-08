@@ -7,9 +7,12 @@ import json
 import os
 import platform
 import tempfile
-from typing import Dict, Literal, Set, Tuple, Union
+from typing import Dict, Set, Tuple, Union
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 
-import jinja2
 import dace
 from dace import memlet as mlt
 from dace.sdfg import nodes as nd
@@ -17,7 +20,6 @@ from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock
 import dace.serialize
-
 
 DiffableT = Union[ControlFlowBlock, nd.Node, MultiConnectorEdge[mlt.Memlet], Edge[InterstateEdge]]
 DiffSetsT = Tuple[Set[str], Set[str], Set[str]]
@@ -66,7 +68,7 @@ def _print_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, diff_sets: DiffSetsT) -> N
         print('SDFGs are identical')
 
 
-def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, eq_strategy = Union[Literal['hash', '==']]) -> DiffSetsT:
+def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG, eq_strategy=Union[Literal['hash', '==']]) -> DiffSetsT:
     all_id_elements_A: Dict[str, DiffableT] = dict()
     all_id_elements_B: Dict[str, DiffableT] = dict()
 
@@ -148,17 +150,13 @@ def main():
                         action='store_true',
                         help="If set, visualize the difference graphically",
                         default=False)
-    parser.add_argument('-o',
-                        '--output',
-                        dest='output',
-                        help="The output filename to generate",
-                        type=str)
+    parser.add_argument('-o', '--output', dest='output', help="The output filename to generate", type=str)
     parser.add_argument('-H',
                         '--hash',
                         dest='hash',
                         action='store_true',
                         help="If set, use the hash of JSON serialized properties for change checks instead of " +
-                             "Python's dictionary equivalence checks. This makes changes order sensitive.",
+                        "Python's dictionary equivalence checks. This makes changes order sensitive.",
                         default=False)
 
     args = parser.parse_args()
@@ -179,6 +177,11 @@ def main():
     diff_sets = _sdfg_diff(sdfg_A, sdfg_B, eq_strategy)
 
     if args.graphical:
+        try:
+            import jinja2
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError('Graphical SDFG diff requires jinja2, please install by running `pip install jinja2`')
+
         basepath = os.path.join(os.path.dirname(os.path.realpath(dace.__file__)), 'viewer')
         template_loader = jinja2.FileSystemLoader(searchpath=os.path.join(basepath, 'templates'))
         template_env = jinja2.Environment(loader=template_loader)

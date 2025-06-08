@@ -67,12 +67,66 @@ def test_multiple_targets_parentheses():
 
 
 @dace.program
+def multiple_targets_unpacking(a: dace.float32[2]):
+    b, c = a
+    return b, c
+
+
+def test_multiple_targets_unpacking():
+    a = np.zeros((2, ), dtype=np.float32)
+    a[0] = np.pi
+    a[1] = 2 * np.pi
+    b, c = multiple_targets_unpacking(a=a)
+    assert (b[0] == a[0])
+    assert (c[0] == a[1])
+
+
+@dace.program
+def multiple_targets_unpacking_multidim(a: dace.float64[2, 3, 4]):
+    b, c = a
+    return b, c
+
+
+def test_multiple_targets_unpacking_multidim():
+    a = np.random.rand(2, 3, 4)
+    b, c = multiple_targets_unpacking_multidim(a)
+    bref, cref = a
+    assert np.allclose(b, bref)
+    assert np.allclose(c, cref)
+
+
+@dace.program
+def multiple_targets_unpacking_func(a: dace.float64[2, 3, 4]):
+    b, c = np.square(a)
+    return b, c
+
+
+def test_multiple_targets_unpacking_func():
+    a = np.random.rand(2, 3, 4)
+    b, c = multiple_targets_unpacking_func(a)
+    bref, cref = np.square(a)
+    assert np.allclose(b, bref)
+    assert np.allclose(c, cref)
+
+
+def test_multiple_targets_unpacking_invalid():
+
+    @dace.program
+    def tester(a: dace.float64[2, 3, 4]):
+        b, c, d = np.square(a)
+        return b, c, d
+
+    with pytest.raises(DaceSyntaxError):
+        tester.to_sdfg()
+
+
+@dace.program
 def starred_target(a: dace.float32[1]):
     b, *c, d, e = a, 2 * a, 3 * a, 4 * a, 5 * a, 6 * a
     return b, c, d, e
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_starred_target():
     a = np.zeros((1, ), dtype=np.float32)
     a[0] = np.pi
@@ -94,7 +148,7 @@ def attribute_reference(a: mystruct[1]):
     a.b[0] = 6
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_attribute_reference():
     a = np.ndarray((1, ), dtype=np.dtype(mystruct.as_ctypes()))
     attribute_reference(a=a)
@@ -175,6 +229,10 @@ if __name__ == "__main__":
     test_single_target_parentheses()
     test_multiple_targets()
     test_multiple_targets_parentheses()
+    test_multiple_targets_unpacking()
+    test_multiple_targets_unpacking_multidim()
+    test_multiple_targets_unpacking_func()
+    test_multiple_targets_unpacking_invalid()
 
     # test_starred_target()
     # test_attribute_reference()

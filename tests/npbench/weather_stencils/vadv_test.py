@@ -217,13 +217,12 @@ def test_cpu(monkeypatch):
     run_vadv(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Compiler error")
 @pytest.mark.gpu
 def test_gpu():
     run_vadv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Variable not defined")
+@pytest.mark.skip(reason="Xilinx internal compiler error")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_vadv(dace.dtypes.DeviceType.FPGA)

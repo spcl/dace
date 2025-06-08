@@ -139,9 +139,7 @@ of << i << "\\n";""",
     return sdfg_outer
 
 
-def _make_read_write_sdfg(
-    conforming_memlet: bool,
-) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
+def _make_read_write_sdfg(conforming_memlet: bool, ) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
     """Creates an SDFG for the `test_read_write_{1, 2}` tests.
 
     The SDFG is rather synthetic, it has an input `in_arg` and adds to every element
@@ -153,7 +151,6 @@ def _make_read_write_sdfg(
 
     Depending on `conforming_memlet` the memlet that copies `inner_A` into `inner_B`
     will either be associated to `inner_A` (`True`) or `inner_B` (`False`).
-    This choice has consequences on if the transformation can apply or not.
 
     Notes:
         This is most likely a bug, see [issue#1643](https://github.com/spcl/dace/issues/1643),
@@ -171,7 +168,10 @@ def _make_read_write_sdfg(
 
     ostate.add_mapped_tasklet(
         "producer",
-        map_ranges={"i": "0:4", "j": "0:4"},
+        map_ranges={
+            "i": "0:4",
+            "j": "0:4"
+        },
         inputs={"__in": dace.Memlet("in_arg[i, j]")},
         code="__out = __in + 10.",
         outputs={"__out": dace.Memlet("A[i, j]")},
@@ -190,7 +190,10 @@ def _make_read_write_sdfg(
 
     istate.add_mapped_tasklet(
         "inner_consumer",
-        map_ranges={"i": "0:4", "j": "0:4"},
+        map_ranges={
+            "i": "0:4",
+            "j": "0:4"
+        },
         inputs={},
         code="__out = 10",
         outputs={"__out": dace.Memlet("inner_A[i, j]")},
@@ -254,14 +257,14 @@ def test_prune_connectors(n=None):
 
     # The pruned connectors are not removed so they have to be supplied.
     sdfg(read_used=arr_in,
-            read_unused=arr_in,
-            read_used_outer=arr_in,
-            read_unused_outer=arr_in,
-            write_used=arr_out,
-            write_unused=arr_out,
-            write_used_outer=arr_out,
-            write_unused_outer=arr_out,
-            N=n)
+         read_unused=arr_in,
+         read_used_outer=arr_in,
+         read_unused_outer=arr_in,
+         write_used=arr_out,
+         write_unused=arr_out,
+         write_used_outer=arr_out,
+         write_unused_outer=arr_out,
+         N=n)
 
     assert np.allclose(arr_out, arr_in + 1)
 
@@ -330,16 +333,6 @@ def test_unused_retval_2():
     a = np.random.rand(2)
     sdfg(output=a)
     assert np.allclose(a, 1)
-
-
-def test_read_write_1():
-    # Because the memlet is conforming, we can apply the transformation.
-    sdfg = _make_read_write_sdfg(True)
-
-    assert first_mode == PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=osdfg, expr_index=0, permissive=False)
-
-
-
 
 
 def test_prune_connectors_with_dependencies():
@@ -420,19 +413,55 @@ def test_prune_connectors_with_dependencies():
     assert np.allclose(np_d, np_d_)
 
 
-def test_read_write_1():
-    # Because the memlet is conforming, we can apply the transformation.
+def test_read_write():
     sdfg, nsdfg = _make_read_write_sdfg(True)
-
-    assert PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
-    sdfg.apply_transformations_repeated(PruneConnectors, validate=True, validate_all=True)
-
-
-def test_read_write_2():
-    # Because the memlet is not conforming, we can not apply the transformation.
-    sdfg, nsdfg = _make_read_write_sdfg(False)
-
     assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
+
+    sdfg, nsdfg = _make_read_write_sdfg(False)
+    assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
+
+
+def test_prune_connectors_with_conditional_block():
+    """
+    Verifies that a connector to scalar data (here 'cond') in a NestedSDFG is not removed,
+    when this data is only accessed by condition expressions in ControlFlowRegion nodes.
+    """
+    sdfg = dace.SDFG('tester')
+    A, A_desc = sdfg.add_array('A', [4], dace.float64)
+    B, B_desc = sdfg.add_array('B', [4], dace.float64)
+    COND, COND_desc = sdfg.add_array('COND', [4], dace.bool_)
+    OUT, OUT_desc = sdfg.add_array('OUT', [4], dace.float64)
+
+    nsdfg = dace.SDFG('nested')
+    a, _ = nsdfg.add_scalar('a', A_desc.dtype)
+    b, _ = nsdfg.add_scalar('b', B_desc.dtype)
+    cond, _ = nsdfg.add_scalar('cond', COND_desc.dtype)
+    out, _ = nsdfg.add_scalar('out', OUT_desc.dtype)
+
+    if_region = dace.sdfg.state.ConditionalBlock("if")
+    nsdfg.add_node(if_region)
+    entry_state = nsdfg.add_state("entry", is_start_block=True)
+    nsdfg.add_edge(entry_state, if_region, dace.InterstateEdge())
+
+    then_body = dace.sdfg.state.ControlFlowRegion("then_body", sdfg=nsdfg)
+    a_state = then_body.add_state("true_branch", is_start_block=True)
+    if_region.add_branch(dace.sdfg.state.CodeBlock(cond), then_body)
+    a_state.add_nedge(a_state.add_access(a), a_state.add_access(out), dace.Memlet(out))
+
+    else_body = dace.sdfg.state.ControlFlowRegion("else_body", sdfg=nsdfg)
+    b_state = else_body.add_state("false_branch", is_start_block=True)
+    if_region.add_branch(dace.sdfg.state.CodeBlock(f"not ({cond})"), else_body)
+    b_state.add_nedge(b_state.add_access(b), b_state.add_access(out), dace.Memlet(out))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, sdfg, inputs={a, b, cond}, outputs={out})
+    me, mx = state.add_map('map', dict(i="0:4"))
+    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
+    state.add_memlet_path(state.add_access(COND), me, nsdfg_node, dst_conn=cond, memlet=dace.Memlet(f"{COND}[i]"))
+    state.add_memlet_path(nsdfg_node, mx, state.add_access(OUT), src_conn=out, memlet=dace.Memlet(f"{OUT}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
 
 
 if __name__ == "__main__":
@@ -449,3 +478,4 @@ if __name__ == "__main__":
     test_prune_connectors_with_dependencies()
     test_read_write_1()
     test_read_write_2()
+    test_prune_connectors_with_conditional_block()

@@ -11,6 +11,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg import infer_types
+from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
@@ -19,8 +20,8 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.single_level_sdfg_only
-class DeadDataflowElimination(ppl.Pass):
+@transformation.explicit_cf_compatible
+class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     """
     Removes unused computations from SDFG states.
     Traverses the graph backwards, removing any computations that result in transient descriptors
@@ -41,15 +42,15 @@ class DeadDataflowElimination(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If dataflow or states changed, new dead code may be exposed
-        return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.States)
+        return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.CFG)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.StateReachability, ap.AccessSets}
+        return {ap.ControlFlowBlockReachability, ap.AccessSets}
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
+    def apply(self, region, pipeline_results):
         """
         Removes unreachable dataflow throughout SDFG states.
-        
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -57,15 +58,18 @@ class DeadDataflowElimination(ppl.Pass):
         :return: A dictionary mapping states to removed data descriptor names, or None if nothing changed.
         """
         # Depends on the following analysis passes:
-        #  * State reachability
-        #  * Read/write access sets per state
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.cfg_id]
-        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.cfg_id]
+        #  * Control flow block reachability
+        #  * Read/write access sets per block
+        sdfg = region if isinstance(region, SDFG) else region.sdfg
+        reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
+            ap.ControlFlowBlockReachability.__name__][region.cfg_id]
+        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
-        # Traverse SDFG backwards
+        # Traverse region backwards
         try:
-            state_order = list(cfg.blockorder_topological_sort(sdfg))
+            state_order: List[SDFGState] = list(
+                cfg.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=True))
         except KeyError:
             return None
         for state in reversed(state_order):
@@ -159,8 +163,10 @@ class DeadDataflowElimination(ppl.Pass):
                                             for code in leaf.src.code.code:
                                                 ast_find.generic_visit(code)
                                         except astutils.NameFound:
-                                            # then add the hint expression 
-                                            leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body + leaf.src.code.code
+                                            # then add the hint expression
+                                            leaf.src.code.code = ast.parse(
+                                                f'{leaf.src_conn}: dace.{ctype.to_string()}\n'
+                                            ).body + leaf.src.code.code
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
@@ -190,8 +196,10 @@ class DeadDataflowElimination(ppl.Pass):
 
             # Update read sets for the predecessor states to reuse
             remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
+            remaining_data_containers = set(node.data for node in remaining_access_nodes)
             removed_data_containers = set(n.data for n in result[state]
-                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes)
+                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes
+                                          and n.data not in remaining_data_containers)
             access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
 
         return result or None

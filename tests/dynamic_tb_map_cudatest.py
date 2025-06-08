@@ -292,8 +292,78 @@ def test_dynamic_map_with_step():
     assert np.allclose(val, ref.data)
 
 
+@pytest.mark.gpu
+def test_dynamic_multidim_map():
+
+    @dace.program
+    def tester(a: dace.float32[H, W, nnz]):
+        A = dace.ndarray([H, W, nnz], dtype=dace.float32, storage=dace.StorageType.GPU_Global)
+        A[:] = a
+        for i, j in dace.map[0:H, 0:W] @ dace.ScheduleType.GPU_Device:
+            for k in dace.map[0:nnz] @ dace.ScheduleType.GPU_ThreadBlock_Dynamic:
+                A[i, j, k] = i * 110 + j * 11 + k
+        a[:] = A
+
+    a = np.zeros((10, 11, 65), dtype=np.float32)
+    tester(a)
+    assert np.allclose(a, np.fromfunction(lambda i, j, k: i * 110 + j * 11 + k, (10, 11, 65), dtype=np.float32))
+
+
+@pytest.mark.skip('Nested maps with work-stealing thread-block schedule are currently unsupported')
+def test_dynamic_nested_map():
+
+    @dace.program
+    def nested2(A: dace.float32[W], i: dace.int32, j: dace.int32):
+        A[j] = i * 10 + j
+
+    @dace.program
+    def nested1(A: dace.float32[W], i: dace.int32):
+        for j in dace.map[0:W] @ dace.ScheduleType.GPU_ThreadBlock_Dynamic:
+            nested2(A, i, j)
+
+    @dace.program
+    def dynamic_nested_map(a: dace.float32[H, W]):
+        A = dace.ndarray([H, W], dtype=dace.float32, storage=dace.StorageType.GPU_Global)
+        A[:] = a
+        for i in dace.map[0:H] @ dace.ScheduleType.GPU_Device:
+            nested1(A[i], i)
+
+        a[:] = A
+
+    a = np.zeros((10, 11), dtype=np.float32)
+    sdfg = dynamic_nested_map.to_sdfg(simplify=False)
+    for _, _, arr in sdfg.arrays_recursive():
+        if arr.storage in (dace.StorageType.GPU_Shared, dace.StorageType.Default):
+            arr.storage = dace.StorageType.Register
+    sdfg(a, H=10, W=11)
+    assert np.allclose(a, np.fromfunction(lambda i, j: i * 10 + j, (10, 11), dtype=np.float32))
+
+
+@pytest.mark.gpu
+def test_dynamic_default_schedule():
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(a: dace.float32[N, 10]):
+        A = dace.ndarray([N, 10], dtype=dace.float32, storage=dace.StorageType.GPU_Global)
+        A[:] = a
+        for i in dace.map[0:N] @ dace.ScheduleType.GPU_Device:
+            smem = np.empty((10, ), dtype=np.float32) @ dace.StorageType.GPU_Shared
+            smem[:] = 1
+            for j in dace.map[0:10] @ dace.ScheduleType.GPU_ThreadBlock_Dynamic:
+                A[i, j] = i * 65 + smem[j]
+        a[:] = A
+
+    a = np.zeros((65, 10), dtype=np.float32)
+    tester(a)
+    assert np.allclose(a, np.fromfunction(lambda i, j: i * 65 + 1, (65, 10), dtype=np.float32))
+
+
 if __name__ == '__main__':
     test_dynamic_map()
     test_dynamic_maps()
     test_nested_dynamic_map()
     test_dynamic_map_with_step()
+    test_dynamic_multidim_map()
+    # test_dynamic_nested_map()
+    test_dynamic_default_schedule()

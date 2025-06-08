@@ -1,24 +1,21 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion.    """
 import dace
 import networkx as nx
 
-from dace import dtypes, registry, symbolic, subsets, data
-from dace.sdfg import nodes, utils, replace, SDFG, scope_contains_scope
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.scope import ScopeTree
+from dace import dtypes, symbolic, subsets, data
+from dace.sdfg import nodes, SDFG
 from dace.memlet import Memlet
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.symbolic import overapproximate
-from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
+from dace.sdfg.propagation import _propagate_node
 from dace.transformation.subgraph import helpers
-from dace.transformation.dataflow import RedundantArray
-from dace.sdfg.utils import consolidate_edges_scope, get_view_node
+from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation.helpers import find_contiguous_subsets
 
 from copy import deepcopy as dcpy
-from typing import List, Union, Tuple
+from typing import List, Tuple
 import warnings
 
 import dace.libraries.standard as stdlib
@@ -74,10 +71,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         desc="A list of array names to treat as non-transients and not compress",
     )
 
-    def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         """
         Fusible if
-        
+
             1. Maps have the same access sets and ranges in order
             2. Any nodes in between two maps are AccessNodes only, without WCR
                There is at most one AccessNode only on a path between two maps,
@@ -89,7 +86,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             4. Check for any disjoint accesses of arrays.
         """
         # get graph
-        graph = subgraph.graph
+        graph: SDFGState = subgraph.graph
         for node in subgraph.nodes():
             if node not in graph.nodes():
                 return False
@@ -350,18 +347,18 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     @staticmethod
     def get_adjacent_nodes(
             sdfg, graph, map_entries) -> Tuple[List[nodes.AccessNode], List[nodes.AccessNode], List[nodes.AccessNode]]:
-        """ 
+        """
         For given map entries, finds a set of in, out and intermediate nodes as defined below
 
         :param sdfg: SDFG
         :param graph: State of interest
-        :param map_entries: List of all outermost scoped maps that induce the subgraph 
+        :param map_entries: List of all outermost scoped maps that induce the subgraph
         :return: Tuple of (in_nodes, intermediate_nodes, out_nodes)
-        
-        - In_nodes are nodes that serve as pure input nodes for the map entries 
+
+        - In_nodes are nodes that serve as pure input nodes for the map entries
         - Out nodes are nodes that serve as pure output nodes for the map entries
-        - Interemdiate nodes are nodes that serve as buffer storage between outermost scoped map entries and exits 
-          of the induced subgraph 
+        - Interemdiate nodes are nodes that serve as buffer storage between outermost scoped map entries and exits
+          of the induced subgraph
 
         -> in_nodes are trivially disjoint from the other two types of access nodes
         -> Intermediate_nodes and out_nodes are not necessarily disjoint
@@ -412,15 +409,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     @staticmethod
     def check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
-        """ 
+        """
         Checks whether given outermost scoped map entries have topological structure apt for fusion
 
-        :param sdfg: SDFG 
-        :param graph: State 
-        :param map_entries: List of outermost scoped map entries induced by subgraph 
-        :param intermediate_nodes: List of intermediate access nodes 
-        :param out_nodes: List of outgoing access nodes 
-        :return: Boolean value indicating fusibility 
+        :param sdfg: SDFG
+        :param graph: State
+        :param map_entries: List of outermost scoped map entries induced by subgraph
+        :param intermediate_nodes: List of intermediate access nodes
+        :param out_nodes: List of outgoing access nodes
+        :return: Boolean value indicating fusibility
         """
         # For each intermediate and out node: must never reach any map
         # entry if it is not connected to map entry immediately
@@ -462,13 +459,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                  map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit],
                                  node: nodes.AccessNode):
         """
-        For a given intermediate access node, return a set of indices that correspond to array / subset dimensions in which no change is observed 
+        For a given intermediate access node, return a set of indices that correspond to array / subset dimensions in which no change is observed
         upon propagation through the corresponding map nodes in map_entries / map_exits.
 
-        :param map_entries: List of outermost scoped map entries 
-        :param map_exits: List of corresponding exit nodes to map_entries, in order 
-        :param node: Intermediate access node of interest 
-        :return: Set of invariant integer dimensions 
+        :param map_entries: List of outermost scoped map entries
+        :param map_exits: List of corresponding exit nodes to map_entries, in order
+        :param node: Intermediate access node of interest
+        :return: Set of invariant integer dimensions
         """
         variant_dimensions = set()
         subset_length = -1
@@ -545,15 +542,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet):
         """
-        DFS to replace strides and volumes of data that exhibits nested SDFGs 
-        adjacent to its corresponding access nodes, applied during post-processing 
+        DFS to replace strides and volumes of data that exhibits nested SDFGs
+        adjacent to its corresponding access nodes, applied during post-processing
         of a fused graph. Operates in-place.
 
-        :param sdfg: SDFG 
-        :param nsdfg: The Nested SDFG of interest 
-        :param name: Name of the array in the SDFG 
-        :param nname: Name of the array in the nested SDFG 
-        :param memlet: Memlet adjacent to the nested SDFG that leads to the 
+        :param sdfg: SDFG
+        :param nsdfg: The Nested SDFG of interest
+        :param name: Name of the array in the SDFG
+        :param nname: Name of the array in the nested SDFG
+        :param memlet: Memlet adjacent to the nested SDFG that leads to the
                        access node with the corresponding data name
         """
         # check whether array needs to change
@@ -602,19 +599,19 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                      map_entries: List[nodes.MapEntry],
                                      map_exits: List[nodes.MapExit],
                                      do_not_override: List[str] = []):
-        """ 
-        Checks for all intermediate nodes whether they appear 
+        """
+        Checks for all intermediate nodes whether they appear
         only within the induced fusible subgraph my map_entries and map_exits.
-        This is returned as a dict that contains a boolean value for each 
+        This is returned as a dict that contains a boolean value for each
         intermediate node as a key.
 
-        :param sdfg: SDFG 
-        :param state: State of interest 
-        :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph 
-        :param map_entries: List of outermost scoped map entries in the subgraph 
-        :param map_exits: List of map exits corresponding to map_entries in order 
-        :param do_not_override: List of data array names not to be compressed 
-        :param return: A dictionary indicating for each data string whether its array can be compressed 
+        :param sdfg: SDFG
+        :param state: State of interest
+        :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph
+        :param map_entries: List of outermost scoped map entries in the subgraph
+        :param map_exits: List of map exits corresponding to map_entries in order
+        :param do_not_override: List of data array names not to be compressed
+        :param return: A dictionary indicating for each data string whether its array can be compressed
         """
 
         # search whether intermediate_nodes appear outside of subgraph
@@ -626,7 +623,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # do a full global search and count each data from each intermediate node
         scope_dict = graph.scope_dict()
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data in data_intermediate:
                     # add them to the counter set in all cases
@@ -650,18 +647,18 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     def clone_intermediate_nodes(self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
                                  intermediate_nodes: List[nodes.AccessNode], out_nodes: List[nodes.AccessNode],
                                  map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
-        """ 
-        Creates cloned access nodes and data arrays for nodes that are both in intermediate nodes 
+        """
+        Creates cloned access nodes and data arrays for nodes that are both in intermediate nodes
         and out nodes, redirecting output from the original node to the cloned node. Operates in-place.
 
-        :param sdfg: SDFG 
-        :param state: State of interest 
-        :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph 
+        :param sdfg: SDFG
+        :param state: State of interest
+        :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph
         :param out_nodes: List of out nodes appearing in a fusible subgraph
-        :param map_entries: List of outermost scoped map entries in the subgraph 
-        :param map_exits: List of map exits corresponding to map_entries in order 
-        :return: A dict that maps each intermediate node that also functions as an out node 
-                       to the respective cloned transient node 
+        :param map_entries: List of outermost scoped map entries in the subgraph
+        :param map_exits: List of map exits corresponding to map_entries in order
+        :return: A dict that maps each intermediate node that also functions as an out node
+                       to the respective cloned transient node
         """
 
         transients_created = {}
@@ -697,15 +694,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                        intermediate_nodes: List[nodes.AccessNode], map_entries: List[nodes.MapEntry],
                                        map_exits: List[nodes.MapExit]):
         """
-        Determines the invariant dimensions for each node -- dimensions in 
-        which the access set of the memlets propagated through map entries and 
+        Determines the invariant dimensions for each node -- dimensions in
+        which the access set of the memlets propagated through map entries and
         exits does not change.
-        
-        :param sdfg: SDFG 
-        :param state: State of interest 
-        :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph 
-        :param map_entries: List of outermost scoped map entries in the subgraph 
-        :param map_exits: List of map exits corresponding to map_entries in order 
+
+        :param sdfg: SDFG
+        :param state: State of interest
+        :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph
+        :param map_entries: List of outermost scoped map entries in the subgraph
+        :param map_exits: List of map exits corresponding to map_entries in order
         :return: A dict mapping each intermediate node (nodes.AccessNode) to a list of integer dimensions
         """
         # create dict for every array that for which
@@ -738,10 +735,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                    map_entries: List[nodes.MapEntry],
                                    map_exits: List[nodes.MapExit],
                                    do_not_override: List[str] = []):
-        """ 
+        """
         Helper function that computes the following information:
-        1. Determine whether intermediate nodes only appear within the induced fusible subgraph. This is equivalent to checking for compresssibility. 
-        2. Determine whether any intermediate transients are also out nodes, if so they have to be cloned 
+        1. Determine whether intermediate nodes only appear within the induced fusible subgraph. This is equivalent to checking for compresssibility.
+        2. Determine whether any intermediate transients are also out nodes, if so they have to be cloned
         3. Determine invariant dimensions for any intermediate transients (that are compressible).
 
         :return: A tuple (subgraph_contains_data, transients_created, invariant_dimensions)

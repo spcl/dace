@@ -87,7 +87,6 @@ from six import StringIO
 from dace import dtypes
 from dace.codegen.tools import type_inference
 
-
 if sys.version_info < (3, 8):
     BytesConstant = ast.Bytes
     EllipsisConstant = ast.Ellipsis
@@ -100,7 +99,6 @@ else:
     NameConstant = ast.Constant
     NumConstant = ast.Constant
     StrConstant = ast.Constant
-
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -349,6 +347,8 @@ class CPPUnparser:
                             # if the veclen is greater than one, this should be defined with a vector data type
                             self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],
                                                       inferred_type.veclen))
+                        elif self.language == dace.dtypes.Language.OpenCL:
+                            self.write(dace.dtypes._OCL_TYPES[inferred_type.type] + " ")
                         else:
                             self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
@@ -555,7 +555,11 @@ class CPPUnparser:
             if result.find("b'") >= 0:
                 self.write(result)
             else:
-                self.write(result.replace('\'', '\"'))
+                towrite = result
+                if result.startswith("'"):
+                    towrite = result[1:-1].replace('"', '\\"')
+                    towrite = f'"{towrite}"'
+                self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
@@ -745,10 +749,11 @@ class CPPUnparser:
 
     def _Num(self, t):
         t_n = t.value if sys.version_info >= (3, 8) else t.n
-        repr_n = repr(t_n)
+        repr_n = str(t_n)
         # For complex values, use ``dtype_to_typeclass``
         if isinstance(t_n, complex):
             dtype = dtypes.dtype_to_typeclass(complex)
+            repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
 
         # Handle large integer values
         if isinstance(t_n, int):
@@ -765,10 +770,8 @@ class CPPUnparser:
             elif bits >= 64:
                 warnings.warn(f'Value wider than 64 bits encountered in expression ({t_n}), emitting as-is')
 
-        if repr_n.endswith("j"):
-            self.write("%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
-        else:
-            self.write(repr_n.replace("inf", INFSTR))
+        repr_n = repr_n.replace("inf", INFSTR)
+        self.write(repr_n)
 
     def _List(self, t):
         raise NotImplementedError('Invalid C++')
@@ -920,7 +923,7 @@ class CPPUnparser:
                     power = t.right.value if sys.version_info >= (3, 8) else t.right.n
                 elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
                     if isinstance(t.right.operand, (NumConstant, ast.Constant)):
-                        power = - (t.right.operand.value if sys.version_info >= (3, 8) else t.right.operand.n)
+                        power = -(t.right.operand.value if sys.version_info >= (3, 8) else t.right.operand.n)
 
                 if power is not None and int(power) == power:
                     negative = power < 0
@@ -1187,6 +1190,8 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
                           expr_semicolon,
                           defined_symbols=defined_symbols)
+    elif isinstance(code, int):
+        return str(code)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)

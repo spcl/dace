@@ -92,7 +92,7 @@ def test_tensordot_01():
 
 # TODO: Enable after fixing cuTENSOR in CI
 #@pytest.mark.gpu
-@pytest.mark.skip
+@pytest.mark.skip('CUTENSOR is not supported in CI')
 def test_tensordot_02():
 
     @dace.program(device=dace.dtypes.DeviceType.GPU)
@@ -131,7 +131,7 @@ def test_tensordot_11():
 
 # TODO: Enable after fixing cuTENSOR in CI
 #@pytest.mark.gpu
-@pytest.mark.skip
+@pytest.mark.skip('CUTENSOR is not supported in CI')
 def test_tensordot_12():
 
     @dace.program(device=dace.dtypes.DeviceType.GPU)
@@ -192,7 +192,7 @@ def test_tensordot_21():
 
 # TODO: Enable after fixing cuTENSOR in CI
 #@pytest.mark.gpu
-@pytest.mark.skip
+@pytest.mark.skip('CUTENSOR is not supported in CI')
 def test_tensordot_22():
 
     @dace.program(device=dace.dtypes.DeviceType.GPU)

@@ -4,7 +4,7 @@ The Python-Frontend aims to assist users in creating SDFGs from Python code
 relatively quickly. You may read a list of supported Python features
 [here](python_supported_features.md). The frontend supports also operations
 among DaCe arrays, in a manner similar to NumPy. A short tutorial can be bound
-[here](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb).
+[here](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/numpy_frontend.ipynb).
 Please note that the Python-Frontend is still in an early version. For any issues
 and feature requests, you can create an issue in the main DaCe project. You can
 also address any questions you have to alziogas@inf.ethz.ch
@@ -14,7 +14,7 @@ also address any questions you have to alziogas@inf.ethz.ch
 The DaCe framework officially supports Python 3 from version 3.7.
 The Python-Frontend also works with version 3.8-3.10. However, the module SymPy
 must be updated to version 1.6.2 or newer. Please note that there are some
-issues between DaCe and SymPy 1.6.2 (see [#367](https://github.com/spcl/dace/pull/367)).  
+issues between DaCe and SymPy 1.6.2 (see [#367](https://github.com/spcl/dace/pull/367)).
 
 ## Main Limitations
 
@@ -72,5 +72,5 @@ automatically may result in invalid SDFGs. Currently known issues include:
 ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate them.
 - When there are sequential dependencies between statements due to updating a loop variable,
 StateFusion may erroneously lead to concurrent execution of those statements (see [#315](https://github.com/spcl/dace/issues/315)).
-  
+
 Temporary workaround: Disable the automatic simplification pass flag in the configuration file `.dace.conf`.

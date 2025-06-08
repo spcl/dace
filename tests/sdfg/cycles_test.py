@@ -2,6 +2,7 @@
 import pytest
 
 import dace
+from dace.sdfg.validation import InvalidSDFGError
 
 
 def test_cycles():
@@ -29,6 +30,23 @@ def test_cycles_memlet_path():
         sdfg.validate()
 
 
+def test_cycles_1562():
+    """
+    Test for issue #1562.
+    """
+    with pytest.raises(InvalidSDFGError, match="cycles"):
+        sdfg = dace.SDFG("foo")
+        state = sdfg.add_state()
+        mentry_2, mexit_2 = state.add_map("map_2", dict(i="0:9"))
+        mentry_6, mexit_6 = state.add_map("map_6", dict(i="0:9"))
+        mentry_8, mexit_8 = state.add_map("map_8", dict(i="0:9"))
+        state.add_edge(mentry_8, "OUT_0", mentry_6, "IN_0", dace.Memlet(data="bla", subset='0:9'))
+        state.add_edge(mentry_6, "OUT_0", mentry_2, "IN_0", dace.Memlet(data="bla", subset='0:9'))
+        state.add_edge(mentry_2, "OUT_0", mentry_6, "IN_0", dace.Memlet(data="bla", subset='0:9'))
+        sdfg.validate()
+
+
 if __name__ == '__main__':
     test_cycles()
     test_cycles_memlet_path()
+    test_cycles_1562()

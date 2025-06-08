@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 from dace import data, dtypes
-from dace.codegen.tools import type_inference
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
@@ -34,9 +33,6 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     else:
         allocated_as_scalar = True
 
-    if node.out_connectors[cname].type is not None:
-        return node.out_connectors[cname].type
-
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):
         scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
@@ -55,9 +51,9 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
 
 
 def infer_connector_types(sdfg: SDFG):
-    """ 
+    """
     Infers connector types throughout an SDFG and its nested SDFGs in-place.
-    
+
     :param sdfg: The SDFG to infer.
     """
     # Loop over states, and in a topological sort over each state's nodes
@@ -129,13 +125,13 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
                                            use_parent_schedule: bool = False,
                                            state: SDFGState = None,
                                            child_nodes: Dict[nodes.Node, List[nodes.Node]] = None):
-    """ 
+    """
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces ``ScheduleType.Default`` and ``StorageType.Default``
-    with the corresponding types according to the parent scope's schedule. 
-    
+    with the corresponding types according to the parent scope's schedule.
+
     The defaults for storage types are determined by the
-    ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device 
+    ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device
     schedule, by default, will allocate containers on the shared memory).
     Following storage type inference for a scope, nested scopes (e.g., map entry, nested SDFG)
     are evaluated using the ``dtypes.STORAGEDEFAULT_SCHEDULE`` dictionary (for example, a
@@ -301,6 +297,12 @@ def _set_default_schedule_in_scope(state: SDFGState,
     else:
         child_schedule = _determine_child_schedule(parent_schedules)
 
+        # Special case for dynamic thread-block neighboring schedules
+        if child_schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            from dace.transformation.helpers import gpu_map_has_explicit_dyn_threadblocks  # Avoid import loops
+            if gpu_map_has_explicit_dyn_threadblocks(state, parent_node):
+                child_schedule = dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+
     # Set child schedule type in scope
     for node in child_nodes[parent_node]:
         # Set default schedule types
@@ -392,6 +394,7 @@ def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
         return parent_sdfg.arrays[e.data.data].storage
 
     raise ValueError(f'Could not find data descriptor {data_name} in parent SDFG')
+
 
 def infer_aliasing(node: nodes.NestedSDFG, sdfg: SDFG, state: SDFGState) -> None:
     """

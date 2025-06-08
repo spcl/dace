@@ -169,16 +169,27 @@ DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
                                    "cpp",
                                    IntelFPGACodeGen,
                                    "Intel FPGA",
-                                   target_type="host")
+                                   target_type="host",
+                                   sdfg=self._global_sdfg)
 
         kernel_code_objs = [
-            CodeObject(kernel_name, code, "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device")
-            for (kernel_name, code, _) in self._kernel_codes
+            CodeObject(kernel_name,
+                       code,
+                       "cl",
+                       IntelFPGACodeGen,
+                       "Intel FPGA",
+                       target_type="device",
+                       sdfg=self._global_sdfg) for (kernel_name, code, _) in self._kernel_codes
         ]
         # add the util header if present
         other_code_objs = [
-            CodeObject(file_name, code.getvalue(), "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device")
-            for (file_name, code) in self._other_codes.items()
+            CodeObject(file_name,
+                       code.getvalue(),
+                       "cl",
+                       IntelFPGACodeGen,
+                       "Intel FPGA",
+                       target_type="device",
+                       sdfg=self._global_sdfg) for (file_name, code) in self._other_codes.items()
         ]
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
@@ -299,8 +310,8 @@ DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
             return "__global volatile  {}* restrict {}".format(vec_type, var_name)
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
-        else:
-            return data.as_arg(with_types=True, name=var_name)
+        else:  # Scalar or structure
+            return f'{data.dtype.ocltype} {var_name}'
 
     @staticmethod
     def generate_unroll_loop_pre(kernel_stream, factor, sdfg, cfg, state_id, node):
@@ -570,8 +581,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             arg = self.make_kernel_argument(p, pname, is_output, True)
 
             if arg is not None:
-                #change c type long long to opencl type long
-                arg = arg.replace("long long", "long")
+                #change c type to opencl type
+                if arg in dtypes._CTYPES_TO_OCLTYPES:
+                    arg = dtypes._CTYPES_TO_OCLTYPES[arg]
 
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.as_arg(True, name=pname))
@@ -733,7 +745,7 @@ __kernel void \\
         arguments = [f'{atype} {aname}' for atype, aname, _ in memlet_references]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
-            f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
+            f'{node.sdfg.symbols[aname].ocltype} {aname}' for aname in sorted(node.symbol_mapping.keys())
             if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
@@ -769,8 +781,9 @@ __kernel void \\
             ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
-            #change c type long long to opencl type long
-            defined_ctype = defined_ctype.replace("long long", "long")
+            #change c type to opencl type
+            if defined_ctype in dtypes._CTYPES_TO_OCLTYPES:
+                defined_ctype = dtypes._CTYPES_TO_OCLTYPES[defined_ctype]
 
             if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                       or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -822,9 +835,9 @@ __kernel void \\
                 ptrname = cpp.ptr(out_memlet.data, desc, sdfg, self._frame)
                 defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
-                #change c type long long to opencl type long
-                if defined_ctype.__contains__("long long"):
-                    defined_ctype = defined_ctype.replace("long long", "long")
+                #change c type to opencl type
+                if defined_ctype in dtypes._CTYPES_TO_OCLTYPES:
+                    defined_ctype = dtypes._CTYPES_TO_OCLTYPES[defined_ctype]
 
                 if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                           or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -908,7 +921,7 @@ __kernel void \\
             # derive the declaration/definition
 
             qualifier = "__global volatile "
-            atype = dtypes.pointer(nodedesc.dtype).ctype + " restrict"
+            atype = dtypes.pointer(nodedesc.dtype).ocltype + " restrict"
             aname = ptrname
             viewed_desc = sdfg.arrays[edge.data.data]
             eptr = cpp.ptr(edge.data.data, viewed_desc, sdfg, self._frame)
@@ -1057,8 +1070,8 @@ __kernel void \\
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
-                    global_node = utils.trace_nested_access(dst_node if is_output else src_node,
-                                                            cfg.state(state_id), sdfg)
+                    global_node = utils.trace_nested_access(dst_node if is_output else src_node, cfg.state(state_id),
+                                                            sdfg)
                     data_name = global_node[0][0][1 if is_output else 0].label
 
                     if outer_memlet is not None:
@@ -1170,8 +1183,8 @@ __kernel void \\
             self._generate_converter(unpack, ctype, veclen, sdfg, cfg, function_stream)
 
     def unparse_tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, dfg: StateSubgraphView,
-                        node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream,
-                        locals, ldepth, toplevel_schedule) -> str:
+                        node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream, locals,
+                        ldepth, toplevel_schedule) -> str:
         if node.label is None or node.label == "":
             return ''
 
@@ -1226,9 +1239,10 @@ __kernel void \\
         defined_symbols = state_dfg.symbols_defined_at(node)
 
         # This could be problematic for numeric constants that have no dtype
-        defined_symbols.update(
-            {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-             for k, v in sdfg.constants.items()})
+        defined_symbols.update({
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        })
 
         for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:
@@ -1263,7 +1277,7 @@ __kernel void \\
 
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, dace.data.Array):
-                const_str = "__constant " + csttype.dtype.ctype + \
+                const_str = "__constant " + csttype.dtype.ocltype + \
                             " " + cstname + "[" + str(cstval.size) + "]"
 
                 if cstname not in self.generated_constants:

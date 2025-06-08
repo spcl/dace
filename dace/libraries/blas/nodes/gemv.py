@@ -72,19 +72,22 @@ class ExpandGemvPure(ExpandTransformation):
 
         # Initialization map
         init_state.add_mapped_tasklet(
-            "gemv_init", {"_o%d" % i: "0:%s" % symbolic.symstr(d)
-                          for i, d in enumerate(shape_y)}, {},
+            "gemv_init", {
+                "_o%d" % i: "0:%s" % symbolic.symstr(d)
+                for i, d in enumerate(shape_y)
+            }, {},
             "out = 0",
             {"out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
             external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet("_GEMV_", {"__i%d" % i: "0:%s" % s
-                                            for i, s in enumerate([N, M])},
-                                 {
-                                     "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
-                                     "__x": dace.Memlet("_x[__i1]")
-                                 },
+        state.add_mapped_tasklet("_GEMV_", {
+            "__i%d" % i: "0:%s" % s
+            for i, s in enumerate([N, M])
+        }, {
+            "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
+            "__x": dace.Memlet("_x[__i1]")
+        },
                                  mul_program, {"__out": dace.Memlet(f"{mul_out}[__i0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
                                  output_nodes=output_nodes)
@@ -730,6 +733,9 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
+        alpha = f'{dtype.ctype}({node.alpha})'
+        beta = f'{dtype.ctype}({node.beta})'
+
         m = m or node.m
         n = n or node.n
         if m is None:
@@ -765,8 +771,17 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         func = func.lower() + 'gemv'
 
-        code = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {node.alpha}, _A, {lda},
-                                _x, {strides_x[0]}, {node.beta}, _y, {strides_y[0]});"""
+        code = ''
+        if dtype in (dace.complex64, dace.complex128):
+            code = f'''
+            {dtype.ctype} __alpha = {alpha};
+            {dtype.ctype} __beta = {beta};
+            '''
+            alpha = '&__alpha'
+            beta = '&__beta'
+
+        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alpha}, _A, {lda},
+                                _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});"""
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

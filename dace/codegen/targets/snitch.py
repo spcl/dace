@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 from typing import Union
 import dace
@@ -145,8 +145,13 @@ class SnitchCodeGen(TargetCodeGenerator):
         # if para:
         #     callsite_stream.write(f'}}')
 
-    def generate_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, global_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream, generate_state_footer: bool = True):
+    def generate_state(self,
+                       sdfg: SDFG,
+                       cfg: ControlFlowRegion,
+                       state: SDFGState,
+                       global_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream,
+                       generate_state_footer: bool = True):
         sdfg = state.sdfg
         sid = state.block_id
         dbg(f'-- generate state "{state}"')
@@ -201,7 +206,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # Invoke all instrumentation providers
         for instr in self.dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_state_begin(sdfg, state, callsite_stream, global_stream)
+                instr.on_state_begin(sdfg, cfg, state, callsite_stream, global_stream)
 
         #####################
         # Create dataflow graph for state's children.
@@ -213,7 +218,12 @@ class SnitchCodeGen(TargetCodeGenerator):
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) == 1:
-            self.dispatcher.dispatch_subgraph(sdfg, cfg, state, sid, global_stream, callsite_stream,
+            self.dispatcher.dispatch_subgraph(sdfg,
+                                              cfg,
+                                              state,
+                                              sid,
+                                              global_stream,
+                                              callsite_stream,
                                               skip_entry_node=False)
         else:
             if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
@@ -221,7 +231,12 @@ class SnitchCodeGen(TargetCodeGenerator):
             for c in components:
                 if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
                     callsite_stream.write("#pragma omp section\n{")
-                self.dispatcher.dispatch_subgraph(sdfg, cfg, c, sid, global_stream, callsite_stream,
+                self.dispatcher.dispatch_subgraph(sdfg,
+                                                  cfg,
+                                                  c,
+                                                  sid,
+                                                  global_stream,
+                                                  callsite_stream,
                                                   skip_entry_node=False)
                 if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
                     callsite_stream.write("} // End omp section")
@@ -424,8 +439,8 @@ class SnitchCodeGen(TargetCodeGenerator):
                 if node.desc(sdfg).lifetime in (dtypes.AllocationLifetime.Persistent,
                                                 dtypes.AllocationLifetime.External):
                     # Don't put a static if it is declared in the state struct for C compliance
-                    declaration_stream.write(f'{nodedesc.dtype.ctype} {name}[{cpp.sym2cpp(arrsize)}];\n', cfg,
-                                             state_id, node)
+                    declaration_stream.write(f'{nodedesc.dtype.ctype} {name}[{cpp.sym2cpp(arrsize)}];\n', cfg, state_id,
+                                             node)
                 else:
                     declaration_stream.write(f'static {nodedesc.dtype.ctype} {name}[{cpp.sym2cpp(arrsize)}];\n', cfg,
                                              state_id, node)
@@ -605,8 +620,8 @@ class SnitchCodeGen(TargetCodeGenerator):
 
             # 2D transfer?
             if len(copy_shape) == 2:
-                xfer = '''__builtin_sdma_start_twod( 
-                        (uint64_t)({src}), (uint64_t)({dst}), 
+                xfer = '''__builtin_sdma_start_twod(
+                        (uint64_t)({src}), (uint64_t)({dst}),
                         {size}, {sstride}, {dstride}, {nrep}, {cfg});'''.format(
                     src=src_expr,
                     dst=dst_expr,
@@ -625,16 +640,16 @@ class SnitchCodeGen(TargetCodeGenerator):
                     return
                 else:
                     if src_strides[0] == 1 and dst_strides[0] == 1:
-                        xfer = '''__builtin_sdma_start_oned( 
-                                (uint64_t)({src}), (uint64_t)({dst}), 
+                        xfer = '''__builtin_sdma_start_oned(
+                                (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {cfg});'''.format(
                             src=src_expr,
                             dst=dst_expr,
                             size=f'sizeof({src_nodedesc.dtype.ctype})*({cpp.sym2cpp(copy_shape[0])})',
                             cfg='0')
                     else:
-                        xfer = '''__builtin_sdma_start_twod( 
-                                (uint64_t)({src}), (uint64_t)({dst}), 
+                        xfer = '''__builtin_sdma_start_twod(
+                                (uint64_t)({src}), (uint64_t)({dst}),
                                 {size}, {sstride}, {dstride}, {nrep}, {cfg});'''.format(
                             src=src_expr,
                             dst=dst_expr,
@@ -836,7 +851,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         dbg('-- ssr_analyze for state', state)
 
         def match_exp(expr, param, ignore):
-            """Takes a symbolic expression `expr` and a string parameter `param` and 
+            """Takes a symbolic expression `expr` and a string parameter `param` and
             tries to match the expression in the form a*param+b. On success, returns
             the tuple (a,b), else None"""
             ignore = [dace.symbol(i) for i in ignore]

@@ -2,18 +2,25 @@ name: FPGA Tests
 
 on:
   push:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
   pull_request:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
   merge_group:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
+
+env:
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
 
 jobs:
   test-fpga:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-ci') }}
     runs-on: [self-hosted, linux, intel-fpga, xilinx-fpga]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
     - name: Install dependencies

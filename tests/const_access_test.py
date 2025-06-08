@@ -22,5 +22,6 @@ def test():
     with pytest.raises(InvalidSDFGError):
         sdfg.validate()
 
+
 if __name__ == '__main__':
     test()

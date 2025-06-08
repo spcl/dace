@@ -75,7 +75,7 @@ def test_string_literal_comparison():
     assert np.allclose(tester(), False)
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_string_literal():
 
     @dace
@@ -85,7 +85,7 @@ def test_string_literal():
     assert tester()[0] == 'Hello World!'
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_bytes_literal():
 
     @dace
