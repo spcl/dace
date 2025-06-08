@@ -1266,7 +1266,8 @@ class ShapeProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, list):
             val = tuple(val)
-        val = tuple(dace.symbolic.UndefinedSymbol() if v == '?' else v for v in val)
+        if isinstance(val, tuple):
+            val = tuple(dace.symbolic.UndefinedSymbol() if v == '?' else v for v in val)
         super(ShapeProperty, self).__set__(obj, val)
 
 
