@@ -363,28 +363,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
 
-        # Check for UndefinedSymbol in argument list or nested SDFG parameters
-        for argname, arg in sdfg.arglist().items():
-            if isinstance(arg, symbolic.UndefinedSymbol):
-                raise InvalidSDFGError(
-                    f'Argument "{argname}" is an undefined symbol, which is required for SDFG execution', sdfg, None)
-
-            # Check if symbol is used in the SDFG
-            if argname in sdfg.symbols:
-                # Check for UndefinedSymbol
-                if isinstance(sdfg.symbols[argname], symbolic.UndefinedSymbol) or symbolic.is_undefined(
-                        sdfg.symbols[argname]):
-                    # Find if this symbol is used in code anywhere
-                    symbol_found = False
-                    for state in sdfg.nodes():
-                        for node in state.nodes():
-                            if isinstance(node, dace.nodes.Tasklet):
-                                if argname in symbolic.symbols_in_code(node.code.as_string, {argname}):
-                                    symbol_found = True
-                                    raise InvalidSDFGError(
-                                        f'Symbol "{argname}" is used in the SDFG but is an undefined symbol', sdfg,
-                                        node)
-
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:
