@@ -286,7 +286,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     None)
 
             # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
-            if hasattr(desc, 'shape') and desc.transient:
+            if desc.transient:
                 # Check dimensions
                 for i, dim in enumerate(desc.shape):
                     if symbolic.is_undefined(dim):
@@ -307,6 +307,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     raise InvalidSDFGError(
                         f'Transient data container "{name}" has undefined total size, '
                         f'which is required for memory allocation', sdfg, None)
+
+                # Check any other undefined symbols in the data descriptor
+                if any(symbolic.is_undefined(s) for s in desc.used_symbols(all_symbols=False)):
+                    raise InvalidSDFGError(
+                        f'Transient data container "{name}" has undefined symbols, '
+                        f'which are required for memory allocation', sdfg, None)
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):

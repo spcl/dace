@@ -8,6 +8,7 @@ from dace import data
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
+from dace.codegen import exceptions as exc
 from dace.config import Config
 from dace.sdfg import infer_types
 
@@ -56,17 +57,12 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
 
     # allocate the array args using calloc
     for argname, arg in al.items():
-        try:
-            if isinstance(arg, data.Array):
-                dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
-                basetype = str(arg.dtype)
-                allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype +
-                                "*) calloc(" + dims_mul + ", sizeof(" + basetype + ")" + ");\n")
-                deallocations += "    free(" + argname + ");\n"
-        except TypeError:
-            # TypeError may occur, for example, when the shape has undefined symbols.
-            # In this case, we cannot allocate the array, so we skip it.
-            pass
+        if isinstance(arg, data.Array):
+            dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
+            basetype = str(arg.dtype)
+            allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
+                            dims_mul + ", sizeof(" + basetype + ")" + ");\n")
+            deallocations += "    free(" + argname + ");\n"
 
     return f'''#include <cstdlib>
 #include "../include/{sdfg.name}.h"
@@ -204,6 +200,11 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     frame = framecode.DaCeCodeGenerator(sdfg)
+
+    # Test for undefined symbols in SDFG arguments
+    if "?" in frame.arglist.keys():
+        raise exc.CodegenError("SDFG '%s' has undefined symbols in its arguments. "
+                               "Please ensure all symbols are defined before generating code." % sdfg.name)
 
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU

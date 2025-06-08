@@ -7,6 +7,7 @@ import numpy as np
 import dace
 from dace import symbolic
 from dace.sdfg.validation import InvalidSDFGError
+from dace.codegen import exceptions as exc
 
 
 def test_undefined_symbol_in_sdfg():
@@ -43,25 +44,27 @@ def test_undefined_symbol_in_sdfg():
     # Add tasklet for using tmp
     read_tasklet = state.add_tasklet('read_tmp', {'t'}, {'b'}, 'b = t')
 
-    # Connect everything
-    state.add_edge(A, None, outer_map_entry, None, dace.Memlet())
-    state.add_edge(outer_map_entry, None, inner_map_entry, None, dace.Memlet())
-    state.add_edge(inner_map_entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[i, j]'))
-    state.add_edge(tasklet, 't', tmp, None, dace.Memlet('tmp[i, 0]'))
-    state.add_edge(inner_map_entry, None, read_tasklet, None, dace.Memlet())
-    state.add_edge(tmp, None, read_tasklet, 't', dace.Memlet('tmp[i, 0]'))
-    state.add_edge(read_tasklet, 'b', B, None, dace.Memlet('B[i]'))
-    state.add_edge(read_tasklet, None, inner_map_exit, None, dace.Memlet())
-    state.add_edge(inner_map_exit, None, outer_map_exit, None, dace.Memlet())
+    # Connect everything using add_memlet_path
+    state.add_memlet_path(A, outer_map_entry, inner_map_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(tasklet, inner_map_exit, outer_map_exit, tmp, src_conn='t', memlet=dace.Memlet('tmp[i, 0]'))
+    state.add_memlet_path(tmp,
+                          outer_map_entry,
+                          inner_map_entry,
+                          read_tasklet,
+                          dst_conn='t',
+                          memlet=dace.Memlet('tmp[i, 0]'))
+    state.add_memlet_path(read_tasklet, inner_map_exit, outer_map_exit, B, src_conn='b', memlet=dace.Memlet('B[i]'))
+
+    with pytest.raises(dace.sdfg.InvalidSDFGError, match="undefined symbol"):
+        sdfg.validate()
 
     # Try to generate code - this should fail because of the undefined symbol
-    with pytest.raises((TypeError, dace.sdfg.InvalidSDFGError), match=r"undefined symbol|contains undefined symbol"):
-        sdfg.compile()
+    with pytest.raises(exc.CodegenError, match="undefined symbol"):
+        sdfg.compile(validate=False)
 
 
 def test_undefined_symbol_in_unused_dimension():
-    """Tests that validation catches UndefinedSymbol even in 'unused' dimensions."""
+    """Tests legitimate use of UndefinedSymbol in an unused dimension of an array."""
 
     # Create an SDFG manually
     sdfg = dace.SDFG('undefined_symbol_in_unused_dimension_test')
@@ -83,26 +86,25 @@ def test_undefined_symbol_in_unused_dimension():
     tmp = state.add_access('tmp')
     B = state.add_write('B')
 
-    # Add map
+    # Add maps
     map_entry, map_exit = state.add_map('compute', dict(i='0:20'))
+    map_entry_2, map_exit_2 = state.add_map('compute_2', dict(i='0:20'))
 
     # Add tasklets
     tasklet_write = state.add_tasklet('write', {'a'}, {'t'}, 't = a')
     tasklet_read = state.add_tasklet('read', {'t'}, {'b'}, 'b = t')
 
-    # Connect everything - only using the defined dimension (index 1),
+    # Connect everything using add_memlet_path - only using the defined dimension (index 1),
     # avoiding the undefined one (index 0)
-    state.add_edge(A, None, map_entry, None, dace.Memlet())
-    state.add_edge(map_entry, None, tasklet_write, None, dace.Memlet())
-    state.add_edge(A, None, tasklet_write, 'a', dace.Memlet('A[0, i]'))
-    state.add_edge(tasklet_write, 't', tmp, None, dace.Memlet('tmp[i, 0]'))
-    state.add_edge(tmp, None, tasklet_read, 't', dace.Memlet('tmp[i, 0]'))
-    state.add_edge(tasklet_read, 'b', B, None, dace.Memlet('B[i]'))
-    state.add_edge(tasklet_read, None, map_exit, None, dace.Memlet())
+    state.add_memlet_path(A, map_entry, tasklet_write, dst_conn='a', memlet=dace.Memlet('A[0, i]'))
+    state.add_memlet_path(tasklet_write, map_exit, tmp, src_conn='t', memlet=dace.Memlet('tmp[i, 0]'))
+    state.add_memlet_path(tmp, map_entry_2, tasklet_read, dst_conn='t', memlet=dace.Memlet('tmp[i, 0]'))
+    state.add_memlet_path(tasklet_read, map_exit_2, B, src_conn='b', memlet=dace.Memlet('B[i]'))
 
     # Make sure we can now validate the SDFG
     sdfg.validate()
 
+    # This is a legitimate use case and should pass validation
     # It should also compile successfully
     sdfg.compile()
 
@@ -135,13 +137,10 @@ def test_undefined_symbol_validation_failure():
     # Add tasklet
     tasklet = state.add_tasklet('compute', {'a'}, {'b', 't'}, 'b = a; t = a')
 
-    # Connect with edges that use the undefined symbol
-    state.add_edge(A, None, map_entry, None, dace.Memlet())
-    state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[i, j]'))
-    state.add_edge(tasklet, 't', tmp, None, dace.Memlet('tmp[i, j]'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
-    state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
+    # Connect
+    state.add_memlet_path(A, map_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(tasklet, map_exit, tmp, src_conn='t', memlet=dace.Memlet('tmp[i, j]'))
+    state.add_memlet_path(tasklet, map_exit, B, src_conn='b', memlet=dace.Memlet('B[i]'))
 
     # This should fail validation because the transient has an undefined dimension
     with pytest.raises(InvalidSDFGError, match="undefined symbol in dimension"):
@@ -176,13 +175,14 @@ def test_undefined_symbol_value_assignment():
     # Add tasklet
     tasklet = state.add_tasklet('compute', {'a'}, {'b', 't'}, 'b = a; t = a')
 
-    # Connect with edges that use the undefined symbol
-    state.add_edge(A, None, map_entry, None, dace.Memlet())
-    state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[i, j]'))
-    state.add_edge(tasklet, 't', tmp, None, dace.Memlet('tmp[i, j]'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
-    state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
+    # Connect using add_memlet_path
+    state.add_memlet_path(A, map_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(tasklet, map_exit, tmp, src_conn='t', memlet=dace.Memlet('tmp[i, j]'))
+    state.add_memlet_path(tasklet, map_exit, B, src_conn='b', memlet=dace.Memlet('B[i]'))
+
+    # This should fail validation because the transient has an undefined dimension
+    with pytest.raises(InvalidSDFGError, match="undefined symbol"):
+        sdfg.validate()
 
     # Replace undefined symbols in the SDFG with concrete values
     # This shows how a user would explicitly replace UndefinedSymbol with concrete values
@@ -237,10 +237,8 @@ def test_undefined_symbol_in_argument_validation_failure():
     tasklet = state.add_tasklet('compute', {'a'}, {'b'}, 'b = a')
 
     # Connect edges - only read A at constant index 0
-    state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0]'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
-    state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
+    state.add_memlet_path(A, map_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[0]'))
+    state.add_memlet_path(tasklet, map_exit, B, src_conn='b', memlet=dace.Memlet('B[i]'))
 
     # Make sure we can now validate the SDFG
     sdfg.validate()
@@ -282,11 +280,9 @@ def test_undefined_symbols_not_in_arglist():
     # Add tasklet
     tasklet = state.add_tasklet('compute', {'a'}, {'b'}, 'b = a + 1')
 
-    # Connect everything
-    state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[i]'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
-    state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
+    # Connect everything using add_memlet_path
+    state.add_memlet_path(A, map_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(tasklet, map_exit, B, src_conn='b', memlet=dace.Memlet('B[i]'))
 
     # This is a legitimate use case and should pass validation
     sdfg.validate()
@@ -295,15 +291,16 @@ def test_undefined_symbols_not_in_arglist():
     sdfg.compile()
 
 
-def test_undefined_symbol_numpy_frontend():
+@pytest.mark.parametrize("syntactic_sugar", [True, False])
+def test_undefined_symbol_numpy_frontend(syntactic_sugar):
     """Test UndefinedSymbol with the numpy frontend."""
 
-    undefined_dim = symbolic.UndefinedSymbol()
+    undefined_dim = "?" if syntactic_sugar else symbolic.UndefinedSymbol()
 
     @dace.program
     def program_with_undefined_symbol(A: dace.float64[undefined_dim], B: dace.float64[20]):
-        # Only access the first element of A, so the undefined dimension isn't used
-        B[0] = A[0]
+        # Only access the first five elements of A, so the undefined dimension isn't used
+        B[0:5] = A[0:5]
 
     # Convert to SDFG
     sdfg = program_with_undefined_symbol.to_sdfg()
@@ -314,8 +311,31 @@ def test_undefined_symbol_numpy_frontend():
     # It should also compile successfully
     sdfg.compile()
 
+    a = np.random.rand(10)
+    b = np.zeros(20)
+    sdfg(A=a, B=b)
+    assert np.allclose(b[0:5], a[0:5]), "Output B does not match expected values."
 
-def test_undefined_symbol_in_arglist():
+
+def test_undefined_symbol_numpy_frontend_shouldfail():
+    """Test UndefinedSymbol with the numpy frontend, in a way that should fail."""
+
+    undefined_dim = symbolic.UndefinedSymbol()
+
+    @dace.program
+    def program_with_undefined_symbol(A: dace.float64[20, undefined_dim], B: dace.float64[20]):
+        B[0:5] = A[1, 0:5]
+
+    # Convert to SDFG
+    sdfg = program_with_undefined_symbol.to_sdfg()
+
+    # It should also fail to compile because the undefined dimension is used
+    with pytest.raises(exc.CodegenError, match="undefined symbols in its arguments"):
+        sdfg.compile(validate=False)
+
+
+@pytest.mark.parametrize("found", [True, False])
+def test_undefined_symbol_in_arglist(found):
     """Tests that UndefinedSymbol can be found in arglist."""
 
     # Create an SDFG manually
@@ -339,16 +359,15 @@ def test_undefined_symbol_in_arglist():
     B = state.add_write('B')
 
     # Add a map
-    map_entry, map_exit = state.add_map('compute', dict(i='0:N'))
+    rng = dace.subsets.Range([(0, undefined_dim, 1)]) if found else dace.subsets.Range([(0, N, 1)])
+    map_entry, map_exit = state.add_map('compute', dict(i=rng))
 
     # Add a tasklet that only uses the first element of A
     tasklet = state.add_tasklet('compute', {'a'}, {'b'}, 'b = a + 1')
 
-    # Connect everything - only use A[0]
-    state.add_edge(map_entry, None, tasklet, None, dace.Memlet())
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0]'))
-    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[i]'))
-    state.add_edge(tasklet, None, map_exit, None, dace.Memlet())
+    # Connect using add_memlet_path
+    state.add_memlet_path(A, map_entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[0]'))
+    state.add_memlet_path(tasklet, map_exit, B, src_conn='b', memlet=dace.Memlet('B[i]'))
 
     # Get the argument list
     arglist = sdfg.arglist()
@@ -356,12 +375,23 @@ def test_undefined_symbol_in_arglist():
     # Both arrays should be in the arglist
     assert 'A' in arglist
     assert 'B' in arglist
-    assert 'N' in arglist
+    # If found is True, the undefined symbol should be in the arglist
+    if found:
+        assert '?' in arglist
+    else:
+        assert 'N' in arglist
+        assert '?' not in arglist
 
 
 if __name__ == '__main__':
+    test_undefined_symbol_in_sdfg()
     test_undefined_symbol_in_unused_dimension()
+    test_undefined_symbol_validation_failure()
     test_undefined_symbol_value_assignment()
+    test_undefined_symbol_in_argument_validation_failure()
     test_undefined_symbols_not_in_arglist()
-    test_undefined_symbol_in_arglist()
-    # test_undefined_symbol_in_sdfg() - This would fail as expected
+    test_undefined_symbol_numpy_frontend(False)
+    test_undefined_symbol_numpy_frontend(True)
+    test_undefined_symbol_numpy_frontend_shouldfail()
+    test_undefined_symbol_in_arglist(False)
+    test_undefined_symbol_in_arglist(True)

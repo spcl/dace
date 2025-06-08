@@ -72,17 +72,8 @@ def test_undefined_symbol_in_evaluate():
     with pytest.raises(TypeError):
         symbolic.evaluate(us + s, {'N': 5})
 
-
-def test_undefined_symbol_in_printing():
-    # Test that DaceSympyPrinter raises TypeError for expressions with UndefinedSymbol
-    us = symbolic.UndefinedSymbol()
-    s = symbolic.symbol('N')
-
     with pytest.raises(TypeError):
-        symbolic.symstr(us, None, False)
-
-    with pytest.raises(TypeError):
-        symbolic.symstr(us + s, None, False)
+        symbolic.evaluate(sympy.sin(us), {us: 7})
 
 
 def test_undefined_symbol_propagation():
@@ -172,13 +163,6 @@ if __name__ == '__main__':
     test_undefined_symbol_comparisons()
     test_undefined_symbol_in_issymbolic()
     test_undefined_symbol_in_evaluate()
-    test_undefined_symbol_in_printing()
     test_undefined_symbol_propagation()
     test_undefined_symbol_math_functions()
     test_is_undefined_function()
-    test_undefined_symbol_comparisons()
-    test_undefined_symbol_in_issymbolic()
-    test_undefined_symbol_in_evaluate()
-    test_undefined_symbol_in_printing()
-    test_undefined_symbol_propagation()
-    test_undefined_symbol_math_functions()

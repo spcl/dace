@@ -39,7 +39,7 @@ else:
 
 
 class symbol(sympy.Symbol):
-    """ Defines a symbolic expression. Extends SymPy symbols with DaCe-related
+    """ Defines a symbolic variable. Extends SymPy symbols with DaCe-related
         information. """
 
     s_currentsymbol = 0
@@ -641,11 +641,7 @@ def is_undefined(expr: Union[SymbolicType, str]) -> bool:
     :return: True if the expression contains undefined symbols, False otherwise.
     """
     if isinstance(expr, str):
-        if not dtypes.validate_name(expr):
-            expr = pystr_to_symbolic(expr)
-        else:
-            # It's just a name, check if it's "?"
-            return expr == "?"
+        expr = pystr_to_symbolic(expr)
 
     if isinstance(expr, UndefinedSymbol):
         return True
@@ -1273,7 +1269,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
             return sympy.Float(float(expr))
         except ValueError:
             pass
-        if expr == '?':
+        if "?" in expr:  # Note that this will convert expressions like "a ? b : c" or "some_func(?)" to UndefinedSymbol
             return UndefinedSymbol()
         if dtypes.validate_name(expr):
             return symbol(expr)
@@ -1406,9 +1402,6 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Symbol(self, expr):
         if expr.name == 'NoneSymbol':
             return 'nullptr' if self.cpp_mode else 'None'
-        if isinstance(expr, UndefinedSymbol):
-            raise TypeError(f'Cannot generate code for undefined symbol: {expr}. '
-                            'This error indicates that a symbol has no concrete value.')
         return super()._print_Symbol(expr)
 
     def _print_Pow(self, expr):
