@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.state import LoopRegion
