@@ -228,10 +228,10 @@ def can_memlet_be_turned_into_a_map(
     if not isinstance(b.desc(sdfg), data.Array):
         return False
     if isinstance(a.desc(sdfg), data.View):
-        if sdutil.get_view_node(graph, a) == b:
+        if sdutil.get_view_node(state, a) == b:
             return False
     if isinstance(b.desc(sdfg), data.View):
-        if sdutil.get_view_node(graph, b) == a:
+        if sdutil.get_view_node(state, b) == a:
             return False
     if (not ignore_strides) and a.desc(sdfg).strides == b.desc(sdfg).strides:
         return False
