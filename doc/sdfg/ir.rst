@@ -287,15 +287,15 @@ Symbols that are defined outside a state can also be given to an SDFG as paramet
 have symbolic sizes. We say that a symbol that does not have a defined value is a *free symbol*. The free symbols of an
 SDFG have to be added to the symbol store (``sdfg.symbols``) using :func:`~dace.sdfg.sdfg.SDFG.add_symbol`.
 
-DaCe also provides a special kind of symbol called :class:`~dace.symbolic.UndefinedSymbol` that represents values which are 
-undefined and deferred to runtime. This allows symbolic analysis to continue even when some data container dimensions 
+DaCe also provides a special kind of symbol called :class:`~dace.symbolic.UndefinedSymbol` that represents values which are
+undefined and deferred to runtime. This allows symbolic analysis to continue even when some data container dimensions
 or other symbolic values cannot be determined at analysis time.
-Similar to NaN behavior in floating-point arithmetic, any operation involving an :class:`~dace.symbolic.UndefinedSymbol` 
-results in another :class:`~dace.symbolic.UndefinedSymbol`. Comparisons with undefined symbols yield indeterminate 
-results. During code generation, an informative exception is raised if an :class:`~dace.symbolic.UndefinedSymbol` is 
+Similar to NaN behavior in floating-point arithmetic, any operation involving an :class:`~dace.symbolic.UndefinedSymbol`
+results in another :class:`~dace.symbolic.UndefinedSymbol`. Comparisons with undefined symbols yield indeterminate
+results. During code generation, an informative exception is raised if an :class:`~dace.symbolic.UndefinedSymbol` is
 encountered, providing clear error messages that point to the undefined symbol.
 
-The Python frontend provides syntactic sugar for creating undefined symbols by using the string ``"?"`` in array 
+The Python frontend provides syntactic sugar for creating undefined symbols by using the string ``"?"`` in array
 dimensions:
 
 .. code-block:: python
