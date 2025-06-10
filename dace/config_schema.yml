@@ -452,11 +452,11 @@ required:
                         title: Allow the implicit conversion of Memlets to Maps during code generation.
                         default: true
                         description: >
-                            If ``true``, the default, the code generator will implicitly convert Memlets that
-                            can not be represented by a native library call, such as ``cudaMemcpy()`` into
-                            Maps that explicitly copy the data around. If this value is ``false`` the code
-                            generator will raise an exception if such a Memlet is encountered. This allows
-                            the user to have full control over all Maps in the SDFG.
+                            If ``true`` the code generator will implicitly convert Memlets that can not be
+                            represented by a native library call, such as ``cudaMemcpy()`` into Maps that
+                            explicitly copy the data around. If this value is ``false`` the code generator
+                            will raise an exception if such a Memlet is encountered. This allows the user
+                            to have full control over all Maps in the SDFG.
 
 
             #############################################
