@@ -19,6 +19,27 @@ import shutil
 
 
 class TransformationRepoManager:
+    """
+    Manages external transformation repositories for DaCe.
+
+    This class provides methods to add (clone), remove, list git repositories
+    containing DaCe transformations. The repositories are tracked in a registry JSON file located in the directory specified by the DaCe configuration option `external_transformations_path` (default: `$HOME/dace_transformations/external_transformations`).
+
+    Each repository is cloned into a subdirectory of the base path set with the name argument. The registry file
+    (`local_external_transformation_repositories.json`) records the URL and (optionally) the name of each repository.
+
+    Paths:
+        - The base path is determined by the DaCe config (from config schema) or the environment variable
+          `DACE_external_transformations_path`.
+        - The registry file is stored as `local_external_transformation_repositories.json` in the base path.
+        - Each repository is cloned into a subdirectory of the base path, named after the repository.
+
+    Example usage (from CLI):
+        dace-external-transformation-registry add https://github.com/user/repo.git
+        dace-external-transformation-registry list
+        dace-external-transformation-registry remove repo_name
+        dace-external-transformation-registry load-from-file my_repos.json
+    """
 
     def _set_path(self):
         """
@@ -59,10 +80,10 @@ class TransformationRepoManager:
 
     def _load_registry(self, filepath: str) -> Dict:
         """
-        Loads the repository registry from a JSON file.
+        Loads the repository registry from the JSON registry file.
 
         Args:
-            filepath (str): The path to the JSON file.
+            filepath (str): The path to the JSON registry file.
 
         Returns:
             Dict: The loaded registry as a dictionary.
@@ -77,7 +98,7 @@ class TransformationRepoManager:
 
     def _save_registry(self, registry: Dict) -> None:
         """
-        Saves the repository registry to a JSON file.
+        Saves the repository registry to the JSON registry file.
 
         Args:
             registry (Dict): The registry dictionary to save.
@@ -123,7 +144,7 @@ class TransformationRepoManager:
 
     def _clone_repository(self, url: str, target_path: Path) -> bool:
         """
-        Clones a git repository to the specified target path.
+        Clones a git repository to the specified target path. Valid inputs are direct subdirectories of the base path of the form `<base_path>/<repo_name>`.
 
         Args:
             url (str): The URL of the repository to clone.
@@ -165,7 +186,7 @@ class TransformationRepoManager:
         Args:
             url (str): The URL of the repository to add.
             name(Optional[str]): Optional name for the repository.
-            force (bool): If True, overwrites an existing repository with the same path.
+            force (bool): If True, overwrites an existing repository with the same path. if False, returns False if the repository already exists.
 
         Returns:
             bool: True if the repository was added successfully, False otherwise.
@@ -235,7 +256,7 @@ class TransformationRepoManager:
 
     def list_repositories(self) -> None:
         """
-        Lists all registered transformation repositories.
+        Lists all registered transformation repositories. Reads the values from the registry JSON file and prints the repository names, URLs, and paths.
         """
         self._set_path()
         print(self.registry_file)
@@ -297,7 +318,14 @@ class TransformationRepoManager:
 
 def main():
     """
-    Entry point for the CLI tool. Parses command-line arguments and executes the corresponding command.
+    Entry point for the DaCe external transformation registry CLI tool.
+
+    This function parses command-line arguments and executes the corresponding command
+    (add, remove, list, load-from-file) using the TransformationRepoManager.
+
+    The CLI expects the DaCe configuration variable from the config schema or the environment variable DACE_external_transformations_path to be set to the base directory for external
+    transformation repositories. All repositories and the registry file will be managed
+    under this directory.
     """
     parser = argparse.ArgumentParser(description="Manage DaCe transformation repositories",
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -308,7 +336,7 @@ Examples:
   %(prog)s list
   %(prog)s remove my-transformations
   %(prog)s load-from-file my_repos.json
-        format:
+        Example format for the JSON file:
             {
                 <repo_name>: {
                     "url": <repo_url>,
