@@ -4,12 +4,13 @@ Contains replacements for array-filling methods (zeros, ones, etc.)
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError
-from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type
+from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type, broadcast_together
+from dace.frontend.python.replacements.operators import result_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import copy
-from numbers import Number
-from typing import Optional, Union
+from numbers import Number, Integral
+from typing import Any, List, Optional, Sequence, Union
 
 import numpy as np
 import sympy as sp
@@ -243,7 +244,7 @@ def _arange(pv: ProgramVisitor,
 
     # Infer dtype from input arguments
     if dtype is None:
-        dtype, _ = _result_type(args)
+        dtype, _ = result_type(args)
 
     # TODO: Unclear what 'like' does
     # if 'like' is not None:
@@ -326,7 +327,7 @@ def _linspace(pv: ProgramVisitor,
         start_type = sdfg.arrays[start] if (isinstance(start, str) and start in sdfg.arrays) else start
         stop_type = sdfg.arrays[stop] if (isinstance(stop, str) and stop in sdfg.arrays) else stop
 
-        dtype, _ = _result_type((start_type, stop_type), 'Add')
+        dtype, _ = result_type((start_type, stop_type), 'Add')
 
         # From the NumPy documentation: The inferred dtype will never be an integer; float is chosen even if the
         # arguments would produce an array of integers.

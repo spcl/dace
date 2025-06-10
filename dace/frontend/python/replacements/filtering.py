@@ -6,7 +6,7 @@ from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
 from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
 
-from typing import Optional, Set
+from typing import List, Optional, Set
 
 
 @oprepo.replaces('numpy.where')
