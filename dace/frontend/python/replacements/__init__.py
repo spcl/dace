@@ -9,6 +9,7 @@ from .array_creation_cupy import *
 from .array_manipulation import *
 from .array_metadata import *
 from .filtering import *
+from .fft import *
 from .linalg import *
 from .misc import *
 from .mpi import *
