@@ -132,20 +132,28 @@ The `DaCeCodeGenerator` class currently handles numerous responsibilities that s
 
 ### Phase 2: Transformation Passes
 
-#### 7. **CopyToMapPass**
+#### 7. **AllocationPass**
+- **Purpose**: Add allocation/deallocation tasklets to the SDFG for each scope
+- **Input**: SDFG with allocation analysis
+- **Output**: SDFG with allocation/deallocation tasklets inserted
+- **Current Location**: `allocate_arrays_in_scope()`, `deallocate_arrays_in_scope()`
+- **Note**: This modifies the SDFG structure rather than generating code
+
+#### 8. **CopyToMapPass**
 - **Purpose**: Convert complex memory copies to Map nodes where needed
 - **Input**: SDFG with targets identified
 - **Output**: SDFG with transformed copies
 - **Current Location**: `cuda.py` preprocessing, various target preprocessors
 - **Applies To**: GPU strided copies, FPGA transfers
 
-#### 8. **StreamAssignmentPass** (GPU-specific)
+#### 9. **StreamAssignmentPass** (GPU-specific)
 - **Purpose**: Assign CUDA streams for concurrent execution
 - **Input**: GPU-targeted SDFG
-- **Output**: SDFG with stream assignments, pipeline_results["stream_info"]
+- **Output**: SDFG with stream assignments stored in node metadata
+- **Note**: Stream assignments are stored directly in `Node.metadata` fields rather than replicated in pipeline_results dictionary for efficiency
 - **Current Location**: Embedded in CUDA code generation
 
-#### 9. **TaskletLanguageLoweringPass**
+#### 10. **TaskletLanguageLoweringPass**
 - **Purpose**: Convert Python/generic tasklets to target language (C++/CUDA/etc.)
 - **Input**: SDFG with tasklets
 - **Output**: SDFG with lowered tasklets
@@ -159,51 +167,33 @@ The `DaCeCodeGenerator` class currently handles numerous responsibilities that s
 - **Output**: pipeline_results["state_struct"] = {struct_def, struct_init}
 - **Current Location**: `DaCeCodeGenerator.generate_code()`
 
-#### 11. **AllocationCodePass**
-- **Purpose**: Generate allocation/deallocation code for each scope
-- **Input**: SDFG with allocation analysis
-- **Output**: pipeline_results["allocation_code"] = {alloc_code, dealloc_code}
-- **Current Location**: `allocate_arrays_in_scope()`, `deallocate_arrays_in_scope()`
-
-#### 12. **MemletLoweringPass**
+#### 11. **MemletLoweringPass**
 - **Purpose**: Lower high-level memlets to explicit copy operations
 - **Input**: SDFG with target analysis
 - **Output**: SDFG with explicit copies as tasklets
 - **Current Location**: Embedded in target-specific copy generation
 
-#### 13. **FrameCodeGenerationPass**
-- **Purpose**: Generate the main frame code with function signatures and dispatch
-- **Input**: All previous pass results
-- **Output**: pipeline_results["frame_code"] = {global_code, local_code}
-- **Current Location**: `DaCeCodeGenerator.generate_code()`
+#### 12. **SDFGSplittingPass**
+- **Purpose**: Split complex SDFGs into multiple files if needed
+- **Input**: SDFG with memlet lowering complete
+- **Output**: List of SDFGs (one per target file)
+- **Current Location**: Implicit in current system
+- **Note**: Moved earlier to enable per-file frame and target code generation
 
-#### 14. **TargetCodeGenerationPass**
-- **Purpose**: Generate target-specific code files
-- **Input**: SDFG with frame code
-- **Output**: List of CodeObject instances
-- **Current Location**: Target-specific `get_generated_codeobjects()`
+#### 13. **FrameAndTargetCodeGenerationPass**
+- **Purpose**: Generate both frame code and target-specific code for each SDFG file
+- **Input**: Split SDFGs with all previous analysis
+- **Output**: pipeline_results["code_objects"] = List[CodeObject] with complete code
+- **Current Location**: Combined from `DaCeCodeGenerator.generate_code()` and target-specific `get_generated_codeobjects()`
+- **Note**: Combines frame and target code generation since they operate on split SDFGs
 
-#### 15. **HeaderGenerationPass**
+#### 14. **HeaderGenerationPass**
 - **Purpose**: Generate C/C++ header files for SDFG interface
-- **Input**: SDFG with frame code
+- **Input**: CodeObjects with complete code
 - **Output**: pipeline_results["headers"] = {call_header, sample_main}
 - **Current Location**: `generate_headers()`, `generate_dummy()`
 
-### Phase 4: File Generation Passes
-
-#### 16. **SDFGSplittingPass**
-- **Purpose**: Split complex SDFGs into multiple files if needed
-- **Input**: Single SDFG with all code
-- **Output**: List of SDFGs (one per target file)
-- **Current Location**: Implicit in current system
-
-#### 17. **CodeObjectCreationPass**
-- **Purpose**: Create final CodeObject instances for each generated file
-- **Input**: Split SDFGs and code
-- **Output**: List[CodeObject] ready for compilation
-- **Current Location**: End of `generate_code()`
-
-## Abstract Pipeline Design
+## Information Flow Design
 
 ### Main Code Generation Pipeline
 
@@ -222,6 +212,7 @@ class CodeGenerationPipeline(Pipeline):
             TargetAnalysisPass(),
 
             # Phase 2: Transformations
+            AllocationPass(),
             CopyToMapPass(),
             ConditionalPipeline([
                 (lambda r: 'cuda' in r.get('targets', []), StreamAssignmentPass()),
@@ -231,15 +222,10 @@ class CodeGenerationPipeline(Pipeline):
 
             # Phase 3: Code Generation
             StateStructCreationPass(),
-            AllocationCodePass(),
             MemletLoweringPass(),
-            FrameCodeGenerationPass(),
-            TargetCodeGenerationPass(),
-            HeaderGenerationPass(),
-
-            # Phase 4: File Generation
             SDFGSplittingPass(),
-            CodeObjectCreationPass(),
+            FrameAndTargetCodeGenerationPass(),
+            HeaderGenerationPass(),
         ])
 ```
 
@@ -456,40 +442,67 @@ dace/codegen/
 - Shared memory parallelism
 
 #### 3. **GPU Backend** (`targets/gpu.py`)
-- Generic GPU programming model
-- Common GPU concepts (kernels, memory hierarchy)
-- Base for CUDA/HIP/OpenCL backends
-- Device memory management
+- Unified GPU programming model supporting both CUDA and HIP
+- Common GPU concepts (kernels, memory hierarchy, device management)
+- Runtime detection of CUDA/HIP capabilities
+- Covers the superset of both NVIDIA and AMD GPU features
+- Device memory management and kernel launch logic
 
-#### 4. **CUDA Backend** (`targets/cuda.py`)
-- Extends GPU backend with CUDA specifics
-- CUDA runtime API calls
-- CUDA-specific optimizations
-- PTX inline assembly support
+### Target APIs and Usage
 
-#### 5. **HIP Backend** (`targets/hip.py`)
-- Extends GPU backend with HIP specifics
-- AMD GPU support
-- ROCm integration
-- Portable GPU code
+The refactored target system provides a clear API for code generation passes:
+
+#### Target Discovery and Selection
+```python
+class TargetAnalysisPass(Pass):
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
+        # Discover available targets based on node types and GPU detection
+        targets = discover_targets(sdfg)
+        # Select appropriate target generators
+        generators = {
+            'cpu': CppCodeGen() if no_parallelism else OpenMPCodeGen(),
+            'gpu': GPUCodeGen(),  # Handles both CUDA and HIP
+            'fpga': FPGACodeGen(),
+        }
+        pipeline_results['targets'] = targets
+        pipeline_results['generators'] = generators
+```
+
+#### Target-Specific Code Generation
+```python
+class FrameAndTargetCodeGenerationPass(Pass):
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
+        generators = pipeline_results['generators']
+        for target, generator in generators.items():
+            # Each generator handles its specific code generation
+            code_objects = generator.generate_code(sdfg, pipeline_results)
+            pipeline_results['code_objects'].extend(code_objects)
+```
+
+#### Target Interface
+Each target generator implements a common interface:
+- `can_handle(node)`: Check if target can handle specific node types
+- `generate_code(sdfg, pipeline_results)`: Generate code for target
+- `get_includes()`: Return required header includes
+- `get_dependencies()`: Return compilation dependencies
 
 ### Target Hierarchy
 ```
 TargetCodeGenerator (base)
 ├── CppCodeGen (sequential C++)
 │   ├── OpenMPCodeGen (CPU parallelism)
+│   ├── SVECodeGen (ARM vectors)
 │   └── MPICodeGen (distributed)
-├── GPUCodeGen (generic GPU)
-│   ├── CUDACodeGen (NVIDIA)
-│   ├── HIPCodeGen (AMD)
-│   └── OpenCLCodeGen (portable)
+├── GPUCodeGen (unified GPU backend)
+│   ├── CUDACodeGen (NVIDIA specifics)
+│   └── HIPCodeGen (AMD specifics)
 ├── FPGACodeGen (FPGA base)
 │   ├── XilinxCodeGen
-│   └── IntelFPGACodeGen
+│   ├── IntelFPGACodeGen
+│   └── OpenCLCodeGen (Intel FPGA only)
 └── SpecializedCodeGen
-    ├── SVECodeGen (ARM vectors)
     ├── MLIRCodeGen
-    └── RTLCodeGen
+    └── RTLCodeGen (part of FPGA toolchain)
 ```
 
 ## Implementation Roadmap
