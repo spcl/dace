@@ -180,12 +180,12 @@ The `DaCeCodeGenerator` class currently handles numerous responsibilities that s
 - **Current Location**: Implicit in current system
 - **Note**: Moved earlier to enable per-file frame and target code generation
 
-#### 13. **FrameAndTargetCodeGenerationPass**
-- **Purpose**: Generate both frame code and target-specific code for each SDFG file
+#### 13. **TargetCodeGenerationPass**
+- **Purpose**: Generate both frame code and target-specific code for each SDFG file by calling the appropriate target code generators
 - **Input**: Split SDFGs with all previous analysis
 - **Output**: pipeline_results["code_objects"] = List[CodeObject] with complete code
 - **Current Location**: Combined from `DaCeCodeGenerator.generate_code()` and target-specific `get_generated_codeobjects()`
-- **Note**: Combines frame and target code generation since they operate on split SDFGs
+- **Note**: This pass calls the target code generators (CppCodeGen, GPUCodeGen, FPGACodeGen, etc.) to generate platform-specific code
 
 #### 14. **HeaderGenerationPass**
 - **Purpose**: Generate C/C++ header files for SDFG interface
@@ -407,8 +407,6 @@ dace/codegen/
 │   ├── openmp.py          # OpenMP backend (split from cpu.py)
 │   ├── cpp.py             # Pure C++ backend
 │   ├── gpu.py             # GPU backend (generalized from cuda.py)
-│   ├── cuda.py            # CUDA-specific GPU
-│   ├── hip.py             # HIP-specific GPU
 │   ├── fpga/              # FPGA backends
 │   └── specialized/       # Other specialized targets
 ├── runtime/               # Runtime interface (from compiled_sdfg.py)
@@ -533,9 +531,8 @@ TargetCodeGenerator (base)
 
 ### Phase 5: Target Refactoring (Weeks 9-10)
 1. Split CPU backend into C++ and OpenMP
-2. Generalize CUDA backend to GPU + CUDA specifics
-3. Create HIP backend
-4. Reorganize FPGA backends
+2. Rename CUDA backend to GPU
+3. Reorganize FPGA backends
 
 ### Phase 6: Integration and Testing (Weeks 11-12)
 1. Create complete pipeline implementations

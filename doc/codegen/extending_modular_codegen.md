@@ -33,810 +33,377 @@ The modular code generation system is designed with extensibility as a core prin
 
 This section demonstrates how to add support for a new hardware platform (e.g., a custom accelerator, neuromorphic chip, or quantum processor).
 
-### Example: Adding Support for a Neuromorphic Processor
+### Example: Adding Support for OpenCL Code Generation
 
-#### Step 1: Define the Target Code Generator
+This example demonstrates how to add OpenCL support, showcasing advanced features like custom allocation handling, memory copy management, and SDFG splitting for kernel generation.
+
+#### Step 1: Define the OpenCL Target Code Generator
 
 ```python
-# File: dace/codegen/targets/neuromorphic.py
+# File: dace/codegen/targets/opencl.py
 
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
-from dace import SDFG, nodes
+from dace import SDFG, nodes, data as dt
 from typing import List, Dict, Any
+import copy
 
-class NeuromorphicCodeGen(TargetCodeGenerator):
-    """Code generator for neuromorphic processors."""
+class OpenCLCodeGen(TargetCodeGenerator):
+    """Code generator for OpenCL devices (Intel FPGAs, CPUs, etc.)."""
 
-    target_name = "neuromorphic"
-    title = "Neuromorphic Processor"
-    language = "spike_train"  # Custom spike-based language
+    target_name = "opencl"
+    title = "OpenCL"
+    language = "opencl"
 
     def __init__(self):
         super().__init__()
-        self._neuron_count = 0
-        self._synapse_map = {}
+        self._device_memories = {}
+        self._kernel_sdfgs = {}
 
     def can_handle(self, node) -> bool:
         """Check if this target can handle the given node."""
-        # Handle specific node types for neuromorphic computation
-        if isinstance(node, nodes.Tasklet):
-            # Check if tasklet contains neuromorphic operations
-            return self._is_neuromorphic_tasklet(node)
-        elif isinstance(node, nodes.MapEntry):
-            # Handle parallel spike processing
-            return self._is_spike_parallel(node)
+        if isinstance(node, nodes.MapEntry):
+            # Handle parallel maps that can be kernelized
+            return self._is_kernelizable_map(node)
+        elif isinstance(node, nodes.Tasklet):
+            # Handle individual compute tasklets
+            return self._is_opencl_compatible_tasklet(node)
         return False
 
     def get_includes(self) -> List[str]:
         """Return required header includes."""
         return [
-            "#include <neuromorphic_runtime.h>",
-            "#include <spike_interface.h>",
+            "#include <CL/cl.h>",
+            "#include <opencl_runtime.h>",
         ]
 
     def get_dependencies(self) -> List[str]:
         """Return compilation dependencies."""
-        return [
-            "neuromorphic_runtime",
-            "spike_processing_lib"
-        ]
+        return ["OpenCL", "opencl_runtime"]
 
     def generate_code(self, sdfg: SDFG, pipeline_results: dict) -> List[CodeObject]:
-        """Generate neuromorphic processor code."""
+        """Generate OpenCL host and kernel code."""
         code_objects = []
 
-        # Extract neuromorphic-specific metadata
-        neuron_config = self._analyze_neuron_requirements(sdfg, pipeline_results)
+        # Split SDFG into host and kernel portions
+        host_sdfg, kernel_sdfgs = self._split_sdfg_for_opencl(sdfg, pipeline_results)
 
-        # Generate spike train code
-        spike_code = self._generate_spike_trains(sdfg, neuron_config)
+        # Generate kernel code objects (.cl files)
+        for kernel_name, kernel_sdfg in kernel_sdfgs.items():
+            kernel_code = self._generate_kernel_code(kernel_sdfg, pipeline_results)
+            code_objects.append(CodeObject(
+                name=f"{kernel_name}.cl",
+                code=kernel_code,
+                language="opencl",
+                target=self.target_name,
+                title=f"OpenCL Kernel: {kernel_name}"
+            ))
 
-        # Generate neuron configuration
-        config_code = self._generate_neuron_config(neuron_config)
-
-        # Create code objects
+        # Generate host code with OpenCL runtime calls
+        host_code = self._generate_host_code(host_sdfg, kernel_sdfgs, pipeline_results)
         code_objects.append(CodeObject(
-            name=f"{sdfg.name}_spikes",
-            code=spike_code,
-            language=self.language,
+            name=f"{sdfg.name}_opencl_host.cpp",
+            code=host_code,
+            language="cpp",
             target=self.target_name,
-            title="Spike Train Generation"
-        ))
-
-        code_objects.append(CodeObject(
-            name=f"{sdfg.name}_config",
-            code=config_code,
-            language="yaml",  # Configuration in YAML
-            target=self.target_name,
-            title="Neuron Configuration"
+            title="OpenCL Host Code"
         ))
 
         return code_objects
 
-    def _is_neuromorphic_tasklet(self, tasklet) -> bool:
-        """Check if tasklet contains neuromorphic operations."""
-        # Look for spike-related operations in tasklet code
-        neuromorphic_ops = ['spike', 'neuron', 'synapse', 'membrane_potential']
-        return any(op in tasklet.code.code for op in neuromorphic_ops)
+    def _split_sdfg_for_opencl(self, sdfg: SDFG, pipeline_results: dict) -> tuple:
+        """Split SDFG into host and kernel portions."""
+        host_sdfg = copy.deepcopy(sdfg)
+        kernel_sdfgs = {}
 
-    def _analyze_neuron_requirements(self, sdfg: SDFG, pipeline_results: dict) -> dict:
-        """Analyze SDFG to determine neuron and synapse requirements."""
-        neuron_config = {
-            'neuron_count': 0,
-            'synapse_count': 0,
-            'network_topology': {},
-            'timing_requirements': {}
-        }
-
-        # Walk through SDFG and count required neurons/synapses
         for state in sdfg.nodes():
             for node in state.nodes():
-                if self.can_handle(node):
-                    self._count_neuromorphic_resources(node, neuron_config)
+                if self.can_handle(node) and isinstance(node, nodes.MapEntry):
+                    # Extract kernelizable map into separate SDFG
+                    kernel_name = f"{sdfg.name}_{node.label}_kernel"
+                    kernel_sdfg = self._extract_kernel_sdfg(node, state, sdfg)
+                    kernel_sdfgs[kernel_name] = kernel_sdfg
 
-        return neuron_config
+        return host_sdfg, kernel_sdfgs
 
-    def _generate_spike_trains(self, sdfg: SDFG, config: dict) -> str:
-        """Generate spike train processing code."""
+    def _generate_kernel_code(self, kernel_sdfg: SDFG, pipeline_results: dict) -> str:
+        """Generate OpenCL kernel code from kernel SDFG."""
         code = []
-        code.append("// Neuromorphic spike train processing")
-        code.append(f"#define NEURON_COUNT {config['neuron_count']}")
-        code.append(f"#define SYNAPSE_COUNT {config['synapse_count']}")
+
+        # Generate kernel signature
+        kernel_params = self._analyze_kernel_parameters(kernel_sdfg, pipeline_results)
+        code.append(f"__kernel void {kernel_sdfg.name}({', '.join(kernel_params)}) {{")
+
+        # Generate kernel body from SDFG
+        for state in kernel_sdfg.nodes():
+            code.extend(self._generate_state_code(state, pipeline_results))
+
+        code.append("}")
+        return "\n".join(code)
+
+    def _generate_host_code(self, host_sdfg: SDFG, kernel_sdfgs: dict, pipeline_results: dict) -> str:
+        """Generate host code with OpenCL runtime management."""
+        code = []
+
+        # Include headers
+        code.extend(self.get_includes())
         code.append("")
 
-        # Generate initialization code
-        code.append("void initialize_neuromorphic_network() {")
-        code.append("    setup_neuron_array(NEURON_COUNT);")
-        code.append("    configure_synapses(SYNAPSE_COUNT);")
-        code.append("}")
+        # Generate OpenCL context initialization
+        code.append("// OpenCL context and device setup")
+        code.append("cl_context context;")
+        code.append("cl_device_id device;")
+        code.append("cl_command_queue queue;")
         code.append("")
 
-        # Generate main processing loop
-        code.append("void process_spike_trains() {")
-        code.append("    for (int timestep = 0; timestep < simulation_time; timestep++) {")
-        code.append("        update_membrane_potentials();")
-        code.append("        process_spike_events();")
-        code.append("        update_synaptic_weights();")
-        code.append("    }")
-        code.append("}")
+        # Generate buffer allocations with custom OpenCL memory management
+        allocation_info = pipeline_results.get('allocation_analysis', {})
+        for array_name, allocation in allocation_info.items():
+            code.extend(self._generate_buffer_allocation(array_name, allocation))
+
+        # Generate kernel compilation and execution
+        for kernel_name, kernel_sdfg in kernel_sdfgs.items():
+            code.extend(self._generate_kernel_invocation(kernel_name, kernel_sdfg, pipeline_results))
+
+        # Generate memory copy operations with async transfers
+        copy_analysis = pipeline_results.get('copy_analysis', {})
+        for copy_info in copy_analysis:
+            code.extend(self._generate_async_copy(copy_info))
 
         return "\n".join(code)
+
+    def _generate_buffer_allocation(self, array_name: str, allocation: dict) -> List[str]:
+        """Generate OpenCL buffer allocation with custom memory flags."""
+        code = []
+        size = allocation.get('size', 0)
+        access_pattern = allocation.get('access_pattern', 'read_write')
+
+        # Map access pattern to OpenCL memory flags
+        flag_map = {
+            'read_only': 'CL_MEM_READ_ONLY',
+            'write_only': 'CL_MEM_WRITE_ONLY',
+            'read_write': 'CL_MEM_READ_WRITE'
+        }
+        flags = flag_map.get(access_pattern, 'CL_MEM_READ_WRITE')
+
+        code.append(f"// Allocate OpenCL buffer for {array_name}")
+        code.append(f"cl_mem {array_name}_buffer = clCreateBuffer(context, {flags}, {size}, NULL, &err);")
+        code.append(f"check_opencl_error(err, \"Failed to allocate buffer for {array_name}\");")
+        code.append("")
+
+        return code
+
+    def _generate_async_copy(self, copy_info: dict) -> List[str]:
+        """Generate asynchronous memory copy operations."""
+        code = []
+        src = copy_info.get('source')
+        dst = copy_info.get('destination')
+        size = copy_info.get('size')
+
+        if copy_info.get('direction') == 'host_to_device':
+            code.append(f"// Async copy {src} -> {dst}")
+            code.append(f"err = clEnqueueWriteBuffer(queue, {dst}_buffer, CL_FALSE, 0, {size}, {src}, 0, NULL, NULL);")
+        elif copy_info.get('direction') == 'device_to_host':
+            code.append(f"// Async copy {src} -> {dst}")
+            code.append(f"err = clEnqueueReadBuffer(queue, {src}_buffer, CL_FALSE, 0, {size}, {dst}, 0, NULL, NULL);")
+
+        code.append(f"check_opencl_error(err, \"Failed to copy {src} -> {dst}\");")
+        code.append("")
+
+        return code
 ```
 
-#### Step 2: Register the Target
+#### Step 2: Add Custom Allocation Pass for OpenCL
 
 ```python
-# File: dace/codegen/targets/__init__.py
-
-# Add to existing imports
-from .neuromorphic import NeuromorphicCodeGen
-
-# Add to target registry
-AVAILABLE_TARGETS = {
-    'cpu': CPUCodeGen,
-    'gpu': GPUCodeGen,
-    'fpga': FPGACodeGen,
-    'neuromorphic': NeuromorphicCodeGen,  # New target
-}
-```
-
-#### Step 3: Add Target Detection Logic
-
-```python
-# File: dace/codegen/passes/target_analysis.py
-
-class TargetAnalysisPass(Pass):
-    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
-        targets = {}
-
-        # Existing target detection logic...
-
-        # Add neuromorphic detection
-        if self._has_neuromorphic_nodes(sdfg):
-            targets['neuromorphic'] = NeuromorphicCodeGen()
-
-        pipeline_results['targets'] = targets
-
-    def _has_neuromorphic_nodes(self, sdfg: SDFG) -> bool:
-        """Check if SDFG contains neuromorphic computation nodes."""
-        for state in sdfg.nodes():
-            for node in state.nodes():
-                if isinstance(node, nodes.Tasklet):
-                    # Check for neuromorphic operations in tasklet
-                    neuromorphic_keywords = ['spike', 'neuron', 'synapse']
-                    if any(kw in node.code.code for kw in neuromorphic_keywords):
-                        return True
-        return False
-```
-
-#### Step 4: Add Platform-Specific Transformation Pass
-
-```python
-# File: dace/codegen/passes/neuromorphic_lowering.py
+# File: dace/codegen/passes/opencl_allocation.py
 
 from dace.transformation.pass_pipeline import Pass
-from dace import SDFG, nodes
+from dace import SDFG, nodes, data as dt
 
-class NeuromorphicLoweringPass(Pass):
-    """Lower high-level operations to neuromorphic primitives."""
+class OpenCLAllocationPass(Pass):
+    """Custom allocation analysis for OpenCL memory management."""
 
     def modifies(self) -> bool:
-        return True
+        return False  # Analysis pass doesn't modify SDFG
 
     def should_reapply(self, modified: bool) -> bool:
         return False
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
-        """Convert mathematical operations to spike-based equivalents."""
+        """Analyze memory allocations for OpenCL-specific optimizations."""
+
+        allocation_analysis = {}
+        copy_analysis = []
 
         for state in sdfg.nodes():
             for node in state.nodes():
-                if isinstance(node, nodes.Tasklet):
-                    self._lower_tasklet_to_spikes(node)
+                if isinstance(node, nodes.AccessNode):
+                    # Analyze data access patterns for OpenCL buffer flags
+                    array_info = self._analyze_array_access(node, state, sdfg)
+                    allocation_analysis[node.data] = array_info
 
-    def _lower_tasklet_to_spikes(self, tasklet):
-        """Convert tasklet operations to spike-based operations."""
-        code = tasklet.code.code
+                elif isinstance(node, nodes.MapEntry):
+                    # Analyze copy requirements for kernel boundaries
+                    copy_info = self._analyze_kernel_copies(node, state, sdfg)
+                    copy_analysis.extend(copy_info)
 
-        # Replace mathematical operations with spike equivalents
-        replacements = {
-            'multiply': 'synapse_weight_modulation',
-            'add': 'spike_accumulation',
-            'threshold': 'membrane_potential_threshold',
-            'sigmoid': 'neuron_activation_function'
-        }
+        pipeline_results['allocation_analysis'] = allocation_analysis
+        pipeline_results['copy_analysis'] = copy_analysis
 
-        for math_op, spike_op in replacements.items():
-            code = code.replace(math_op, spike_op)
+    def _analyze_array_access(self, access_node, state, sdfg) -> dict:
+        """Determine OpenCL memory access patterns for optimal buffer allocation."""
+        array_name = access_node.data
+        array_desc = sdfg.arrays[array_name]
 
-        tasklet.code.code = code
-```
+        # Analyze read/write patterns
+        is_read = False
+        is_written = False
 
-#### Step 5: Update Pipeline Configuration
+        for edge in state.edges():
+            if edge.src == access_node:
+                is_read = True
+            elif edge.dst == access_node:
+                is_written = True
 
-```python
-# File: dace/codegen/pipeline_config.py
-
-def create_neuromorphic_pipeline():
-    """Create pipeline configuration for neuromorphic targets."""
-    return Pipeline([
-        # Standard analysis passes
-        TypeInferencePass(),
-        MetadataCollectionPass(),
-        AllocationAnalysisPass(),
-        TargetAnalysisPass(),
-
-        # Neuromorphic-specific passes
-        ConditionalPass(
-            condition=lambda results: 'neuromorphic' in results.get('targets', {}),
-            pass=NeuromorphicLoweringPass()
-        ),
-
-        # Code generation
-        FrameAndTargetCodeGenerationPass(),
-    ])
-```
-
-## Adding Support for New Languages/IRs
-
-This section demonstrates how to add support for generating code in a new programming language or intermediate representation.
-
-### Example: Adding LLVM IR Support
-
-#### Step 1: Create Language-Specific Code Generator
-
-```python
-# File: dace/codegen/targets/llvm_ir.py
-
-from dace.codegen.targets.target import TargetCodeGenerator
-from dace.codegen.codeobject import CodeObject
-from dace import SDFG, nodes, data
-from typing import List, Dict, Any
-import llvmlite.ir as ir
-
-class LLVMIRCodeGen(TargetCodeGenerator):
-    """Generate LLVM IR code from SDFG."""
-
-    target_name = "llvm"
-    title = "LLVM IR"
-    language = "llvm_ir"
-
-    def __init__(self):
-        super().__init__()
-        self.module = None
-        self.builder = None
-        self.function = None
-        self.variables = {}
-
-    def can_handle(self, node) -> bool:
-        """LLVM IR can handle most computational nodes."""
-        if isinstance(node, (nodes.Tasklet, nodes.MapEntry, nodes.AccessNode)):
-            return True
-        # Skip specialized nodes that need specific backends
-        if isinstance(node, nodes.LibraryNode):
-            return node.implementation in ['BLAS', 'pure']
-        return False
-
-    def get_includes(self) -> List[str]:
-        """LLVM IR doesn't need traditional includes."""
-        return []
-
-    def get_dependencies(self) -> List[str]:
-        """Return LLVM-related dependencies."""
-        return ["llvm-runtime", "llvm-libs"]
-
-    def generate_code(self, sdfg: SDFG, pipeline_results: dict) -> List[CodeObject]:
-        """Generate LLVM IR code for the SDFG."""
-
-        # Initialize LLVM module
-        self.module = ir.Module(name=sdfg.name)
-
-        # Generate function signature
-        self._generate_function_signature(sdfg, pipeline_results)
-
-        # Generate function body
-        self._generate_function_body(sdfg, pipeline_results)
-
-        # Create code object
-        ir_code = str(self.module)
-
-        return [CodeObject(
-            name=f"{sdfg.name}_llvm",
-            code=ir_code,
-            language=self.language,
-            target=self.target_name,
-            title="LLVM IR Implementation"
-        )]
-
-    def _generate_function_signature(self, sdfg: SDFG, pipeline_results: dict):
-        """Generate LLVM function signature from SDFG arguments."""
-
-        # Analyze SDFG arguments
-        args_info = pipeline_results.get('arguments', {})
-
-        # Create LLVM function type
-        arg_types = []
-        for arg_name, arg_info in args_info.items():
-            llvm_type = self._convert_dace_type_to_llvm(arg_info['type'])
-            if arg_info.get('is_pointer', False):
-                llvm_type = llvm_type.as_pointer()
-            arg_types.append(llvm_type)
-
-        # Create function type (void return for now)
-        func_type = ir.FunctionType(ir.VoidType(), arg_types)
-
-        # Create function
-        self.function = ir.Function(self.module, func_type, name=f"dace_{sdfg.name}")
-
-        # Create entry basic block
-        block = self.function.append_basic_block(name="entry")
-        self.builder = ir.IRBuilder(block)
-
-        # Map arguments to variables
-        for i, (arg_name, _) in enumerate(args_info.items()):
-            self.variables[arg_name] = self.function.args[i]
-
-    def _generate_function_body(self, sdfg: SDFG, pipeline_results: dict):
-        """Generate LLVM IR for SDFG states."""
-
-        for state in sdfg.nodes():
-            self._generate_state_code(state)
-
-        # Add return instruction
-        self.builder.ret_void()
-
-    def _generate_state_code(self, state):
-        """Generate LLVM IR for a single state."""
-
-        for node in state.nodes():
-            if isinstance(node, nodes.Tasklet):
-                self._generate_tasklet_code(node)
-            elif isinstance(node, nodes.MapEntry):
-                self._generate_map_code(node, state)
-
-    def _generate_tasklet_code(self, tasklet):
-        """Generate LLVM IR for a tasklet."""
-
-        # Parse tasklet code and convert to LLVM operations
-        code = tasklet.code.code.strip()
-
-        # Simple example: convert basic arithmetic
-        if '=' in code:
-            lhs, rhs = code.split('=', 1)
-            lhs = lhs.strip()
-            rhs = rhs.strip()
-
-            # Generate LLVM IR for the expression
-            result = self._compile_expression(rhs)
-
-            # Store result (simplified)
-            if lhs in self.variables:
-                self.builder.store(result, self.variables[lhs])
-
-    def _compile_expression(self, expr: str):
-        """Compile a simple expression to LLVM IR."""
-
-        # Very simplified expression compiler
-        # In practice, you'd want a proper parser
-
-        if expr.isdigit():
-            # Constant integer
-            return ir.Constant(ir.IntType(32), int(expr))
-        elif '+' in expr:
-            # Addition
-            operands = expr.split('+')
-            left = self._compile_expression(operands[0].strip())
-            right = self._compile_expression(operands[1].strip())
-            return self.builder.add(left, right)
-        elif expr in self.variables:
-            # Variable reference
-            return self.builder.load(self.variables[expr])
-
-        # Default: return zero
-        return ir.Constant(ir.IntType(32), 0)
-
-    def _convert_dace_type_to_llvm(self, dace_type):
-        """Convert DaCe data type to LLVM type."""
-
-        if dace_type == data.int32:
-            return ir.IntType(32)
-        elif dace_type == data.int64:
-            return ir.IntType(64)
-        elif dace_type == data.float32:
-            return ir.FloatType()
-        elif dace_type == data.float64:
-            return ir.DoubleType()
+        # Determine access pattern
+        if is_read and is_written:
+            access_pattern = 'read_write'
+        elif is_read:
+            access_pattern = 'read_only'
+        elif is_written:
+            access_pattern = 'write_only'
         else:
-            # Default to i32
-            return ir.IntType(32)
+            access_pattern = 'read_write'  # Default
+
+        return {
+            'size': array_desc.total_size * array_desc.dtype.bytes,
+            'access_pattern': access_pattern,
+            'dtype': str(array_desc.dtype),
+            'shape': array_desc.shape
+        }
 ```
 
-#### Step 2: Add Language Support to Code Object
+#### Step 3: Add SDFG Splitting Pass
 
 ```python
-# File: dace/codegen/codeobject.py
-
-# Add to LANGUAGE_MAPPINGS
-LANGUAGE_MAPPINGS = {
-    'cpp': 'C++',
-    'cuda': 'CUDA',
-    'llvm_ir': 'LLVM IR',  # New language
-    'spike_train': 'Spike Train Language',  # From neuromorphic example
-}
-
-# Add to file extensions
-FILE_EXTENSIONS = {
-    'cpp': '.cpp',
-    'cuda': '.cu',
-    'llvm_ir': '.ll',  # LLVM IR file extension
-    'spike_train': '.spike',
-}
-```
-
-#### Step 3: Add LLVM-Specific Analysis Pass
-
-```python
-# File: dace/codegen/passes/llvm_analysis.py
+# File: dace/codegen/passes/opencl_sdfg_splitting.py
 
 from dace.transformation.pass_pipeline import Pass
-from dace import SDFG, nodes
+from dace import SDFG, nodes, SDFGState
+import copy
 
-class LLVMAnalysisPass(Pass):
-    """Analyze SDFG for LLVM IR generation requirements."""
+class OpenCLSDFGSplittingPass(Pass):
+    """Split SDFG into host and kernel portions for OpenCL code generation."""
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
-        """Collect LLVM-specific metadata."""
+    def modifies(self) -> bool:
+        return True  # Creates new SDFGs
 
-        llvm_info = {
-            'requires_vectorization': False,
-            'memory_access_patterns': {},
-            'control_flow_complexity': 'simple',
-            'parallelization_opportunities': []
-        }
-
-        # Analyze for vectorization opportunities
-        for state in sdfg.nodes():
-            if self._has_vectorizable_operations(state):
-                llvm_info['requires_vectorization'] = True
-
-        # Analyze memory access patterns
-        llvm_info['memory_access_patterns'] = self._analyze_memory_accesses(sdfg)
-
-        pipeline_results['llvm_analysis'] = llvm_info
-
-    def _has_vectorizable_operations(self, state) -> bool:
-        """Check if state contains vectorizable operations."""
-        for node in state.nodes():
-            if isinstance(node, nodes.MapEntry):
-                # Maps are typically vectorizable
-                return True
+    def should_reapply(self, modified: bool) -> bool:
         return False
 
-    def _analyze_memory_accesses(self, sdfg: SDFG) -> dict:
-        """Analyze memory access patterns for optimization."""
-        patterns = {
-            'sequential': [],
-            'strided': [],
-            'random': []
-        }
+    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
+        """Split SDFG for OpenCL kernel extraction."""
 
-        # Simplified analysis - in practice would be more sophisticated
+        # Check if OpenCL target is present
+        targets = pipeline_results.get('targets', {})
+        if 'opencl' not in targets:
+            return
+
+        kernel_sdfgs = {}
+
         for state in sdfg.nodes():
-            for edge in state.edges():
-                if edge.data.subset:
-                    # Analyze access pattern
-                    if self._is_sequential_access(edge.data.subset):
-                        patterns['sequential'].append(edge)
-                    elif self._is_strided_access(edge.data.subset):
-                        patterns['strided'].append(edge)
-                    else:
-                        patterns['random'].append(edge)
+            kernelizable_maps = self._find_kernelizable_maps(state)
 
-        return patterns
+            for map_node in kernelizable_maps:
+                # Create kernel SDFG
+                kernel_name = f"{sdfg.name}_{map_node.label}_kernel"
+                kernel_sdfg = self._extract_kernel_sdfg(map_node, state, sdfg)
+                kernel_sdfgs[kernel_name] = kernel_sdfg
+
+                # Replace map with kernel call node in host SDFG
+                self._replace_with_kernel_call(map_node, state, kernel_name)
+
+        pipeline_results['kernel_sdfgs'] = kernel_sdfgs
+
+    def _find_kernelizable_maps(self, state: SDFGState) -> list:
+        """Find map nodes that can be converted to OpenCL kernels."""
+        kernelizable = []
+
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                # Check if map is suitable for kernelization
+                if self._is_suitable_for_kernel(node, state):
+                    kernelizable.append(node)
+
+        return kernelizable
+
+    def _extract_kernel_sdfg(self, map_node, state, parent_sdfg) -> SDFG:
+        """Extract map scope into separate SDFG for kernel generation."""
+        kernel_sdfg = SDFG(f"{parent_sdfg.name}_{map_node.label}_kernel")
+        kernel_state = kernel_sdfg.add_state("kernel_state")
+
+        # Copy map scope contents to kernel SDFG
+        # This is a simplified version - real implementation would be more complex
+        self._copy_map_scope_to_kernel(map_node, state, kernel_state, kernel_sdfg)
+
+        return kernel_sdfg
 ```
 
-#### Step 4: Integration with Pipeline
+#### Step 4: Update Pipeline Configuration
 
 ```python
 # File: dace/codegen/pipeline_config.py
 
-def create_llvm_pipeline():
-    """Create pipeline configuration for LLVM IR generation."""
+def create_opencl_pipeline():
+    """Create pipeline configuration for OpenCL targets."""
     return Pipeline([
         # Standard analysis passes
         TypeInferencePass(),
         MetadataCollectionPass(),
-        AllocationAnalysisPass(),
         TargetAnalysisPass(),
 
-        # LLVM-specific analysis
+        # OpenCL-specific analysis
         ConditionalPass(
-            condition=lambda results: 'llvm' in results.get('targets', {}),
-            pass=LLVMAnalysisPass()
+            condition=lambda results: 'opencl' in results.get('targets', {}),
+            pass=OpenCLAllocationPass()
+        ),
+
+        # Transformations
+        ConditionalPass(
+            condition=lambda results: 'opencl' in results.get('targets', {}),
+            pass=OpenCLSDFGSplittingPass()
         ),
 
         # Code generation
-        FrameAndTargetCodeGenerationPass(),
-    ])
-
-def create_multi_backend_pipeline():
-    """Create pipeline that can generate multiple backends."""
-    return Pipeline([
-        # Common analysis passes
-        TypeInferencePass(),
-        MetadataCollectionPass(),
-        AllocationAnalysisPass(),
-        TargetAnalysisPass(),
-
-        # Backend-specific analysis
-        ConditionalPass(
-            condition=lambda results: 'llvm' in results.get('targets', {}),
-            pass=LLVMAnalysisPass()
-        ),
-        ConditionalPass(
-            condition=lambda results: 'neuromorphic' in results.get('targets', {}),
-            pass=NeuromorphicLoweringPass()
-        ),
-
-        # Code generation for all targets
-        FrameAndTargetCodeGenerationPass(),
+        TargetCodeGenerationPass(),
     ])
 ```
 
-## Integration with the Pipeline
-
-### Automatic Target Discovery
-
-The modular system automatically discovers and registers new targets:
+#### Step 5: Target Registration and Integration
 
 ```python
-# File: dace/codegen/passes/target_analysis.py
+# File: dace/codegen/targets/__init__.py
 
-class TargetAnalysisPass(Pass):
-    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
-        """Discover and configure appropriate targets for the SDFG."""
+from .opencl import OpenCLCodeGen
 
-        targets = {}
-
-        # Automatic target discovery based on node analysis
-        for target_name, target_class in AVAILABLE_TARGETS.items():
-            target_instance = target_class()
-
-            # Check if any nodes in the SDFG can be handled by this target
-            can_handle_any = False
-            for state in sdfg.nodes():
-                for node in state.nodes():
-                    if target_instance.can_handle(node):
-                        can_handle_any = True
-                        break
-                if can_handle_any:
-                    break
-
-            if can_handle_any:
-                targets[target_name] = target_instance
-
-        pipeline_results['targets'] = targets
-        pipeline_results['target_priorities'] = self._compute_target_priorities(targets)
-
-    def _compute_target_priorities(self, targets: dict) -> dict:
-        """Compute priority order for targets when multiple can handle the same node."""
-        priorities = {
-            'neuromorphic': 100,  # Highest priority for neuromorphic nodes
-            'fpga': 90,
-            'gpu': 80,
-            'llvm': 70,
-            'cpu': 60,  # Lowest priority (fallback)
-        }
-
-        return {name: priorities.get(name, 50) for name in targets.keys()}
+AVAILABLE_TARGETS = {
+    'cpu': CPUCodeGen,
+    'gpu': GPUCodeGen,
+    'fpga': FPGACodeGen,
+    'opencl': OpenCLCodeGen,  # New OpenCL target
+}
 ```
 
-### Multi-Target Code Generation
+This example demonstrates several advanced features:
 
-The system can generate code for multiple targets simultaneously:
+1. **Custom Allocation Management**: OpenCL-specific buffer allocation with memory access pattern analysis
+2. **SDFG Splitting**: Automatic extraction of kernel portions into separate `.cl` files
+3. **Asynchronous Memory Copies**: Host-device transfer optimization
+4. **Target-Specific Passes**: Custom analysis and transformation passes for OpenCL
+5. **Multi-File Generation**: Separate host (.cpp) and kernel (.cl) code objects
 
-```python
-# File: dace/codegen/passes/frame_and_target_generation.py
-
-class FrameAndTargetCodeGenerationPass(Pass):
-    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
-        """Generate code for all applicable targets."""
-
-        targets = pipeline_results.get('targets', {})
-        code_objects = []
-
-        for target_name, target_generator in targets.items():
-            try:
-                target_code_objects = target_generator.generate_code(sdfg, pipeline_results)
-                code_objects.extend(target_code_objects)
-            except Exception as e:
-                # Log error but continue with other targets
-                print(f"Warning: Failed to generate code for target {target_name}: {e}")
-
-        pipeline_results['code_objects'] = code_objects
-
-        # Generate orchestration code if multiple targets are used
-        if len(targets) > 1:
-            orchestration_code = self._generate_orchestration_code(targets, pipeline_results)
-            code_objects.append(orchestration_code)
-
-    def _generate_orchestration_code(self, targets: dict, pipeline_results: dict) -> CodeObject:
-        """Generate code to orchestrate multiple targets."""
-
-        code = []
-        code.append("// Multi-target orchestration code")
-        code.append("#include <runtime/multi_target.h>")
-        code.append("")
-
-        # Initialize all targets
-        for target_name in targets.keys():
-            code.append(f"    initialize_{target_name}_runtime();")
-
-        # Add synchronization points
-        code.append("    synchronize_all_targets();")
-
-        # Cleanup
-        for target_name in targets.keys():
-            code.append(f"    cleanup_{target_name}_runtime();")
-
-        return CodeObject(
-            name="multi_target_orchestration",
-            code="\n".join(code),
-            language="cpp",
-            target="orchestration",
-            title="Multi-Target Orchestration"
-        )
-```
-
-## Testing Extensions
-
-### Unit Testing New Targets
-
-```python
-# File: tests/codegen/test_neuromorphic_target.py
-
-import unittest
-from dace import SDFG, nodes
-from dace.codegen.targets.neuromorphic import NeuromorphicCodeGen
-
-class TestNeuromorphicTarget(unittest.TestCase):
-
-    def setUp(self):
-        self.target = NeuromorphicCodeGen()
-
-    def test_can_handle_neuromorphic_tasklet(self):
-        """Test that neuromorphic target can handle spike-related tasklets."""
-
-        # Create a tasklet with neuromorphic operations
-        tasklet = nodes.Tasklet(
-            name="spike_processor",
-            inputs={'input_spikes'},
-            outputs={'output_spikes'},
-            code="output_spikes = process_spike_train(input_spikes)"
-        )
-
-        self.assertTrue(self.target.can_handle(tasklet))
-
-    def test_cannot_handle_regular_tasklet(self):
-        """Test that neuromorphic target rejects non-neuromorphic tasklets."""
-
-        tasklet = nodes.Tasklet(
-            name="math_processor",
-            inputs={'a', 'b'},
-            outputs={'c'},
-            code="c = a + b"
-        )
-
-        self.assertFalse(self.target.can_handle(tasklet))
-
-    def test_code_generation(self):
-        """Test code generation for neuromorphic SDFG."""
-
-        # Create simple SDFG with neuromorphic tasklet
-        sdfg = SDFG("test_neuromorphic")
-        state = sdfg.add_state("main")
-
-        tasklet = state.add_tasklet(
-            "spike_gen",
-            inputs={'input_data'},
-            outputs={'spikes'},
-            code="spikes = generate_spikes(input_data)"
-        )
-
-        # Mock pipeline results
-        pipeline_results = {
-            'arguments': {'input_data': {'type': 'float32', 'is_pointer': True}}
-        }
-
-        code_objects = self.target.generate_code(sdfg, pipeline_results)
-
-        self.assertGreater(len(code_objects), 0)
-        self.assertEqual(code_objects[0].target, "neuromorphic")
-        self.assertIn("neuromorphic", code_objects[0].code)
-
-if __name__ == '__main__':
-    unittest.main()
-```
-
-### Integration Testing
-
-```python
-# File: tests/codegen/test_multi_target_pipeline.py
-
-import unittest
-from dace import SDFG
-from dace.codegen.pipeline_config import create_multi_backend_pipeline
-
-class TestMultiTargetPipeline(unittest.TestCase):
-
-    def test_neuromorphic_and_cpu_generation(self):
-        """Test generating code for both neuromorphic and CPU targets."""
-
-        # Create SDFG with mixed computation
-        sdfg = SDFG("mixed_computation")
-        state = sdfg.add_state("main")
-
-        # Add CPU computation
-        cpu_tasklet = state.add_tasklet(
-            "cpu_math",
-            inputs={'a', 'b'},
-            outputs={'c'},
-            code="c = a * b + 42"
-        )
-
-        # Add neuromorphic computation
-        neuro_tasklet = state.add_tasklet(
-            "spike_proc",
-            inputs={'input_spikes'},
-            outputs={'output_spikes'},
-            code="output_spikes = neuron_activation(input_spikes)"
-        )
-
-        # Run multi-target pipeline
-        pipeline = create_multi_backend_pipeline()
-        pipeline_results = {}
-        pipeline.apply_pass(sdfg, pipeline_results)
-
-        # Check that code was generated for both targets
-        code_objects = pipeline_results.get('code_objects', [])
-        targets_found = {obj.target for obj in code_objects}
-
-        self.assertIn('cpu', targets_found)
-        self.assertIn('neuromorphic', targets_found)
-
-    def test_llvm_ir_generation(self):
-        """Test LLVM IR generation for computational SDFG."""
-
-        # Create computational SDFG
-        sdfg = SDFG("llvm_test")
-        state = sdfg.add_state("compute")
-
-        tasklet = state.add_tasklet(
-            "vector_add",
-            inputs={'a', 'b'},
-            outputs={'c'},
-            code="c = a + b"
-        )
-
-        # Force LLVM target
-        pipeline_results = {
-            'targets': {'llvm': LLVMIRCodeGen()}
-        }
-
-        pipeline = create_multi_backend_pipeline()
-        pipeline.apply_pass(sdfg, pipeline_results)
-
-        # Check LLVM IR was generated
-        code_objects = pipeline_results.get('code_objects', [])
-        llvm_objects = [obj for obj in code_objects if obj.language == 'llvm_ir']
-
-        self.assertGreater(len(llvm_objects), 0)
-        self.assertIn('define', llvm_objects[0].code)  # LLVM IR function definition
-
-if __name__ == '__main__':
-    unittest.main()
-```
+The modular design makes it straightforward to add sophisticated platform-specific optimizations while maintaining clean separation of concerns.
 
 ## Best Practices
 
@@ -874,4 +441,4 @@ The modular code generation system is designed to make adding new platforms and 
 3. Register your target with the system
 4. Provide comprehensive tests
 
-The examples above demonstrate the flexibility of the system - from specialized neuromorphic processors to general-purpose LLVM IR generation. The same patterns can be applied to add support for any new platform or programming language.
+The OpenCL example above demonstrates the flexibility of the system, showing advanced features like custom allocation management, SDFG splitting, and multi-file code generation. The same patterns can be applied to add support for any new platform or programming language.
