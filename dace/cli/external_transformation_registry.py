@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 DaCe Transformation Repository Manager
 
@@ -12,17 +12,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from urllib.parse import urlparse
-
+import dace
 
 class TransformationRepoManager:
-
     def _set_path(self):
-        import dace
-        from dace import config
         # Get default path for external transformations, eval $HOME if present
-        base_path_home_unevaluated_str = config.Config.get("external_transformations_path")
+        base_path_home_unevaluated_str = dace.config.Config.get("external_transformations_path")
         home_str = str(Path.home())
         base_path_str = base_path_home_unevaluated_str.replace('$HOME', home_str)
         base_path = Path(base_path_str)

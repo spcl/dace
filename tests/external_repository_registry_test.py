@@ -1,11 +1,9 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import subprocess
-import sys
-from pathlib import Path
 import importlib.util
 import shutil
-import pytest
+import dace
 
 REPO_URL = "https://github.com/spcl/TransformationsTest.git"
 REPO_NAME = "external_transformations"
@@ -14,7 +12,7 @@ EXPECTED_CLASS = "EmptyTransformation"
 ENV_KEY = "DACE_external_transformations_path"
 
 
-def run_cli(env_key, env_value, *args):
+def run_cli(env_key: str, env_value: str, *args):
     """Run the CLI script with a single environment variable."""
     cmd = ["dace-external-transformation-registry", *args]
 
@@ -38,34 +36,23 @@ def run_cli(env_key, env_value, *args):
     return result
 
 
-def _get_base_path():
-    import dace
-    from dace import config
-
-    base_path_home_unevaluated_str = config.Config.get("external_transformations_path")
-    base_path_str = os.path.expanduser(os.path.expandvars(base_path_home_unevaluated_str))
-    base_path = Path(base_path_str)
-    if not base_path.is_absolute():
-        dace_root = Path(dace.__file__).resolve().parent.parent
-        base_path = dace_root / base_path
-    return base_path
+def _get_base_path() -> str:
+    return str(dace.__external_transformations_path__)
 
 
-def _set_and_get_non_default_path():
-    from dace import config
-    config.Config.set("external_transformations_path", value="dace/transformation/external")
+def _set_and_get_non_default_path() -> str:
+    dace.config.Config.set("external_transformations_path", value="dace/transformation/external")
     base_path = _get_base_path()
     return base_path
 
 
-def _set_default_path():
-    from dace import config
-    config.Config.set("external_transformations_path", value="$HOME/dace_transformations/external_transformations")
+def _set_default_path() -> str:
+    dace.config.Config.set("external_transformations_path", value="$HOME/dace_transformations/external_transformations")
     base_path = _get_base_path()
     return base_path
 
 
-def _test_add_repository_and_check_file(env_key, env_value):
+def _test_add_repository_and_check_file(env_key: str, env_value: str):
     base_path = _get_base_path()
 
     repo_path = base_path / REPO_NAME
@@ -93,7 +80,7 @@ def test_add_repository_and_check_file_with_env_var():
     _test_remove_repository(ENV_KEY, str(base_path))
 
 
-def _test_import_empty_transformation(env_key, env_value):
+def _test_import_empty_transformation(env_key: str, env_value: str):
     _test_add_repository_and_check_file(env_key, env_value)
     base_path = _get_base_path()
 
@@ -122,7 +109,7 @@ def test_import_empty_transformation_with_env_var():
     _test_remove_repository(ENV_KEY, str(base_path))
 
 
-def _test_remove_repository(env_key, env_value):
+def _test_remove_repository(env_key: str, env_value: str):
     base_path = _get_base_path()
     repo_path = base_path / REPO_NAME
     result = run_cli(env_key, env_value, "remove", REPO_NAME)
@@ -177,4 +164,3 @@ if __name__ == "__main__":
     test_add_repository_and_check_file_non_default_path()
     test_import_empty_transformation_non_default_path()
     test_remove_repository_non_default_path()
-    print("All External-Repository-Registry tests passed.")
