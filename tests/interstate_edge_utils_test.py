@@ -1,13 +1,14 @@
 import dace
 import typing
 
+
 def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
     sdfg = dace.SDFG("interstate_util_test")
 
     # Add symbols and arrays
     scalar1_name, scalar1 = sdfg.add_scalar("scalar1", dace.int32, transient=True, find_new_name=False)
     scalar2_name, scalar2 = sdfg.add_scalar("scalar2", dace.int32, transient=True, find_new_name=False)
-    array1_name, array1 = sdfg.add_array("array1", (10,), dace.int32, transient=True, find_new_name=False)
+    array1_name, array1 = sdfg.add_array("array1", (10, ), dace.int32, transient=True, find_new_name=False)
     sym1_name = sdfg.add_symbol("symbol1", dace.int32, find_new_name=False)
     sym2_name = sdfg.add_symbol("symbol2", dace.int32, find_new_name=False)
     sym3_name = sdfg.add_symbol("symbol3", dace.int32, find_new_name=False)
@@ -33,10 +34,12 @@ def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
     sdfg.validate()
     return sdfg, e
 
+
 def test_read_symbols():
     sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.read_symbols() == {"scalar2", "symbol1", "array1"}
+
 
 def test_used_symbols():
     sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
@@ -44,11 +47,15 @@ def test_used_symbols():
     assert e.data.used_symbols() == {"scalar2", "symbol1", "array1"}
     assert e.data.used_symbols(all_symbols=True) == e.data.used_symbols(all_symbols=False)
 
+
 def test_all_used_symbols():
     sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     e: dace.InterstateEdge = sdfg_and_edge[1]
-    assert e.data.used_symbols(all_symbols=True, union_lhs_symbols=True) == {"scalar1", "scalar2", "symbol1", "symbol2", "symbol3", "array1"}
-    assert e.data.used_symbols(all_symbols=False, union_lhs_symbols=True) == e.data.used_symbols(all_symbols=True, union_lhs_symbols=True)
+    assert e.data.used_symbols(
+        all_symbols=True, union_lhs_symbols=True) == {"scalar1", "scalar2", "symbol1", "symbol2", "symbol3", "array1"}
+    assert e.data.used_symbols(all_symbols=False, union_lhs_symbols=True) == e.data.used_symbols(all_symbols=True,
+                                                                                                 union_lhs_symbols=True)
+
 
 def test_all_read_sdfg_symbols():
     sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
@@ -56,11 +63,13 @@ def test_all_read_sdfg_symbols():
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.used_sdfg_symbols(arrays=sdfg.arrays, union_lhs_symbols=False) == {"symbol1"}
 
+
 def test_all_read_arrays():
     sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
     sdfg: dace.SDFG = sdfg_and_edge[0]
     e: dace.InterstateEdge = sdfg_and_edge[1]
     assert e.data.used_arrays(arrays=sdfg.arrays, union_lhs_symbols=False) == {"scalar2", "array1"}
+
 
 def test_all_used_arrays():
     sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
