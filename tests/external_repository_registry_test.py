@@ -1,15 +1,27 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+import pathlib
 import subprocess
 import importlib.util
 import shutil
 import dace
+import json
+import tempfile
 
 REPO_URL = "https://github.com/spcl/TransformationsTest.git"
 REPO_NAME = "external_transformations"
 EXPECTED_FILE = "empty_transformation.py"
 EXPECTED_CLASS = "EmptyTransformation"
 ENV_KEY = "DACE_external_transformations_path"
+JSON_SAMPLE = """{
+    "external_transformations": {
+        "url": "https://github.com/spcl/TransformationsTest.git"
+    },
+    "renamed_external_transformations": {
+        "url": "https://github.com/spcl/TransformationsTest.git"
+    }
+}
+"""
 
 
 def run_cli(env_key: str, env_value: str, *args):
@@ -36,8 +48,8 @@ def run_cli(env_key: str, env_value: str, *args):
     return result
 
 
-def _get_base_path() -> str:
-    return str(dace.__external_transformations_path__)
+def _get_base_path() -> pathlib.Path:
+    return pathlib.Path(dace.__external_transformations_path__)
 
 
 def _set_and_get_non_default_path() -> str:
@@ -69,18 +81,39 @@ def _test_add_repository_and_check_file(env_key: str, env_value: str):
     assert found, f"{EXPECTED_FILE} not found in repository"
 
 
+def _test_load_from_file(env_key: str, env_value: str, filepath: str):
+    base_path = _get_base_path()
+
+    result = run_cli(env_key, env_value, "load-from-file", filepath, "--force")
+    assert result.returncode == 0, "Failed to load repos from file"
+
+    repo_path = base_path / REPO_NAME
+    assert repo_path.exists(), f"Repository directory {repo_path} does not exist"
+    repo_path = base_path / ("renamed_" + REPO_NAME)
+    assert repo_path.exists(), f"Repository directory {repo_path} does not exist"
+    found = list(repo_path.rglob(EXPECTED_FILE))
+    assert found, f"{EXPECTED_FILE} not found in repository"
+
+
 def test_add_repository_and_check_file():
+    """
+    Test adding a repository and checking that the expected file exists in the cloned repository. Cleans-up after test, which is also checked.
+    """
     _test_add_repository_and_check_file(ENV_KEY, None)
     _test_remove_repository(ENV_KEY, None)
 
 
 def test_add_repository_and_check_file_with_env_var():
+    """
+    Test adding a repository and checking the expected file exists, using an environment variable for the path.
+    """
     base_path = _get_base_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
 
 
 def _test_import_empty_transformation(env_key: str, env_value: str):
+
     _test_add_repository_and_check_file(env_key, env_value)
     base_path = _get_base_path()
 
@@ -97,32 +130,44 @@ def _test_import_empty_transformation(env_key: str, env_value: str):
 
 
 def test_import_empty_transformation():
+    """
+    Test importing the expected transformation class from the cloned repository.
+    """
     _test_add_repository_and_check_file(ENV_KEY, None)
     _test_import_empty_transformation(ENV_KEY, None)
     _test_remove_repository(ENV_KEY, None)
 
 
 def test_import_empty_transformation_with_env_var():
+    """
+    Test importing the expected transformation class from the cloned repository using an environment variable for the path root path of external transformations.
+    """
     base_path = _get_base_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_import_empty_transformation(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
 
 
-def _test_remove_repository(env_key: str, env_value: str):
+def _test_remove_repository(env_key: str, env_value: str, repo_name: str = REPO_NAME):
     base_path = _get_base_path()
-    repo_path = base_path / REPO_NAME
-    result = run_cli(env_key, env_value, "remove", REPO_NAME)
+    repo_path = base_path / repo_name
+    result = run_cli(env_key, env_value, "remove", repo_name)
     assert result.returncode == 0, "Failed to remove repository"
     assert not repo_path.exists(), "Repository folder still exists after removal"
 
 
 def test_remove_repository():
+    """
+    Test removing a repository and ensuring its directory is deleted.
+    """
     _test_add_repository_and_check_file(ENV_KEY, None)
     _test_remove_repository(ENV_KEY, None)
 
 
 def test_remove_repository_with_env_var():
+    """
+    Test removing a repository using an environment variable for the path.
+    """
     base_path = _get_base_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
@@ -133,6 +178,9 @@ def test_remove_repository_with_env_var():
 # impact config once DaCe is imported or to override using environment variables with
 # DACE_external_repository_path when get/set is called.
 def test_add_repository_and_check_file_non_default_path():
+    """
+    Test adding a repository and checking the expected file exists using a non-default path.
+    """
     base_path = _set_and_get_non_default_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
@@ -140,6 +188,9 @@ def test_add_repository_and_check_file_non_default_path():
 
 
 def test_import_empty_transformation_non_default_path():
+    """
+    Test importing the expected transformation class from the cloned repository using a non-default path set through environment variables.
+    """
     base_path = _set_and_get_non_default_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_import_empty_transformation(ENV_KEY, str(base_path))
@@ -148,9 +199,42 @@ def test_import_empty_transformation_non_default_path():
 
 
 def test_remove_repository_non_default_path():
+    """
+    Test removing a repository and ensuring its directory is deleted using a non-default path.
+    """
     base_path = _set_and_get_non_default_path()
     _test_add_repository_and_check_file(ENV_KEY, str(base_path))
     _test_remove_repository(ENV_KEY, str(base_path))
+    _set_default_path()
+
+
+def test_load_from_json_base_path():
+    """
+    Test loading repositories from a JSON file using the base path.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp_file:
+        data = json.loads(JSON_SAMPLE)  # Ensure valid JSON data
+        json.dump(data, tmp_file)
+        tmp_file_path = tmp_file.name
+    base_path = _get_base_path()
+    _test_load_from_file(ENV_KEY, str(base_path), tmp_file_path)
+    _test_remove_repository(ENV_KEY, str(base_path), "external_transformations")
+    _test_remove_repository(ENV_KEY, str(base_path), "renamed_external_transformations")
+    _set_default_path()
+
+
+def test_load_from_json_non_base_path():
+    """
+    Test loading repositories from a JSON file using a non-default path.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp_file:
+        data = json.loads(JSON_SAMPLE)  # Ensure valid JSON data
+        json.dump(data, tmp_file)
+        tmp_file_path = tmp_file.name
+    base_path = _set_and_get_non_default_path()
+    _test_load_from_file(ENV_KEY, str(base_path), tmp_file_path)
+    _test_remove_repository(ENV_KEY, str(base_path), "external_transformations")
+    _test_remove_repository(ENV_KEY, str(base_path), "renamed_external_transformations")
     _set_default_path()
 
 
@@ -164,3 +248,5 @@ if __name__ == "__main__":
     test_add_repository_and_check_file_non_default_path()
     test_import_empty_transformation_non_default_path()
     test_remove_repository_non_default_path()
+    test_load_from_json_base_path()
+    test_load_from_json_non_base_path()
