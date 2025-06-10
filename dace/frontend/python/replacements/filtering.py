@@ -1,6 +1,7 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Contains replacements for filtering functions.
+Contains replacements for filtering functions. This module includes functions from both
+NumPy's Indexing Routines and Sorting, Searching, and Counting Functions.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together

@@ -1,6 +1,6 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Contains operator replacements for supported objects.
+Contains operator replacements (e.g., NumPy Mathematical Functions) for supported objects.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils

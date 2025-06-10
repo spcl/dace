@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for array-filling methods (zeros, ones, etc.)
 """
@@ -14,6 +14,28 @@ from typing import Any, List, Optional, Sequence, Union
 
 import numpy as np
 import sympy as sp
+
+
+@oprepo.replaces('numpy.copy')
+def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str):
+    """ Creates a copy of array a.
+    """
+    if a not in sdfg.arrays.keys():
+        raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
+    # TODO: The whole AddTransientMethod class should be move in replacements.py
+    from dace.frontend.python.newast import _add_transient_data
+    name, desc = _add_transient_data(sdfg, sdfg.arrays[a])
+    rnode = state.add_read(a)
+    wnode = state.add_write(name)
+    state.add_nedge(rnode, wnode, Memlet.from_array(name, desc))
+    return name
+
+
+@oprepo.replaces_method('Array', 'copy')
+@oprepo.replaces_method('Scalar', 'copy')
+@oprepo.replaces_method('View', 'copy')
+def _ndarray_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    return _numpy_copy(pv, sdfg, state, arr)
 
 
 @oprepo.replaces('numpy.full')

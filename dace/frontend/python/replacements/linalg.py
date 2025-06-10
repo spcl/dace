@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains linear algebra function and operator replacements.
 """
@@ -305,15 +305,15 @@ def _tensordot(pv: 'ProgramVisitor',
 
 @oprepo.replaces('numpy.einsum')
 def _einsum(pv: ProgramVisitor,
-                       sdfg: SDFG,
-                       state: SDFGState,
-                       einsum_string: StringLiteral,
-                       *arrays: str,
-                       dtype: Optional[dtypes.typeclass] = None,
-                       optimize: bool = False,
-                       output: Optional[str] = None,
-                       alpha: Optional[symbolic.SymbolicType] = 1.0,
-                       beta: Optional[symbolic.SymbolicType] = 0.0):
+            sdfg: SDFG,
+            state: SDFGState,
+            einsum_string: StringLiteral,
+            *arrays: str,
+            dtype: Optional[dtypes.typeclass] = None,
+            optimize: bool = False,
+            output: Optional[str] = None,
+            alpha: Optional[symbolic.SymbolicType] = 1.0,
+            beta: Optional[symbolic.SymbolicType] = 0.0):
     from dace.frontend.common.einsum import create_einsum_sdfg
     return create_einsum_sdfg(sdfg,
                               state,

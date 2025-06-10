@@ -1,6 +1,6 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Adds CuPy support for NumPy replacements and extra functionality.
+Adds CuPy support for array creation functions.
 """
 from dace.frontend.common import op_repository as oprepo
 import dace.frontend.python.memlet_parser as mem_parser

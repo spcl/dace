@@ -122,7 +122,7 @@ class ExpandTTGT(ExpandTransformation):
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
 
-        from dace.frontend.python.replacements.array_transformations import _transpose
+        from dace.frontend.python.replacements.array_manipulation import _transpose
         # NOTE: We use the numpy.transpose replacement because:
         # (1) It will return the tensor itself if transposition is uncessary.
         # (2) It will use matrix transpose operation for 2-mode tensors.

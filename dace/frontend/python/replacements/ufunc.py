@@ -1,11 +1,10 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for NumPy ufuncs.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
-from dace.frontend.python.replacements.elementwise import elementwise
 from dace.frontend.python.replacements.utils import (ProgramVisitor, Shape, UfuncInput, UfuncOutput, normalize_axes,
                                                      sym_type)
 import dace.frontend.python.memlet_parser as mem_parser
@@ -1830,6 +1829,8 @@ def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 @oprepo.replaces_method('Scalar', 'mean')
 @oprepo.replaces_method('View', 'mean')
 def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+
     nest = NestedCall(pv, sdfg, state)
     kwargs = kwargs or dict(axis=None)
     sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), 'add', [arr], kwargs)[0]

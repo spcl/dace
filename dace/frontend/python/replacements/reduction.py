@@ -1,10 +1,10 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Contains replacements of reduction operations
+Contains replacements of reduction operations, which cover both NumPy's Mathematical Functions (e.g., ``numpy.sum``)
+and Sorting, Searching, and Counting Functions (e.g., ``numpy.argmax``).
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.nested_call import NestedCall
-from dace.frontend.python.replacements.elementwise import elementwise
 from dace.frontend.python.replacements.utils import ProgramVisitor, normalize_axes
 from dace import dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
 
@@ -107,6 +107,8 @@ def _all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.mean')
 def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+
     nest = NestedCall(pv, sdfg, state)
 
     sum = nest(_sum)(a, axis=axis)
@@ -157,7 +159,7 @@ def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 
 def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
     """ Implements the min or max function with 2 scalar arguments. """
-    from dace.frontend.python.replacements.definitions import _define_local_scalar
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.frontend.python.replacements.operators import result_type
 
     in_conn = set()
@@ -269,7 +271,7 @@ def _argminmax(pv: ProgramVisitor,
 
     # Flatten the array if axis is not given
     if axis is None:
-        from dace.frontend.python.replacements.array_transformations import flat  # Avoid import loop
+        from dace.frontend.python.replacements.array_manipulation import flat  # Avoid import loop
         axis = 0
         a = flat(pv, sdfg, state, a)
 

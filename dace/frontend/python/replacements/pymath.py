@@ -1,6 +1,6 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Contains replacements of mathematical operations.
+Contains replacements of Python mathematical operations.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, complex_to_scalar, simple_call
