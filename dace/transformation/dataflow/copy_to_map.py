@@ -41,11 +41,15 @@ class CopyToMap(xf.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        a_b_edges = list(graph.edges_between(self.a, self.b))
+        a_b_edges = list(state.edges_between(self.a, self.b))
         for a_b_edge in a_b_edges:
-            _ = mutils.memlet_to_map(
-                edge=a_b_edge,
-                state=state,
-                sdfg=sdfg,
-                ignore_strides=self.ignore_strides,
-            )
+            if mutils.can_memlet_be_turned_into_a_map(edge=a_b_edge,
+                                                      state=state,
+                                                      sdfg=sdfg,
+                                                      ignore_strides=self.ignore_strides):
+                _ = mutils.memlet_to_map(
+                    edge=a_b_edge,
+                    state=state,
+                    sdfg=sdfg,
+                    ignore_strides=self.ignore_strides,
+                )
