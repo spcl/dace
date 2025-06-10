@@ -177,4 +177,3 @@ if __name__ == "__main__":
     test_add_repository_and_check_file_non_default_path()
     test_import_empty_transformation_non_default_path()
     test_remove_repository_non_default_path()
-    print("All External-Repository-Registry tests passed.")
