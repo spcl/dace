@@ -72,19 +72,22 @@ class ExpandGemvPure(ExpandTransformation):
 
         # Initialization map
         init_state.add_mapped_tasklet(
-            "gemv_init", {"_o%d" % i: "0:%s" % symbolic.symstr(d)
-                          for i, d in enumerate(shape_y)}, {},
+            "gemv_init", {
+                "_o%d" % i: "0:%s" % symbolic.symstr(d)
+                for i, d in enumerate(shape_y)
+            }, {},
             "out = 0",
             {"out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
             external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet("_GEMV_", {"__i%d" % i: "0:%s" % s
-                                            for i, s in enumerate([N, M])},
-                                 {
-                                     "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
-                                     "__x": dace.Memlet("_x[__i1]")
-                                 },
+        state.add_mapped_tasklet("_GEMV_", {
+            "__i%d" % i: "0:%s" % s
+            for i, s in enumerate([N, M])
+        }, {
+            "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
+            "__x": dace.Memlet("_x[__i1]")
+        },
                                  mul_program, {"__out": dace.Memlet(f"{mul_out}[__i0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
                                  output_nodes=output_nodes)

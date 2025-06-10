@@ -47,9 +47,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.hardware_target: bool = config.Config.get("compiler", "xilinx", "mode").startswith("hardware")
         self.frequencies: str = config.Config.get("compiler", "xilinx", "frequency")
 
-    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                      node: nodes.Node, function_stream: prettycode.CodeIOStream,
-                      callsite_stream: prettycode.CodeIOStream) -> None:
+    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                      function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream) -> None:
         # check instance type
         if isinstance(node, nodes.Tasklet):
             """
@@ -117,8 +116,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                     line: str = "// WARNING: Unsupported read from ({}) variable '{}' from stream '{}'." \
                         " This may lead to a deadlock if used in code.\n".format(
                             dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src_conn)
-                    line += "{} {} = {}.pop();".format(
-                            dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src.data)
+                    line += "{} {} = {}.pop();".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
+                                                       edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
             rtl_name = self.unique_name(edge.dst, cfg.state(state_id))
             self.n_unrolled[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)

@@ -11,35 +11,36 @@ from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, 
 
 
 def test_reshaping_with_redundant_arrays():
+
     def make_sdfg() -> Tuple[dace.SDFG, dace.nodes.AccessNode, dace.nodes.AccessNode, dace.nodes.AccessNode]:
         sdfg = dace.SDFG("slicing_sdfg")
         _, input_desc = sdfg.add_array(
-                "input",
-                shape=(6, 6, 6),
-                transient=False,
-                strides=None,
-                dtype=dace.float64,
+            "input",
+            shape=(6, 6, 6),
+            transient=False,
+            strides=None,
+            dtype=dace.float64,
         )
         _, a_desc = sdfg.add_array(
-                "a",
-                shape=(6, 6, 6),
-                transient=True,
-                strides=None,
-                dtype=dace.float64,
+            "a",
+            shape=(6, 6, 6),
+            transient=True,
+            strides=None,
+            dtype=dace.float64,
         )
         _, b_desc = sdfg.add_array(
-                "b",
-                shape=(36, 1, 6),
-                transient=True,
-                strides=None,
-                dtype=dace.float64,
+            "b",
+            shape=(36, 1, 6),
+            transient=True,
+            strides=None,
+            dtype=dace.float64,
         )
         _, output_desc = sdfg.add_array(
-                "output",
-                shape=(36, 1, 6),
-                transient=False,
-                strides=None,
-                dtype=dace.float64,
+            "output",
+            shape=(36, 1, 6),
+            transient=False,
+            strides=None,
+            dtype=dace.float64,
         )
         state = sdfg.add_state("state", is_start_block=True)
         input_an = state.add_access("input")
@@ -48,29 +49,24 @@ def test_reshaping_with_redundant_arrays():
         output_an = state.add_access("output")
 
         state.add_edge(
-                input_an,
-                None,
-                a_an,
-                None,
-                dace.Memlet.from_array("input", input_desc),
+            input_an,
+            None,
+            a_an,
+            None,
+            dace.Memlet.from_array("input", input_desc),
         )
+        state.add_edge(a_an, None, b_an, None,
+                       dace.Memlet.simple(
+                           "a",
+                           subset_str="0:6, 0:6, 0:6",
+                           other_subset_str="0:36, 0, 0:6",
+                       ))
         state.add_edge(
-                a_an,
-                None,
-                b_an,
-                None,
-                dace.Memlet.simple(
-                    "a",
-                    subset_str="0:6, 0:6, 0:6",
-                    other_subset_str="0:36, 0, 0:6",
-                )
-        )
-        state.add_edge(
-                b_an,
-                None,
-                output_an,
-                None,
-                dace.Memlet.from_array("b", b_desc),
+            b_an,
+            None,
+            output_an,
+            None,
+            dace.Memlet.from_array("b", b_desc),
         )
         sdfg.validate()
         assert state.number_of_nodes() == 4
@@ -78,11 +74,11 @@ def test_reshaping_with_redundant_arrays():
         return sdfg, a_an, b_an, output_an
 
     def apply_trafo(
-            sdfg: dace.SDFG,
-            in_array: dace.nodes.AccessNode,
-            out_array: dace.nodes.AccessNode,
-            will_not_apply: bool = False,
-            will_create_view: bool = False,
+        sdfg: dace.SDFG,
+        in_array: dace.nodes.AccessNode,
+        out_array: dace.nodes.AccessNode,
+        will_not_apply: bool = False,
+        will_create_view: bool = False,
     ) -> dace.SDFG:
         trafo = RedundantArray()
 

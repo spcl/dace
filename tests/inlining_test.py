@@ -1,9 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace import nodes as dace_nodes
 from dace.sdfg.state import FunctionCallRegion, NamedRegion
 from dace.transformation.interstate import InlineSDFG, StateFusion
 from dace.libraries import blas
 from dace.library import change_default
+from typing import Tuple
 import numpy as np
 import os
 import pytest
@@ -41,6 +43,155 @@ def myprogram(A, B, cst):
 
 def test():
     myprogram.compile(dace.float32[W, H], dace.float32[H, W], dace.int32)
+
+
+def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG, dace_nodes.NestedSDFG]:
+
+    def _make_nested_sdfg(name: str) -> dace.SDFG:
+        sdfg = dace.SDFG(name)
+        state = sdfg.add_state(is_start_block=True)
+
+        for name in "ABC":
+            sdfg.add_array(
+                name=name,
+                shape=(10, ),
+                dtype=dace.float64,
+                transient=False,
+            )
+        state.add_mapped_tasklet(
+            "comp",
+            map_ranges={"__i": "0:10"},
+            inputs={
+                "__in1": dace.Memlet("A[__i]"),
+                "__in2": dace.Memlet("B[__i]"),
+            },
+            code="__out = __in1 + __in2",
+            outputs={"__out": dace.Memlet("C[__i]")},
+            external_edges=True,
+        )
+        sdfg.validate()
+        return sdfg
+
+    outer_sdfg = dace.SDFG("chain_reduction_sdfg")
+    state = outer_sdfg.add_state(is_start_block=True)
+
+    anames_s10 = ["I1", "I2", "I3", "I4", "T1", "T4", "T5"]
+    anames_s20 = ["T2"]
+    anames_s30 = ["T3", "O"]
+    sizes = dict()
+    sizes.update({name: 10 for name in anames_s10})
+    sizes.update({name: 20 for name in anames_s20})
+    sizes.update({name: 30 for name in anames_s30})
+
+    for name in anames_s10 + anames_s20 + anames_s30:
+        outer_sdfg.add_array(
+            name=name,
+            shape=(sizes[name], ),
+            dtype=dace.float64,
+            transient=name.startswith("T"),
+        )
+    T1, T2, T3, T4, T5 = (state.add_access(f"T{i}") for i in range(1, 6))
+
+    state.add_mapped_tasklet(
+        "comp1",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("I3[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("T4[__i]")},
+        external_edges=True,
+        output_nodes={T4},
+    )
+
+    inner_sdfg_1 = _make_nested_sdfg("first_adding")
+    nsdfg_node_1 = state.add_nested_sdfg(
+        sdfg=inner_sdfg_1,
+        parent=outer_sdfg,
+        inputs={"A", "B"},
+        outputs={"C"},
+        symbol_mapping={},
+    )
+
+    state.add_edge(state.add_access("I4"), None, nsdfg_node_1, "A", dace.Memlet("I4[0:10]"))
+    state.add_edge(state.add_access("I1"), None, nsdfg_node_1, "B", dace.Memlet("I1[0:10]"))
+    state.add_edge(nsdfg_node_1, "C", T5, None, dace.Memlet("T5[0:10]"))
+
+    state.add_nedge(T4, T2, dace.Memlet("T4[0:10] -> [0:10]"))
+    state.add_nedge(T5, T2, dace.Memlet("T5[0:10] -> [10:20]"))
+
+    inner_sdfg_2 = _make_nested_sdfg("second_adding")
+    nsdfg_node_2 = state.add_nested_sdfg(
+        sdfg=inner_sdfg_2,
+        parent=outer_sdfg,
+        inputs={"A", "B"},
+        outputs={"C"},
+        symbol_mapping={},
+    )
+
+    state.add_edge(state.add_access("I1"), None, nsdfg_node_2, "A", dace.Memlet("I1[0:10]"))
+    state.add_edge(state.add_access("I2"), None, nsdfg_node_2, "B", dace.Memlet("I2[0:10]"))
+
+    state.add_edge(nsdfg_node_2, "C", T1, None, dace.Memlet("T1[0:10]"))
+
+    state.add_nedge(T1, T3, dace.Memlet("T1[0:10] -> [0:10]"))
+    state.add_nedge(T2, T3, dace.Memlet("T2[0:20] -> [10:30]"))
+    state.add_nedge(T3, state.add_access("O"), dace.Memlet("T3[0:30] -> [0:30]"))
+    outer_sdfg.validate()
+
+    return outer_sdfg, state, nsdfg_node_1, nsdfg_node_2
+
+
+def _perform_chain_reduction_inlining(which: int, ) -> None:
+    from dace.transformation.interstate import InlineMultistateSDFG
+
+    def count_writes(sdfg):
+        nb_writes = 0
+        for state in sdfg.states():
+            for dnode in state.data_nodes():
+                nb_writes += state.in_degree(dnode)
+        return nb_writes
+
+    def count_nsdfg(sdfg):
+        nb_nsdfg = 0
+        for state in sdfg.states():
+            nb_nsdfg += sum(isinstance(node, dace_nodes.NestedSDFG) for node in state.nodes())
+        return nb_nsdfg
+
+    ref = {arg: np.array(np.random.rand(10), dtype=np.float64, copy=True) for arg in ["I1", "I2", "I3", "I4"]}
+    ref["O"] = np.array(np.random.rand(30), dtype=np.float64, copy=True)
+    res = {k: v.copy() for k, v in ref.items()}
+
+    sdfg, state, nsdfg_node_1, nsdfg_node_2 = _make_chain_reduction_sdfg()
+    initial_writes = count_writes(sdfg)
+    initial_nsdfg = count_nsdfg(sdfg)
+
+    csdfg_ref = sdfg.compile()
+    csdfg_ref(**ref)
+
+    if which == 0:
+        InlineMultistateSDFG.apply_to(
+            sdfg=sdfg,
+            verify=True,
+            nested_sdfg=nsdfg_node_1,
+        )
+    elif which == 1:
+        InlineMultistateSDFG.apply_to(
+            sdfg=sdfg,
+            verify=True,
+            nested_sdfg=nsdfg_node_2,
+        )
+    elif which == -1:
+        nb_applied = sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+        assert nb_applied == 2
+    else:
+        raise ValueError(f"Unknown selector {which}")
+
+    assert initial_writes == count_writes(sdfg)
+    assert count_nsdfg(sdfg) < initial_nsdfg
+
+    csdfg_res = sdfg.compile()
+    csdfg_res(**res)
+
+    assert all(np.allclose(ref[k], res[k]) for k in ref.keys())
 
 
 @pytest.mark.skip('CI failure that cannot be reproduced outside CI')
@@ -258,6 +409,18 @@ def test_multistate_inline_concurrent_subgraphs():
     assert np.allclose(A, expected_a)
     assert np.allclose(B, expected_b)
     assert np.allclose(C, expected_c)
+
+
+def test_chain_reduction_1():
+    _perform_chain_reduction_inlining(0)
+
+
+def test_chain_reduction_2():
+    _perform_chain_reduction_inlining(1)
+
+
+def test_chain_reduction_all():
+    _perform_chain_reduction_inlining(-1)
 
 
 def test_inline_symexpr():
@@ -479,3 +642,6 @@ if __name__ == "__main__":
     test_inline_symbol_assignment()
     test_regression_inline_subset()
     test_inlining_view_input()
+    test_chain_reduction_1()
+    test_chain_reduction_2()
+    test_chain_reduction_all()

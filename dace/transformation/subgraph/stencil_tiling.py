@@ -111,7 +111,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             if e.data.data not in exit_coverage:
                 exit_coverage[e.data.data] = rng
             else:
-                old_coverage = exit_coverage[e.data]
+                old_coverage = exit_coverage[e.data.data]
                 exit_coverage[e.data.data] = subsets.union(old_coverage, rng)
 
         # return both coverages as a tuple
@@ -574,7 +574,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                     # Prevent circular import
                     from dace.transformation.interstate.loop_unroll import LoopUnroll
 
-                    subgraph = { LoopUnroll.loop: trafo_for_loop.loop_region.block_id }
+                    subgraph = {LoopUnroll.loop: trafo_for_loop.loop_region.block_id}
                     transformation = LoopUnroll()
                     transformation.setup_match(nsdfg, nsdfg.cfg_id, -1, subgraph, 0)
                     transformation.apply(nsdfg, nsdfg)

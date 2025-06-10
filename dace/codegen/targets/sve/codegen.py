@@ -487,9 +487,10 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Constants and other defined symbols
         defined_symbols = state_dfg.symbols_defined_at(node)
-        defined_symbols.update(
-            {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-             for k, v in sdfg.constants.items()})
+        defined_symbols.update({
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        })
 
         # All memlets of that node
         memlets = {}

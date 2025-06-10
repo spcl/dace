@@ -17,8 +17,10 @@ nnz = dace.symbol('nnz')
 
 @dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz], dace.float32[W], dace.float32[H])
 def spmv(A_row, A_col, A_val, x, b):
+
     @dace.mapscope(_[0:H])
     def compute_row(i):
+
         @dace.map(_[A_row[i]:A_row[i + 1]])
         def compute(j):
             a << A_val[j]

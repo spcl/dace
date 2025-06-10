@@ -190,7 +190,7 @@ public:
         std::stringstream ss;
         ss << this->folder << "/" << arrayname << "/" << filename << "_" << version << ".bin";
         std::ifstream ifs(ss.str(), std::ios::binary);
-        
+
         // Ignore header (dimensions, shape, and strides)
         uint32_t ndims;
         ifs.read((char *)&ndims, sizeof(uint32_t));

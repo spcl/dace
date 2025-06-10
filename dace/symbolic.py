@@ -39,7 +39,7 @@ else:
 
 
 class symbol(sympy.Symbol):
-    """ Defines a symbolic expression. Extends SymPy symbols with DaCe-related
+    """ Defines a symbolic variable. Extends SymPy symbols with DaCe-related
         information. """
 
     s_currentsymbol = 0
@@ -98,28 +98,12 @@ class symbol(sympy.Symbol):
         except TypeError:  # constraint_list is not iterable
             self._constraints = [constraint_list]
 
-        # Check for the new constraints and reset symbol value if necessary
-        if symbol.s_values[self.name] is not None:
-            try:
-                self.check_constraints(symbol.s_values[self.name])
-            except RuntimeError:
-                self.reset()  # Reset current value
-                raise
-
     def add_constraints(self, constraint_list):
         try:
             iter(constraint_list)
-            symbol.s_constraints[self.name].extend(constraint_list)
+            self._constraints.extend(constraint_list)
         except TypeError:  # constraint_list is not iterable
-            symbol.s_constraints[self.name].append(constraint_list)
-
-        # Check for the new constraints and reset symbol value if necessary
-        if symbol.s_values[self.name] is not None:
-            try:
-                self.check_constraints(symbol.s_values[self.name])
-            except RuntimeError:
-                self.reset()  # Reset current value
-                raise
+            self._constraints.append(constraint_list)
 
     @property
     def constraints(self):
@@ -137,6 +121,98 @@ class symbol(sympy.Symbol):
                 raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
         if fail is not None:
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
+
+
+class UndefinedSymbol(symbol):
+    """ Defines an undefined symbolic expression whose value is deferred to runtime.
+
+    Similar to NaN values, any operation on an undefined symbol results in an
+    undefined symbol. When used in code generation, an informative exception
+    will be raised.
+
+    This class is useful in situations where a symbol's value is not known
+    at compile time but symbolic analysis should continue. For example, when
+    a data container's size is undefined but other symbols with concrete
+    values should still be analyzed.
+
+    Examples
+    --------
+    >>> from dace.symbolic import UndefinedSymbol, symbol
+    >>> N = symbol('N')
+    >>> undefined = UndefinedSymbol()
+    >>> N + undefined  # Returns an UndefinedSymbol
+    >>>
+    >>> # This will eventually raise an exception during code generation:
+    >>> expr = N * undefined + 5
+    """
+
+    def __new__(cls, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
+        # Bypass the name validation
+        self = sympy.Symbol.__xnew__(cls, "?", **assumptions)
+        self.dtype = dtype
+        self._constraints = []
+        return self
+
+    # Make undefined symbol behavior propagate through operations
+    def _eval_subs(self, old, new):
+        # Consolidated logic for substitution
+        if isinstance(old, UndefinedSymbol):
+            return self
+        # Additional logic from the second _eval_subs definition (if any)
+        return super()._eval_subs(old, new)
+
+    def __abs__(self):
+        return UndefinedSymbol(self.dtype)
+
+    def __add__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __radd__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __sub__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __rsub__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __mul__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __rmul__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __truediv__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __rtruediv__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __pow__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    def __rpow__(self, other):
+        return UndefinedSymbol(self.dtype)
+
+    # Comparisons always return False to indicate indeterminate equality
+    def __eq__(self, other):
+        return False
+
+    def __lt__(self, other):
+        return None
+
+    def __gt__(self, other):
+        return None
+
+    def __le__(self, other):
+        return None
+
+    def __ge__(self, other):
+        return None
+
+    def __hash__(self):
+        # Make UndefinedSymbol hashable as required by SymPy
+        return hash(self.name)
 
 
 class SymExpr(object):
@@ -337,6 +413,10 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
     if isinstance(expr, SymExpr):
         return evaluate(expr.expr, symbols)
     if issymbolic(expr, set(map(str, symbols.keys()))):
+        # Check for UndefinedSymbol
+        for atom in expr.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                raise TypeError(f'Cannot evaluate expression "{expr}" containing undefined symbol')
         raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
     if isinstance(expr, (int, float, numpy.number)):
         return expr
@@ -361,10 +441,14 @@ def issymbolic(value, constants=None):
     constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
+    if isinstance(value, UndefinedSymbol):
+        return True
     if isinstance(value, (sympy.Symbol, symbol)) and value.name not in constants:
         return True
     if isinstance(value, sympy.Basic):
         for atom in value.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return True
             if isinstance(atom, (sympy.Symbol, symbol)) and atom.name not in constants:
                 return True
     return False
@@ -549,6 +633,30 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
     return result
 
 
+def is_undefined(expr: Union[SymbolicType, str]) -> bool:
+    """
+    Checks if a symbolic expression contains any UndefinedSymbol atoms.
+
+    :param expr: The expression to check.
+    :return: True if the expression contains undefined symbols, False otherwise.
+    """
+    if isinstance(expr, str):
+        expr = pystr_to_symbolic(expr)
+
+    if isinstance(expr, UndefinedSymbol):
+        return True
+
+    if not isinstance(expr, sympy.Basic):
+        return False
+
+    # Check all atoms in the expression
+    for atom in expr.atoms():
+        if isinstance(atom, UndefinedSymbol):
+            return True
+
+    return False
+
+
 def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
@@ -569,6 +677,12 @@ def sympy_numeric_fix(expr):
                     return sympy.oo
                 else:
                     return -sympy.oo
+
+    # Check if expression contains UndefinedSymbol and propagate it
+    for atom in expr.atoms():
+        if isinstance(atom, UndefinedSymbol):
+            return UndefinedSymbol()
+
     return expr
 
 
@@ -1004,13 +1118,15 @@ else:
     def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
         return ast.copy_location(ast.Constant(bool(node.value)), node)
 
+
 # Convert simple AST node (constant) into a falsy / truthy. Anything other than 0, None, and an empty string '' is
 # considered a truthy, while the listed exceptions are considered falsy values - following the semantics of Python's
 # bool() builtin.
 _convert_truthy_falsy = __comp_convert_truthy_falsy
 
+
 class PythonOpToSympyConverter(ast.NodeTransformer):
-    """ 
+    """
     Replaces various operations with the appropriate SymPy functions to avoid non-symbolic evaluation.
     """
     _ast_to_sympy_comparators = {
@@ -1153,6 +1269,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
             return sympy.Float(float(expr))
         except ValueError:
             pass
+        if "?" in expr:  # Note that this will convert expressions like "a ? b : c" or "some_func(?)" to UndefinedSymbol
+            return UndefinedSymbol()
         if dtypes.validate_name(expr):
             return symbol(expr)
 
@@ -1322,11 +1440,11 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 
 @lru_cache(maxsize=16384)
 def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
-    """ 
-    Convert a symbolic expression to a compilable expression. 
+    """
+    Convert a symbolic expression to a compilable expression.
 
     :param sym: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy 
+    :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
     :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
                      returns a Python expression.
@@ -1364,9 +1482,9 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
     :param mapping: The replacement dictionary.
     :param replace_callback: A callable function that receives a replacement
-                             dictionary and performs the replacement (can be 
+                             dictionary and performs the replacement (can be
                              unsafe).
-    :param value_as_string: Replacement values are replaced as strings rather 
+    :param value_as_string: Replacement values are replaced as strings rather
                             than symbols.
     """
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
@@ -1479,6 +1597,16 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
     """
+    # Check for UndefinedSymbol in either expression
+    if isinstance(a, sympy.Basic):
+        for atom in a.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return True
+    if isinstance(b, sympy.Basic):
+        for atom in b.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return True
+
     if not isinstance(a, sympy.Expr) or not isinstance(b, sympy.Expr):
         return a != b
     else:
@@ -1501,6 +1629,16 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
     """
 
     args = [arg.expr if isinstance(arg, SymExpr) else arg for arg in (a, b)]
+
+    # Check for UndefinedSymbol in either expression
+    if isinstance(a, sympy.Basic):
+        for atom in a.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return None
+    if isinstance(b, sympy.Basic):
+        for atom in b.atoms():
+            if isinstance(atom, UndefinedSymbol):
+                return None
 
     if any([args is None for args in args]):
         return False

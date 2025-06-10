@@ -1119,8 +1119,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # If we're not already generating kernel code, fail
             raise cgx.CodegenError('FPGA kernel needs to be generated inside a device state.')
 
-        self.generate_node(sdfg, cfg, dfg_scope, state_id, dfg_scope.source_nodes()[0], function_stream,
-                           callsite_stream)
+        self.generate_node(sdfg, cfg, dfg_scope, state_id,
+                           dfg_scope.source_nodes()[0], function_stream, callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
@@ -1684,8 +1684,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                  sdfg,
                                  src_subset,
                                  decouple_array_interfaces=self._decouple_array_interfaces),
-                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), cfg, state_id,
-                    [src_node, dst_node])
+                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), cfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
@@ -1868,8 +1867,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
 
-    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                      node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                      function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         method_name = "_generate_" + type(node).__name__
         # Fake inheritance... use this class' method if it exists,
         # otherwise fall back on CPU codegen
@@ -2331,9 +2330,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             raise RuntimeError("Expected at least one tasklet or data node.")
         return "_".join(labels)
 
-    def generate_modules(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, kernel_name: str,
-                         subgraphs, subgraph_parameters, module_stream, entry_stream,
-                         host_stream, instrumentation_stream):
+    def generate_modules(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, kernel_name: str, subgraphs,
+                         subgraph_parameters, module_stream, entry_stream, host_stream, instrumentation_stream):
         """
         Generate all PEs inside an FPGA Kernel.
         """
@@ -2394,8 +2392,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         self._cpu_codegen.generate_tasklet_preamble(*args, **kwargs)
 
     def generate_tasklet_postamble(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                                   node: nodes.Node, function_stream: CodeIOStream,
-                                   before_memlets_stream: CodeIOStream, after_memlets_stream: CodeIOStream) -> None:
+                                   node: nodes.Node, function_stream: CodeIOStream, before_memlets_stream: CodeIOStream,
+                                   after_memlets_stream: CodeIOStream) -> None:
         # Inject dependency pragmas on memlets
         for edge in dfg.out_edges(node):
             dataname = edge.data.data

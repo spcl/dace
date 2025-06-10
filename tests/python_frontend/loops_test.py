@@ -5,6 +5,7 @@ import numpy as np
 
 from dace.frontend.python.common import DaceSyntaxError
 
+
 @dace.program
 def for_loop():
     A = dace.ndarray([10], dtype=dace.int32)
@@ -211,12 +212,8 @@ def map_with_break_continue():
 
 
 def test_map_with_break_continue():
-    try:
+    with pytest.raises(DaceSyntaxError):
         map_with_break_continue()
-    except Exception as e:
-        if isinstance(e, DaceSyntaxError):
-            return 0
-    assert (False)
 
 
 @dace.program

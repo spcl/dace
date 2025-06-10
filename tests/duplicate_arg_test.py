@@ -9,6 +9,7 @@ N = dace.symbol('N')
 
 @dace.program
 def dot(A, B, out):
+
     @dace.map
     def product(i: _[0:N]):
         a << A[i]

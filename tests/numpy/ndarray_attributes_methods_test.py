@@ -116,9 +116,17 @@ def test_conj(A: dace.complex64[M, N, N, M]):
     return A.conj()
 
 
-@compare_numpy_output()
-def test_sum(A: dace.float32[M, N, N, M]):
-    return A.sum()
+def test_sum():
+
+    @dace.program
+    def testee(A: dace.float64[10, 20, 20, 10]):
+        return A.sum()
+
+    A = np.array(np.random.rand(10, 20, 20, 10) + 0.1, dtype=np.float64, copy=True)
+    ref = A.sum()
+    res = testee(A)
+    assert res.shape == (1, )  # DaCe can not return scalars
+    assert np.allclose(ref, res), f"Expected '{ref}' but got '{res[0]}'"
 
 
 @compare_numpy_output()

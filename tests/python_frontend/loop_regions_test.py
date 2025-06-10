@@ -1,9 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.state import LoopRegion
+
 
 @dace.program
 def for_loop():
@@ -243,13 +245,9 @@ def map_with_break_continue():
 
 
 def test_map_with_break_continue():
-    try:
+    with pytest.raises(DaceSyntaxError):
         map_with_break_continue.use_explicit_cf = True
         map_with_break_continue()
-    except Exception as e:
-        if isinstance(e, DaceSyntaxError):
-            return 0
-    assert (False)
 
 
 @dace.program
@@ -544,6 +542,7 @@ def test_branch_in_while():
     sdfg = branch_in_while.to_sdfg(simplify=False)
     assert len(sdfg.source_nodes()) == 1
 
+
 def test_for_with_return():
 
     @dace.program
@@ -556,8 +555,8 @@ def test_for_with_return():
     for_with_return.use_explicit_cf = True
     sdfg = for_with_return.to_sdfg()
 
-    A = np.full((10,), 1).astype(np.int32)
-    A2 = np.full((10,), 1).astype(np.int32)
+    A = np.full((10, ), 1).astype(np.int32)
+    A2 = np.full((10, ), 1).astype(np.int32)
     A2[5] = -1
     rval1 = sdfg(A)
     expected1 = for_with_return.f(A)
@@ -566,6 +565,7 @@ def test_for_with_return():
     assert rval1 == expected1
     assert rval2 == expected2
 
+
 def test_for_while_with_return():
 
     @dace.program
@@ -573,7 +573,7 @@ def test_for_while_with_return():
         for i in range(10):
             j = 0
             while (j < 10):
-                if A[i,j] < 0:
+                if A[i, j] < 0:
                     return 1
                 j += 1
         return 0
@@ -581,9 +581,9 @@ def test_for_while_with_return():
     for_while_with_return.use_explicit_cf = True
     sdfg = for_while_with_return.to_sdfg()
 
-    A = np.full((10,10), 1).astype(np.int32)
-    A2 = np.full((10,10), 1).astype(np.int32)
-    A2[5,5] = -1
+    A = np.full((10, 10), 1).astype(np.int32)
+    A2 = np.full((10, 10), 1).astype(np.int32)
+    A2[5, 5] = -1
     rval1 = sdfg(A)
     expected1 = for_while_with_return.f(A)
     rval2 = sdfg(A2)

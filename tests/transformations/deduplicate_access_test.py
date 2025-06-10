@@ -51,7 +51,7 @@ def test_find_contiguous_subsets_nonsquare():
 
 
 def test_dedup_access_simple():
-    """ 
+    """
     Simple duplicate access.
     """
 
@@ -83,8 +83,8 @@ def test_dedup_access_simple():
 
 
 def test_dedup_access_plus():
-    """ 
-    A test where there is no gain by applying DeduplicateAccess, and so it 
+    """
+    A test where there is no gain by applying DeduplicateAccess, and so it
     should not be applied.
     """
 
@@ -123,7 +123,7 @@ def test_dedup_access_plus():
 
 
 def test_dedup_access_square():
-    """ 
+    """
     A test where a one square load can be performed once.
     """
 
@@ -159,7 +159,7 @@ def test_dedup_access_square():
 
 
 def test_dedup_access_contiguous():
-    """ 
+    """
     A test where there is a non-square shape that, based on whether contiguity
     is prioritized, might give different results.
     Subset is:
@@ -169,7 +169,7 @@ def test_dedup_access_contiguous():
      ____|     |____  2
     |    |     |    | 1
     |    |     |    | 0 i
-    |____|     |____| 1 
+    |____|     |____| 1
          |_____|     2
     A square of size 5x5, with two 4x3 squares on each side
     """

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, List, Set
 
 import networkx as nx
 
-from dace import dtypes, subsets, symbolic
+from dace import dtypes, subsets, symbolic, data
 from dace.dtypes import DebugInfo
 
 if TYPE_CHECKING:
@@ -264,7 +264,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             elif const_name in sdfg.symbols:
                 if const_type.dtype != sdfg.symbols[const_name]:
                     # This should actually be an error, but there is a lots of code that depends on it.
-                    warnings.warn(f'Mismatch between constant and symobl type of "{const_name}", '
+                    warnings.warn(f'Mismatch between constant and symbol type of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
             else:
                 warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
@@ -284,6 +284,35 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 raise InvalidSDFGError(
                     f'Cannot use scalar data descriptor ("{name}") as return value of a top-level function.', sdfg,
                     None)
+
+            # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
+            if desc.transient:
+                # Check dimensions
+                for i, dim in enumerate(desc.shape):
+                    if symbolic.is_undefined(dim):
+                        raise InvalidSDFGError(
+                            f'Transient data container "{name}" contains undefined symbol in dimension {i}, '
+                            f'which is required for memory allocation', sdfg, None)
+
+                # Check strides if array
+                if hasattr(desc, 'strides'):
+                    for i, stride in enumerate(desc.strides):
+                        if symbolic.is_undefined(stride):
+                            raise InvalidSDFGError(
+                                f'Transient data container "{name}" contains undefined symbol in stride {i}, '
+                                f'which is required for memory allocation', sdfg, None)
+
+                # Check total size
+                if hasattr(desc, 'total_size') and symbolic.is_undefined(desc.total_size):
+                    raise InvalidSDFGError(
+                        f'Transient data container "{name}" has undefined total size, '
+                        f'which is required for memory allocation', sdfg, None)
+
+                # Check any other undefined symbols in the data descriptor
+                if any(symbolic.is_undefined(s) for s in desc.used_symbols(all_symbols=False)):
+                    raise InvalidSDFGError(
+                        f'Transient data container "{name}" has undefined symbols, '
+                        f'which are required for memory allocation', sdfg, None)
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
@@ -333,6 +362,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
+
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:
@@ -656,7 +686,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
         ########################################
 
-    # Memlet checks
     for eid, e in enumerate(state.edges()):
         # Reference check
         if id(e) in references:
@@ -679,6 +708,27 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise
         except Exception as ex:
             raise InvalidSDFGEdgeError("Edge validation failed: " + str(ex), sdfg, state_id, eid)
+
+        # If the edge is a connection between two AccessNodes check if the subset has negative size.
+        # NOTE: We _should_ do this check in `Memlet.validate()` however, this is not possible,
+        #  because the connection between am AccessNode and a MapEntry, with a negative size, is
+        #  legal because, the Map will not run in that case. However, this constellation can not
+        #  be tested for in the Memlet's validation function, so we have to do it here.
+        # NOTE: Zero size is explicitly allowed because it is essentially `memcpy(dst, src, 0)`
+        #  which is save.
+        # TODO: The AN to AN connection is the most obvious one, but it should be extended.
+        if isinstance(e.src, nd.AccessNode) and isinstance(e.dst, nd.AccessNode):
+            e_memlet: dace.Memlet = e.data
+            if e_memlet.subset is not None:
+                if any((ss < 0) == True for ss in e_memlet.subset.size()):
+                    raise InvalidSDFGEdgeError(
+                        f'`subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was {e_memlet.subset.size()}',
+                        sdfg, state_id, eid)
+            if e_memlet.other_subset is not None:
+                if any((ss < 0) == True for ss in e_memlet.other_subset.size()):
+                    raise InvalidSDFGEdgeError(
+                        f'`other_subset` of an AccessNode to AccessNode Memlet contains a negative size; the size was {e_memlet.other_subset.size()}',
+                        sdfg, state_id, eid)
 
         # For every memlet, obtain its full path in the DFG
         path = state.memlet_path(e)
@@ -751,11 +801,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
                         "Memlet subset does not match node dimension "
-                        "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()),
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                        "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()), sdfg, state_id, eid)
 
                 # Bounds
                 if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
@@ -778,24 +824,21 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if e.data.other_subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
                         "Memlet other_subset does not match node dimension "
-                        "(expected %d, got %d)" % (len(arr.shape), e.data.other_subset.dims()),
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                        "(expected %d, got %d)" % (len(arr.shape), e.data.other_subset.dims()), sdfg, state_id, eid)
 
                 # Bounds
                 if any(
                     ((minel + off) < 0) == True for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
-                    raise InvalidSDFGEdgeError(
-                        "Memlet other_subset negative out-of-bounds",
-                        sdfg,
-                        state_id,
-                        eid,
-                    )
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential negative out-of-bounds memlet other_subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet other_subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
                        for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
-                    raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential out-of-bounds memlet other_subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
 
             # Test subset and other_subset for undefined symbols
             if Config.get_bool('experimental', 'validate_undefs'):

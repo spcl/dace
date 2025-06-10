@@ -8,6 +8,7 @@ from dace import data
 from dace.sdfg import SDFG
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
+from dace.codegen import exceptions as exc
 from dace.config import Config
 from dace.sdfg import infer_types
 
@@ -200,6 +201,11 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
+    # Test for undefined symbols in SDFG arguments
+    if "?" in frame.arglist.keys():
+        raise exc.CodegenError("SDFG '%s' has undefined symbols in its arguments. "
+                               "Please ensure all symbols are defined before generating code." % sdfg.name)
+
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
     default_target = cpu.CPUCodeGen
@@ -210,9 +216,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
-    targets.update(
-        {v['name']: k(frame, sdfg)
-         for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets})
+    targets.update({
+        v['name']: k(frame, sdfg)
+        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets
+    })
 
     # Query all code generation targets and instrumentation providers in SDFG
     _get_codegen_targets(sdfg, frame)

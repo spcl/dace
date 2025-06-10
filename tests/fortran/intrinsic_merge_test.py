@@ -4,6 +4,7 @@ import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
 
+
 def test_fortran_frontend_merge_1d():
     """
     Tests that the generated array map correctly handles offsets.
@@ -45,12 +46,12 @@ def test_fortran_frontend_merge_1d():
     for val in res:
         assert val == 42
 
-    for i in range(int(size/2)):
+    for i in range(int(size / 2)):
         mask[i] = 1
     sdfg(input1=first, input2=second, mask=mask, res=res)
-    for i in range(int(size/2)):
+    for i in range(int(size / 2)):
         assert res[i] == 13
-    for i in range(int(size/2), size):
+    for i in range(int(size / 2), size):
         assert res[i] == 42
 
     mask[:] = 0
@@ -63,6 +64,7 @@ def test_fortran_frontend_merge_1d():
             assert res[i] == 13
         else:
             assert res[i] == 42
+
 
 def test_fortran_frontend_merge_comparison_scalar():
     """
@@ -102,12 +104,12 @@ def test_fortran_frontend_merge_comparison_scalar():
     for val in res:
         assert val == 42
 
-    for i in range(int(size/2)):
+    for i in range(int(size / 2)):
         first[i] = 3
     sdfg(input1=first, input2=second, res=res)
-    for i in range(int(size/2)):
+    for i in range(int(size / 2)):
         assert res[i] == 3
-    for i in range(int(size/2), size):
+    for i in range(int(size / 2), size):
         assert res[i] == 42
 
     first[:] = 13
@@ -120,6 +122,7 @@ def test_fortran_frontend_merge_comparison_scalar():
             assert res[i] == 3
         else:
             assert res[i] == 42
+
 
 def test_fortran_frontend_merge_comparison_arrays():
     """
@@ -159,12 +162,12 @@ def test_fortran_frontend_merge_comparison_arrays():
     for val in res:
         assert val == 13
 
-    for i in range(int(size/2)):
+    for i in range(int(size / 2)):
         first[i] = 45
     sdfg(input1=first, input2=second, res=res)
-    for i in range(int(size/2)):
+    for i in range(int(size / 2)):
         assert res[i] == 42
-    for i in range(int(size/2), size):
+    for i in range(int(size / 2), size):
         assert res[i] == 13
 
     first[:] = 13
@@ -215,8 +218,8 @@ def test_fortran_frontend_merge_comparison_arrays_offset():
     # Minimum is in the beginning
     first = np.full([size], 13, order="F", dtype=np.float64)
     second = np.full([size], 42, order="F", dtype=np.float64)
-    mask1 = np.full([size*2], 30, order="F", dtype=np.float64)
-    mask2 = np.full([size*2], 0, order="F", dtype=np.float64)
+    mask1 = np.full([size * 2], 30, order="F", dtype=np.float64)
+    mask2 = np.full([size * 2], 0, order="F", dtype=np.float64)
     res = np.full([size], 40, order="F", dtype=np.float64)
 
     mask1[2:9] = 3
@@ -261,9 +264,9 @@ def test_fortran_frontend_merge_array_shift():
 
     # Minimum is in the beginning
     first = np.full([size], 13, order="F", dtype=np.float64)
-    second = np.full([size*3], 42, order="F", dtype=np.float64)
-    mask1 = np.full([size*2], 30, order="F", dtype=np.float64)
-    mask2 = np.full([size*2], 0, order="F", dtype=np.float64)
+    second = np.full([size * 3], 42, order="F", dtype=np.float64)
+    mask1 = np.full([size * 2], 30, order="F", dtype=np.float64)
+    mask2 = np.full([size * 2], 0, order="F", dtype=np.float64)
     res = np.full([size], 40, order="F", dtype=np.float64)
 
     second[12:19] = 100
