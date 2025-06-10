@@ -285,6 +285,35 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     f'Cannot use scalar data descriptor ("{name}") as return value of a top-level function.', sdfg,
                     None)
 
+            # Check for UndefinedSymbol in transient data shape (needed for memory allocation)
+            if desc.transient:
+                # Check dimensions
+                for i, dim in enumerate(desc.shape):
+                    if symbolic.is_undefined(dim):
+                        raise InvalidSDFGError(
+                            f'Transient data container "{name}" contains undefined symbol in dimension {i}, '
+                            f'which is required for memory allocation', sdfg, None)
+
+                # Check strides if array
+                if hasattr(desc, 'strides'):
+                    for i, stride in enumerate(desc.strides):
+                        if symbolic.is_undefined(stride):
+                            raise InvalidSDFGError(
+                                f'Transient data container "{name}" contains undefined symbol in stride {i}, '
+                                f'which is required for memory allocation', sdfg, None)
+
+                # Check total size
+                if hasattr(desc, 'total_size') and symbolic.is_undefined(desc.total_size):
+                    raise InvalidSDFGError(
+                        f'Transient data container "{name}" has undefined total size, '
+                        f'which is required for memory allocation', sdfg, None)
+
+                # Check any other undefined symbols in the data descriptor
+                if any(symbolic.is_undefined(s) for s in desc.used_symbols(all_symbols=False)):
+                    raise InvalidSDFGError(
+                        f'Transient data container "{name}" has undefined symbols, '
+                        f'which are required for memory allocation', sdfg, None)
+
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
@@ -333,6 +362,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
+
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:
