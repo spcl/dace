@@ -175,7 +175,7 @@ def memlet_to_map(
     schedule = dtypes.ScheduleType.Default
     if adesc.storage == dtypes.StorageType.GPU_Global or bdesc.storage == dtypes.StorageType.GPU_Global:
         # If already inside GPU kernel
-        if is_devicelevel_gpu(sdfg, state, self.a):
+        if is_devicelevel_gpu(sdfg, state, avnode):
             schedule = dtypes.ScheduleType.Sequential
         else:
             schedule = dtypes.ScheduleType.GPU_Device
