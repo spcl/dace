@@ -249,7 +249,7 @@ class InterstateEdge(object):
 
         return result
 
-    def used_symbols(self, all_symbols: bool, union_lhs_symbols: bool = False) -> Set[str]:
+    def used_symbols(self, all_symbols: bool = False, union_lhs_symbols: bool = False) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
         # NOTE: The former algorithm for computing an edge's free symbols was:
         #       `self.read_symbols() - set(self.assignments.keys())`
@@ -288,7 +288,8 @@ class InterstateEdge(object):
         :param union_lhs_symbols: If True, returns all symbols used in the edge, including those on the LHS.
         :return: A set of symbols names.
         """
-        symbol_names = self.used_symbols(union_lhs_symbols=union_lhs_symbols)
+        # all_symbols does not matter but need to provide something
+        symbol_names = self.used_symbols(all_symbols=True, union_lhs_symbols=union_lhs_symbols)
         assert all([isinstance(s, str) for s in symbol_names])
         real_symbol_names = {s for s in symbol_names if s not in arrays}
         assert all([isinstance(s, str) for s in real_symbol_names])
@@ -301,7 +302,8 @@ class InterstateEdge(object):
         :param union_lhs_symbols: If True, returns all symbols used in the edge, including those on the LHS.
         :return: A set of array names.
         """
-        symbol_names = self.used_symbols(union_lhs_symbols=union_lhs_symbols)
+        # all_symbols does not matter but need to provide something
+        symbol_names = self.used_symbols(all_symbols=True, union_lhs_symbols=union_lhs_symbols)
         assert all([isinstance(s, str) for s in symbol_names])
         used_array_names = {s for s in symbol_names if s in arrays}
         assert all([isinstance(s, str) for s in used_array_names])
