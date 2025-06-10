@@ -154,7 +154,6 @@ class CUDACodeGen(TargetCodeGenerator):
                                       target_type=target_type)
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
-        from dace.transformation.dataflow import CopyToMap
         for e, state in list(sdfg.all_edges_recursive()):
             if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode) and (not e.data.is_empty()):
                 nsdfg = state.parent
