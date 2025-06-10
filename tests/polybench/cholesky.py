@@ -15,9 +15,7 @@ sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 args = [([N, N], datatype)]
 
 
-def init_array(A):
-    n = N.get()
-
+def init_array(A, n):
     for i in range(0, n, 1):
         for j in range(0, i + 1, 1):
             # Python does modulo, while C does remainder ...
@@ -61,11 +59,11 @@ def cholesky(A):
             out = math.sqrt(inp)
 
 
-def print_result(filename, *args):
+def print_result(filename, *args, n=None, **kwargs):
     with open(filename, 'w') as fp:
         fp.write("==BEGIN DUMP_ARRAYS==\n")
         fp.write("begin dump: %s\n" % 'A')
-        for i in range(0, N.get()):
+        for i in range(0, n):
             for j in range(0, i + 1):
                 fp.write("{:.7f} ".format(args[0][i, j]))
             fp.write("\n")

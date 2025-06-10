@@ -98,7 +98,6 @@ def run_durbin(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Validation error")
 def test_cpu():
     run_durbin(dace.dtypes.DeviceType.CPU)
 

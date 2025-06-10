@@ -10,9 +10,7 @@ from dace.data import Array, Scalar
 from dace.memlet import Memlet
 
 
-def list_access_nodes(
-        sdfg: dace.SDFG,
-        array_name: str) -> List[Tuple[nodes.AccessNode, Union[SDFGState, dace.SDFG]]]:
+def list_access_nodes(sdfg: dace.SDFG, array_name: str) -> List[Tuple[nodes.AccessNode, Union[SDFGState, dace.SDFG]]]:
     """
     Find all access nodes in the SDFG of the given array name. Does not recourse into nested SDFGs.
 
@@ -31,10 +29,7 @@ def list_access_nodes(
     return found_nodes
 
 
-def change_strides(
-        sdfg: dace.SDFG,
-        stride_one_values: List[str],
-        schedule: ScheduleType) -> SDFG:
+def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], schedule: ScheduleType) -> SDFG:
     """
     Change the strides of the arrays on the given SDFG such that the given dimension has stride 1. Returns a new SDFG.
 
@@ -89,9 +84,8 @@ def change_strides(
     for dname, desc in sdfg.arrays.items():
         if not desc.transient:
             if isinstance(desc, Array):
-                new_sdfg.add_array(dname, desc.shape, desc.dtype, desc.storage,
-                                   desc.location, desc.transient, desc.strides,
-                                   desc.offset)
+                new_sdfg.add_array(dname, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient,
+                                   desc.strides, desc.offset)
             elif isinstance(desc, Scalar):
                 new_sdfg.add_scalar(dname, desc.dtype, desc.storage, desc.transient, desc.lifetime, desc.debuginfo)
 
@@ -101,7 +95,7 @@ def change_strides(
     # Map of array names in the nested sdfg:  key: array name in parent sdfg (this sdfg), value: name in the nsdfg
     # Assumes that name changes only appear in the first level of nsdfg nesting
     array_names_map = {}
-    for graph in sdfg.sdfg_list:
+    for graph in sdfg.cfg_list:
         if graph.parent_nsdfg_node is not None:
             if graph.parent_sdfg == sdfg:
                 for connector in graph.parent_nsdfg_node.in_connectors:
@@ -155,9 +149,8 @@ def change_strides(
         if not desc.transient:
             flipped_name = f"{dname}_flipped"
             flipped_names_map[dname] = flipped_name
-            new_sdfg.add_array(flipped_name, desc.shape, desc.dtype,
-                               desc.storage, desc.location, True,
-                               desc.strides, desc.offset)
+            new_sdfg.add_array(flipped_name, desc.shape, desc.dtype, desc.storage, desc.location, True, desc.strides,
+                               desc.offset)
 
     # Deal with the inputs: Create tasklet to flip them and connect via memlets
     # for input in inputs:
@@ -165,46 +158,60 @@ def change_strides(
         if input in new_order:
             flipped_data = flipped_names_map[input]
             if input in inputs:
-                changed_stride_state.add_memlet_path(changed_stride_state.add_access(flipped_data), nsdfg,
-                                                     dst_conn=input, memlet=Memlet(data=flipped_data))
+                changed_stride_state.add_memlet_path(changed_stride_state.add_access(flipped_data),
+                                                     nsdfg,
+                                                     dst_conn=input,
+                                                     memlet=Memlet(data=flipped_data))
             # Simply need to copy the data, the different strides take care of the transposing
             arr = sdfg.arrays[input]
             tasklet, map_entry, map_exit = transform_state.add_mapped_tasklet(
-                    name=f"transpose_{input}",
-                    map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
-                    inputs={'_in': Memlet(data=input, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                    code='_out = _in',
-                    outputs={'_out': Memlet(data=flipped_data,
-                                            subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                    external_edges=True,
-                    schedule=schedule,
-                    )
+                name=f"transpose_{input}",
+                map_ranges={
+                    f"_i{i}": f"0:{s}"
+                    for i, s in enumerate(arr.shape)
+                },
+                inputs={'_in': Memlet(data=input, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                code='_out = _in',
+                outputs={
+                    '_out': Memlet(data=flipped_data, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))
+                },
+                external_edges=True,
+                schedule=schedule,
+            )
     # Do the same for the outputs
     for output in outputs:
         if output in new_order:
             flipped_data = flipped_names_map[output]
-            changed_stride_state.add_memlet_path(nsdfg, changed_stride_state.add_access(flipped_data),
-                                                 src_conn=output, memlet=Memlet(data=flipped_data))
+            changed_stride_state.add_memlet_path(nsdfg,
+                                                 changed_stride_state.add_access(flipped_data),
+                                                 src_conn=output,
+                                                 memlet=Memlet(data=flipped_data))
             # Simply need to copy the data, the different strides take care of the transposing
             arr = sdfg.arrays[output]
             tasklet, map_entry, map_exit = transform_state_back.add_mapped_tasklet(
-                    name=f"transpose_{output}",
-                    map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
-                    inputs={'_in': Memlet(data=flipped_data,
-                                          subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                    code='_out = _in',
-                    outputs={'_out': Memlet(data=output, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                    external_edges=True,
-                    schedule=schedule,
-                    )
+                name=f"transpose_{output}",
+                map_ranges={
+                    f"_i{i}": f"0:{s}"
+                    for i, s in enumerate(arr.shape)
+                },
+                inputs={'_in': Memlet(data=flipped_data, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                code='_out = _in',
+                outputs={'_out': Memlet(data=output, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                external_edges=True,
+                schedule=schedule,
+            )
     # Deal with any arrays which have not been flipped (should only be scalars). Connect them directly
     for dname, desc in sdfg.arrays.items():
         if not desc.transient and dname not in new_order:
             if dname in inputs:
-                changed_stride_state.add_memlet_path(changed_stride_state.add_access(dname), nsdfg, dst_conn=dname,
+                changed_stride_state.add_memlet_path(changed_stride_state.add_access(dname),
+                                                     nsdfg,
+                                                     dst_conn=dname,
                                                      memlet=Memlet(data=dname))
             if dname in outputs:
-                changed_stride_state.add_memlet_path(nsdfg, changed_stride_state.add_access(dname), src_conn=dname,
+                changed_stride_state.add_memlet_path(nsdfg,
+                                                     changed_stride_state.add_access(dname),
+                                                     src_conn=dname,
                                                      memlet=Memlet(data=dname))
 
     return new_sdfg

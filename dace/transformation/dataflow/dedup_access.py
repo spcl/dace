@@ -3,13 +3,11 @@
 
 from collections import defaultdict
 import copy
-import itertools
-from typing import List, Set
+from typing import List
 
-from dace import data, dtypes, sdfg as sd, subsets, symbolic
+from dace import sdfg as sd, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes, graph as gr
-from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
 import dace.transformation.helpers as helpers
 
@@ -17,9 +15,9 @@ import warnings
 
 
 class DeduplicateAccess(xf.SingleStateTransformation):
-    """ 
+    """
     This transformation takes a node that is connected to multiple destinations
-    with overlapping memlets, and consolidates those accesses through a 
+    with overlapping memlets, and consolidates those accesses through a
     transient array or scalar.
     """
 

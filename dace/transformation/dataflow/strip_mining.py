@@ -360,7 +360,8 @@ class StripMining(transformation.SingleStateTransformation):
             map_entry.map.range = subsets.Range([r for i, r in enumerate(map_entry.map.range) if i != dim_idx])
             map_entry.map.params = [p for i, p in enumerate(map_entry.map.params) if i != dim_idx]
             if len(map_entry.map.params) == 0:
-                raise ValueError('Strip-mining all dimensions of the map with ' 'empty tiles is disallowed')
+                raise ValueError('Strip-mining all dimensions of the map with '
+                                 'empty tiles is disallowed')
         else:
             map_entry.map.range[dim_idx] = td_rng
 
@@ -466,7 +467,7 @@ class StripMining(transformation.SingleStateTransformation):
 
         # Skew if necessary
         if self.skew:
-            xfh.offset_map(sdfg, graph, map_entry, dim_idx, td_rng[0])
+            xfh.offset_map(graph, map_entry, dim_idx, td_rng[0])
 
         # Return strip-mined dimension.
         return target_dim, new_dim, new_map

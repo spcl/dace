@@ -29,8 +29,7 @@ sizes = [{
 args = [([N, N], datatype)]
 
 
-def init_array(u):
-    n = N.get()
+def init_array(u, tsteps, n):
     for i in range(n):
         for j in range(n):
             u[i, j] = datatype(i + n - j) / n

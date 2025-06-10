@@ -16,11 +16,6 @@ from dace.frontend.operations import detect_reduction_type
 from dace.sdfg.propagation import propagate_memlets_scope
 
 from copy import deepcopy as dcpy
-from typing import List
-
-import numpy as np
-
-import timeit
 
 
 @make_properties
@@ -40,9 +35,11 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transient" "in registers", dtype=bool, default=False)
+    create_in_transient = Property(desc="Create local in-transient"
+                                   "in registers", dtype=bool, default=False)
 
-    create_out_transient = Property(desc="Create local out-transient" "in registers", dtype=bool, default=False)
+    create_out_transient = Property(desc="Create local out-transient"
+                                    "in registers", dtype=bool, default=False)
 
     reduce_implementation = Property(desc="Reduce implementation of inner reduce. If specified,"
                                      "overrides any existing implementations",
@@ -183,7 +180,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
-            nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
+            nsdfg_id = nsdfg.sdfg.cfg_list.index(nsdfg.sdfg)
             nstate_id = 0
             local_storage = OutLocalStorage()
             local_storage.setup_match(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
@@ -215,7 +212,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
             }
 
-            nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
+            nsdfg_id = nsdfg.sdfg.cfg_list.index(nsdfg.sdfg)
             nstate_id = 0
             local_storage = InLocalStorage()
             local_storage.setup_match(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
@@ -229,8 +226,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
         inline_sdfg = InlineSDFG()
-        inline_sdfg.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)},
-                                0)
+        inline_sdfg.setup_match(sdfg, sdfg.cfg_id, graph.block_id, {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
         inline_sdfg.apply(graph, sdfg)
 
         new_schedule = dtypes.ScheduleType.Default
@@ -339,9 +335,10 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
             output_size = outedge.data.subset.size()
 
-            ome, omx = nstate.add_map(
-                'reduce_output', {'_o%d' % i: '0:%s' % symstr(sz)
-                                  for i, sz in enumerate(outedge.data.subset.size())})
+            ome, omx = nstate.add_map('reduce_output', {
+                '_o%d' % i: '0:%s' % symstr(sz)
+                for i, sz in enumerate(outedge.data.subset.size())
+            })
             outm = Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]), wcr_str=node.wcr)
             inmm = Memlet.simple('_in', ','.join(input_subset))
         else:
@@ -351,10 +348,10 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
         # Add inner map, which corresponds to the range to reduce, containing
         # an identity tasklet
-        ime, imx = nstate.add_map(
-            'reduce_values',
-            {'_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
-             for i, axis in enumerate(sorted(axes))})
+        ime, imx = nstate.add_map('reduce_values', {
+            '_i%d' % i: '0:%s' % symstr(inedge.data.subset.size()[axis])
+            for i, axis in enumerate(sorted(axes))
+        })
 
         # Add identity tasklet for reduction
         t = nstate.add_tasklet('identity', {'inp'}, {'out'}, 'out = inp')

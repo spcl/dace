@@ -27,17 +27,17 @@ def multistate_init(A):
 
 
 def test():
-    W.set(3)
+    W = 3
 
     A = dace.ndarray([W])
     regression = dace.ndarray([W])
 
-    A[:] = np.mgrid[0:W.get()]
+    A[:] = np.mgrid[0:W]
     regression[:] = A[:]
 
     multistate_init(A, W=W)
 
-    diff = np.linalg.norm(4 * regression - A) / W.get()
+    diff = np.linalg.norm(4 * regression - A) / W
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5

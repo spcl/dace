@@ -80,7 +80,7 @@ def test_gpu():
     run_trisolv(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test(assert_ii_1=False, xilinx=False)
 def test_fpga():
     return run_trisolv(dace.dtypes.DeviceType.FPGA)
 

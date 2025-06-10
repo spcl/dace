@@ -6,6 +6,7 @@ import pytest
 
 
 def _test_kernel_transient(persistent: bool):
+
     @dace.program
     def nested(A: dace.float64[128, 64]):
         for i in dace.map[0:128]:
@@ -35,6 +36,7 @@ def _test_kernel_transient(persistent: bool):
 
 
 def _test_transient(persistent: bool):
+
     @dace.program
     def transient(A: dace.float64[128, 64]):
         for i in dace.map[0:128]:
@@ -48,7 +50,7 @@ def _test_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.sdfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -60,6 +62,7 @@ def _test_transient(persistent: bool):
 
 
 def _test_double_transient(persistent: bool):
+
     @dace.program
     def nested(A: dace.float64[64]):
         # Create local array with the same name as an outer array
@@ -84,7 +87,7 @@ def _test_double_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.sdfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)

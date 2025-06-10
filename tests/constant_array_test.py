@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -10,12 +10,12 @@ from dace.transformation.interstate.state_fusion import StateFusion
 from scipy import ndimage
 
 N = dace.symbol('N')
-N.set(20)
 KERNEL = np.array([[0, -1, 0], [-1, 0, -1], [0, -1, 0]], dtype=np.float32)
 
 
 @dace.program(dace.float32[N, N], dace.float32[N, N])
 def stencil3x3(A, B):
+
     @dace.map(_[1:N - 1, 1:N - 1])
     def a2b(y, x):
         input << A[y - 1:y + 2, x - 1:x + 2]
@@ -26,7 +26,8 @@ def stencil3x3(A, B):
 
 
 def test():
-    print('Conv2D %dx%d' % (N.get(), N.get()))
+    N = 20
+    print('Conv2D %dx%d' % (N, N))
 
     A = dace.ndarray([N, N], dtype=dace.float32)
     B = dace.ndarray([N, N], dtype=dace.float32)
@@ -34,9 +35,9 @@ def test():
     # Initialize arrays: Randomize A, zero B
     A[:] = dace.float32(0)
     B[:] = dace.float32(0)
-    A[1:N.get() - 1, 1:N.get() - 1] = np.random.rand((N.get() - 2), (N.get() - 2)).astype(dace.float32.type)
-    regression = np.ndarray([N.get() - 2, N.get() - 2], dtype=np.float32)
-    regression[:] = A[1:N.get() - 1, 1:N.get() - 1]
+    A[1:N - 1, 1:N - 1] = np.random.rand((N - 2), (N - 2)).astype(dace.float32.type)
+    regression = np.ndarray([N - 2, N - 2], dtype=np.float32)
+    regression[:] = A[1:N - 1, 1:N - 1]
 
     #print(A.view(type=np.ndarray))
 
@@ -50,7 +51,7 @@ def test():
     # Regression
     regression = ndimage.convolve(regression, KERNEL, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(B[1:N.get() - 1, 1:N.get() - 1] - regression) / ((N.get() - 2)**2)
+    residual = np.linalg.norm(B[1:N - 1, 1:N - 1] - regression) / ((N - 2)**2)
     print("Residual:", residual)
 
     #print(A.view(type=np.ndarray))
@@ -60,6 +61,7 @@ def test():
 
 
 def test_constant_transient():
+
     @dace.program
     def ctrans(a: dace.float64[10]):
         cst = np.array([1., 2., 3., 4., 5, 6, 7, 8, 9, 10])
@@ -112,12 +114,10 @@ def test_constant_transient_double_nested_scalar():
 
     sdfg = test.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated([StateFusion, RedundantArray, RedundantSecondArray])
-    state = sdfg.node(0)
 
     # modify cst to be a dace constant: the python frontend adds an assignment tasklet
-    n = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'cst'][0]
-    for pred in state.predecessors(n):
-        state.remove_node(pred)
+    assign_state = sdfg.node(0)
+    sdfg.remove_node(assign_state)
 
     sdfg.add_constant('cst', 1.0, sdfg.arrays['cst'])
 

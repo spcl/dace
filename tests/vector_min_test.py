@@ -11,11 +11,11 @@ def test():
     print('Dynamic SDFG test with vectorization and min')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
+    n = 20
 
-    input = np.random.rand(N.get()).astype(np.float32)
-    input2 = np.random.rand(N.get()).astype(np.float32)
-    output = dp.ndarray([N], dp.float32)
+    input = np.random.rand(n).astype(np.float32)
+    input2 = np.random.rand(n).astype(np.float32)
+    output = dp.ndarray([n], dp.float32)
     output[:] = dp.float32(0)
 
     # Construct SDFG
@@ -42,9 +42,9 @@ def test():
     state.add_edge(B, None, map_entry, None, Memlet.simple(B, '0:N'))
     state.add_edge(map_exit, None, C, None, Memlet.simple(C, '0:N'))
 
-    mysdfg(A=input, B=input2, C=output, N=N)
+    mysdfg(A=input, B=input2, C=output, N=n)
 
-    diff = np.linalg.norm(np.minimum(input, input2) - output) / N.get()
+    diff = np.linalg.norm(np.minimum(input, input2) - output) / n
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5

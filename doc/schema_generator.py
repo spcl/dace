@@ -56,12 +56,14 @@ def _sortkey(item):
     else:
         return 'aaaaa' + k
 
+
 def _format_default(value: Any):
     # Returns a string format for a default value of a configuration entry
     if value == '':
         return '(Empty)'
-    
+
     return f'``{value}``'
+
 
 def _write_entry_doc(fp: TextIO, name: str, element: Dict[str, Any]) -> None:
     TITLE_CHARACTERS = '-^~'

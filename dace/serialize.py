@@ -187,7 +187,7 @@ def all_properties_to_json(object_with_properties):
     for x, v in object_with_properties.properties():
         if not save_all_fields and v == x.default:  # Skip default fields
             continue
-        if x.optional and not x.optional_condition(object_with_properties):
+        if not x.serialize_if(object_with_properties):
             continue
         retdict[x.attr_name] = x.to_json(v)
 

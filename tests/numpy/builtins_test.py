@@ -15,6 +15,7 @@ def test_len():
     a = np.random.rand(20, 30)
     assert np.allclose(tester(a), len(a))
 
+
 def test_len_constant():
 
     @dace.program
@@ -24,6 +25,7 @@ def test_len_constant():
 
     a = np.random.rand(20, 30)
     assert np.allclose(tester(a), 3)
+
 
 def test_sum():
 

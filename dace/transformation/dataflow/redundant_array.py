@@ -196,6 +196,10 @@ class RedundantArray(pm.SingleStateTransformation):
         if not in_desc.transient:
             return False
 
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
+            return False
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         try:
@@ -230,7 +234,7 @@ class RedundantArray(pm.SingleStateTransformation):
 
         if not permissive:
             # Make sure the memlet covers the removed array
-            subset = copy.deepcopy(e1.data.subset)
+            subset = copy.deepcopy(a1_subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
             if any(m != a for m, a in zip(subset.size(), shape)):
@@ -368,11 +372,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 return True
 
         # Find occurrences in this and other states
-        occurrences = []
-        for state in sdfg.nodes():
-            occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data])
-        for isedge in sdfg.edges():
+        occurrences = [n for n in sdfg.data_nodes() if n.data == in_array.data]
+        for isedge in sdfg.all_interstate_edges():
             if in_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
 
@@ -452,12 +453,54 @@ class RedundantArray(pm.SingleStateTransformation):
         view_strides = in_desc.strides
         if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) - len(in_desc.shape)):
             view_strides = [s for i, s in enumerate(out_desc.strides) if i not in b_dims_to_pop]
-        sdfg.arrays[in_array.data] = data.View(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
-                                               out_desc.storage, out_desc.location, view_strides, in_desc.offset,
-                                               out_desc.may_alias, dtypes.AllocationLifetime.Scope, in_desc.alignment,
-                                               in_desc.debuginfo, in_desc.total_size)
+        sdfg.arrays[in_array.data] = data.ArrayView(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
+                                                    out_desc.storage, out_desc.location, view_strides, in_desc.offset,
+                                                    out_desc.may_alias, dtypes.AllocationLifetime.Scope,
+                                                    in_desc.alignment, in_desc.debuginfo, in_desc.total_size)
         in_array.add_out_connector('views', force=True)
         e1._src_conn = 'views'
+
+    def _is_reshaping_memlet(
+        self,
+        graph: SDFGState,
+        edge: graph.MultiConnectorEdge,
+    ) -> bool:
+        """Test if Memlet between `input_node` and `output_node` is reshaping.
+
+        A "reshaping Memlet" is a Memlet that changes the shape of a data container,
+        in the same way as `numpy.reshape()` does.
+
+        :param graph: The graph (SDFGState) in which the connection is.
+        :param edge: The edge between them.
+        """
+        # Reshaping can not be a reduction
+        if edge.data.wcr or edge.data.wcr_nonatomic:
+            return False
+
+        # Reshaping needs to access nodes.
+        src_node = edge.src
+        dst_node = edge.dst
+        if not all(isinstance(node, nodes.AccessNode) for node in (src_node, dst_node)):
+            return False
+
+        # Reshaping can only happen between arrays.
+        sdfg = graph.sdfg
+        src_desc = sdfg.arrays[src_node.data]
+        dst_desc = sdfg.arrays[dst_node.data]
+        if not all(isinstance(desc, data.Array) and not isinstance(desc, data.View) for desc in (src_desc, dst_desc)):
+            return False
+
+        # Reshaping implies that the shape is different.
+        if dst_desc.shape == src_desc.shape:
+            return False
+
+        # A reshaping Memlet must read the whole source array and write the whole destination array.
+        src_subset, dst_subset = _validate_subsets(edge, sdfg.arrays)
+        for subset, shape in zip([dst_subset, src_subset], [dst_desc.shape, src_desc.shape]):
+            if not all(sssize == arraysize for sssize, arraysize in zip(subset.size(), shape)):
+                return False
+
+        return True
 
     def apply(self, graph, sdfg):
         in_array = self.in_array
@@ -523,8 +566,20 @@ class RedundantArray(pm.SingleStateTransformation):
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
-                m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
+        if (reduction or len(a_dims_to_pop) == len(in_desc.shape)
+                or any(m != a for m, a in zip(a1_subset.size(), in_desc.shape))):
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
+            return in_array
+
+        # TODO: Fix me.
+        #  As described in [issue 1595](https://github.com/spcl/dace/issues/1595) the
+        #  transformation is unable to handle certain cases of reshaping Memlets
+        #  correctly and fixing this case has proven rather difficult. In a first
+        #  attempt the case of reshaping Memlets was forbidden (in the
+        #  `can_be_applied()` method), however, this caused other (useful) cases to
+        #  fail. For that reason such Memlets are transformed to Views.
+        #  This is a fix and it should be addressed.
+        if self._is_reshaping_memlet(graph=graph, edge=e1):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
@@ -550,6 +605,7 @@ class RedundantArray(pm.SingleStateTransformation):
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
+            print(f"CREATED VIEW(2): {in_array}")
             return in_array
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
@@ -647,6 +703,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # Make sure that the candidate is a transient variable
         if not out_desc.transient:
+            return False
+
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
             return False
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
@@ -811,11 +871,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 return False
 
         # Find occurrences in this and other states
-        occurrences = []
-        for state in sdfg.nodes():
-            occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_array.data])
-        for isedge in sdfg.edges():
+        occurrences = [n for n in sdfg.data_nodes() if n.data == out_array.data]
+        for isedge in sdfg.all_interstate_edges():
             if out_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
 
@@ -926,10 +983,11 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             view_strides = out_desc.strides
             if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) - len(out_desc.shape)):
                 view_strides = [s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop]
-            sdfg.arrays[out_array.data] = data.View(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
-                                                    in_desc.storage, in_desc.location, view_strides, out_desc.offset,
-                                                    in_desc.may_alias, dtypes.AllocationLifetime.Scope,
-                                                    out_desc.alignment, out_desc.debuginfo, out_desc.total_size)
+            sdfg.arrays[out_array.data] = data.ArrayView(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
+                                                         in_desc.storage, in_desc.location, view_strides,
+                                                         out_desc.offset, in_desc.may_alias,
+                                                         dtypes.AllocationLifetime.Scope, out_desc.alignment,
+                                                         out_desc.debuginfo, out_desc.total_size)
             out_array.add_in_connector('views', force=True)
             e1._dst_conn = 'views'
             return out_array
@@ -1474,6 +1532,8 @@ class RemoveSliceView(pm.SingleStateTransformation):
         # Ensure view
         if not isinstance(desc, data.View):
             return False
+        if isinstance(desc, data.StructureView):
+            return False
 
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)
@@ -1572,7 +1632,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.subset = copy.deepcopy(subset)
-                        
+
                 else:  # The memlet points to the other side, use ``other_subset``
                     if e.data.other_subset is not None:
                         e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
@@ -1582,7 +1642,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
                 # NOTE: It's only necessary to modify one subset of the memlet, as the space of the other differs from
                 #       the view space.
-
 
             # Remove edge directly adjacent to view and reconnect
             state.remove_edge(edge)
@@ -1612,13 +1671,12 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):
     """ Moves intermediate writes insde a Map's subgraph outside the Map.
-    
+
     Currently, the transformation supports only the case `WriteAccess -> MapExit`, where the edge has an empty Memlet.
     """
 
     write = pm.PatternNode(nodes.AccessNode)
     map_exit = pm.PatternNode(nodes.MapExit)
-
 
     @classmethod
     def expressions(cls):
@@ -1630,7 +1688,7 @@ class RemoveIntermediateWrite(pm.SingleStateTransformation):
         edges = state.edges_between(self.write, self.map_exit)
         if any(not e.data.is_empty() for e in edges):
             return False
-        
+
         # The input edges must either depend on all the Map parameters or have WCR.
         for edge in state.in_edges(self.write):
             if edge.data.wcr:
@@ -1645,7 +1703,7 @@ class RemoveIntermediateWrite(pm.SingleStateTransformation):
 
         entry_node = state.entry_node(self.map_exit)
         scope_dict = state.scope_dict()
-        
+
         outer_write = state.add_access(self.write.data)
         for edge in state.in_edges(self.write):
             state.add_memlet_path(edge.src, self.map_exit, outer_write, memlet=edge.data, src_conn=edge.src_conn)

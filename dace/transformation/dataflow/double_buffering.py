@@ -37,7 +37,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         # Verify the map can be transformed to a for-loop
         m2for = MapToForLoop()
-        m2for.setup_match(sdfg, sdfg.sdfg_id, self.state_id,
+        m2for.setup_match(sdfg, sdfg.cfg_id, self.state_id,
                           {MapToForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]}, expr_index)
         if not m2for.can_be_applied(graph, expr_index, sdfg, permissive):
             return False
@@ -110,7 +110,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         ##############################
         # Turn map into for loop
         map_to_for = MapToForLoop()
-        map_to_for.setup_match(sdfg, self.sdfg_id, self.state_id,
+        map_to_for.setup_match(sdfg, self.cfg_id, self.state_id,
                                {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
         nsdfg_node, nstate = map_to_for.apply(graph, sdfg)
 
@@ -127,8 +127,8 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         ##############################
         # Add initial reads to initial nested state
-        initial_state: sd.SDFGState = nsdfg_node.sdfg.start_state
-        initial_state.label = '%s_init' % map_entry.map.label
+        loop_block = nsdfg_node.sdfg.start_block
+        initial_state = nsdfg_node.sdfg.add_state_before(loop_block, '%s_init' % map_entry.map.label)
         for edge in edges_to_replace:
             initial_state.add_node(edge.src)
             rnode = edge.src
@@ -151,8 +151,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         ##############################
         # Add the main state's contents to the last state, modifying
         # memlets appropriately.
-        final_state: sd.SDFGState = nsdfg_node.sdfg.sink_nodes()[0]
-        final_state.label = '%s_final_computation' % map_entry.map.label
+        final_state = nsdfg_node.sdfg.add_state_after(loop_block, '%s_final_computation' % map_entry.map.label)
         dup_nstate = copy.deepcopy(nstate)
         final_state.add_nodes_from(dup_nstate.nodes())
         for e in dup_nstate.edges():

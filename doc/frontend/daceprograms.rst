@@ -6,10 +6,10 @@ an existing Python function or method for parsing.
 
 We support a large subset of the Python language, geared towards scientific computing and high-performance applications.
 This includes standard Python code (loops, functions, context managers, etc.), but also native support for NumPy arrays
-and (most) functions. 
+and (most) functions.
 
 .. note::
-    For more examples, see the `Getting Started <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/getting_started.ipynb>`_
+    For more examples, see the `Getting Started <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/getting_started.ipynb>`_
     Jupyter Notebook tutorial.
 
 Usage
@@ -34,9 +34,9 @@ You can use :func:`~dace.frontend.python.interface.program` either as a decorato
 
 
 The Python frontend will then try to parse the entire function, including internal function calls, so you only need to
-annotate the top-level function. What it can parse is converted to our :ref:`data-centric intermediate representation <sdfg>`, 
+annotate the top-level function. What it can parse is converted to our :ref:`data-centric intermediate representation <sdfg>`,
 and what it cannot parse will be encapsulated (best-effort) as callbacks to the Python interpreter. Callbacks are useful
-because they allow programs to use the full power of the Python ecosystem. For example, if you wish to read a file, 
+because they allow programs to use the full power of the Python ecosystem. For example, if you wish to read a file,
 compute something expensive and plot the result during computation, you can!
 
 .. code-block:: python
@@ -87,7 +87,7 @@ To ease performance programming and give users control over parallelism, we exte
 functions. Note that outside of a ``@dace.program``, these constructs will run sequentially with the Python interpreter
 and can be directly debugged.
 
-The first generator is the multidimensional :class:`~dace.frontend.python.interface.map` construct (see the 
+The first generator is the multidimensional :class:`~dace.frontend.python.interface.map` construct (see the
 :ref:`IR <sdfg-map>` for a definition), which enables parallel iteration over arbitrary ranges::
 
     for i, j in dace.map[0:N, 0:M]:
@@ -122,7 +122,7 @@ engine (powered by `SymPy <https://www.sympy.org>`_) that can perform checks and
 it can raise issues if the wrong sizes are used in an operation:
 
 .. code-block:: python
-    
+
     @dace.program
     def func(A: dace.float64[N, K], B: dace.float64[M, K]):
         C = A @ B    # NOT OK - will raise "DaceSyntaxError: Matrix dimension mismatch K != M"
@@ -181,7 +181,7 @@ It is also possible to annotate the storage location of an array or where a map 
     import cupy
 
     @dace
-    def runs_on_gpu(a: dace.float64[20] @ StorageType.GPU_Global, 
+    def runs_on_gpu(a: dace.float64[20] @ StorageType.GPU_Global,
                     b: dace.float64[20] @ StorageType.GPU_Global):
         # This map will become a GPU kernel
         for i in dace.map[0:20] @ ScheduleType.GPU_Device:
@@ -245,15 +245,15 @@ and compatibility with other codes:
     * Native :class:`~dace.dtypes.vector` types (vectors of vectors also supported)
 
         * Example: :pycode:`dace.vector(dtype, vector_length)`
-    
+
     * Compound :class:`~dace.dtypes.struct` types
 
         * Example: :pycode:`dace.struct(x=dace.float64, y=dace.float64, mass=dace.float16)`
-    
+
     * Callbacks to native code via :class:`~dace.dtypes.callback`
-    
+
         * Example: :pycode:`dace.callback(return_type, *arg_types)`
-    
+
     * Interoperability with libraries via the :class:`~dace.dtypes.pointer` and :class:`~dace.dtypes.opaque` types
 
         * Example: :pycode:`dace.pointer(dace.opaque('MPI_Request'))`
@@ -264,8 +264,8 @@ Closure (arguments, fields, and globals)
 
 Python functions can also use variables defined out of their scope. Those (among other things) define the *closure* of the function.
 DaCe natively supports closures, and works differently depending on the type of external variable used. Once the function
-is compiled, **scalars and constants are assumed to be compile-time constants**, whereas arrays are given to the function 
-as implicit arguments. This emulates the natural behavior of Python functions and their interaction with globals (which 
+is compiled, **scalars and constants are assumed to be compile-time constants**, whereas arrays are given to the function
+as implicit arguments. This emulates the natural behavior of Python functions and their interaction with globals (which
 is read-only unless the ``global`` or ``nonlocal`` keywords are used).
 
 The following example demonstrates how it all works together:
@@ -297,7 +297,7 @@ The following example demonstrates how it all works together:
     b = 100
     sdfg(__g_a=a)
     print(a)
-    # Prints [11., 11., ..., 11.], because ``a`` is an array and 
+    # Prints [11., 11., ..., 11.], because ``a`` is an array and
     # ``b`` is treated as a compile-time constant
 
 
@@ -332,7 +332,7 @@ a pattern that is common in scientific computing applications:
 
         # Its fields are used as data containers
         state.positions += forces(state.dt)
-        
+
 
 A commonly recurring example of compile-time arguments is in object-oriented programming. ``self`` in DaCe methods is
 always considered a compile-time argument, which allows the fields of the object to be given and used as part of the
@@ -344,18 +344,18 @@ Explicit Dataflow Mode
 ----------------------
 
 .. warning::
-    This mode provides a low-level syntax for fine-grained control of the generated SDFG, use sparingly as it can 
+    This mode provides a low-level syntax for fine-grained control of the generated SDFG, use sparingly as it can
     disrupt optimizations (e.g., if the tasklets are too large).
 
 
 The DaCe Python frontend allows users to write SDFG tasklets and memlets directly in Python code.
-For more example uses, see the `Explicit Dataflow <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb>`_
+For more example uses, see the `Explicit Dataflow <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/explicit.ipynb>`_
 tutorial.
 
 Memlets
 ~~~~~~~
 
-:ref:`sdfg-memlet` are a unit of data movement. We can explicitly define them in Python code using a shift operator 
+:ref:`sdfg-memlet` are a unit of data movement. We can explicitly define them in Python code using a shift operator
 between a local variable (left-hand side) and an array, or between two arbitrary arrays. The full syntax is as follows
 (gray elements are optional):
 
@@ -416,7 +416,7 @@ and a write-conflicted memlet:
 
                 c = a * b  # We store the multiplication in c, which triggers an
                            # addition due to conflict resolution
-                
+
                 # One output, at index "i,j", write-conflict resolution is summation
                 c >> C(1, lambda a, b: a + b)[i, j]
 

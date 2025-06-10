@@ -15,10 +15,10 @@ def _get_transpose_input(node, state, sdfg):
     for edge in state.in_edges(node):
         if edge.dst_conn == "_inp":
             subset = dc(edge.data.subset)
-            subset.squeeze()
+            idx = subset.squeeze()
             size = subset.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            return edge, outer_array, (size[0], size[1])
+            return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError("Transpose input connector \"_inp\" not found.")
 
 
@@ -27,10 +27,10 @@ def _get_transpose_output(node, state, sdfg):
     for edge in state.out_edges(node):
         if edge.src_conn == "_out":
             subset = dc(edge.data.subset)
-            subset.squeeze()
+            idx = subset.squeeze()
             size = subset.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            return edge, outer_array, (size[0], size[1])
+            return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError("Transpose output connector \"_out\" not found.")
 
 
@@ -42,23 +42,15 @@ class ExpandTransposePure(ExpandTransformation):
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
 
-        in_edge, in_outer_array, in_shape = _get_transpose_input(node, parent_state, parent_sdfg)
-        out_edge, out_outer_array, out_shape = _get_transpose_output(node, parent_state, parent_sdfg)
+        in_edge, in_outer_array, in_shape, in_strides = _get_transpose_input(node, parent_state, parent_sdfg)
+        out_edge, out_outer_array, out_shape, out_strides = _get_transpose_output(node, parent_state, parent_sdfg)
         dtype = node.dtype
 
         sdfg = dace.SDFG(node.label + "_sdfg")
         state = sdfg.add_state(node.label + "_state")
 
-        _, in_array = sdfg.add_array("_inp",
-                                     in_shape,
-                                     dtype,
-                                     strides=in_outer_array.strides,
-                                     storage=in_outer_array.storage)
-        _, out_array = sdfg.add_array("_out",
-                                      out_shape,
-                                      dtype,
-                                      strides=out_outer_array.strides,
-                                      storage=out_outer_array.storage)
+        _, in_array = sdfg.add_array("_inp", in_shape, dtype, strides=in_strides, storage=in_outer_array.storage)
+        _, out_array = sdfg.add_array("_out", out_shape, dtype, strides=out_strides, storage=out_outer_array.storage)
 
         num_elements = functools.reduce(lambda x, y: x * y, in_array.shape)
         if num_elements == 1:
@@ -70,8 +62,10 @@ class ExpandTransposePure(ExpandTransformation):
         else:
             state.add_mapped_tasklet(
                 name="transpose",
-                map_ranges={"__i%d" % i: "0:%s" % n
-                            for i, n in enumerate(in_array.shape)},
+                map_ranges={
+                    "__i%d" % i: "0:%s" % n
+                    for i, n in enumerate(in_array.shape)
+                },
                 inputs={
                     "__inp": dace.memlet.Memlet.simple("_inp",
                                                        ",".join(["__i%d" % i for i in range(len(in_array.shape))]))
@@ -100,6 +94,12 @@ class ExpandTransposeMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+
+        # Fall back to native implementation if input and output types are not the same
+        if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype
+                != sdfg.arrays[list(state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         dtype = node.dtype
         if dtype == dace.float32:
             func = "somatcopy"
@@ -121,7 +121,8 @@ class ExpandTransposeMKL(ExpandTransformation):
             warnings.warn("Unsupported type for MKL omatcopy extension: " + str(dtype) + ", falling back to pure")
             return ExpandTransposePure.expansion(node, state, sdfg)
 
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
+        # TODO: Add stride support
+        _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, {cast}_inp, "
                 "{n}, {cast}_out, {m});").format(f=func, m=m, n=n, a=alpha, cast=cast)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
@@ -140,27 +141,39 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+
+        # Fall back to native implementation if input and output types are not the same
+        if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype
+                != sdfg.arrays[list(state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         dtype = node.dtype
+        cast = ""
         if dtype == dace.float32:
             func = "somatcopy"
             alpha = "1.0f"
+            cast = ''
         elif dtype == dace.float64:
             func = "domatcopy"
             alpha = "1.0"
+            cast = ''
         elif dtype == dace.complex64:
             func = "comatcopy"
             alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            cast = '(float*)'
         elif dtype == dace.complex128:
             func = "zomatcopy"
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            cast = '(double*)'
         else:
             raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
+        # TODO: Add stride support
+        _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = 'CblasRowMajor'
         trans = 'CblasTrans'
-        code = ("cblas_{f}({o}, {t}, {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha)
+        code = ("cblas_{f}({o}, {t}, {m}, {n}, {cast}{a}, {cast}_inp, "
+                "{n}, {cast}_out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha, cast=cast)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -179,6 +192,11 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         node.validate(sdfg, state)
         dtype = node.dtype
 
+        # Fall back to native implementation if input and output types are not the same
+        if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype
+                != sdfg.arrays[list(state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         try:
             func, cdtype, factort = blas_helpers.cublas_type_metadata(dtype)
         except TypeError as ex:
@@ -189,7 +207,8 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
 
         alpha = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()"
         beta = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()"
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
+        _, _, (m, n), (istride, _) = _get_transpose_input(node, state, sdfg)
+        _, _, _, (ostride, _) = _get_transpose_output(node, state, sdfg)
 
         code = (blas_environments.cublas.cuBLAS.handle_setup_code(node) + f"""cublas{func}(
                     __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,

@@ -91,13 +91,17 @@ def _make_sdfg():
 
     tasklet = s_init.add_tasklet('set_result', {'root_idx'}, {'result_out'}, 'result_out = 0 if i == root_idx else -1')
 
-    s_init.add_memlet_path(root_in, map_entry, tasklet, dst_conn='root_idx', memlet=dace.Memlet.simple(root_in.data, '0'))
+    s_init.add_memlet_path(root_in,
+                           map_entry,
+                           tasklet,
+                           dst_conn='root_idx',
+                           memlet=dace.Memlet.simple(root_in.data, '0'))
 
     s_init.add_memlet_path(tasklet,
-                        map_exit,
-                        result_out,
-                        src_conn='result_out',
-                        memlet=dace.Memlet.simple(result_out.data, 'i'))
+                           map_exit,
+                           result_out,
+                           src_conn='result_out',
+                           memlet=dace.Memlet.simple(result_out.data, 'i'))
 
     # -------------------------------------------------------------
 
@@ -145,6 +149,7 @@ def _make_sdfg():
     bfs.fill_scope_connectors()
     bfs.validate()
     return bfs, s_init
+
 
 # -----------------------------
 # Helper functions to init data
@@ -268,7 +273,6 @@ if res[neighbor] == -1:
     state.add_memlet_path(s_frontier_io, front_out, memlet=dace.Memlet.simple(front_out.data, '0'))
 
 
-
 @pytest.mark.gpu
 def test_persistent_fusion():
     sdfg, s_init = _make_sdfg()
@@ -302,7 +306,7 @@ def test_persistent_fusion():
     E = E * 2
 
     # Extract adjacency matrix
-    M = nx.to_scipy_sparse_matrix(graph, dtype=vtype).tocsr()
+    M = nx.to_scipy_sparse_array(graph, dtype=vtype).tocsr()
     assert M.nnz == E
 
     G_row = np.ndarray([V + 1], dtype=vtype)
@@ -327,7 +331,6 @@ def test_persistent_fusion():
 @pytest.mark.gpu
 def test_persistent_fusion_interstate():
     N = dace.symbol('N', dtype=dace.int64)
-
 
     @dace.program(auto_optimize=False, device=dace.DeviceType.GPU)
     def func(A: dace.float64[N], B: dace.float64[N]):
@@ -357,7 +360,7 @@ def test_persistent_fusion_interstate():
     func.f(aref, B)
 
     sdfg(A=A, B=B, N=N)
-    
+
     assert np.allclose(A, aref)
 
 

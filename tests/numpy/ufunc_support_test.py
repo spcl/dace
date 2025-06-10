@@ -71,10 +71,10 @@ def ufunc_add_simple4(A: dace.int32[N]):
 
 
 def test_ufunc_add_simple4():
-    N.set(10)
-    A = np.random.randint(10, size=(N.get(), ), dtype=np.int32)
+    N = 10
+    A = np.random.randint(10, size=(N, ), dtype=np.int32)
     C = ufunc_add_simple4(A)
-    assert (np.array_equal(A + N.get(), C))
+    assert (np.array_equal(A + N, C))
 
 
 @dace.program
@@ -239,10 +239,10 @@ def ufunc_add_reduce_simple3(A: dace.int32[N]):
 
 
 def test_ufunc_add_reduce_simple3():
-    N.set(10)
-    A = np.random.randint(1, 10, size=(N.get(), ), dtype=np.int32)
+    N = 10
+    A = np.random.randint(1, 10, size=(N, ), dtype=np.int32)
     s = ufunc_add_reduce_simple3(A)
-    assert (np.array_equal(np.add.reduce(N.get()) + A, s))
+    assert (np.array_equal(np.add.reduce(N) + A, s))
 
 
 @dace.program
@@ -416,10 +416,10 @@ def ufunc_add_outer_simple4(A: dace.int32[2, 2, 2, 2, N]):
 
 
 def test_ufunc_add_outer_simple4():
-    N.set(10)
-    A = np.random.randint(1, 10, size=(2, 2, 2, 2, N.get()), dtype=np.int32)
+    N = 10
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, N), dtype=np.int32)
     s = ufunc_add_outer_simple4(A)
-    assert (np.array_equal(np.add.outer(A, N.get()), s))
+    assert (np.array_equal(np.add.outer(A, N), s))
 
 
 @dace.program

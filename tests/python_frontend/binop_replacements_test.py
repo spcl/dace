@@ -4,9 +4,7 @@ import numpy as np
 import pytest
 
 N = dace.symbol('N')
-N.set(10)
 M = dace.symbol('M')
-M.set(5)
 
 
 @dace.program
@@ -15,8 +13,8 @@ def array_array(A: dace.int32[N], B: dace.int32[N]):
 
 
 def test_array_array():
-    A = np.random.randint(10, size=(N.get(), ), dtype=np.int32)
-    B = np.random.randint(10, size=(N.get(), ), dtype=np.int32)
+    A = np.random.randint(10, size=(10, ), dtype=np.int32)
+    B = np.random.randint(10, size=(10, ), dtype=np.int32)
     C = array_array(A, B)
     assert (np.array_equal(A + B, C))
 
@@ -27,7 +25,7 @@ def array_array1(A: dace.int32[N], B: dace.int32[1]):
 
 
 def test_array_array1():
-    A = np.random.randint(10, size=(N.get(), ), dtype=np.int32)
+    A = np.random.randint(10, size=(10, ), dtype=np.int32)
     B = np.random.randint(10, size=(1, ), dtype=np.int32)
     C = array_array1(A, B)
     assert (np.array_equal(A + B, C))
@@ -40,7 +38,7 @@ def array1_array(A: dace.int32[1], B: dace.int32[N]):
 
 def test_array1_array():
     A = np.random.randint(10, size=(1, ), dtype=np.int32)
-    B = np.random.randint(10, size=(N.get(), ), dtype=np.int32)
+    B = np.random.randint(10, size=(10, ), dtype=np.int32)
     C = array1_array(A, B)
     assert (np.array_equal(A + B, C))
 
@@ -63,7 +61,7 @@ def array_scalar(A: dace.int32[N], B: dace.int32):
 
 
 def test_array_scalar():
-    A = np.random.randint(10, size=(N.get(), ), dtype=np.int32)
+    A = np.random.randint(10, size=(10, ), dtype=np.int32)
     B = np.random.randint(10, size=(1, ), dtype=np.int32)[0]
     C = array_scalar(A, B)
     assert (np.array_equal(A + B, C))
@@ -76,7 +74,7 @@ def scalar_array(A: dace.int32, B: dace.int32[N]):
 
 def test_scalar_array():
     A = np.random.randint(10, size=(1, ), dtype=np.int32)[0]
-    B = np.random.randint(10, size=(N.get(), ), dtype=np.int32)
+    B = np.random.randint(10, size=(10, ), dtype=np.int32)
     C = scalar_array(A, B)
     assert (np.array_equal(A + B, C))
 
@@ -87,7 +85,7 @@ def array_num(A: dace.int64[N]):
 
 
 def test_array_num():
-    A = np.random.randint(10, size=(N.get(), ), dtype=np.int64)
+    A = np.random.randint(10, size=(10, ), dtype=np.int64)
     B = array_num(A)
     assert (np.array_equal(A + 5, B))
 
@@ -98,7 +96,7 @@ def num_array(A: dace.int64[N]):
 
 
 def test_num_array():
-    A = np.random.randint(10, size=(N.get(), ), dtype=np.int64)
+    A = np.random.randint(10, size=(10, ), dtype=np.int64)
     B = array_num(A)
     assert (np.array_equal(5 + A, B))
 
@@ -109,7 +107,7 @@ def array_bool(A: dace.bool[N]):
 
 
 def test_array_bool():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=bool)
+    A = np.random.randint(0, high=2, size=(10, ), dtype=bool)
     B = array_bool(A)
     assert (np.array_equal(np.logical_and(A, True), B))
 
@@ -120,7 +118,7 @@ def bool_array(A: dace.bool[N]):
 
 
 def test_bool_array():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=bool)
+    A = np.random.randint(0, high=2, size=(10, ), dtype=bool)
     B = bool_array(A)
     assert (np.array_equal(np.logical_and(True, A), B))
 
@@ -131,9 +129,9 @@ def array_sym(A: dace.int64[N]):
 
 
 def test_array_sym():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.int64)
+    A = np.random.randint(0, high=2, size=(10, ), dtype=np.int64)
     B = array_sym(A)
-    assert (np.array_equal(A + N.get(), B))
+    assert (np.array_equal(A + 10, B))
 
 
 @dace.program
@@ -142,9 +140,9 @@ def sym_array(A: dace.int64[N]):
 
 
 def test_sym_array():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.int64)
+    A = np.random.randint(0, high=2, size=(10, ), dtype=np.int64)
     B = sym_array(A)
-    assert (np.array_equal(N.get() + A, B))
+    assert (np.array_equal(10 + A, B))
 
 
 @dace.program
@@ -153,9 +151,9 @@ def array_symexpr(A: dace.int64[N]):
 
 
 def test_array_symexpr():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.int64)
+    A = np.random.randint(0, high=2, size=(10, ), dtype=np.int64)
     B = array_symexpr(A)
-    assert (np.array_equal(A + (N.get() + 1), B))
+    assert (np.array_equal(A + (10 + 1), B))
 
 
 @dace.program
@@ -164,9 +162,9 @@ def symexpr_array(A: dace.int64[N]):
 
 
 def test_symexpr_array():
-    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.int64)
+    A = np.random.randint(0, high=2, size=(10, ), dtype=np.int64)
     B = symexpr_array(A)
-    assert (np.array_equal((N.get() + 1) + A, B))
+    assert (np.array_equal((10 + 1) + A, B))
 
 
 @dace.program
@@ -232,9 +230,9 @@ def scal_sym(A: dace.int64, tmp: dace.int64[N]):
 
 def test_scal_sym():
     A = np.random.randint(0, high=2, size=(1, ), dtype=np.int64)[0]
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     B = scal_sym(A, tmp)
-    assert (np.array_equal(A + N.get(), B[0]))
+    assert (np.array_equal(A + 10, B[0]))
 
 
 @dace.program
@@ -244,9 +242,9 @@ def sym_scal(A: dace.int64, tmp: dace.int64[N]):
 
 def test_sym_scal():
     A = np.random.randint(0, high=2, size=(1, ), dtype=np.int64)[0]
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     B = sym_scal(A, tmp)
-    assert (np.array_equal(N.get() + A, B[0]))
+    assert (np.array_equal(10 + A, B[0]))
 
 
 @dace.program
@@ -256,9 +254,9 @@ def scal_symexpr(A: dace.int64, tmp: dace.int64[N]):
 
 def test_scal_symexpr():
     A = np.random.randint(0, high=2, size=(1, ), dtype=np.int64)[0]
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     B = scal_symexpr(A, tmp)
-    assert (np.array_equal(A + (N.get() + 1), B[0]))
+    assert (np.array_equal(A + (10 + 1), B[0]))
 
 
 @dace.program
@@ -268,9 +266,9 @@ def symexpr_scal(A: dace.int64, tmp: dace.int64[N]):
 
 def test_symexpr_scal():
     A = np.random.randint(0, high=2, size=(1, ), dtype=np.int64)[0]
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     B = symexpr_scal(A, tmp)
-    assert (np.array_equal((N.get() + 1) + A, B[0]))
+    assert (np.array_equal((10 + 1) + A, B[0]))
 
 
 @dace.program
@@ -289,9 +287,9 @@ def num_sym(tmp: dace.int64[N]):
 
 
 def test_num_sym():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = num_sym(tmp)
-    assert (A[0] == 5 + N.get())
+    assert (A[0] == 5 + 10)
 
 
 @dace.program
@@ -300,9 +298,9 @@ def sym_num(tmp: dace.int64[N]):
 
 
 def test_sym_num():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = sym_num(tmp)
-    assert (A[0] == N.get() + 5)
+    assert (A[0] == 10 + 5)
 
 
 @dace.program
@@ -311,9 +309,9 @@ def num_symexpr(tmp: dace.int64[N]):
 
 
 def test_num_symexpr():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = num_symexpr(tmp)
-    assert (A[0] == 5 + (N.get() + 1))
+    assert (A[0] == 5 + (10 + 1))
 
 
 @dace.program
@@ -322,9 +320,9 @@ def symexpr_num(tmp: dace.int64[N]):
 
 
 def test_symexpr_num():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = symexpr_num(tmp)
-    assert (A[0] == (N.get() + 1) + 5)
+    assert (A[0] == (10 + 1) + 5)
 
 
 @dace.program
@@ -343,9 +341,9 @@ def bool_sym(tmp: dace.int64[N]):
 
 
 def test_bool_sym():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = bool_sym(tmp)
-    assert (A[0] == False or N.get())
+    assert (A[0] == False or 10)
 
 
 @dace.program
@@ -354,9 +352,9 @@ def sym_bool(tmp: dace.int64[N]):
 
 
 def test_sym_bool():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = sym_bool(tmp)
-    assert (A[0] == N.get() or False)
+    assert (A[0] == 10 or False)
 
 
 @dace.program
@@ -365,9 +363,9 @@ def bool_symexpr(tmp: dace.int64[N]):
 
 
 def test_bool_symexpr():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = bool_symexpr(tmp)
-    assert (A[0] == False or (N.get() + 1))
+    assert (A[0] == False or (10 + 1))
 
 
 @dace.program
@@ -376,9 +374,9 @@ def symexpr_bool(tmp: dace.int64[N]):
 
 
 def test_symexpr_bool():
-    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    tmp = np.zeros((10, ), dtype=np.int64)
     A = symexpr_bool(tmp)
-    assert (A[0] == (N.get() + 1) or False)
+    assert (A[0] == (10 + 1) or False)
 
 
 @dace.program
@@ -387,9 +385,9 @@ def sym_sym(tmp: dace.int64[M, N]):
 
 
 def test_sym_sym():
-    tmp = np.zeros((M.get(), N.get()), dtype=np.int64)
+    tmp = np.zeros((5, 10), dtype=np.int64)
     A = sym_sym(tmp)
-    assert (A[0] == M.get() + N.get())
+    assert (A[0] == 5 + 10)
 
 
 @dace.program
@@ -398,10 +396,10 @@ def mixed(A: dace.int64[M, N], B: dace.int64):
 
 
 def test_mixed():
-    A = np.random.randint(10, size=(M.get(), N.get()), dtype=np.int64)
+    A = np.random.randint(10, size=(5, 10), dtype=np.int64)
     B = np.random.randint(10, size=(1, ), dtype=np.int64)[0]
     C = mixed(A, B)
-    ref = 5j + M.get() + A[0, 0] + 32 + A[0, 1] + B + 2 + M.get() + N.get()
+    ref = 5j + 5 + A[0, 0] + 32 + A[0, 1] + B + 2 + 5 + 10
     assert (C[0] == ref)
 
 

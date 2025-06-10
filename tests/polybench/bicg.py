@@ -30,10 +30,7 @@ sizes = [{
 args = [([N, M], datatype), ([M], datatype), ([N], datatype), ([M], datatype), ([N], datatype)]
 
 
-def init_array(A, s, q, p, r):
-    n = N.get()
-    m = M.get()
-
+def init_array(A, s, q, p, r, n, m):
     for i in range(m):
         p[i] = datatype(i % m) / m
     for i in range(n):
@@ -44,6 +41,7 @@ def init_array(A, s, q, p, r):
 
 @dace.program(datatype[N, M], datatype[M], datatype[N], datatype[M], datatype[N])
 def bicg(A, s, q, p, r):
+
     @dace.map
     def reset_s(i: _[0:M]):
         out >> s[i]

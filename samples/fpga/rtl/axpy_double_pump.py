@@ -430,11 +430,11 @@ if __name__ == '__main__':
     with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
         with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
             # init data structures
-            N.set(4096)
+            N = 4096
             a = np.random.rand(1)[0].astype(np.float32)
-            x = np.random.rand(N.get()).astype(np.float32)
-            y = np.random.rand(N.get()).astype(np.float32)
-            result = np.zeros((N.get(), )).astype(np.float32)
+            x = np.random.rand(N).astype(np.float32)
+            y = np.random.rand(N).astype(np.float32)
+            result = np.zeros((N, )).astype(np.float32)
 
             # show initial values
             print("a={}, x={}, y={}".format(a, x, y))
@@ -450,7 +450,7 @@ if __name__ == '__main__':
 
             # check result
             expected = a * x + y
-            diff = np.linalg.norm(expected - result) / N.get()
+            diff = np.linalg.norm(expected - result) / N
             print("Difference:", diff)
 
             assert diff <= 1e-5

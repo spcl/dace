@@ -33,6 +33,8 @@ class MapTiling(transformation.SingleStateTransformation):
     divides_evenly = Property(dtype=bool, default=False, desc="Tile size divides dimension length evenly")
     tile_trivial = Property(dtype=bool, default=False, desc="Tiles even if tile_size is 1")
 
+    skew = Property(dtype=bool, default=False, desc="If True, offsets inner tile back such that it starts with zero")
+
     @staticmethod
     def annotates_memlets():
         return True
@@ -54,7 +56,7 @@ class MapTiling(transformation.SingleStateTransformation):
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.strip_mining import StripMining
         stripmine_subgraph = {StripMining.map_entry: self.subgraph[MapTiling.map_entry]}
-        sdfg_id = sdfg.sdfg_id
+        cfg_id = graph.parent_graph.cfg_id
         last_map_entry = None
         removed_maps = 0
 
@@ -82,7 +84,7 @@ class MapTiling(transformation.SingleStateTransformation):
                 continue
 
             stripmine = StripMining()
-            stripmine.setup_match(sdfg, sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
+            stripmine.setup_match(sdfg, cfg_id, self.state_id, stripmine_subgraph, self.expr_index)
 
             # Special case: Tile size of 1 should be omitted from inner map
             if tile_size == 1 and tile_stride == 1 and self.tile_trivial == False:
@@ -92,6 +94,7 @@ class MapTiling(transformation.SingleStateTransformation):
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = True
                 stripmine.tile_offset = str(offset)
+                stripmine.skew = self.skew
                 stripmine.apply(graph, sdfg)
                 removed_maps += 1
             else:
@@ -101,6 +104,7 @@ class MapTiling(transformation.SingleStateTransformation):
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = self.divides_evenly
                 stripmine.tile_offset = str(offset)
+                stripmine.skew = self.skew
                 stripmine.apply(graph, sdfg)
 
             # apply to the new map the schedule of the original one
@@ -113,7 +117,7 @@ class MapTiling(transformation.SingleStateTransformation):
                     MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
                 }
                 mapcollapse = MapCollapse()
-                mapcollapse.setup_match(sdfg, sdfg_id, self.state_id, mapcollapse_subgraph, 0)
+                mapcollapse.setup_match(sdfg, cfg_id, self.state_id, mapcollapse_subgraph, 0)
                 mapcollapse.apply(graph, sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
         return last_map_entry

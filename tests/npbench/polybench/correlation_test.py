@@ -83,7 +83,8 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
     # Compute ground truth and validate result
 
     corr_ref = ground_truth(M, float_n_ref, data_ref)
-    assert np.allclose(corr, corr_ref)
+    diff = corr_ref - corr
+    assert np.abs(diff).max() <= 10e-10
     return sdfg
 
 
@@ -91,7 +92,6 @@ def test_cpu():
     run_correlation(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Compiler error")
 @pytest.mark.gpu
 def test_gpu():
     run_correlation(dace.dtypes.DeviceType.GPU)

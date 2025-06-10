@@ -46,12 +46,7 @@ args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NL], datatype), ([NI, 
         ([1], datatype)]
 
 
-def init_array(A, B, C, D, alpha, beta):
-    ni = NI.get()
-    nj = NJ.get()
-    nk = NK.get()
-    nl = NL.get()
-
+def init_array(A, B, C, D, alpha, beta, ni, nj, nk, nl):
     alpha[0] = datatype(1.5)
     beta[0] = datatype(1.2)
 
@@ -106,6 +101,5 @@ if __name__ == '__main__':
     if polybench:
         polybench.main(sizes, args, [(3, 'D')], init_array, k2mm)
     else:
-        [k.set(v) for k, v in sizes[2].items()]
-        init_array(*args)
+        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         k2mm(*args)

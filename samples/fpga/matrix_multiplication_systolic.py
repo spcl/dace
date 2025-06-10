@@ -241,12 +241,12 @@ def make_fpga_state(sdfg):
     return state
 
 
-def make_sdfg(specialized):
+def make_sdfg(specialized, p, n, k, m):
 
     if specialized:
-        sdfg = dace.SDFG("mm_fpga_systolic_{}_{}x{}x{}".format(P.get(), N.get(), K.get(), M.get()))
+        sdfg = dace.SDFG("mm_fpga_systolic_{}_{}x{}x{}".format(p, n, k, m))
     else:
-        sdfg = dace.SDFG("mm_fpga_systolic_{}_NxKx{}".format(P.get(), M.get()))
+        sdfg = dace.SDFG("mm_fpga_systolic_{}_NxKx{}".format(p, m))
 
     pre_state = make_copy_to_fpga_state(sdfg)
     compute_state = make_fpga_state(sdfg)
@@ -262,35 +262,26 @@ def run_matmul_systolic(m, n, k, p, specialize):
     print("==== Program start ====")
 
     if not specialize:
-        P.set(p)
-        M.set(m)
         # M must always be specialized, as it's used for the static buffer size
-        sdfg = make_sdfg(False)
+        sdfg = make_sdfg(False, p, n, k, m)
         sdfg.specialize(dict(P=p, M=m))
-        N.set(n)
-        K.set(k)
     else:
-        P.set(p)
-        M.set(m)
-        N.set(n)
-        K.set(k)
-        sdfg = make_sdfg(True)
+        sdfg = make_sdfg(True, p, n, k, m)
         sdfg.specialize(dict(P=p, M=m, N=n, K=k))
 
-    print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(M.get(), N.get(), K.get(), P.get(),
-                                                                              "" if specialize else "not "))
+    print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(m, n, k, p, "" if specialize else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
-    A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)
-    B = np.ndarray([K.get(), M.get()], dtype=dace.float32.type)
-    C = np.ndarray([N.get(), M.get()], dtype=dace.float32.type)
-    A[:] = np.random.rand(N.get(), K.get()).astype(dace.float32.type)
-    B[:] = np.random.rand(K.get(), M.get()).astype(dace.float32.type)
+    A = np.ndarray([n, k], dtype=dace.float32.type)
+    B = np.ndarray([k, m], dtype=dace.float32.type)
+    C = np.ndarray([n, m], dtype=dace.float32.type)
+    A[:] = np.random.rand(n, k).astype(dace.float32.type)
+    B[:] = np.random.rand(k, m).astype(dace.float32.type)
     C[:] = dace.float32(0)
 
-    A_regression = np.ndarray([N.get(), K.get()], dtype=np.float32)
-    B_regression = np.ndarray([K.get(), M.get()], dtype=np.float32)
-    C_regression = np.ndarray([N.get(), M.get()], dtype=np.float32)
+    A_regression = np.ndarray([n, k], dtype=np.float32)
+    B_regression = np.ndarray([k, m], dtype=np.float32)
+    C_regression = np.ndarray([n, m], dtype=np.float32)
     A_regression[:] = A[:]
     B_regression[:] = B[:]
     C_regression[:] = C[:]
@@ -298,9 +289,9 @@ def run_matmul_systolic(m, n, k, p, specialize):
     if specialize:
         sdfg(A=A, B=B, C=C)
     else:
-        sdfg(A=A, B=B, C=C, N=N, K=K)
+        sdfg(A=A, B=B, C=C, N=n, K=k)
 
-    diff = np.linalg.norm((A @ B) - C) / float(M.get() * K.get())
+    diff = np.linalg.norm((A @ B) - C) / float(m * k)
     if diff > 1e-6:
         raise ValueError(f"Verification failed, difference: {diff}")
     else:

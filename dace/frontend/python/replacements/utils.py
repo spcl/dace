@@ -19,7 +19,11 @@ import dace  # For evaluation of data types
 # Type hint definitions
 ########################################################################
 
-ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
+else:
+    ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
+
 Size = Union[int, symbolic.symbol]
 Shape = Sequence[Size]
 UfuncInput = Union[str, Number, sp.Basic]
@@ -71,8 +75,10 @@ def simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: 
     else:
         state.add_mapped_tasklet(
             name=func,
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(inparr.shape)},
+            map_ranges={
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
+            },
             inputs={'__inp': Memlet.simple(inpname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
             code='__out = {f}(__inp)'.format(f=func),
             outputs={'__out': Memlet.simple(outname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
@@ -156,9 +162,9 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
             all_idx_dict[get_idx(i)] = dim1
         else:
             if unidirectional:
-                raise SyntaxError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
+                raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
             else:
-                raise SyntaxError("operands could not be broadcast together with shapes {}, {}".format(
+                raise IndexError("operands could not be broadcast together with shapes {}, {}".format(
                     arr1_shape, arr2_shape))
 
     def to_string(idx):
@@ -177,9 +183,9 @@ def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
 
 
 def complex_to_scalar(complex_type: dtypes.typeclass):
-    if complex_type is dtypes.complex64:
+    if complex_type == dtypes.complex64:
         return dtypes.float32
-    elif complex_type is dtypes.complex128:
+    elif complex_type == dtypes.complex128:
         return dtypes.float64
     else:
         return complex_type
@@ -190,18 +196,22 @@ def representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         nptype = dtype.type
     else:
         nptype = dtype
-    if issubclass(nptype, bool):
+    if isinstance(nptype, type):
+        nptype_class = nptype
+    else:
+        nptype_class = type(nptype)
+    if issubclass(nptype_class, bool):
         return True
-    elif issubclass(nptype, np.bool_):
+    elif issubclass(nptype_class, np.bool_):
         return np.bool_(True)
-    elif issubclass(nptype, Integral):
+    elif issubclass(nptype_class, Integral):
         # NOTE: Returning the max representable integer seems a better choice
         # than 1, however it was causing issues with some programs. This should
         # be revisited in the future.
         # return nptype(np.iinfo(nptype).max)
         return nptype(1)
     else:
-        return nptype(np.finfo(nptype).resolution)
+        return nptype(np.finfo(nptype_class).resolution)
 
 
 def np_result_type(nptypes):

@@ -41,14 +41,50 @@ def trivial_map_init_sdfg():
     state.add_memlet_path(map_entry_outer, map_entry_inner, memlet=dace.Memlet())
     state.add_memlet_path(map_entry_inner, tasklet, memlet=dace.Memlet())
 
-    state.add_memlet_path(tasklet, map_exit_inner, memlet=dace.Memlet.simple('B', 'j, i'), src_conn='b',
+    state.add_memlet_path(tasklet,
+                          map_exit_inner,
+                          memlet=dace.Memlet.simple('B', 'j, i'),
+                          src_conn='b',
                           dst_conn='IN_B')
-    state.add_memlet_path(map_exit_inner, map_exit_outer, memlet=dace.Memlet.simple('B', 'j, 0'), src_conn='OUT_B',
+    state.add_memlet_path(map_exit_inner,
+                          map_exit_outer,
+                          memlet=dace.Memlet.simple('B', 'j, 0'),
+                          src_conn='OUT_B',
                           dst_conn='IN_B')
-    state.add_memlet_path(map_exit_outer, write, memlet=dace.Memlet.simple('B', '0:5, 0'),
-                          src_conn='OUT_B')
+    state.add_memlet_path(map_exit_outer, write, memlet=dace.Memlet.simple('B', '0:5, 0'), src_conn='OUT_B')
 
     sdfg.validate()
+    return sdfg
+
+
+def trivial_map_with_dynamic_map_range_sdfg():
+    sdfg = dace.SDFG("trivial_map_with_dynamic_map_range")
+    state = sdfg.add_state("state1", is_start_block=True)
+
+    for name in "ABC":
+        sdfg.add_scalar(name, dtype=dace.float32, transient=False)
+    A, B, C = (state.add_access(name) for name in "ABC")
+
+    _, me, _ = state.add_mapped_tasklet(
+        name="MAP",
+        map_ranges=[("__i", "0:1"), ("__j", "10:11")],
+        inputs={"__in": dace.Memlet("A[0]")},
+        input_nodes={"A": A},
+        code="__out = __in + 1",
+        outputs={"__out": dace.Memlet("B[0]")},
+        output_nodes={"B": B},
+        external_edges=True,
+    )
+    state.add_edge(
+        C,
+        None,
+        me,
+        "dynamic_variable",
+        dace.Memlet("C[0]"),
+    )
+    me.add_in_connector("dynamic_variable")
+    sdfg.validate()
+
     return sdfg
 
 
@@ -68,17 +104,29 @@ def trivial_map_pseudo_init_sdfg():
 
     # Edges
     state.add_memlet_path(map_entry_outer, map_entry_inner, memlet=dace.Memlet())
-    state.add_memlet_path(read, map_entry_outer, map_entry_inner, memlet=dace.Memlet.simple('A', '0:5, 0'),
+    state.add_memlet_path(read,
+                          map_entry_outer,
+                          map_entry_inner,
+                          memlet=dace.Memlet.simple('A', '0:5, 0'),
                           dst_conn='IN_A')
     state.add_memlet_path(map_entry_inner, tasklet, memlet=dace.Memlet())
-    state.add_memlet_path(map_entry_inner, tasklet, memlet=dace.Memlet.simple('A', 'j, 0'), src_conn='OUT_A', dst_conn='a')
+    state.add_memlet_path(map_entry_inner,
+                          tasklet,
+                          memlet=dace.Memlet.simple('A', 'j, 0'),
+                          src_conn='OUT_A',
+                          dst_conn='a')
 
-    state.add_memlet_path(tasklet, map_exit_inner, memlet=dace.Memlet.simple('B', 'j, i'), src_conn='b',
+    state.add_memlet_path(tasklet,
+                          map_exit_inner,
+                          memlet=dace.Memlet.simple('B', 'j, i'),
+                          src_conn='b',
                           dst_conn='IN_B')
-    state.add_memlet_path(map_exit_inner, map_exit_outer, memlet=dace.Memlet.simple('B', 'j, 0'), src_conn='OUT_B',
+    state.add_memlet_path(map_exit_inner,
+                          map_exit_outer,
+                          memlet=dace.Memlet.simple('B', 'j, 0'),
+                          src_conn='OUT_B',
                           dst_conn='IN_B')
-    state.add_memlet_path(map_exit_outer, write, memlet=dace.Memlet.simple('B', '0:5, 0'),
-                          src_conn='OUT_B')
+    state.add_memlet_path(map_exit_outer, write, memlet=dace.Memlet.simple('B', '0:5, 0'), src_conn='OUT_B')
 
     sdfg.validate()
     return sdfg
@@ -88,6 +136,7 @@ class TrivialMapEliminationTest(unittest.TestCase):
     """
     Tests the case where the map has an empty input edge
     """
+
     def test_can_be_applied(self):
         graph = trivial_map_sdfg()
 
@@ -119,6 +168,7 @@ class TrivialMapEliminationTest(unittest.TestCase):
 
 
 class TrivialMapInitEliminationTest(unittest.TestCase):
+
     def test_can_be_applied(self):
         graph = trivial_map_init_sdfg()
 
@@ -155,12 +205,12 @@ class TrivialMapPseudoInitEliminationTest(unittest.TestCase):
     """
     Test cases where the map has an empty input and a non empty input
     """
+
     def test_can_be_applied(self):
         graph = trivial_map_pseudo_init_sdfg()
 
         count = graph.apply_transformations(TrivialMapElimination, validate=False, validate_all=False)
         graph.validate()
-        graph.view()
 
         self.assertGreater(count, 0)
 
@@ -186,6 +236,41 @@ class TrivialMapPseudoInitEliminationTest(unittest.TestCase):
         self.assertEqual(len(map_entries), 1)
         # Check that there is an outgoing edge from the map entry
         self.assertEqual(len(state.out_edges(map_entries[0])), 1)
+
+
+class TrivialMapEliminationWithDynamicMapRangesTest(unittest.TestCase):
+    """
+    Tests the case where the map has trivial ranges and dynamic map ranges.
+    """
+
+    def test_can_be_applied(self):
+        graph = trivial_map_with_dynamic_map_range_sdfg()
+
+        count = graph.apply_transformations(TrivialMapElimination)
+        graph.validate()
+
+        self.assertEqual(count, 1)
+
+    def test_removes_map(self):
+        graph = trivial_map_with_dynamic_map_range_sdfg()
+
+        graph.apply_transformations(TrivialMapElimination)
+
+        state = graph.nodes()[0]
+        map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+        self.assertEqual(len(map_entries), 1)
+        self.assertEqual(state.in_degree(map_entries[0]), 2)
+        self.assertTrue(any(e.dst_conn.startswith("IN_") for e in state.in_edges(map_entries[0])))
+        self.assertTrue(any(not e.dst_conn.startswith("IN_") for e in state.in_edges(map_entries[0])))
+
+    def test_not_remove_dynamic_map_range(self):
+        graph = trivial_map_with_dynamic_map_range_sdfg()
+
+        count1 = graph.apply_transformations(TrivialMapElimination)
+        self.assertEqual(count1, 1)
+
+        count2 = graph.apply_transformations(TrivialMapElimination)
+        self.assertEqual(count2, 0)
 
 
 if __name__ == '__main__':

@@ -10,12 +10,12 @@ from dace.sdfg import utils as sdutil
 
 @properties.make_properties
 class WarpTiling(xf.SingleStateTransformation):
-    """ 
-    Implements a GPU specialization tiling that takes a GPU kernel map (with 
+    """
+    Implements a GPU specialization tiling that takes a GPU kernel map (with
     nested maps, but without explicit block sizes) and divides its work across
-    a warp. Specifically, it tiles its contents by a configurable warp size 
-    (default: 32), and optionally preferring recomputation (map replication) 
-    over local storage within the kernel. If write-conflicted reductions happen 
+    a warp. Specifically, it tiles its contents by a configurable warp size
+    (default: 32), and optionally preferring recomputation (map replication)
+    over local storage within the kernel. If write-conflicted reductions happen
     within the given map, the transformation adds warp reductions to the tiles.
     """
 
@@ -55,6 +55,10 @@ class WarpTiling(xf.SingleStateTransformation):
         # Stride and offset all internal maps
         maps_to_stride = xfh.get_internal_scopes(graph, new_me, immediate=True)
         for nstate, nmap in maps_to_stride:
+            # Skip sequential maps
+            if nmap.schedule == dtypes.ScheduleType.Sequential:
+                continue
+
             nsdfg = nstate.parent
             nsdfg_node = nsdfg.parent_nsdfg_node
 
@@ -123,7 +127,7 @@ class WarpTiling(xf.SingleStateTransformation):
                         write = nstate.add_write(name)
                         edge = nstate.add_nedge(read, write, copy.deepcopy(out_edge.data))
                         edge.data.wcr = None
-                        xfh.state_fission(nsdfg, SubgraphView(nstate, [read, write]))
+                        xfh.state_fission(SubgraphView(nstate, [read, write]))
 
                         newnode = nstate.add_access(name)
                         nstate.remove_edge(out_edge)

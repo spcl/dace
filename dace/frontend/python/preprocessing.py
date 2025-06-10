@@ -19,7 +19,6 @@ from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
-
 if sys.version_info < (3, 8):
     BytesConstant = ast.Bytes
     EllipsisConstant = ast.Ellipsis
@@ -52,7 +51,7 @@ class DaceRecursionError(Exception):
 class PreprocessedAST:
     """
     Python AST and metadata of a preprocessed @dace.program/method, for use
-    in parsing. 
+    in parsing.
     """
     filename: str
     src_line: int
@@ -123,8 +122,8 @@ class ModuleResolver(ast.NodeTransformer):
 
 
 class RewriteSympyEquality(ast.NodeTransformer):
-    """ 
-    Replaces symbolic equality checks by ``sympy.{Eq,Ne}``. 
+    """
+    Replaces symbolic equality checks by ``sympy.{Eq,Ne}``.
     This is done because a test ``if x == 0`` where ``x`` is a symbol would
     result in False, even in indeterminate cases.
     """
@@ -162,7 +161,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
 
 
 class ConditionalCodeResolver(ast.NodeTransformer):
-    """ 
+    """
     Replaces if conditions by their bodies if can be evaluated at compile time.
     """
 
@@ -327,7 +326,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
 
 def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> Tuple[Callable, int]:
     """
-    Creates a lambda function for recreating the original Python object and returns the number of 
+    Creates a lambda function for recreating the original Python object and returns the number of
     arguments to increment.
     """
     try:
@@ -375,7 +374,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
     """
     Creates a version of the function that has only marshallable arguments and no keyword arguments.
     Arguments in callback matches the number of arguments used exactly.
-    Used for creating callbacks from C to Python with keyword arguments or other Pythonic structures 
+    Used for creating callbacks from C to Python with keyword arguments or other Pythonic structures
     (such as literal lists).
     """
 
@@ -527,6 +526,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         elif isinstance(value, symbolic.symbol):
             # Symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
+        elif isinstance(value, sympy.Basic):  # Symbolic or constant expression
+            newnode = ast.parse(symbolic.symstr(value)).body[0].value
         elif isinstance(value, ast.Name):
             newnode = ast.Name(id=value.id, ctx=ast.Load())
         elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):
@@ -623,7 +624,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 if find_disallowed_statements(sast):
                     return newnode
 
-                parsed = parser.DaceProgram(value, [], {}, False, dtypes.DeviceType.CPU)
+                parsed = parser.DaceProgram(value, [], {}, False, dtypes.DeviceType.CPU, ignore_type_hints=True)
                 # If method, add the first argument (which disappears due to
                 # being a bound method) and the method's object
                 if parent_object is not None:
@@ -752,7 +753,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 return self.generic_visit(node)
 
             # Then query for the right value
-            if isinstance(node.value, ast.Dict):
+            if isinstance(node.value, ast.Dict):  # Dict
                 for k, v in zip(node.value.keys, node.value.values):
                     try:
                         gkey = astutils.evalnode(k, self.globals)
@@ -760,16 +761,28 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                         continue
                     if gkey == gslice:
                         return self._visit_potential_constant(v, True)
-            else:  # List or Tuple
-                return self._visit_potential_constant(node.value.elts[gslice], True)
+            elif isinstance(node.value, (ast.List, ast.Tuple)):  # List & Tuple
+                # Loop over the list if slicing makes it a list
+                if isinstance(node.value.elts[gslice], List):
+                    visited_list = astutils.copy_tree(node.value)
+                    visited_list.elts.clear()
+                    for v in node.value.elts[gslice]:
+                        visited_cst = self._visit_potential_constant(v, True)
+                        visited_list.elts.append(visited_cst)
+                    node.value = visited_list
+                    return node
+                else:
+                    return self._visit_potential_constant(node.value.elts[gslice], True)
+            else:  # Catch-all
+                return self._visit_potential_constant(node, True)
 
         return self._visit_potential_constant(node, True)
 
     def visit_Call(self, node: ast.Call) -> Any:
         from dace.frontend.python.interface import in_program, inline  # Avoid import loop
 
-        if (hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible) or 
-                sys.version_info < (3, 8) and hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible)):
+        if (hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible)
+                or sys.version_info < (3, 8) and hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible)):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
@@ -873,8 +886,10 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             parsed = [
                 not isinstance(v, ast.FormattedValue) or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [v.s if sys.version_info < (3, 8) and isinstance(v, ast.Str) else astutils.unparse(v.value)
-                      for v in visited.values]
+            values = [
+                v.s if sys.version_info < (3, 8) and isinstance(v, ast.Str) else astutils.unparse(v.value)
+                for v in visited.values
+            ]
             return ast.copy_location(
                 ast.Constant(kind='', value=''.join(('{%s}' % v) if not p else v for p, v in zip(parsed, values))),
                 node)
@@ -923,6 +938,9 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         for stmt in reversed(self.with_statements):
             if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
                 break
+            elif not until_loop_end and isinstance(stmt, (ast.For, ast.While)):
+                break
+
             for mgrname, mgr in reversed(self.context_managers[stmt]):
                 # Call __exit__ (without exception management all three arguments are set to None)
                 exit_call = ast.copy_location(ast.parse(f'{mgrname}.__exit__(None, None, None)').body[0], stmt)
@@ -954,7 +972,9 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
                                  'evaluatable context managers are supported.')
 
             # Create manager as part of closure
-            mgr_name = data.find_new_name(f'__with_{item.context_expr.qualname if hasattr(item.context_expr, "qualname") else item.context_expr.id}', self.names)
+            mgr_name = data.find_new_name(
+                f'__with_{item.context_expr.qualname if hasattr(item.context_expr, "qualname") else item.context_expr.id}',
+                self.names)
             mgr = self.resolver.global_value_to_node(ctxmgr, node, mgr_name, keep_object=True)
             ctx_mgr_names.append((mgr.id, ctxmgr))
             self.names.add(mgr_name)
@@ -975,7 +995,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         # Avoid parsing "with dace.tasklet"
         try:
             evald = astutils.evalnode(node.items[0].context_expr, self.globals)
-            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+            if evald is dace.tasklet or evald is dace.named or isinstance(evald, (dace.tasklet, dace.named)):
                 return self.generic_visit(node)
         except SyntaxError:
             pass
@@ -1029,7 +1049,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
 
 
 class LoopUnroller(ast.NodeTransformer):
-    """ 
+    """
     Replaces loops by their unrolled bodies if generator can be evaluated at
     compile time and one of the following conditions apply:
 
@@ -1284,7 +1304,11 @@ class ExpressionInliner(ast.NodeTransformer):
                                             node)
             else:
                 # Augment closure with new value
-                newnode = self.resolver.global_value_to_node(contents, node, f'inlined_{id(contents)}', True, keep_object=True)
+                newnode = self.resolver.global_value_to_node(contents,
+                                                             node,
+                                                             f'inlined_{id(contents)}',
+                                                             True,
+                                                             keep_object=True)
             return newnode
 
         return _convert_to_ast(contents)
@@ -1447,7 +1471,7 @@ class ArrayClosureResolver(ast.NodeVisitor):
 
 class DisallowedAssignmentChecker(ast.NodeVisitor):
     """
-    Tests a pre-processed program for disallowed assignments to compile-time constants, and raises a 
+    Tests a pre-processed program for disallowed assignments to compile-time constants, and raises a
     ``DaceSyntaxError`` exception if one is found.
     """
 
@@ -1518,13 +1542,14 @@ def find_disallowed_statements(node: ast.AST):
 
 class MPIResolver(ast.NodeTransformer):
     """ Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD. """
+
     def __init__(self, globals: Dict[str, Any]):
         from mpi4py import MPI
         self.globals = globals
         self.MPI = MPI
         self.parents = {}
         self.parent = None
-    
+
     def visit(self, node):
         self.parents[node] = self.parent
         self.parent = node
@@ -1532,7 +1557,7 @@ class MPIResolver(ast.NodeTransformer):
         if isinstance(node, ast.AST):
             self.parent = self.parents[node]
         return node
-    
+
     def visit_Name(self, node: ast.Name) -> Union[ast.Name, ast.Attribute]:
         self.generic_visit(node)
         if node.id in self.globals:
@@ -1544,7 +1569,7 @@ class MPIResolver(ast.NodeTransformer):
                     self.parents[newnode] = self.parents[node]
                     return newnode
         return node
-    
+
     def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
         self.generic_visit(node)
         if isinstance(node.attr, str) and node.attr == 'Request':
@@ -1614,7 +1639,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         newmod = global_vars[mod]
         #del global_vars[mod]
         global_vars[modval] = newmod
-    
+
     try:
         src_ast = MPIResolver(global_vars).visit(src_ast)
     except (ImportError, ModuleNotFoundError):

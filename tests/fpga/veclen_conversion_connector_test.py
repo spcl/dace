@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import argparse
 import numpy as np
-from veclen_conversion_test import SIZE, VECTOR_LENGTH, make_sdfg
+from veclen_conversion_test import make_sdfg
 from dace.fpga_testing import fpga_test
 
 
@@ -10,9 +9,6 @@ def test_veclen_conversion_connector():
 
     size = 128
     vector_length = 4
-
-    SIZE.set(size)
-    VECTOR_LENGTH.set(vector_length)
 
     if size % vector_length != 0:
         raise ValueError("Size {} must be divisible by vector length {}.".format(size, vector_length))
@@ -23,7 +19,7 @@ def test_veclen_conversion_connector():
     A = np.arange(size, dtype=np.float64)
     B = np.zeros((size, ), dtype=np.float64)
 
-    sdfg(A=A, B=B, N=SIZE)
+    sdfg(A=A, B=B, N=size)
 
     mid = vector_length // 2
 

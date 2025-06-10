@@ -46,7 +46,7 @@ struct __align__(8) half4 {
     enum { ELEMS = 4 };
 
     half h[ELEMS];
-    
+
     DACE_HDFI half4() {}
     DACE_HDFI half4(const half4& other) {
         __DACE_UNROLL
@@ -61,7 +61,7 @@ struct __align__(8) half4 {
         return *this;
     }
 
-    DACE_HDFI half4(const half& x, const half& y, const half& z, 
+    DACE_HDFI half4(const half& x, const half& y, const half& z,
                     const half& w) {
         h[0] = x;
         h[1] = y;
@@ -74,7 +74,7 @@ struct __align__(8) half4 {
         h2<1>() = zw;
     }
 
-    DACE_HDFI 
+    DACE_HDFI
     static half4 fillall(half value) {
         half4 res;
         #if defined(__CUDA_ARCH__)
@@ -91,7 +91,7 @@ struct __align__(8) half4 {
     }
 
     template <int stride>
-    DACE_HDFI 
+    DACE_HDFI
     static half4 load(half* ptr) {
         half4 res;
         if (stride == 1) {
@@ -104,9 +104,9 @@ struct __align__(8) half4 {
         }
         return res;
     }
-    
+
     template <int stride>
-    DACE_HDFI 
+    DACE_HDFI
     void store(half* ptr) {
         if (stride == 1) {
             *(half4*)ptr = *this;
@@ -117,7 +117,7 @@ struct __align__(8) half4 {
             }
         }
     }
-    
+
     DACE_DFI
     void sum(float& res) {
         __DACE_UNROLL
@@ -125,17 +125,17 @@ struct __align__(8) half4 {
             res += __half2float(h[k]);
         }
     }
-    
+
     template <int i>
     DACE_HDFI half2& h2() {
         return ((half2*)h)[i];
     }
-    
+
     template <int i>
     DACE_HDFI const half2& h2() const {
         return ((const half2*)h)[i];
     }
-    
+
     DACE_DFI
     half4 exp() {
         half4 res;
@@ -143,45 +143,45 @@ struct __align__(8) half4 {
         res.h2<1>() = h2exp(h2<1>());
         return res;
     }
-    
+
     DACE_DFI void operator*=(const half4& v) {
         h2<0>() = __hmul2(h2<0>(), v.h2<0>());
         h2<1>() = __hmul2(h2<1>(), v.h2<1>());
     }
-    
+
     DACE_DFI void operator+=(const half4& v) {
         h2<0>() = __hadd2(h2<0>(), v.h2<0>());
         h2<1>() = __hadd2(h2<1>(), v.h2<1>());
     }
-    
+
     DACE_DFI void operator-=(const half4& v) {
         h2<0>() = __hsub2(h2<0>(), v.h2<0>());
         h2<1>() = __hsub2(h2<1>(), v.h2<1>());
     }
-    
+
     DACE_DFI void operator*=(const half2& v) {
         h2<0>() = __hmul2(h2<0>(), v);
         h2<1>() = __hmul2(h2<1>(), v);
     }
-    
+
     DACE_DFI void operator+=(const half2& v) {
         h2<0>() = __hadd2(h2<0>(), v);
         h2<1>() = __hadd2(h2<1>(), v);
     }
-    
+
     DACE_DFI void operator-=(const half2& v) {
         h2<0>() = __hsub2(h2<0>(), v);
         h2<1>() = __hsub2(h2<1>(), v);
     }
-    
+
     DACE_DFI void operator*=(const half& v) {
         *this *= __half2half2(v);
     }
-    
+
     DACE_DFI void operator+=(const half& v) {
         *this += __half2half2(v);
     }
-    
+
     DACE_DFI void operator-=(const half& v) {
         *this -= __half2half2(v);
     }
@@ -209,7 +209,7 @@ struct __align__(16) half8 {
         return *this;
     }
 
-    DACE_HDFI half8(half a, half b, half c, half d, half e, half f, half g, 
+    DACE_HDFI half8(half a, half b, half c, half d, half e, half f, half g,
                     half _h) {
         h[0] = a;
         h[1] = b;
@@ -228,7 +228,7 @@ struct __align__(16) half8 {
         h2<3>() = gh;
     }
 
-    DACE_HDFI 
+    DACE_HDFI
     static half8 fillall(half value) {
         half8 res;
         #if defined(__CUDA_ARCH__)
@@ -247,7 +247,7 @@ struct __align__(16) half8 {
     }
 
     template <int stride>
-    DACE_HDFI 
+    DACE_HDFI
     static half8 load(half* ptr) {
         half8 res;
         if (stride == 1) {
@@ -260,9 +260,9 @@ struct __align__(16) half8 {
         }
         return res;
     }
-    
+
     template <int stride>
-    DACE_HDFI 
+    DACE_HDFI
     void store(half* ptr) {
         if (stride == 1) {
             *(half8*)ptr = *this;
@@ -273,7 +273,7 @@ struct __align__(16) half8 {
             }
         }
     }
-    
+
     DACE_DFI
     void sum(float& res) {
         __DACE_UNROLL
@@ -281,17 +281,17 @@ struct __align__(16) half8 {
             res += __half2float(h[k]);
         }
     }
-    
+
     template <int i>
     DACE_HDFI half2& h2() {
         return ((half2*)h)[i];
     }
-    
+
     template <int i>
     DACE_HDFI const half2& h2() const {
         return ((const half2*)h)[i];
     }
-    
+
     DACE_DFI
     half8 exp() {
         half8 res;
@@ -301,21 +301,21 @@ struct __align__(16) half8 {
         res.h2<3>() = h2exp(h2<3>());
         return res;
     }
-    
+
     DACE_DFI void operator*=(const half8& v) {
         h2<0>() = __hmul2(h2<0>(), v.h2<0>());
         h2<1>() = __hmul2(h2<1>(), v.h2<1>());
         h2<2>() = __hmul2(h2<2>(), v.h2<2>());
         h2<3>() = __hmul2(h2<3>(), v.h2<3>());
     }
-    
+
     DACE_DFI void operator+=(const half8& v) {
         h2<0>() = __hadd2(h2<0>(), v.h2<0>());
         h2<1>() = __hadd2(h2<1>(), v.h2<1>());
         h2<2>() = __hadd2(h2<2>(), v.h2<2>());
         h2<3>() = __hadd2(h2<3>(), v.h2<3>());
     }
-    
+
     DACE_DFI void operator-=(const half8& v) {
         h2<0>() = __hsub2(h2<0>(), v.h2<0>());
         h2<1>() = __hsub2(h2<1>(), v.h2<1>());
@@ -329,14 +329,14 @@ struct __align__(16) half8 {
         h2<2>() = __hmul2(h2<2>(), v.h2<0>());
         h2<3>() = __hmul2(h2<3>(), v.h2<1>());
     }
-    
+
     DACE_DFI void operator+=(const half4& v) {
         h2<0>() = __hadd2(h2<0>(), v.h2<0>());
         h2<1>() = __hadd2(h2<1>(), v.h2<1>());
         h2<2>() = __hadd2(h2<2>(), v.h2<0>());
         h2<3>() = __hadd2(h2<3>(), v.h2<1>());
     }
-    
+
     DACE_DFI void operator-=(const half4& v) {
         h2<0>() = __hsub2(h2<0>(), v.h2<0>());
         h2<1>() = __hsub2(h2<1>(), v.h2<1>());
@@ -350,29 +350,29 @@ struct __align__(16) half8 {
         h2<2>() = __hmul2(h2<2>(), v);
         h2<3>() = __hmul2(h2<3>(), v);
     }
-    
+
     DACE_DFI void operator+=(const half2& v) {
         h2<0>() = __hadd2(h2<0>(), v);
         h2<1>() = __hadd2(h2<1>(), v);
         h2<2>() = __hadd2(h2<2>(), v);
         h2<3>() = __hadd2(h2<3>(), v);
     }
-    
+
     DACE_DFI void operator-=(const half2& v) {
         h2<0>() = __hsub2(h2<0>(), v);
         h2<1>() = __hsub2(h2<1>(), v);
         h2<2>() = __hsub2(h2<2>(), v);
         h2<3>() = __hsub2(h2<3>(), v);
     }
-    
+
     DACE_DFI void operator*=(const half& v) {
         *this *= __half2half2(v);
     }
-    
+
     DACE_DFI void operator+=(const half& v) {
         *this += __half2half2(v);
     }
-    
+
     DACE_DFI void operator-=(const half& v) {
         *this -= __half2half2(v);
     }
@@ -530,12 +530,13 @@ namespace dace { namespace math {
     HALF_VEC_UFUNC(exp)
     HALF_VEC_UFUNC(tanh)
 } }
-#endif
 
 // Vector comparison functions
 DACE_DFI half2 max(half2 a, half2 b) {
     return make_half2(max(a.x, b.x), max(a.y, b.y));
 }
+#endif
+
 
 DACE_DFI half4 max(half4 a, half b) {
     half2 bvec = __half2half2(b);
@@ -559,7 +560,7 @@ DACE_DFI half4 max(half4 a, half4 b) {
 
 DACE_DFI half8 max(half8 a, half b) {
     half2 bvec = __half2half2(b);
-    return half8(max(a.h2<0>(), bvec), 
+    return half8(max(a.h2<0>(), bvec),
                  max(a.h2<1>(), bvec),
                  max(a.h2<2>(), bvec),
                  max(a.h2<3>(), bvec));
@@ -569,7 +570,7 @@ DACE_DFI half8 max(half a, half8 b) { return max(b, a); }
 #endif
 
 DACE_DFI half8 max(half8 a, half2 b) {
-    return half8(max(a.h2<0>(), b), 
+    return half8(max(a.h2<0>(), b),
                  max(a.h2<1>(), b),
                  max(a.h2<2>(), b),
                  max(a.h2<3>(), b));
@@ -577,7 +578,7 @@ DACE_DFI half8 max(half8 a, half2 b) {
 DACE_DFI half8 max(half2 a, half8 b) { return max(b, a); }
 
 DACE_DFI half8 max(half8 a, half4 b) {
-    return half8(max(a.h2<0>(), b.h2<0>()), 
+    return half8(max(a.h2<0>(), b.h2<0>()),
                  max(a.h2<1>(), b.h2<1>()),
                  max(a.h2<2>(), b.h2<0>()),
                  max(a.h2<3>(), b.h2<1>()));
@@ -585,7 +586,7 @@ DACE_DFI half8 max(half8 a, half4 b) {
 DACE_DFI half8 max(half4 a, half8 b) { return max(b, a); }
 
 DACE_DFI half8 max(half8 a, half8 b) {
-    return half8(max(a.h2<0>(), b.h2<0>()), 
+    return half8(max(a.h2<0>(), b.h2<0>()),
                  max(a.h2<1>(), b.h2<1>()),
                  max(a.h2<2>(), b.h2<2>()),
                  max(a.h2<3>(), b.h2<3>()));

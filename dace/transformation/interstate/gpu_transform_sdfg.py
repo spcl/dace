@@ -1,15 +1,17 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
-from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic, subsets as sbs, propagate_memlets_sdfg
+from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
+from dace.sdfg.replace import replace_in_codeblock
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
-from dace.properties import Property, make_properties
+from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
 from sympy import floor
-from typing import Dict
+from typing import Dict, List, Set, Tuple
 
 gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
 
@@ -83,6 +85,7 @@ def _recursive_in_check(node, state, gpu_scalars):
 
 
 @make_properties
+@transformation.explicit_cf_compatible
 class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 
@@ -127,6 +130,16 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                dtype=str,
                                default='')
 
+    host_maps = ListProperty(desc='List of map GUIDs, the passed maps are not offloaded to the GPU',
+                             element_type=str,
+                             default=None,
+                             allow_none=True)
+
+    host_data = ListProperty(desc='List of data names, the passed data are not offloaded to the GPU',
+                             element_type=str,
+                             default=None,
+                             allow_none=True)
+
     @staticmethod
     def annotates_memlets():
         # Skip memlet propagation for now
@@ -143,7 +156,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
                 return False
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             schildren = state.scope_children()
             for node in schildren[None]:
                 # If two top-level tasklets are connected with a code->code
@@ -153,20 +166,53 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     return False
         return True
 
-    def apply(self, _, sdfg: sd.SDFG):
+    def _get_marked_inputs_and_outputs(self, state, entry_node) -> list:
+        if not self.host_data and not self.host_maps:
+            return []
+        marked_sources = [state.memlet_tree(e).root().edge.src for e in state.in_edges(entry_node)]
+        marked_sources = [
+            sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_sources
+        ]
+        marked_destinations = [
+            state.memlet_tree(e).root().edge.dst for e in state.in_edges(state.exit_node(entry_node))
+        ]
+        marked_destinations = [
+            sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_destinations
+        ]
+        marked_accesses = [
+            n.data for n in (marked_sources + marked_destinations)
+            if n is not None and isinstance(n, nodes.AccessNode) and n.data in self.host_data
+        ]
+        return marked_accesses
 
+    def _output_or_input_is_marked_host(self, state, entry_node) -> bool:
+        marked_accesses = self._get_marked_inputs_and_outputs(state, entry_node)
+        return len(marked_accesses) > 0
+
+    def apply(self, _, sdfg: sd.SDFG):
         #######################################################
         # Step 0: SDFG metadata
 
         # Find all input and output data descriptors
-        input_nodes = []
-        output_nodes = []
+        input_nodes: List[Tuple[str, data.Data]] = []
+        output_nodes: List[Tuple[str, data.Data]] = []
         global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
+        if self.host_maps is None:
+            self.host_maps = []
+        if self.host_data is None:
+            self.host_data = []
 
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
 
-        for state in sdfg.nodes():
+        # Input and ouputs of all host_maps need to be marked as host_data
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.EntryNode) and node.guid in self.host_maps:
+                    accesses = self._get_marked_inputs_and_outputs(state, node)
+                    self.host_data.extend(accesses)
+
+        for state in sdfg.states():
             sdict = state.scope_dict()
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).transient == False):
@@ -175,12 +221,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         # map ranges must stay on host
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
-                            if (isinstance(last_edge.dst, nodes.EntryNode) and last_edge.dst_conn
-                                    and not last_edge.dst_conn.startswith('IN_') and sdict[last_edge.dst] is None):
+                            if (isinstance(last_edge.dst, nodes.EntryNode)
+                                    and ((last_edge.dst_conn and not last_edge.dst_conn.startswith('IN_')
+                                          and sdict[last_edge.dst] is None) or (last_edge.dst in self.host_maps))):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
-                    if (state.in_degree(node) > 0 and node.data not in output_nodes):
+                    if (state.in_degree(node) > 0 and node.data not in output_nodes
+                            and node.data not in self.host_data):
                         output_nodes.append((node.data, node.desc(sdfg)))
 
             # Input nodes may also be nodes with WCR memlets and no identity
@@ -189,8 +237,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     if (e.data.data not in input_nodes and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append((e.data.data, sdfg.arrays[e.data.data]))
 
-        start_state = sdfg.start_state
-        end_states = sdfg.sink_nodes()
+        start_block = sdfg.start_block
+        end_blocks = sdfg.sink_nodes()
 
         #######################################################
         # Step 1: Create cloned GPU arrays and replace originals
@@ -229,7 +277,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 found_full_write = False
                 full_subset = sbs.Range.from_array(onode)
                 try:
-                    for state in sdfg.nodes():
+                    for state in sdfg.states():
                         for node in state.nodes():
                             if (isinstance(node, nodes.AccessNode) and node.data == onodename):
                                 for e in state.in_edges(node):
@@ -250,20 +298,24 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 if not found_full_write:
                     input_nodes.append((onodename, onode))
 
-        for edge in sdfg.edges():
-            memlets = edge.data.get_read_memlets(sdfg.arrays)
-            for mem in memlets:
-                if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
-                    data_already_on_gpu[mem.data] = None
+        check_memlets: List[memlet.Memlet] = []
+        for edge in sdfg.all_interstate_edges():
+            check_memlets.extend(edge.data.get_read_memlets(sdfg.arrays))
+        for blk in sdfg.all_control_flow_blocks():
+            if isinstance(blk, AbstractControlFlowRegion):
+                check_memlets.extend(blk.get_meta_read_memlets())
+        for mem in check_memlets:
+            if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
+                data_already_on_gpu[mem.data] = None
 
         # Replace nodes
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and node.data in cloned_arrays):
                     node.data = cloned_arrays[node.data]
 
         # Replace memlets
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.data in cloned_arrays:
                     edge.data.data = cloned_arrays[edge.data.data]
@@ -273,7 +325,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         excluded_copyin = self.exclude_copyin.split(',')
 
         copyin_state = sdfg.add_state(sdfg.label + '_copyin')
-        sdfg.add_edge(copyin_state, start_state, sd.InterstateEdge())
+        sdfg.add_edge(copyin_state, start_block, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(input_nodes):
             if nname in excluded_copyin or nname not in cloned_arrays:
@@ -289,7 +341,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         excluded_copyout = self.exclude_copyout.split(',')
 
         copyout_state = sdfg.add_state(sdfg.label + '_copyout')
-        for state in end_states:
+        for state in end_blocks:
             sdfg.add_edge(state, copyout_state, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(output_nodes):
@@ -305,17 +357,19 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 4: Change all top-level maps and library nodes to GPU schedule
 
-        gpu_nodes = set()
-        for state in sdfg.nodes():
+        gpu_nodes: Set[Tuple[SDFGState, nodes.Node]] = set()
+        for state in sdfg.states():
             sdict = state.scope_dict()
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
-                        gpu_nodes.add((state, node))
+                        if node.guid:
+                            node.schedule = dtypes.ScheduleType.GPU_Default
+                            gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                        gpu_nodes.add((state, node))
+                        if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
+                            node.schedule = dtypes.ScheduleType.GPU_Device
+                            gpu_nodes.add((state, node))
                 elif self.sequential_innermaps:
                     if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                         node.schedule = dtypes.ScheduleType.Sequential
@@ -346,7 +400,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         # inside a GPU kernel.
 
         gpu_scalars = {}
-        nsdfgs = []
+        nsdfgs: List[Tuple[nodes.NestedSDFG, SDFGState]] = []
         changed = True
         # Iterates over Tasklets that not inside a GPU kernel. Such Tasklets must be moved inside a GPU kernel only
         # if they write to GPU memory. The check takes into account the fact that GPU kernels can read host-based
@@ -405,7 +459,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         const_syms = xfh.constant_symbols(sdfg)
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             sdict = state.scope_dict()
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.desc(sdfg).transient:
@@ -422,7 +476,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             continue
 
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
-                        nodedesc.storage = dtypes.StorageType.GPU_Global
+                        if node.data not in self.host_data:
+                            nodedesc.storage = dtypes.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
@@ -436,6 +491,28 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         #######################################################
         # Step 7: Wrap free tasklets and nested SDFGs with a GPU map
+
+        # Extend global_code_nodes with tasklets that write/read from an array
+        # Previous steps map all arrays to GPU storage, but only checks tasklets that write to/read from
+        # Scalars to be wrapped in a GPU Map
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.Tasklet):
+                    if node in global_code_nodes[state]:
+                        continue
+                    if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(
+                            state.parent, state, node):
+                        memlet_path_roots = set()
+                        memlet_path_roots = memlet_path_roots.union(
+                            [state.memlet_tree(e).root().edge.src for e in state.in_edges(node)])
+                        memlet_path_roots = memlet_path_roots.union(
+                            [state.memlet_tree(e).root().edge.dst for e in state.out_edges(node)])
+                        gpu_accesses = [
+                            n.data for n in memlet_path_roots
+                            if isinstance(n, nodes.AccessNode) and sdfg.arrays[n.data].storage in gpu_storage
+                        ]
+                        if len(gpu_accesses) > 0:
+                            global_code_nodes[state].append(node)
 
         for state, gcodes in global_code_nodes.items():
             for gcode in gcodes:
@@ -471,62 +548,75 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys()).union(data_already_on_gpu.keys())
 
-        for state in list(sdfg.nodes()):
+        def _create_copy_out(arrays_used: Set[str]) -> Dict[str, str]:
+            # Add copy-out nodes
+            name_mapping = {}
+            for nname in arrays_used:
+                # Handle GPU scalars
+                if nname in gpu_scalars:
+                    hostname = gpu_scalars[nname]
+                    if not hostname:
+                        desc = sdfg.arrays[nname].clone()
+                        desc.storage = dtypes.StorageType.CPU_Heap
+                        desc.transient = True
+                        hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                        gpu_scalars[nname] = hostname
+                    else:
+                        desc = sdfg.arrays[hostname]
+                    devicename = nname
+                elif nname in data_already_on_gpu:
+                    hostname = data_already_on_gpu[nname]
+                    if not hostname:
+                        desc = sdfg.arrays[nname].clone()
+                        desc.storage = dtypes.StorageType.CPU_Heap
+                        desc.transient = True
+                        hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                        data_already_on_gpu[nname] = hostname
+                    else:
+                        desc = sdfg.arrays[hostname]
+                    devicename = nname
+                else:
+                    desc = sdfg.arrays[nname]
+                    hostname = nname
+                    devicename = cloned_arrays[nname]
+
+                src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
+                dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
+                co_state.add_node(src_array)
+                co_state.add_node(dst_array)
+                co_state.add_nedge(src_array, dst_array, memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
+                name_mapping[devicename] = hostname
+            return name_mapping
+
+        for block in list(sdfg.all_control_flow_blocks()):
             arrays_used = set()
-            for e in sdfg.out_edges(state):
+            for e in block.parent_graph.out_edges(block):
                 # Used arrays = intersection between symbols and cloned data
                 arrays_used.update(set(e.data.free_symbols) & cloned_data)
 
             # Create a state and copy out used arrays
             if len(arrays_used) > 0:
-
-                co_state = sdfg.add_state(state.label + '_icopyout')
+                co_state = block.parent_graph.add_state(block.label + '_icopyout')
 
                 # Reconnect outgoing edges to after interim copyout state
-                for e in sdfg.out_edges(state):
-                    sdutil.change_edge_src(sdfg, state, co_state)
+                for e in block.parent_graph.out_edges(block):
+                    sdutil.change_edge_src(block.parent_graph, block, co_state)
                 # Add unconditional edge to interim state
-                sdfg.add_edge(state, co_state, sd.InterstateEdge())
-
-                # Add copy-out nodes
-                for nname in arrays_used:
-
-                    # Handle GPU scalars
-                    if nname in gpu_scalars:
-                        hostname = gpu_scalars[nname]
-                        if not hostname:
-                            desc = sdfg.arrays[nname].clone()
-                            desc.storage = dtypes.StorageType.CPU_Heap
-                            desc.transient = True
-                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
-                            gpu_scalars[nname] = hostname
-                        else:
-                            desc = sdfg.arrays[hostname]
-                        devicename = nname
-                    elif nname in data_already_on_gpu:
-                        hostname = data_already_on_gpu[nname]
-                        if not hostname:
-                            desc = sdfg.arrays[nname].clone()
-                            desc.storage = dtypes.StorageType.CPU_Heap
-                            desc.transient = True
-                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
-                            data_already_on_gpu[nname] = hostname
-                        else:
-                            desc = sdfg.arrays[hostname]
-                        devicename = nname
-                    else:
-                        desc = sdfg.arrays[nname]
-                        hostname = nname
-                        devicename = cloned_arrays[nname]
-
-                    src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
-                    dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
-                    co_state.add_node(src_array)
-                    co_state.add_node(dst_array)
-                    co_state.add_nedge(src_array, dst_array,
-                                       memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
-                    for e in sdfg.out_edges(co_state):
+                block.parent_graph.add_edge(block, co_state, sd.InterstateEdge())
+                mapping = _create_copy_out(arrays_used)
+                for devicename, hostname in mapping.items():
+                    for e in block.parent_graph.out_edges(co_state):
                         e.data.replace(devicename, hostname, False)
+
+        for block in list(sdfg.all_control_flow_blocks()):
+            arrays_used = set(block.used_symbols(all_symbols=True, with_contents=False)) & cloned_data
+
+            # Create a state and copy out used arrays
+            if len(arrays_used) > 0:
+                co_state = block.parent_graph.add_state_before(block, block.label + '_icopyout')
+                mapping = _create_copy_out(arrays_used)
+                for devicename, hostname in mapping.items():
+                    block.replace_meta_accesses({devicename: hostname})
 
         # Step 9: Simplify
         if not self.simplify:

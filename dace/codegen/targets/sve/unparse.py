@@ -23,6 +23,7 @@ from dace.codegen.targets.cpp import is_write_conflicted, cpp_ptr_expr, DefinedT
 
 
 class SVEUnparser(cppunparse.CPPUnparser):
+
     def __init__(self,
                  sdfg: SDFG,
                  dfg,

@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the inter-state transformations package."""
 
-from .control_flow_inline import LoopRegionInline
+from .block_fusion import BlockFusion
+from .condition_fusion import ConditionFusion
 from .state_fusion import StateFusion
 from .state_fusion_with_happens_before import StateFusionExtended
 from .state_elimination import (EndStateElimination, StartStateElimination, StateAssignElimination,

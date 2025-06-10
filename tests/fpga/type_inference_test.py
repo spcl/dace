@@ -57,6 +57,7 @@ def make_sdfg():
 
 @dace.program
 def type_inference(x: dace.float32[N], y: dace.float32[N]):
+
     @dace.map
     def comp(i: _[0:N]):
         in_x << x[i]
@@ -74,21 +75,21 @@ def type_inference(x: dace.float32[N], y: dace.float32[N]):
 @fpga_test()
 def test_type_inference_fpga():
 
-    N.set(24)
+    N = 24
 
     # Initialize vector: X
-    X = np.random.uniform(-10, 0, N.get()).astype(dace.float32.type)
-    Y = np.random.uniform(-10, 0, N.get()).astype(dace.float32.type)
+    X = np.random.uniform(-10, 0, N).astype(dace.float32.type)
+    Y = np.random.uniform(-10, 0, N).astype(dace.float32.type)
     # compute expected result
-    Z = np.zeros(N.get())
-    for i in range(0, N.get()):
+    Z = np.zeros(N)
+    for i in range(0, N):
         Z[i] = int(X[i]) + int(Y[i]) * 2.1
 
     sdfg = type_inference.to_sdfg()
     sdfg.apply_transformations(FPGATransformSDFG)
     sdfg(x=X, y=Y, N=N)
 
-    diff = np.linalg.norm(Z - Y) / N.get()
+    diff = np.linalg.norm(Z - Y) / N
 
     assert diff <= 1e-5
 

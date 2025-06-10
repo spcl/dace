@@ -25,21 +25,21 @@ def transpose_tiled(A: dace.float32[H, W], B: dace.float32[H, W]):
 
 
 def test():
-    W.set(128)
-    H.set(128)
-    TW.set(16)
-    TH.set(16)
+    W = 128
+    H = 128
+    TW = 16
+    TH = 16
 
-    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W.get(), H.get(), TW.get(), TH.get()))
+    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W, H, TW, TH))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)
-    A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(H, W).astype(dace.float32.type)
     B[:] = dace.float32(0)
 
     transpose_tiled(A, B, TW=TW, TH=TH)
 
-    diff = np.linalg.norm(np.transpose(A) - B) / (H.get() * W.get())
+    diff = np.linalg.norm(np.transpose(A) - B) / (H * W)
     print("Difference:", diff)
     assert diff <= 1e-5
 

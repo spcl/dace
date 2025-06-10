@@ -21,8 +21,10 @@ from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 class AttributedCallDetector(ast.NodeVisitor):
@@ -62,10 +64,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
-    
+
         * Size of data must be 1, it must not be a stream and must be transient.
         * Only inputs to candidate scalars must be either arrays or tasklets.
-        * All tasklets that lead to it must have one statement, one output, 
+        * All tasklets that lead to it must have one statement, one output,
           and may have zero or more **array** inputs and not be in a scope.
         * Scalar must not be accessed with a write-conflict resolution.
         * Scalar must not be written to more than once in a state.
@@ -85,6 +87,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
+        if isinstance(desc, (dt.View, dt.StructureView)):
+            continue
         if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
@@ -95,7 +99,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Check all occurrences of candidates in SDFG and filter out
     candidates_seen: Set[str] = set()
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         candidates_in_state: Set[str] = set()
 
         for node in state.nodes():
@@ -184,6 +188,9 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
+                    if edge.src.has_side_effects(sdfg):
+                        candidates.remove(candidate)
+                        continue
                     if cb.language is dtypes.Language.Python:
                         if (len(cb.code) > 1 or not isinstance(cb.code[0], ast.Assign)):
                             candidates.remove(candidate)
@@ -225,8 +232,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Filter out non-integral symbols that do not appear in inter-state edges
     interstate_symbols = set()
-    for edge in sdfg.edges():
+    for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
+    for reg in sdfg.all_control_flow_regions():
+        interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
     for candidate in (candidates - interstate_symbols):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)
@@ -309,25 +318,58 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
                  defined_syms: Set[str]) -> None:
         """
         Initializes AST transformer.
-        
+
         """
         self.in_edges = in_edges
         self.out_edges = out_edges
+        self.arrays = {k: sdfg.arrays[v.data] for k, v in in_edges.items() if k is not None}
+        self.arrays.update({k: sdfg.arrays[v.data] for k, v in out_edges.items() if k is not None})
         self.sdfg = sdfg
         self.defined = defined_syms
+        self.connector_names = set(in_edges.keys()) | set(out_edges.keys())
         self.in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.do_not_remove: Set[str] = set()
-        self.latest: DefaultDict[str, int] = collections.defaultdict(int)
+
+    def _get_requested_range(self, node: ast.Subscript, memlet_subset: subsets.Subset) -> subsets.Subset:
+        """
+        Returns the requested range from a subscript node, which consists of the memlet subset composed with the
+        tasklet subset.
+
+        :param node: The subscript node.
+        :param memlet_subset: The memlet subset.
+        :return: The requested range.
+        """
+        arrname, tasklet_slice = astutils.subscript_to_ast_slice(node)
+        arrname = arrname if arrname in self.arrays else None
+        if len(tasklet_slice) < len(memlet_subset):
+            new_tasklet_slice = [(None, None, None)] * len(memlet_subset)
+            # Unsqueeze all index dimensions from orig_subset into tasklet_subset
+            j = 0
+            for i, (start, end, _) in enumerate(memlet_subset.ndrange()):
+                if start != end:
+                    new_tasklet_slice[i] = tasklet_slice[j]
+                    j += 1
+
+            # Sanity check
+            if j != len(tasklet_slice):
+                raise IndexError(f'Only {j} out of {len(tasklet_slice)} indices were provided in subset expression '
+                                 f'"{astutils.unparse(node)}", found during composing with memlet of subset '
+                                 f'"{memlet_subset}".')
+            tasklet_slice = new_tasklet_slice
+
+        tasklet_subset = subsets.Range(astutils.astrange_to_symrange(tasklet_slice, self.arrays, arrname))
+        return memlet_subset.compose(tasklet_subset)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # Convert subscript to symbol name
+        node = self.generic_visit(node)
         node_name = astutils.rname(node)
         if node_name in self.in_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
-            orig_subset = self.in_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
+            subset = self._get_requested_range(node, self.in_edges[node_name].subset)
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.in_mapping[new_name] = (node_name, subset)
@@ -335,17 +377,17 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             else:
                 self.do_not_remove.add(node_name)
         elif node_name in self.out_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
-            orig_subset = self.out_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
+            subset = self._get_requested_range(node, self.out_edges[node_name].subset)
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.out_mapping[new_name] = (node_name, subset)
                 return ast.copy_location(ast.Name(id=new_name, ctx=ast.Store()), node)
             else:
                 self.do_not_remove.add(node_name)
-        return self.generic_visit(node)
+        return node
 
 
 def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
@@ -358,9 +400,9 @@ def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
 
 def _handle_connectors(state: sd.SDFGState, node: nodes.Tasklet, mapping: Dict[str, Tuple[str, subsets.Range]],
                        ignore: Set[str], in_edges: bool) -> bool:
-    """ 
+    """
     Adds new connectors and removes unused connectors after indirection
-    promotion. 
+    promotion.
     """
     if in_edges:
         orig_edges = {e.dst_conn: e for e in state.in_edges(node)}
@@ -502,15 +544,17 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
     This removes each read-only access node as well as all of its descendant
     edges (in memlet trees) and connectors. Descends recursively to nested
     SDFGs and modifies tasklets (Python and C++).
-    
+
     :param sdfg: The SDFG to operate on.
     :param array_names: Mapping between scalar names to replace and their
                         replacement symbol name.
     :note: Operates in-place on the SDFG.
     """
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in array_names]
         for node in scalar_nodes:
+            if node not in state:
+                continue
             symname = array_names[node.data]
             for out_edge in state.out_edges(node):
                 for e in state.memlet_tree(out_edge):
@@ -543,7 +587,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
 
                         # Descend recursively to remove scalar
                         remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
-                        for ise in dst.sdfg.edges():
+                        for ise in dst.sdfg.all_interstate_edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
                             for aname, aval in ise.data.assignments.items():
@@ -551,6 +595,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                                 vast = astutils.RemoveSubscripts({tmp_symname}).visit(vast)
                                 ise.data.assignments[aname] = astutils.unparse(vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
+                        promo = TaskletPromoterDict({e.dst_conn: tmp_symname})
+                        for reg in dst.sdfg.all_control_flow_regions():
+                            meta_codes = reg.get_meta_codeblocks()
+                            for cd in meta_codes:
+                                for stmt in cd.code:
+                                    promo.visit(stmt)
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
@@ -585,6 +635,7 @@ def translate_cpp_tasklet_to_python(code: str):
 
 @dataclass(unsafe_hash=True)
 @props.make_properties
+@explicit_cf_compatible
 class ScalarToSymbolPromotion(passes.Pass):
 
     CATEGORY: str = 'Simplification'
@@ -603,7 +654,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         to be used within states as part of memlets, and allows further
         transformations (such as loop detection) to use the information for
         optimization.
-        
+
         :param sdfg: The SDFG to run the pass on.
         :param ignore: An optional set of strings of scalars to ignore.
         :param transients_only: If False, also considers global data descriptors (e.g., arguments).
@@ -633,11 +684,11 @@ class ScalarToSymbolPromotion(passes.Pass):
         if len(to_promote) == 0:
             return None
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
             for node in scalar_nodes:
-                if state.in_degree(node) == 0:
+                if node not in state or state.in_degree(node) == 0:
                     continue
                 in_edge = state.in_edges(node)[0]
                 input = in_edge.src
@@ -645,8 +696,10 @@ class ScalarToSymbolPromotion(passes.Pass):
                 # There is only zero or one incoming edges by definition
                 tasklet_inputs = [e.src for e in state.in_edges(input)]
                 # Step 2.1
-                new_state = xfh.state_fission(sdfg, gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
-                new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
+                new_state = xfh.state_fission(gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
+                if state.edges_between(input, node):  # Edge still there after fission, remove manually
+                    state.remove_edge_and_connectors(state.edges_between(input, node)[0])
+                new_isedge: sd.InterstateEdge = new_state.parent_graph.out_edges(new_state)[0]
                 # Step 2.2
                 node: nodes.AccessNode = new_state.sink_nodes()[0]
                 input = new_state.in_edges(node)[0].src
@@ -683,7 +736,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         remove_scalar_reads(sdfg, {k: k for k in to_promote})
 
         # Step 4: Isolated nodes
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
@@ -699,7 +752,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         # Step 6: Inter-state edge cleanup
         cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
         promo = TaskletPromoterDict({k: k for k in to_promote})
-        for edge in sdfg.edges():
+        for edge in sdfg.all_interstate_edges():
             ise: InterstateEdge = edge.data
             # Condition
             if not edge.data.is_unconditional():
@@ -719,6 +772,11 @@ class ScalarToSymbolPromotion(passes.Pass):
                         # should work for all Python versions.
                         assignment = cleanup_re[scalar].sub(scalar, assignment.strip())
                 ise.assignments[aname] = assignment
+        for reg in sdfg.all_control_flow_regions():
+            meta_codes = reg.get_meta_codeblocks()
+            for cd in meta_codes:
+                for stmt in cd.code:
+                    promo.visit(stmt)
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
@@ -726,4 +784,4 @@ class ScalarToSymbolPromotion(passes.Pass):
         return to_promote or None
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Promoted {len(pass_retval)} scalars to symbols.'
+        return f'Promoted {len(pass_retval)} scalars to symbols: {pass_retval}'

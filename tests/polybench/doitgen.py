@@ -36,11 +36,7 @@ sizes = [{
 args = [([NR, NQ, NP], datatype), ([NP, NP], datatype)]
 
 
-def init_array(A, C4):
-    nr = NR.get()
-    nq = NQ.get()
-    np = NP.get()
-
+def init_array(A, C4, nr, nq, np):
     for i in range(nr):
         for j in range(nq):
             for k in range(np):
@@ -52,6 +48,7 @@ def init_array(A, C4):
 
 @dace.program(datatype[NR, NQ, NP], datatype[NP, NP])
 def doitgen(A, C4):
+
     @dace.mapscope
     def doit(r: _[0:NR], q: _[0:NQ]):
         sum = dace.define_local([NP], dtype=datatype)

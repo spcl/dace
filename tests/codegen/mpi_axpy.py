@@ -12,6 +12,7 @@ N = dace.symbol('N')
 
 @dace.program(dace.float64, dace.float64[N], dace.float64[N])
 def axpy(A, X, Y):
+
     @dace.map(_[0:N])
     def multiplication(i):
         in_A << A
@@ -27,21 +28,21 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int, nargs="?", default=24)
     args = vars(parser.parse_args())
 
-    N.set(args["N"])
+    N = args["N"]
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     ranks = comm.Get_size()
 
     if rank == 0:
-        print('Scalar-vector multiplication %d (MPI, ranks = %d)' % (N.get(), ranks))
+        print('Scalar-vector multiplication %d (MPI, ranks = %d)' % (N, ranks))
     else:
         dace.Config.set('debugprint', value=False)
 
     # Initialize arrays: Randomize A and X, zero Y
     a = dace.float64(np.random.rand())
-    x = np.random.rand(N.get()).astype(np.float64)
-    y = np.random.rand(N.get()).astype(np.float64)
+    x = np.random.rand(N).astype(np.float64)
+    y = np.random.rand(N).astype(np.float64)
     regression = (a * x + y)
 
     sdfg = axpy.to_sdfg()
@@ -62,7 +63,7 @@ if __name__ == "__main__":
     csdfg(A=a, X=x, Y=y, N=N)
 
     # Get range handled by this rank
-    partition = N.get() // ranks
+    partition = N // ranks
     reg = regression[partition * rank:partition * (rank + 1)]
     res = y[partition * rank:partition * (rank + 1)]
 

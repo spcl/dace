@@ -18,8 +18,8 @@ from dace.properties import CodeProperty
 cols = dace.symbol("cols")
 rows = dace.symbol("rows")
 nnz = dace.symbol("nnz")
-itype = dace.dtypes.uint32
-dtype = dace.dtypes.float32
+itype = dace.uint32
+dtype = dace.float32
 
 
 def make_pre_state(sdfg):
@@ -434,66 +434,10 @@ def make_main_state(sdfg):
     return state
 
 
-def make_nested_compute_state(sdfg):
-
-    state = sdfg.add_state("spmv")
-
-    row_entry, row_exit = state.add_map("compute_row", {"i": "0:rows"}, schedule=ScheduleType.FPGA_Device)
-
-    rowptr = state.add_scalar("rowptr", itype, storage=StorageType.FPGA_Registers, transient=True)
-    rowend = state.add_scalar("rowend", itype, storage=StorageType.FPGA_Registers, transient=True)
-
-    nested_sdfg = make_nested_sdfg(sdfg)
-    nested_sdfg_tasklet = state.add_nested_sdfg(nested_sdfg, sdfg,
-                                                {"row_begin", "row_end", "A_val_read", "A_col_read", "x_read"},
-                                                {"b_write"})
-
-    state.add_memlet_path(a_row, row_entry, rowptr, memlet=dace.memlet.Memlet.simple(rowptr, "0", other_subset_str="i"))
-    state.add_memlet_path(rowptr,
-                          nested_sdfg_tasklet,
-                          dst_conn="row_begin",
-                          memlet=dace.memlet.Memlet.simple(rowptr, "0"))
-
-    state.add_memlet_path(a_row,
-                          row_entry,
-                          rowend,
-                          memlet=dace.memlet.Memlet.simple(rowend, "0", other_subset_str="i + 1"))
-    state.add_memlet_path(rowend,
-                          nested_sdfg_tasklet,
-                          dst_conn="row_end",
-                          memlet=dace.memlet.Memlet.simple(rowend, "0"))
-
-    state.add_memlet_path(a_val,
-                          row_entry,
-                          nested_sdfg_tasklet,
-                          dst_conn="A_val_read",
-                          memlet=dace.memlet.Memlet.simple(a_val, "0:nnz"))
-
-    state.add_memlet_path(x,
-                          row_entry,
-                          nested_sdfg_tasklet,
-                          dst_conn="x_read",
-                          memlet=dace.memlet.Memlet.simple(x, "0:cols"))
-
-    state.add_memlet_path(a_col,
-                          row_entry,
-                          nested_sdfg_tasklet,
-                          dst_conn="A_col_read",
-                          memlet=dace.memlet.Memlet.simple(a_col, "0:nnz"))
-
-    state.add_memlet_path(nested_sdfg_tasklet,
-                          row_exit,
-                          b,
-                          src_conn="b_write",
-                          memlet=dace.memlet.Memlet.simple(b, "i"))
-
-    return state
-
-
-def make_sdfg(specialize):
+def make_sdfg(specialize, rows, cols, nnz):
 
     if specialize:
-        name = "spmv_fpga_stream_{}x{}x{}".format(rows.get(), cols.get(), nnz.get())
+        name = "spmv_fpga_stream_{}x{}x{}".format(rows, cols, nnz)
     else:
         name = "spmv_fpga_stream"
     sdfg = dace.SDFG(name)
@@ -509,60 +453,54 @@ def make_sdfg(specialize):
 
 
 def run_spmv(size_w, size_h, num_nonzero, specialize):
-
-    cols.set(size_w)
-    rows.set(size_h)
-    nnz.set(num_nonzero)
-
     print("Sparse Matrix-Vector Multiplication {}x{} "
-          "({} non-zero elements, {}specialized)".format(cols.get(), rows.get(), nnz.get(),
-                                                         "not " if not specialize else ""))
+          "({} non-zero elements, {}specialized)".format(size_w, size_h, num_nonzero, "not " if not specialize else ""))
 
-    A_row = dace.ndarray([rows + 1], dtype=itype)
-    A_col = dace.ndarray([nnz], dtype=itype)
-    A_val = dace.ndarray([nnz], dtype=dtype)
+    A_row = dace.ndarray([size_h + 1], dtype=itype)
+    A_col = dace.ndarray([num_nonzero], dtype=itype)
+    A_val = dace.ndarray([num_nonzero], dtype=dtype)
 
-    x = dace.ndarray([cols], dtype)
-    b = dace.ndarray([rows], dtype)
+    x = dace.ndarray([size_w], dtype)
+    b = dace.ndarray([size_h], dtype)
 
     # Assuming uniform sparsity distribution across rows
-    nnz_per_row = nnz.get() // rows.get()
-    nnz_last_row = nnz_per_row + (nnz.get() % rows.get())
-    if nnz_last_row > cols.get():
+    nnz_per_row = num_nonzero // size_h
+    nnz_last_row = nnz_per_row + (num_nonzero % size_h)
+    if nnz_last_row > size_w:
         print("Too many nonzeros per row")
         exit(1)
 
     # RANDOMIZE SPARSE MATRIX
     A_row[0] = itype(0)
-    A_row[1:rows.get()] = itype(nnz_per_row)
+    A_row[1:size_h] = itype(nnz_per_row)
     A_row[-1] = itype(nnz_last_row)
     A_row = np.cumsum(A_row, dtype=itype.type)
 
     # Fill column data
-    for i in range(rows.get() - 1):
+    for i in range(size_h - 1):
         A_col[nnz_per_row*i:nnz_per_row*(i+1)] = \
-            np.sort(np.random.choice(cols.get(), nnz_per_row, replace=False))
+            np.sort(np.random.choice(size_w, nnz_per_row, replace=False))
     # Fill column data for last row
-    A_col[nnz_per_row * (rows.get() - 1):] = np.sort(np.random.choice(cols.get(), nnz_last_row, replace=False))
+    A_col[nnz_per_row * (size_h - 1):] = np.sort(np.random.choice(size_w, nnz_last_row, replace=False))
 
-    A_val[:] = np.random.rand(nnz.get()).astype(dtype.type)
+    A_val[:] = np.random.rand(num_nonzero).astype(dtype.type)
     #########################
 
-    x[:] = np.random.rand(cols.get()).astype(dtype.type)
+    x[:] = np.random.rand(size_w).astype(dtype.type)
     #b[:] = dtype(0)
 
     # Setup regression
-    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row), shape=(rows.get(), cols.get()))
+    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row), shape=(size_h, size_w))
 
-    spmv = make_sdfg(specialize)
+    spmv = make_sdfg(specialize, size_h, size_w, num_nonzero)
     if specialize:
-        spmv.specialize(dict(rows=rows, cols=cols, nnz=nnz))
-    spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, rows=rows, cols=cols, nnz=nnz)
+        spmv.specialize(dict(rows=size_h, cols=size_w, nnz=num_nonzero))
+    spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, rows=size_h, cols=size_w, nnz=num_nonzero)
 
     if dace.Config.get_bool("profiling"):
         dace.timethis("spmv", "scipy", 0, A_sparse.dot, x)
 
-    diff = np.linalg.norm(A_sparse.dot(x) - b) / float(rows.get())
+    diff = np.linalg.norm(A_sparse.dot(x) - b) / float(size_h)
     print("Difference:", diff)
     if diff >= 1e-5:
         print("Validation failed.")
@@ -570,7 +508,8 @@ def run_spmv(size_w, size_h, num_nonzero, specialize):
         print(b)
         print("Reference:")
         print(A_sparse.dot(x))
-        print("Type \"debug\" to enter debugger, " "or any other string to quit (timeout in 10 seconds)")
+        print("Type \"debug\" to enter debugger, "
+              "or any other string to quit (timeout in 10 seconds)")
         read, _, _ = select.select([sys.stdin], [], [], 10)
         if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
             print("Entering debugger...")

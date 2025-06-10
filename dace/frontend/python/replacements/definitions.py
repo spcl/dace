@@ -8,6 +8,7 @@ from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size
 from dace import data, dtypes, Memlet, SDFG, SDFGState
 
 from copy import deepcopy as dcpy
+from numbers import Integral
 from typing import Any, Optional
 
 import numpy as np
@@ -20,12 +21,17 @@ def _define_local_ex(pv: ProgramVisitor,
                      state: SDFGState,
                      shape: Shape,
                      dtype: dtypes.typeclass,
+                     strides: Optional[Shape] = None,
                      storage: dtypes.StorageType = dtypes.StorageType.Default,
                      lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage, lifetime=lifetime)
+    if strides is not None:
+        if not isinstance(strides, (list, tuple)):
+            strides = [strides]
+        strides = [int(s) if isinstance(s, Integral) else s for s in strides]
+    name, _ = sdfg.add_temp_transient(shape, dtype, strides=strides, storage=storage, lifetime=lifetime)
     return name
 
 
@@ -45,6 +51,24 @@ def _define_local_scalar(pv: ProgramVisitor,
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage, lifetime=lifetime)
+    pv.variables[name] = name
+    return name
+
+
+@oprepo.replaces('dace.define_local_structure')
+def _define_local_structure(pv: ProgramVisitor,
+                            sdfg: SDFG,
+                            state: SDFGState,
+                            dtype: data.Structure,
+                            storage: dtypes.StorageType = dtypes.StorageType.Default,
+                            lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
+    """ Defines a local structure in a DaCe program. """
+    name = sdfg.temp_data_name()
+    desc = dcpy(dtype)
+    desc.transient = True
+    desc.storage = storage
+    desc.lifetime = lifetime
+    sdfg.add_datadesc(name, desc)
     pv.variables[name] = name
     return name
 

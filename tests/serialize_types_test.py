@@ -68,18 +68,18 @@ def test_serialize_infinity():
     @dace.program
     def reduction_infinity_1(a: dace.float64[3]):
         return a.max()
-    
+
     sdfg = reduction_infinity_1.to_sdfg()
     json_string = json.dumps(sdfg.to_json())
-    assert(json_string.find('Infinity') == -1)
+    assert (json_string.find('Infinity') == -1)
 
     @dace.program
     def reduction_infinity_2(a: dace.float64[3]):
         return np.max(a)
-    
+
     sdfg = reduction_infinity_1.to_sdfg()
     json_string = json.dumps(sdfg.to_json())
-    assert(json_string.find('Infinity') == -1)
+    assert (json_string.find('Infinity') == -1)
 
 
 if __name__ == '__main__':

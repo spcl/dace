@@ -71,16 +71,11 @@ def dealias_sdfg(sdfg: SDFG):
             for parent_name in to_unsqueeze:
                 parent_arr = parent_sdfg.arrays[parent_name]
                 if isinstance(parent_arr, data.View):
-                    parent_arr = data.Array(parent_arr.dtype, parent_arr.shape, parent_arr.transient,
-                                            parent_arr.allow_conflicts, parent_arr.storage, parent_arr.location,
-                                            parent_arr.strides, parent_arr.offset, parent_arr.may_alias,
-                                            parent_arr.lifetime, parent_arr.alignment, parent_arr.debuginfo,
-                                            parent_arr.total_size, parent_arr.start_offset, parent_arr.optional,
-                                            parent_arr.pool)
+                    parent_arr = parent_arr.as_array()
                 elif isinstance(parent_arr, data.StructureView):
-                    parent_arr = data.Structure(parent_arr.members, parent_arr.name, parent_arr.transient,
-                                                parent_arr.storage, parent_arr.location, parent_arr.lifetime,
-                                                parent_arr.debuginfo)
+                    parent_arr = parent_arr.as_structure()
+                elif isinstance(parent_arr, data.ContainerView):
+                    parent_arr = copy.deepcopy(parent_arr.stype)
                 child_names = inv_replacements[parent_name]
                 for name in child_names:
                     child_arr = copy.deepcopy(parent_arr)
@@ -121,7 +116,7 @@ def dealias_sdfg(sdfg: SDFG):
                         elif e.data.data == dst_data:
                             e.data.data = new_dst_memlet.data
 
-                for e in nsdfg.edges():
+                for e in nsdfg.all_interstate_edges():
                     repl_dict = dict()
                     syms = e.data.read_symbols()
                     for memlet in e.data.get_read_memlets(nsdfg.arrays):
@@ -164,7 +159,7 @@ def dealias_sdfg(sdfg: SDFG):
 def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:
     """
     Normalizes a memlet to a given data descriptor.
-    
+
     :param sdfg: The SDFG.
     :param state: The state.
     :param original: The original memlet.
@@ -281,7 +276,7 @@ def remove_name_collisions(sdfg: SDFG):
 
     for nsdfg in sdfg.all_sdfgs_recursive():
         # Rename duplicate states
-        for state in nsdfg.nodes():
+        for state in nsdfg.states():
             if state.label in state_names_seen:
                 state.label = data.find_new_name(state.label, state_names_seen)
             state_names_seen.add(state.label)
@@ -351,7 +346,7 @@ def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
     """
     mapping = nsdfg.symbol_mapping
     sdfg = nsdfg.sdfg
-    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.sdfg_id]
+    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.cfg_id]
     redefined_symbols: Dict[SDFGState, Set[str]] = defaultdict(set)
 
     # Collect redefined symbols
@@ -402,7 +397,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
             # 1. Check for views
             if isinstance(e.src, dace.nodes.AccessNode):
                 desc = e.src.desc(sdfg)
-                if isinstance(desc, (dace.data.View, dace.data.StructureView)):
+                if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.src)
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.src)
@@ -412,7 +407,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                         continue
             if isinstance(e.dst, dace.nodes.AccessNode):
                 desc = e.dst.desc(sdfg)
-                if isinstance(desc, (dace.data.View, dace.data.StructureView)):
+                if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.dst)
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.dst)
@@ -625,11 +620,11 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     the SDFG.
     Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node, etc.)
     or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
-    
+
     It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
-    erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the 
+    erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the
     ``from_schedule_tree`` function.
-    
+
     :param sdfg: The SDFG to convert.
     :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might not be
                      usable after the conversion if ``in_place`` is True!
@@ -657,7 +652,10 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     #############################
 
     # Create initial tree from CFG
-    cfg: cf.ControlFlow = cf.structured_control_flow_tree(sdfg, lambda _: '')
+    if sdfg.using_explicit_control_flow:
+        cfg: cf.ControlFlow = cf.structured_control_flow_tree_with_regions(sdfg, lambda _: '')
+    else:
+        cfg: cf.ControlFlow = cf.structured_control_flow_tree(sdfg, lambda _: '')
 
     # Traverse said tree (also into states) to create the schedule tree
     def totree(node: cf.ControlFlow, parent: cf.GeneralBlock = None) -> List[tn.ScheduleTreeNode]:
@@ -673,12 +671,12 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                 # Use the sub-nodes directly
                 result = subnodes
 
-        elif isinstance(node, cf.SingleState):
+        elif isinstance(node, cf.BasicCFBlock):
             result = state_schedule_tree(node.state)
 
             # Add interstate assignments unrelated to structured control flow
             if parent is not None:
-                for e in sdfg.out_edges(node.state):
+                for e in node.state.parent_graph.out_edges(node.state):
                     edge_body = []
 
                     if e not in parent.assignments_to_ignore:
@@ -696,6 +694,26 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                                 edge_body.append(tn.BreakNode())
                             elif e in parent.gotos_to_continue:
                                 edge_body.append(tn.ContinueNode())
+                    else:
+                        # If the next state is not the expected target (loop-back edge, next state),
+                        # emit goto
+                        expected_transition = False
+                        if isinstance(parent, (cf.ForScope, cf.WhileScope)) and e.dst is parent.guard:
+                            expected_transition = True
+                        elif isinstance(parent, cf.DoWhileScope) and e.dst is parent.body[0]:
+                            expected_transition = True
+                        else:
+                            next_block = cf.find_next_block(node)
+                            # Next state in block or first state in next CF block
+                            if next_block is not None:
+                                if isinstance(next_block, cf.GeneralLoopScope):  # Special case for control flow regions
+                                    if e.dst is next_block.loop:
+                                        expected_transition = True
+                                elif next_block.first_block is e.dst:
+                                    expected_transition = True
+
+                        if not expected_transition and e not in parent.gotos_to_ignore:
+                            edge_body.append(tn.GotoNode(target=e.dst.label))
 
                     if e not in parent.gotos_to_ignore and not e.data.is_unconditional():
                         if sdfg.out_degree(node.state) == 1 and parent.sequential:
@@ -727,12 +745,14 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
             result.append(tn.WhileScope(header=node, children=totree(node.body)))
         elif isinstance(node, cf.DoWhileScope):
             result.append(tn.DoWhileScope(header=node, children=totree(node.body)))
+        elif isinstance(node, cf.GeneralLoopScope):
+            result.append(tn.GeneralLoopScope(header=node, children=totree(node.body)))
         else:
             # e.g., "SwitchCaseScope"
             raise tn.UnsupportedScopeException(type(node).__name__)
 
-        if node.first_state is not None:
-            result = [tn.StateLabel(state=node.first_state)] + result
+        if node.first_block is not None:
+            result = [tn.StateLabel(state=node.first_block)] + result
 
         return result
 

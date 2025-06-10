@@ -11,13 +11,14 @@ from dace.sdfg import nodes
 
 
 class SdfgLocation:
-    def __init__(self, sdfg_id, state_id, node_ids):
-        self.sdfg_id = sdfg_id
+
+    def __init__(self, cfg_id, state_id, node_ids):
+        self.cfg_id = cfg_id
         self.state_id = state_id
         self.node_ids = node_ids
 
     def printer(self):
-        print("SDFG {}:{}:{}".format(self.sdfg_id, self.state_id, self.node_ids))
+        print("SDFG {}:{}:{}".format(self.cfg_id, self.state_id, self.node_ids))
 
 
 def create_folder(path_str: str):
@@ -32,7 +33,7 @@ def create_folder(path_str: str):
 
 
 def create_cache(name: str, folder: str) -> str:
-    """ 
+    """
     Creates the map folder in the build path if it does not yet exist
 
     :param name: name of the SDFG
@@ -70,7 +71,7 @@ def send(data: json):
 
 
 def save(language: str, name: str, map: dict, build_folder: str) -> str:
-    """ 
+    """
     Saves the mapping in the map folder of
     the corresponding SDFG
 
@@ -176,6 +177,7 @@ class MapCpp:
     """ Creates the mapping between the SDFG nodes and
         the generated C++ code lines.
     """
+
     def __init__(self, code: str, name: str, target_name: str):
         self.name = name
         self.code = code
@@ -204,12 +206,12 @@ class MapCpp:
             :param node: A node which will map to the line number
             :param line_num: The line number to add to the mapping
         """
-        if node.sdfg_id not in self.map:
-            self.map[node.sdfg_id] = {}
-        if node.state_id not in self.map[node.sdfg_id]:
-            self.map[node.sdfg_id][node.state_id] = {}
+        if node.cfg_id not in self.map:
+            self.map[node.cfg_id] = {}
+        if node.state_id not in self.map[node.cfg_id]:
+            self.map[node.cfg_id][node.state_id] = {}
 
-        state = self.map[node.sdfg_id][node.state_id]
+        state = self.map[node.cfg_id][node.state_id]
 
         for node_id in node.node_ids:
             if node_id not in state:
@@ -273,6 +275,7 @@ class MapPython:
     """ Creates the mapping between the source code and
         the SDFG nodes
     """
+
     def __init__(self, name):
         self.name = name
         self.map = {}
@@ -329,28 +332,28 @@ class MapPython:
                            'end_line'], n['debuginfo']['end_column'])))
         return db_sorted
 
-    def make_info(self, debuginfo, node_id: int, state_id: int, sdfg_id: int) -> dict:
+    def make_info(self, debuginfo, node_id: int, state_id: int, cfg_id: int) -> dict:
         """ Creates an object for the current node with
             the most important information
 
             :param debuginfo: JSON object of the debuginfo of the node
             :param node_id: ID of the node
             :param state_id: ID of the state
-            :param sdfg_id: ID of the sdfg
+            :param cfg_id: ID of the sdfg
             :return: Dictionary with a debuginfo JSON object and the identifiers
         """
-        return {"debuginfo": debuginfo, "sdfg_id": sdfg_id, "state_id": state_id, "node_id": node_id}
+        return {"debuginfo": debuginfo, "cfg_id": cfg_id, "state_id": state_id, "node_id": node_id}
 
-    def sdfg_debuginfo(self, graph, sdfg_id: int = 0, state_id: int = 0):
+    def sdfg_debuginfo(self, graph, cfg_id: int = 0, state_id: int = 0):
         """ Recursively retracts all debuginfo from the nodes
 
             :param graph: An SDFG or SDFGState to check for nodes
-            :param sdfg_id: Id of the current SDFG/NestedSDFG
+            :param cfg_id: Id of the current SDFG/NestedSDFG
             :param state_id: Id of the current SDFGState
             :return: list of debuginfo with the node identifiers
         """
-        if sdfg_id is None:
-            sdfg_id = 0
+        if cfg_id is None:
+            cfg_id = 0
 
         mapping = []
         for id, node in enumerate(graph.nodes()):
@@ -360,26 +363,26 @@ class MapPython:
                 (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map)) and node.debuginfo is not None:
 
                 dbinfo = node.debuginfo.to_json()
-                mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
+                mapping.append(self.make_info(dbinfo, id, state_id, cfg_id))
 
             elif isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.debuginfo is not None:
                 dbinfo = node.map.debuginfo.to_json()
-                mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
+                mapping.append(self.make_info(dbinfo, id, state_id, cfg_id))
 
             # State no debuginfo, recursive call
             elif isinstance(node, state.SDFGState):
-                mapping += self.sdfg_debuginfo(node, sdfg_id, graph.node_id(node))
+                mapping += self.sdfg_debuginfo(node, cfg_id, graph.node_id(node))
 
             # Sdfg not using debuginfo, recursive call
             elif isinstance(node, nodes.NestedSDFG):
-                mapping += self.sdfg_debuginfo(node.sdfg, node.sdfg.sdfg_id, state_id)
+                mapping += self.sdfg_debuginfo(node.sdfg, node.sdfg.cfg_id, state_id)
 
         return mapping
 
     def create_mapping(self, range_dict=None):
         """ Creates the actual mapping by using the debuginfo list
 
-            :param range_dict: For each file, a list of tuples containing a start and 
+            :param range_dict: For each file, a list of tuples containing a start and
                                end line of a DaCe program
         """
         for file_dbinfo in self.debuginfo:
@@ -394,7 +397,7 @@ class MapPython:
                         self.map[src_file][str(line)] = []
 
                     self.map[src_file][str(line)].append({
-                        "sdfg_id": node["sdfg_id"],
+                        "cfg_id": node["cfg_id"],
                         "state_id": node["state_id"],
                         "node_id": node["node_id"]
                     })

@@ -23,15 +23,16 @@ def expand_reduce(sdfg: dace.SDFG,
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
                 rexp = ReduceExpansion()
-                rexp.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {ReduceExpansion.reduce: graph.node_id(node)},
+                rexp.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(graph), {ReduceExpansion.reduce: graph.node_id(node)},
                                  0)
                 if not rexp.can_be_applied(graph, 0, sdfg):
-                    print(f"WARNING: Cannot expand reduce node {node}:" "can_be_applied() failed.")
+                    print(f"WARNING: Cannot expand reduce node {node}:"
+                          "can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 
         trafo_reduce = ReduceExpansion()
-        trafo_reduce.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {}, 0)
+        trafo_reduce.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(graph), {}, 0)
         for (property, val) in kwargs.items():
             setattr(trafo_reduce, property, val)
 

@@ -27,7 +27,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
     For example::
 
         tuner = DataLayoutTuner(sdfg)
-        
+
         # Create instrumented data report
         tuner.dry_run(sdfg, arg1, arg2, arg3=4)
 
@@ -38,7 +38,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def __init__(self, task: str, sdfg: SDFG) -> None:
         """
         Creates a cutout tuner.
-        
+
         :param task: Name of tuning task (for filename labeling).
         :param sdfg: The SDFG to tune.
         """
@@ -95,8 +95,11 @@ class CutoutTuner(auto_tuner.AutoTuner):
                 dreport_[dnode.data] = data
             except:
                 continue
-        
-        runtime = optim_utils.subprocess_measure(cutout=cutout, dreport=dreport_, repetitions=repetitions, timeout=timeout)
+
+        runtime = optim_utils.subprocess_measure(cutout=cutout,
+                                                 dreport=dreport_,
+                                                 repetitions=repetitions,
+                                                 timeout=timeout)
         return runtime
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict[Any, Any]:
@@ -123,8 +126,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return tuning_report
 
-    def search(self, cutout: SDFG, measurements: int,
-               **kwargs) -> Dict[str, float]:
+    def search(self, cutout: SDFG, measurements: int, **kwargs) -> Dict[str, float]:
         kwargs = self.pre_evaluate(cutout=cutout, measurements=measurements, **kwargs)
 
         results = {}
@@ -141,7 +143,8 @@ class CutoutTuner(auto_tuner.AutoTuner):
         all_configs = []
         for cutout_label in tuning_report:
             configs = tuning_report[cutout_label]
-            best_k_configs = [(key, value) for key, value in sorted(configs.items(), key=lambda item: item[1])][:min(len(configs), k)]
+            best_k_configs = [(key, value) for key, value in sorted(configs.items(), key=lambda item: item[1])
+                              ][:min(len(configs), k)]
             best_k_configs = filter(lambda c: c[1] != math.inf, best_k_configs)
             best_k_configs = list(map(lambda c: (cutout_label, c[0]), best_k_configs))
 

@@ -465,8 +465,16 @@ def test_direct_read_structure_loops():
     state.add_edge(data, None, t, '__val', dace.Memlet(data='A.data', subset='idx'))
     state.add_edge(t, '__out', B, None, dace.Memlet(data='B', subset='0:M, 0:N', volume=1))
 
-    idx_before, idx_guard, idx_after = sdfg.add_loop(None, state, None, 'idx', 'A.indptr[i]', 'idx < A.indptr[i+1]', 'idx + 1')
-    i_before, i_guard, i_after = sdfg.add_loop(None, idx_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=idx_after)
+    idx_before, idx_guard, idx_after = sdfg.add_loop(None, state, None, 'idx', 'A.indptr[i]', 'idx < A.indptr[i+1]',
+                                                     'idx + 1')
+    i_before, i_guard, i_after = sdfg.add_loop(None,
+                                               idx_before,
+                                               None,
+                                               'i',
+                                               '0',
+                                               'i < M',
+                                               'i + 1',
+                                               loop_end_state=idx_after)
 
     func = sdfg.compile()
 
@@ -543,6 +551,67 @@ def test_direct_read_nested_structure():
     assert np.allclose(B, ref)
 
 
+def test_read_struct_member_interstate_edge():
+    sdfg = dace.SDFG('test_read_struct_member_interstate_edge')
+
+    struct_data = dace.data.Structure({
+        'start': dace.data.Scalar(dace.int32),
+        'stop': dace.data.Scalar(dace.int32),
+    }, 't_indices')
+    struct_data.transient = True
+    sdfg.add_datadesc('indices', struct_data)
+    sdfg.add_array('A', [20], dace.int32, transient=False)
+    _, desc_start_in = sdfg.add_scalar('start_in', dace.int32, transient=False)
+    _, desc_stop_in = sdfg.add_scalar('stop_in', dace.int32, transient=False)
+    _, v_start = sdfg.add_view('v_start', [1], dace.int32)
+    _, v_stop = sdfg.add_view('v_stop', [1], dace.int32)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    init2 = sdfg.add_state('init', is_start_block=True)
+    guard = sdfg.add_state('guard')
+    body = sdfg.add_state('guard')
+    tail = sdfg.add_state('guard')
+    sdfg.add_edge(init, init2, dace.InterstateEdge())
+    sdfg.add_edge(init2, guard, dace.InterstateEdge(assignments={'i': 'indices.start'}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i <= indices.stop'))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': '(i + 1)'}))
+    sdfg.add_edge(guard, tail, dace.InterstateEdge(condition='not (i <= indices.stop)'))
+
+    in_start_access = init.add_access('start_in')
+    t1 = init.add_tasklet('t1', {'i1'}, {'o1'}, 'o1 = i1')
+    start_access = init.add_access('v_start')
+    ind_access1 = init.add_access('indices')
+    init.add_edge(in_start_access, None, t1, 'i1', dace.Memlet.from_array('start_in', desc_start_in))
+    init.add_edge(t1, 'o1', start_access, None, dace.Memlet.from_array('v_start', v_start))
+    init.add_edge(start_access, 'views', ind_access1, None,
+                  dace.Memlet.from_array('indices.start', struct_data.members['start']))
+
+    in_stop_access = init2.add_access('stop_in')
+    t2 = init2.add_tasklet('t2', {'i1'}, {'o1'}, 'o1 = i1')
+    stop_access = init2.add_access('v_stop')
+    ind_access2 = init2.add_access('indices')
+    init2.add_edge(in_stop_access, None, t2, 'i1', dace.Memlet.from_array('stop_in', desc_stop_in))
+    init2.add_edge(t2, 'o1', stop_access, None, dace.Memlet.from_array('v_stop', v_stop))
+    init2.add_edge(stop_access, 'views', ind_access2, None,
+                   dace.Memlet.from_array('indices.stop', struct_data.members['stop']))
+
+    t3 = body.add_tasklet('t3', {}, {'o1'}, 'o1 = i')
+    a_access = body.add_access('A')
+    body.add_edge(t3, 'o1', a_access, None, dace.Memlet('A[i]'))
+
+    sdfg.validate()
+
+    arr = np.zeros((20, ), dtype=np.int32)
+    arr_validate = np.zeros((20, ), dtype=np.int32)
+    for i in range(11):
+        arr_validate[i] = i
+
+    c_sdfg = sdfg.compile()
+    c_sdfg(A=arr, start_in=0, stop_in=10)
+
+    assert np.allclose(arr, arr_validate)
+
+
 if __name__ == "__main__":
     test_read_structure()
     test_write_structure()
@@ -552,3 +621,4 @@ if __name__ == "__main__":
     test_direct_read_structure()
     test_direct_read_nested_structure()
     test_direct_read_structure_loops()
+    test_read_struct_member_interstate_edge()

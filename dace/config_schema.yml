@@ -173,6 +173,20 @@ required:
                     The typename of this struct is derived by appending this value to the SDFG's name.
                     Note that the suffix may only contains letters, digits and underscores.
 
+            format_code:
+                type: bool
+                default: false
+                title: Format code with `clang-format`
+                description: >
+                    Formats the generated code with `clang-format` before saving the files.
+
+            format_config_file:
+                type: str
+                default: ""
+                title: Path the clang-format file
+                description: >
+                    Clang-format file to be used by clang-format, only used if format_code is true
+
             default_data_types:
                 type : str
                 default: Python
@@ -474,7 +488,7 @@ required:
                         title: Detect parts of an SDFG that can run in parallel
                         description: >
                             If set to false, DaCe will place each weakly connected
-                            component found in an SDFG state in a different Kernel/Processing Element. 
+                            component found in an SDFG state in a different Kernel/Processing Element.
                             If true, a heuristic will further inspect each independent component
                             for other parallelism opportunities (e.g., branches of the SDFG
                             that can be executed in parallel), creating the corresponding kernels.
@@ -540,7 +554,7 @@ required:
                         type: str
                         title: Synthesis arguments
                         description: High-level synthesis C++ flags
-                        default: "-std=c++11"
+                        default: "-std=c++14"
 
                     build_flags:
                         type: str
@@ -800,7 +814,7 @@ required:
                 default: false
                 title: Check arguments on SDFG call
                 description: >
-                    Perform an early type check on arguments passed to an SDFG when called directly (from 
+                    Perform an early type check on arguments passed to an SDFG when called directly (from
                     ``SDFG.__call__``). Another type check is performed when calling compiled SDFGs.
 
             avoid_wcr:
@@ -835,18 +849,18 @@ required:
         title: Compiled cache entry naming policy
         description: >
             Determine the name of the generated ``.dacecache`` folder:
-            
-            
+
+
             * ``name`` uses the name of the SDFG directly, causing it to be
             overridden by other programs using the same SDFG name.
-            
+
             * ``hash`` uses a mangled name based on the hash of the SDFG, such that
             any change to the SDFG will generate a different cache folder.
-            
+
             * ``unique`` uses a name based on the currently running Python process
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invocations of Python.
-            
+
             * ``single`` uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
@@ -919,6 +933,13 @@ required:
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
 
+            check_race_conditions:
+                type: bool
+                default: false
+                title: Check race conditions
+                description: >
+                    Check for potential race conditions during validation.
+
     #############################################
     # Features for unit testing
 
@@ -945,10 +966,10 @@ required:
 
             serialize_all_fields:
                 type: bool
-                default: true
+                default: false
                 title: Serialize all unmodified fields in SDFG files
                 description: >
-                    If False, saving an SDFG keeps only the modified non-default properties. If True,
+                    If False (default), saving an SDFG keeps only the modified non-default properties. If True,
                     saves all fields.
 
     #############################################

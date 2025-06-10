@@ -2,35 +2,34 @@
 
 from six import StringIO
 import collections
-import enum
-import functools
 import itertools
 import re
 import warnings
-import sympy as sp
 import numpy as np
-from typing import Dict, Iterable, List, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes, memlet, sdfg as sd, symbolic
+from dace import subsets, data as dt, dtypes, memlet, symbolic
 from dace.config import Config
-from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
-from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
+from dace.sdfg import ScopeSubgraphView
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.codegen import exceptions as cgx
-from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
+from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen import cppunparse
-from dace.properties import Property, make_properties, indirect_properties
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
 from collections import defaultdict
+
+if TYPE_CHECKING:
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
+    from dace.codegen.targets.cpu import CPUCodeGen
 
 _CPU_STORAGE_TYPES = {dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned}
 _FPGA_STORAGE_TYPES = {
@@ -303,7 +302,7 @@ def is_vendor_supported(fpga_vendor: str) -> bool:
     Returns wheter the given vendor is supported or not, by looking
     among the registered FPGA code-generators.
 
-    :param fpga_vendor: the fpga vendor 
+    :param fpga_vendor: the fpga vendor
     """
 
     registered_codegens = dace.codegen.targets.target.TargetCodeGenerator._registry_
@@ -325,12 +324,12 @@ class FPGACodeGen(TargetCodeGenerator):
     title = None
     language = None
 
-    def __init__(self, frame_codegen, sdfg: SDFG):
+    def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
 
         # The inheriting class must set target_name, title and language.
 
         self._in_device_code = False
-        self._cpu_codegen = None
+        self._cpu_codegen: Optional['CPUCodeGen'] = None
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._kernel_count = 0
@@ -417,15 +416,16 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         Finds a tasklet with SystemVerilog as its language, within the given subgraph, if it contains one.
 
-        :param subgraph: The subgraph to check. 
-        :return: The tasklet node if one exists, None otherwise. 
+        :param subgraph: The subgraph to check.
+        :return: The tasklet node if one exists, None otherwise.
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
-                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    node = self.find_rtl_tasklet(sg)
-                    if node:
-                        return node
+                if len(n.sdfg.nodes()) == 1 and isinstance(n.sdfg.nodes()[0], SDFGState):
+                    for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                        node = self.find_rtl_tasklet(sg)
+                        if node:
+                            return node
             elif isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog:
                 return n
         return None
@@ -439,9 +439,10 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
-                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    if self.is_multi_pumped_subgraph(sg):
-                        return True
+                if len(n.sdfg.nodes()) == 1 and isinstance(n.sdfg.nodes()[0], SDFGState):
+                    for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.nodes()[0]):
+                        if self.is_multi_pumped_subgraph(sg):
+                            return True
             elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Multi_Pumped:
                 return True
         return False
@@ -515,8 +516,8 @@ class FPGACodeGen(TargetCodeGenerator):
         del kernels_graph
         return subgraph_views
 
-    def generate_state(self, sdfg: dace.SDFG, state: dace.SDFGState, function_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream):
+    def generate_state(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, state: dace.SDFGState,
+                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """
         Generate an FPGA State, possibly comprising multiple Kernels and/or PEs.
 
@@ -527,7 +528,7 @@ class FPGACodeGen(TargetCodeGenerator):
         :param callsite_stream: CPU code stream, contains the actual code (for creating global buffers, invoking
             device host functions, and so on).
         """
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
 
         if not self._in_device_code:
             # Avoid import loop
@@ -610,15 +611,15 @@ class FPGACodeGen(TargetCodeGenerator):
                         continue
                     if (data.storage == dtypes.StorageType.FPGA_Global and not isinstance(data, dt.View)):
                         allocated.add(node.data)
-                        self._dispatcher.dispatch_allocate(sdfg, kern, state_id, node, data, function_stream,
+                        self._dispatcher.dispatch_allocate(sdfg, cfg, kern, state_id, node, data, function_stream,
                                                            callsite_stream)
 
                 # Create a unique kernel name to avoid name clashes
                 # If this kernels comes from a Nested SDFG, use that name also
                 if sdfg.parent_nsdfg_node is not None:
-                    kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{sdfg.sdfg_id}"
+                    kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{cfg.cfg_id}"
                 else:
-                    kernel_name = f"{state.label}_{kern_id}_{sdfg.sdfg_id}"
+                    kernel_name = f"{state.label}_{kern_id}_{cfg.cfg_id}"
 
                 # Vitis HLS removes double underscores, which leads to a compilation
                 # error down the road due to kernel name mismatch. Remove them here
@@ -634,7 +635,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     self._num_kernels += 1
 
                 # Generate kernel code
-                self.generate_kernel(sdfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
+                self.generate_kernel(sdfg, cfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
                                      state_host_header_stream, state_host_body_stream, instrumentation_stream,
                                      state_parameters, kern_id)
 
@@ -645,7 +646,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in
                     # a > b > c > d > e
                     # Currently, it only works if the subgraphs are directly chained
-                    self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream,
+                    self.generate_kernel(sdfg, cfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream,
                                          state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
 
             kernel_args_call_host = []
@@ -676,7 +677,7 @@ class FPGACodeGen(TargetCodeGenerator):
             ## Generate the global function here
 
             kernel_host_stream = CodeIOStream()
-            host_function_name = f"__dace_runstate_{sdfg.sdfg_id}_{state.name}_{state_id}"
+            host_function_name = f"__dace_runstate_{cfg.cfg_id}_{state.name}_{state_id}"
             function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(host_function_name,
                                                                               ", ".join(kernel_args_opencl)))
 
@@ -717,8 +718,8 @@ std::cout << std::scientific;""")
                 kernel_host_stream.write(f"""\
 const unsigned long int _dace_fpga_end_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 // Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
-__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", 1e-3 * first_start, 1e-3 * last_end, {sdfg.sdfg_id}, {state_id}, -1);
-__state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_us, _dace_fpga_end_us, {sdfg.sdfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", 1e-3 * first_start, 1e-3 * last_end, {sdfg.cfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_us, _dace_fpga_end_us, {sdfg.cfg_id}, {state_id}, -1);
 """)
                 if Config.get_bool("instrumentation", "print_fpga_runtime"):
                     kernel_host_stream.write(f"""
@@ -749,9 +750,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     raise cgx.CodegenError("Cannot allocate global memory from device code.")
                 allocated.add(node.data)
                 # Allocate transients
-                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node, data, function_stream, callsite_stream)
+                self._dispatcher.dispatch_allocate(sdfg, cfg, state, state_id, node, data, function_stream,
+                                                   callsite_stream)
 
-            self.generate_nested_state(sdfg, state, state.label, subgraphs, function_stream, callsite_stream)
+            self.generate_nested_state(sdfg, cfg, state, state.label, subgraphs, function_stream, callsite_stream)
 
     @staticmethod
     def shared_data(subgraphs):
@@ -1097,32 +1099,40 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         return (global_data_parameters, top_level_local_data, subgraph_parameters, nested_global_transients,
                 bank_assignments, external_streams)
 
-    def generate_nested_state(self, sdfg, state, nest_name, subgraphs, function_stream, callsite_stream):
+    def generate_nested_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: dace.SDFGState, nest_name: str,
+                              subgraphs: List[ScopeSubgraphView], function_stream: CodeIOStream,
+                              callsite_stream: CodeIOStream) -> None:
 
         for sg in subgraphs:
             self._dispatcher.dispatch_subgraph(sdfg,
+                                               cfg,
                                                sg,
-                                               sdfg.node_id(state),
+                                               cfg.node_id(state),
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=False)
 
-    def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
+    def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
+                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
         if not self._in_device_code:
             # If we're not already generating kernel code, fail
             raise cgx.CodegenError('FPGA kernel needs to be generated inside a device state.')
 
-        self.generate_node(sdfg, dfg_scope, state_id, dfg_scope.source_nodes()[0], function_stream, callsite_stream)
+        self.generate_node(sdfg, cfg, dfg_scope, state_id,
+                           dfg_scope.source_nodes()[0], function_stream, callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
+                                           cfg,
                                            dfg_scope,
                                            state_id,
                                            function_stream,
                                            callsite_stream,
                                            skip_entry_node=True)
 
-    def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
+    def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                      node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream) -> None:
 
         fsymbols = self._frame.symbols_and_constants(sdfg)
         if not utils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
@@ -1163,10 +1173,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         else:
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
-        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
 
-    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-                       allocation_stream):
+    def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
+                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
 
         # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
         # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
@@ -1191,9 +1202,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         declared = self._dispatcher.declared_arrays.has(dataname)
 
         if isinstance(nodedesc, dt.View):
-            return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+            return self.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
+                                      allocation_stream)
         elif isinstance(nodedesc, dt.Reference):
-            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+            return self.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
                                            allocation_stream)
         elif isinstance(nodedesc, dt.Stream):
 
@@ -1314,10 +1326,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         else:
             raise TypeError("Unhandled data type: {}".format(type(nodedesc).__name__))
 
-        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
-        allocation_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
+        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
+        allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
+    def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                         node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
+                         callsite_stream: CodeIOStream) -> None:
         pass  # Handled by destructor
 
     def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
@@ -1332,7 +1346,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         """
 
         concurrent_kernels = 0  # Max number of kernels
-        sdfg = state.parent
+        sdfg = state.sdfg
 
         def increment(kernel_id):
             if concurrent_kernels > 0:
@@ -1453,7 +1467,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         return max_kernels, dependencies
 
     def _trace_back_edge(self,
-                         edge: dace.sdfg.sdfg.Edge,
+                         edge: MultiConnectorEdge[dace.Memlet],
                          state: dace.SDFGState,
                          look_for_kernel_id: bool = False) -> Union[bool, int]:
         """
@@ -1497,7 +1511,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             src_repr = utils.unique_node_repr(state, curedge.src)
             return self._node_to_kernel[src_repr] if src_repr in self._node_to_kernel else None
 
-    def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge, state: dace.SDFGState) -> Tuple[bool, int]:
+    def _trace_forward_edge(self, edge: MultiConnectorEdge[dace.Memlet], state: dace.SDFGState) -> Tuple[bool, int]:
         """
         Given an edge, this traverses the edges forward.
         It can be used either for:
@@ -1530,8 +1544,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         kernel_id = self._node_to_kernel[dst_repr] if dst_repr in self._node_to_kernel else None
         return contains_only_global_buffers, kernel_id
 
-    def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node, dst_storage, dst_schedule, edge, dfg,
-                   function_stream, callsite_stream):
+    def _emit_copy(self, sdfg: SDFG, cfg: ControlFlowRegion, state_id: int, src_node: nodes.Node,
+                   src_storage: dtypes.StorageType, dst_node: nodes.Node, dst_storage: dtypes.StorageType,
+                   dst_schedule: dtypes.ScheduleType, edge: MultiConnectorEdge[memlet.Memlet], dfg: StateSubgraphView,
+                   function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
         u, v, memlet = edge.src, edge.dst, edge.data
 
@@ -1647,7 +1663,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                  sdfg,
                                  dst_subset,
                                  decouple_array_interfaces=self._decouple_array_interfaces),
-                        (offset_dst if not outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                        (offset_dst if not outgoing_memlet else 0), copysize, ptr_str), cfg, state_id,
                     [src_node, dst_node])
 
             elif device_to_host:
@@ -1668,8 +1684,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                  sdfg,
                                  src_subset,
                                  decouple_array_interfaces=self._decouple_array_interfaces),
-                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
-                    [src_node, dst_node])
+                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), cfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
@@ -1686,7 +1701,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                  sdfg,
                                  dst_subset,
                                  decouple_array_interfaces=self._decouple_array_interfaces),
-                        (offset_dst if not outgoing_memlet else 0)), sdfg, state_id, [src_node, dst_node])
+                        (offset_dst if not outgoing_memlet else 0)), cfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data and
@@ -1706,7 +1721,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
-            state_dfg = sdfg.nodes()[state_id]
+            state_dfg = cfg.node(state_id)
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
                 self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, packed_types=True))
 
@@ -1761,37 +1776,37 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if has_pipelined_loops:
                 # Language-specific
-                self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id, dst_node)
+                self.generate_pipeline_loop_pre(callsite_stream, sdfg, cfg, state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
-                    self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id, dst_node)
+                    self.generate_flatten_loop_pre(callsite_stream, sdfg, cfg, state_id, dst_node)
                 for node in dependency_pragma_nodes:
                     # Inject dependence pragmas
-                    self.generate_no_dependence_pre(callsite_stream, sdfg, state_id, dst_node, node.data)
+                    self.generate_no_dependence_pre(callsite_stream, sdfg, cfg, state_id, dst_node, node.data)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
                 if copy_dim != 1:
                     if register_to_register:
                         # Language-specific
-                        self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id, dst_node)
+                        self.generate_unroll_loop_pre(callsite_stream, None, sdfg, cfg, state_id, dst_node)
 
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
-                        "++__dace_copy{}) {{".format(i, i, cpp.sym2cpp(copy_dim), i), sdfg, state_id, dst_node)
+                        "++__dace_copy{}) {{".format(i, i, cpp.sym2cpp(copy_dim), i), cfg, state_id, dst_node)
 
                     if register_to_register:
                         # Language-specific
-                        self.generate_unroll_loop_post(callsite_stream, None, sdfg, state_id, dst_node)
+                        self.generate_unroll_loop_post(callsite_stream, None, sdfg, cfg, state_id, dst_node)
 
             # Pragmas
             if has_pipelined_loops:
                 # Language-specific
-                self.generate_pipeline_loop_post(callsite_stream, sdfg, state_id, dst_node)
-                self.generate_flatten_loop_post(callsite_stream, sdfg, state_id, dst_node)
+                self.generate_pipeline_loop_post(callsite_stream, sdfg, cfg, state_id, dst_node)
+                self.generate_flatten_loop_post(callsite_stream, sdfg, cfg, state_id, dst_node)
                 # Inject dependence pragmas
                 for node in dependency_pragma_nodes:
-                    self.generate_no_dependence_post(callsite_stream, sdfg, state_id, dst_node, node.data)
+                    self.generate_no_dependence_post(callsite_stream, sdfg, cfg, state_id, dst_node, node.data)
 
             src_name = cpp.ptr(src_node.data, src_node.desc(sdfg), sdfg, self._frame)
             dst_name = cpp.ptr(dst_node.data, dst_node.desc(sdfg), sdfg, self._frame)
@@ -1833,7 +1848,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         else:
 
-            self.generate_memlet_definition(sdfg, dfg, state_id, src_node, dst_node, edge, callsite_stream)
+            self.generate_memlet_definition(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, callsite_stream)
 
     @staticmethod
     def make_opencl_parameter(name, desc):
@@ -1848,11 +1863,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         parent_scope = dfg.scope_subgraph(parent_scope_entry)
 
         # Get all scopes from the same level
-        all_scopes = [node for node in parent_scope.topological_sort() if isinstance(node, dace.sdfg.nodes.EntryNode)]
+        all_scopes = [node for node in parent_scope.bfs_nodes() if isinstance(node, dace.sdfg.nodes.EntryNode)]
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
 
-    def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                      function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         method_name = "_generate_" + type(node).__name__
         # Fake inheritance... use this class' method if it exists,
         # otherwise fall back on CPU codegen
@@ -1865,17 +1881,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                               "Ignoring.".format(node.schedule,
                                                  type(node).__name__))
 
-            getattr(self, method_name)(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            getattr(self, method_name)(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
         else:
             old_codegen = self._cpu_codegen.calling_codegen
             self._cpu_codegen.calling_codegen = self
 
-            self._cpu_codegen.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
             self._cpu_codegen.calling_codegen = old_codegen
 
-    def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
-
+    def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                    src_node: Union[nodes.CodeNode, nodes.AccessNode],
+                    dst_node: Union[nodes.CodeNode, nodes.AccessNode], edge: MultiConnectorEdge[memlet.Memlet],
+                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
             try:
@@ -1896,7 +1914,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         except KeyError:
             dst_parent = None
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
-        state_dfg = sdfg.nodes()[state_id]
+        state_dfg = cfg.state(state_id)
 
         # Check if this is a copy memlet using at least one multibank array
         edge_list = []
@@ -1934,8 +1952,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         # Emit actual copy
         for current_edge in edge_list:
-            self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node, dst_storage, dst_schedule, current_edge,
-                            state_dfg, function_stream, callsite_stream)
+            self._emit_copy(sdfg, cfg, state_id, src_node, src_storage, dst_node, dst_storage, dst_schedule,
+                            current_edge, state_dfg, function_stream, callsite_stream)
 
     def _generate_PipelineEntry(self, *args, **kwargs):
         self._generate_MapEntry(*args, **kwargs)
@@ -1957,7 +1975,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     return False
                 to_search += scope_dict[x]
             elif isinstance(x, dace.sdfg.nodes.NestedSDFG):
-                for state in x.sdfg:
+                for state in x.sdfg.states():
                     if not self._is_innermost(state.nodes(), state.scope_children(), x.sdfg):
                         return False
         return True
@@ -1973,8 +1991,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         except TypeError:  # Cannot statically evaluate expression
             return False, begin
 
-    def _generate_MapEntry(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-
+    def _generate_MapEntry(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                           node: nodes.MapEntry, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         result = callsite_stream
 
         scope_dict = dfg.scope_dict()
@@ -1987,15 +2005,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         else:
             # Add extra opening brace (dynamic map ranges, closed in MapExit
             # generator)
-            callsite_stream.write('{', sdfg, state_id, node)
+            callsite_stream.write('{', cfg, state_id, node)
 
             # Define dynamic loop bounds variables (dynamic input memlets to
             # the MapEntry node)
-            for e in dynamic_map_inputs(sdfg.node(state_id), node):
+            for e in dynamic_map_inputs(cfg.state(state_id), node):
                 if e.data.data != e.dst_conn:
                     callsite_stream.write(
                         self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                            e.dst.in_connectors[e.dst_conn]), sdfg, state_id, node)
+                                                            e.dst.in_connectors[e.dst_conn]), cfg, state_id, node)
 
             # Pipeline innermost loops
             scope_children = dfg.scope_children()
@@ -2024,7 +2042,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # that is read/written inside this map, if there are no WCR. If there are no WCR at all, we can add
             # a more generic pragma to ignore all loop-carried dependencies.
             map_exit_node = dfg.exit_node(node)
-            state = sdfg.nodes()[state_id]
+            state = cfg.state(state_id)
             candidates_in = set()
             candidates_out = set()
             is_there_a_wcr = False
@@ -2058,19 +2076,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # Add pragmas
                     if not fully_degenerate and not is_degenerate[i]:
                         if node.map.unroll:
-                            self.generate_unroll_loop_pre(result, None, sdfg, state_id, node)
+                            self.generate_unroll_loop_pre(result, None, sdfg, cfg, state_id, node)
                         elif is_innermost:
-                            self.generate_pipeline_loop_pre(result, sdfg, state_id, node)
+                            self.generate_pipeline_loop_pre(result, sdfg, cfg, state_id, node)
                             # Do not put pragma if this is degenerate (loop does not exist)
-                            self.generate_flatten_loop_pre(result, sdfg, state_id, node)
+                            self.generate_flatten_loop_pre(result, sdfg, cfg, state_id, node)
                         if not node.map.unroll:
                             if len(in_out_data) > 0 and is_there_a_wcr == False:
                                 # add pragma to ignore all loop carried dependencies
-                                self.generate_no_dependence_pre(result, sdfg, state_id, node)
+                                self.generate_no_dependence_pre(result, sdfg, cfg, state_id, node)
                             else:
                                 # add specific pragmas
                                 for candidate in in_out_data:
-                                    self.generate_no_dependence_pre(result, sdfg, state_id, node, candidate)
+                                    self.generate_no_dependence_pre(result, sdfg, cfg, state_id, node, candidate)
 
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -2095,7 +2113,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 end_type = None
                             if end_type is not None:
                                 if np.dtype(end_type.dtype.type) > np.dtype('uint32'):
-                                    loop_var_type = end_type.ctype
+                                    v = dace.config.Config.get("compiler", "fpga", "vendor")
+                                    if v.casefold() == 'intel_fpga'.casefold():
+                                        loop_var_type = end_type.ocltype
+                                    else:
+                                        loop_var_type = end_type.ctype
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
@@ -2119,11 +2141,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         result.write(
                             "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(loop_var_type, var, cpp.sym2cpp(begin),
                                                                               var, cpp.sym2cpp(end + 1), var,
-                                                                              cpp.sym2cpp(skip)), sdfg, state_id, node)
+                                                                              cpp.sym2cpp(skip)), cfg, state_id, node)
 
                     #Add unroll pragma
                     if not fully_degenerate and not is_degenerate[i] and node.map.unroll:
-                        self.generate_unroll_loop_post(result, None, sdfg, state_id, node)
+                        self.generate_unroll_loop_post(result, None, sdfg, cfg, state_id, node)
 
             else:
                 pipeline = node.pipeline
@@ -2133,11 +2155,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if len(in_out_data) > 0:
                     if is_there_a_wcr == False:
                         # add pragma to ignore all loop carried dependencies
-                        self.generate_no_dependence_pre(result, sdfg, state_id, node)
+                        self.generate_no_dependence_pre(result, sdfg, cfg, state_id, node)
                     else:
                         # add specific pragmas
                         for candidate in in_out_data:
-                            self.generate_no_dependence_pre(result, sdfg, state_id, node, candidate)
+                            self.generate_no_dependence_pre(result, sdfg, cfg, state_id, node, candidate)
                 result.write("for (long {it} = 0; {it} < {bound}; ++{it}) {{\n".format(
                     it=flat_it, bound=node.pipeline.loop_bound_str()))
                 if pipeline.init_size != 0:
@@ -2152,15 +2174,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             if not fully_degenerate:
                 if not node.map.unroll:
                     if is_innermost:
-                        self.generate_pipeline_loop_post(result, sdfg, state_id, node)
-                        self.generate_flatten_loop_post(result, sdfg, state_id, node)
+                        self.generate_pipeline_loop_post(result, sdfg, cfg, state_id, node)
+                        self.generate_flatten_loop_post(result, sdfg, cfg, state_id, node)
                     # add pragmas for data read/written inside this map, but only for local arrays
                     for candidate in in_out_data:
                         if sdfg.arrays[candidate].storage != dtypes.StorageType.FPGA_Global:
-                            self.generate_no_dependence_post(result, sdfg, state_id, node, candidate)
+                            self.generate_no_dependence_post(result, sdfg, cfg, state_id, node, candidate)
 
         # Emit internal transient array allocation
-        to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id), node)
+        to_allocate = dace.sdfg.local_transients(sdfg, cfg.state(state_id), node)
         allocated = set()
         for child in dfg.scope_children()[node]:
             if not isinstance(child, dace.sdfg.nodes.AccessNode):
@@ -2168,12 +2190,13 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, child.desc(sdfg), None, result)
+            self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, child, child.desc(sdfg), None, result)
 
     def _generate_PipelineExit(self, *args, **kwargs):
         self._generate_MapExit(*args, **kwargs)
 
-    def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+    def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         scope_dict = dfg.scope_dict()
         entry_node = scope_dict[node]
         if entry_node.map in self._unrolled_pes:
@@ -2206,10 +2229,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 callsite_stream.write("}\n")
             callsite_stream.write("}\n}\n")
         else:
-            self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def generate_kernel(self,
                         sdfg: dace.SDFG,
+                        cfg: ControlFlowRegion,
                         state: dace.SDFGState,
                         kernel_name: str,
                         subgraphs: list,
@@ -2260,7 +2284,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 predecessors.append(get_kernel_name(pred))
 
         # Actual kernel code generation
-        self.generate_kernel_internal(sdfg, state, kernel_name, predecessors, subgraphs, kernel_stream,
+        self.generate_kernel_internal(sdfg, cfg, state, kernel_name, predecessors, subgraphs, kernel_stream,
                                       state_host_header_stream, state_host_body_stream, instrumentation_stream,
                                       function_stream, callsite_stream, state_parameters)
         self._kernel_count = self._kernel_count + 1
@@ -2306,18 +2330,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             raise RuntimeError("Expected at least one tasklet or data node.")
         return "_".join(labels)
 
-    def generate_modules(self, sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
-                         host_stream, instrumentation_stream):
+    def generate_modules(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, kernel_name: str, subgraphs,
+                         subgraph_parameters, module_stream, entry_stream, host_stream, instrumentation_stream):
         """
         Generate all PEs inside an FPGA Kernel.
         """
         for subgraph in subgraphs:
             module_name = self._module_name(subgraph, state)
-            self.generate_module(sdfg, state, kernel_name, module_name, subgraph, subgraph_parameters[subgraph],
+            self.generate_module(sdfg, cfg, state, kernel_name, module_name, subgraph, subgraph_parameters[subgraph],
                                  module_stream, entry_stream, host_stream, instrumentation_stream)
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
+    def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_header(sdfg,
+                                                       cfg,
                                                        state,
                                                        state_id,
                                                        node,
@@ -2325,18 +2350,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                        sdfg_label,
                                                        state_struct=False)
 
-    def generate_nsdfg_call(self, sdfg, state, node, memlet_references, sdfg_label):
+    def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_call(sdfg,
+                                                     cfg,
                                                      state,
                                                      node,
                                                      memlet_references,
                                                      sdfg_label,
                                                      state_struct=False)
 
-    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
-        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, dfg, node)
+    def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
+        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, state, dfg, node)
 
-    def generate_host_function_boilerplate(self, sdfg, state, nested_global_transients, host_code_stream):
+    def generate_host_function_boilerplate(self, sdfg, cfg, state, nested_global_transients, host_code_stream):
         """
         Generates global transients that must be passed to the state (required by a kernel)
         """
@@ -2344,14 +2370,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel
         for arr_node in nested_global_transients:
-            self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node, arr_node.desc(sdfg), None, host_code_stream)
+            self._dispatcher.dispatch_allocate(sdfg, cfg, state, None, arr_node, arr_node.desc(sdfg), None,
+                                               host_code_stream)
 
     def _generate_Tasklet(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback
         self._cpu_codegen._generate_Tasklet(*args, codegen=self, **kwargs)
 
-    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
-        self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg, state_dfg, state_id, function_stream,
+    def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
+                          src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[memlet.Memlet],
+                          function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg, cfg, state_dfg, state_id, function_stream,
                                        callsite_stream)
 
     def process_out_memlets(self, *args, **kwargs):
@@ -2362,8 +2391,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # Fall back on CPU implementation
         self._cpu_codegen.generate_tasklet_preamble(*args, **kwargs)
 
-    def generate_tasklet_postamble(self, sdfg, dfg, state_id, node, function_stream, before_memlets_stream,
-                                   after_memlets_stream):
+    def generate_tasklet_postamble(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                                   node: nodes.Node, function_stream: CodeIOStream, before_memlets_stream: CodeIOStream,
+                                   after_memlets_stream: CodeIOStream) -> None:
         # Inject dependency pragmas on memlets
         for edge in dfg.out_edges(node):
             dataname = edge.data.data
@@ -2379,7 +2409,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 else:
                     accessed_subset = 0
 
-                self.generate_no_dependence_post(after_memlets_stream, sdfg, state_id, node, dataname, accessed_subset)
+                self.generate_no_dependence_post(after_memlets_stream, sdfg, cfg, state_id, node, dataname,
+                                                 accessed_subset)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
@@ -2387,7 +2418,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def make_ptr_assignment(self, *args, **kwargs):
         return self._cpu_codegen.make_ptr_assignment(*args, codegen=self, **kwargs)
 
-    def instrument_opencl_kernel(self, kernel_name: str, state_id: int, sdfg_id: int, code_stream: CodeIOStream):
+    def instrument_opencl_kernel(self, kernel_name: str, state_id: int, cfg_id: int, code_stream: CodeIOStream):
         """
         Emits code to instrument the OpenCL kernel with the given `kernel_name`.
         """
@@ -2414,5 +2445,5 @@ if (event_end > last_end) {{
     last_end = event_end;
 }}
 // Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
-__state->report.add_completion("{kernel_name}", "FPGA", 1e-3 * event_start, 1e-3 * event_end, {sdfg_id}, {state_id}, -1);{print_str}
+__state->report.add_completion("{kernel_name}", "FPGA", 1e-3 * event_start, 1e-3 * event_end, {cfg_id}, {state_id}, -1);{print_str}
 }}""")

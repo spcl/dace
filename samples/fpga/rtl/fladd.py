@@ -172,10 +172,10 @@ sdfg.validate()
 if __name__ == '__main__':
     with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
         # init data structures
-        N.set(8192)
-        a = np.random.randint(0, 100, N.get()).astype(np.float32)
-        b = np.random.randint(0, 100, N.get()).astype(np.float32)
-        c = np.zeros((N.get() // veclen, )).astype(np.float32)
+        N = 8192
+        a = np.random.randint(0, 100, N).astype(np.float32)
+        b = np.random.randint(0, 100, N).astype(np.float32)
+        c = np.zeros((N // veclen, )).astype(np.float32)
         print(a.shape, b.shape, c.shape)
 
         # show initial values
@@ -189,6 +189,6 @@ if __name__ == '__main__':
 
         # check result
         expected = a + b
-        diff = np.linalg.norm(expected - c) / N.get()
+        diff = np.linalg.norm(expected - c) / N
         print("Difference:", diff)
         assert diff <= 1e-5

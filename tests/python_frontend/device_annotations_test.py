@@ -1,11 +1,15 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import pytest
+import numpy as np
 
 from dace.dtypes import StorageType, DeviceType, ScheduleType
 from dace import dtypes
 
-cupy = pytest.importorskip("cupy")
+try:
+    import cupy
+except (ImportError, ModuleNotFoundError):
+    cupy = None
 
 
 @pytest.mark.gpu
@@ -58,7 +62,40 @@ def test_pythonmode():
     assert cupy.allclose(gpu_b, gpu_a + 1)
 
 
+def test_inline_storage_hint():
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester():
+        b = np.ones(N, dtype=np.float32) @ dace.StorageType.CPU_ThreadLocal
+        return b + 1
+
+    sdfg = tester.to_sdfg(simplify=False)
+    assert sdfg.arrays['b'].storage == StorageType.CPU_ThreadLocal
+
+    b = tester(N=10)
+    assert np.allclose(b, 2)
+
+
+def test_annotated_storage_hint():
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester():
+        b: dace.float32[N] @ dace.StorageType.CPU_ThreadLocal = np.ones(N, dtype=np.float32)
+        return b + 1
+
+    sdfg = tester.to_sdfg(simplify=False)
+    assert sdfg.arrays['b'].storage == StorageType.CPU_ThreadLocal
+
+    b = tester(N=10)
+    assert np.allclose(b, 2)
+
+
 if __name__ == "__main__":
-    test_storage()
-    test_schedule()
-    test_pythonmode()
+    if cupy is not None:
+        test_storage()
+        test_schedule()
+        test_pythonmode()
+    test_inline_storage_hint()
+    test_annotated_storage_hint()

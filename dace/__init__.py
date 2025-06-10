@@ -7,8 +7,9 @@ from .dtypes import *
 from .builtin_hooks import *
 
 from . import data, hooks, subsets
+from .codegen.compiled_sdfg import CompiledSDFG
 from .config import Config
-from .sdfg import SDFG, SDFGState, InterstateEdge, nodes
+from .sdfg import SDFG, SDFGState, InterstateEdge, nodes, ControlFlowRegion
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet
 from .symbolic import symbol

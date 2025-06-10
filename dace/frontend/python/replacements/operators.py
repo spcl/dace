@@ -17,6 +17,8 @@ import numpy as np
 import sympy as sp
 import dace  # For evaluation of data types
 
+numpy_version = np.lib.NumpyVersion(np.__version__)
+
 
 def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array unary operator. """
@@ -33,9 +35,10 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
         opcode = 'not'
 
     name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
-    state.add_mapped_tasklet("_%s_" % opname, {'__i%d' % i: '0:%s' % s
-                                               for i, s in enumerate(arr1.shape)},
-                             {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
+    state.add_mapped_tasklet("_%s_" % opname, {
+        '__i%d' % i: '0:%s' % s
+        for i, s in enumerate(arr1.shape)
+    }, {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
                              '__out = %s __in1' % opcode,
                              {'__out': Memlet.simple(name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
                              external_edges=True)
@@ -133,22 +136,28 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
     datatypes = []
     dtypes_for_result = []
+    dtypes_for_result_np2 = []
     for arg in arguments:
         if isinstance(arg, (data.Array, data.Stream)):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(arg.dtype.type)
+            dtypes_for_result_np2.append(arg.dtype.type)
         elif isinstance(arg, data.Scalar):
             datatypes.append(arg.dtype)
             dtypes_for_result.append(representative_num(arg.dtype))
+            dtypes_for_result_np2.append(arg.dtype.type)
         elif isinstance(arg, (Number, np.bool_)):
             datatypes.append(dtypes.dtype_to_typeclass(type(arg)))
             dtypes_for_result.append(arg)
+            dtypes_for_result_np2.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(sym_type(arg))
             dtypes_for_result.append(representative_num(sym_type(arg)))
+            dtypes_for_result_np2.append(sym_type(arg).type)
         elif isinstance(arg, dtypes.typeclass):
             datatypes.append(arg)
             dtypes_for_result.append(representative_num(arg))
+            dtypes_for_result_np2.append(arg.type)
         else:
             raise TypeError("Type {t} of argument {a} is not supported".format(t=type(arg), a=arg))
 
@@ -181,8 +190,11 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
         elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
               and coarse_types[0] == 3):
             raise TypeError("ufunc '{}' not supported for complex input".format(operator))
+        elif operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and numpy_version < '2.1.0':
+            restype = dtypes.float64
+            casting[0] = cast_str(restype)
         elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt', 'Trigonometric', 'Angles', 'FpBoolean',
-                           'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc') and coarse_types[0] < 2):
+                           'Spacing', 'Modf') and coarse_types[0] < 2):
             restype = dtypes.float64
             casting[0] = cast_str(restype)
         elif operator in ('Frexp'):
@@ -262,7 +274,10 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
                 restype = dtypes.float64
             # All other arithmetic operators and cases of the above operators
             else:
-                restype = np_result_type(dtypes_for_result)
+                if numpy_version >= '2.0.0':
+                    restype = np_result_type(dtypes_for_result_np2)
+                else:
+                    restype = np_result_type(dtypes_for_result)
 
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -338,8 +353,17 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
     else:  # Operators with 3 or more arguments
         restype = np_result_type(dtypes_for_result)
+        coarse_result_type = None
+        if result_type in complex_types:
+            coarse_result_type = 3  # complex
+        elif result_type in float_types:
+            coarse_result_type = 2  # float
+        elif result_type in signed_types:
+            coarse_result_type = 1  # signed integer, bool
+        else:
+            coarse_result_type = 0  # unsigned integer
         for i, t in enumerate(coarse_types):
-            if t != restype:
+            if t != coarse_result_type:
                 casting[i] = cast_str(restype)
 
     return restype, casting

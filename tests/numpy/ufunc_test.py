@@ -56,12 +56,6 @@ def test_ufunc_true_divide_uu(A: dace.uint32[10], B: dace.uint32[10]):
     return np.true_divide(A, B)
 
 
-@pytest.mark.skip
-@compare_numpy_output(non_zero=True, check_dtype=True)
-def test_ufunc_floor_divide_cc(A: dace.complex64[10], B: dace.complex64[10]):
-    return np.floor_divide(A, B)
-
-
 @compare_numpy_output(non_zero=True, check_dtype=True)
 def test_ufunc_floor_divide_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.floor_divide(A, B)
@@ -890,12 +884,6 @@ def test_ufunc_not_equal_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.not_equal(A, B)
 
 
-@pytest.mark.skip
-@compare_numpy_output(check_dtype=True)
-def test_ufunc_logical_and_cc(A: dace.complex64[10], B: dace.complex64[10]):
-    return np.logical_and(A, B)
-
-
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_logical_and_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.logical_and(A, B)
@@ -911,12 +899,6 @@ def test_ufunc_logical_and_su(A: dace.int32[10], B: dace.uint32[10]):
     return np.logical_and(A, B)
 
 
-@pytest.mark.skip
-@compare_numpy_output(check_dtype=True)
-def test_ufunc_logical_or_cc(A: dace.complex64[10], B: dace.complex64[10]):
-    return np.logical_or(A, B)
-
-
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_logical_or_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.logical_or(A, B)
@@ -930,12 +912,6 @@ def test_ufunc_logical_or_uu(A: dace.uint32[10], B: dace.uint32[10]):
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_logical_or_su(A: dace.int32[10], B: dace.uint32[10]):
     return np.logical_or(A, B)
-
-
-@pytest.mark.skip
-@compare_numpy_output(check_dtype=True)
-def test_ufunc_logical_xor_cc(A: dace.complex64[10], B: dace.complex64[10]):
-    return np.logical_xor(A, B)
 
 
 @compare_numpy_output(check_dtype=True)
@@ -998,10 +974,11 @@ def test_ufunc_fmin_nan_ff(A: dace.float32[10], B: dace.float32[10]):
 
 
 def test_ufunc_isfinite_c():
+
     @compare_numpy_output(check_dtype=True)
     def ufunc_isfinite_c(A: dace.complex64[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isfinite(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1016,10 +993,11 @@ def test_ufunc_isfinite_c():
 
 
 def test_ufunc_isfinite_f():
+
     @compare_numpy_output(check_dtype=True)
     def ufunc_isfinite_f(A: dace.float32[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isfinite(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1036,19 +1014,19 @@ def test_ufunc_isfinite_f():
 # NumPy accepts integer arrays in np.isfinite.
 # However, if any element of an integer array is inf, it will fail because it
 # "<class 'OverflowError'>: cannot convert float infinity to integer"
-@pytest.mark.skip
 @compare_numpy_output(validation_func=lambda a: np.isfinite(a))
 def test_ufunc_isfinite_u(A: dace.uint32[10]):
     A[0] = np.inf
-    A[1] = np.NaN
+    A[1] = np.nan
     return np.isfinite(A)
 
 
 def test_ufunc_isinf_c():
+
     @compare_numpy_output(check_dtype=True)
     def ufunc_isinf_c(A: dace.complex64[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isinf(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1063,10 +1041,11 @@ def test_ufunc_isinf_c():
 
 
 def test_ufunc_isinf_f():
+
     @compare_numpy_output(check_dtype=True)
     def ufunc_isinf_f(A: dace.float32[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isinf(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1083,19 +1062,19 @@ def test_ufunc_isinf_f():
 # NumPy accepts integer arrays in np.isinf.
 # However, if any element of an integer array is inf, it will fail because it
 # "<class 'OverflowError'>: cannot convert float infinity to integer"
-@pytest.mark.skip
 @compare_numpy_output(validation_func=lambda a: np.isinf(a))
 def test_ufunc_isinf_u(A: dace.uint32[10]):
     A[0] = np.inf
-    A[1] = np.NaN
+    A[1] = np.nan
     return np.isinf(A)
 
 
 def test_ufunc_isnan_c():
+
     @compare_numpy_output(check_dtype=True)
     def ufunc_isnan_c(A: dace.complex64[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isnan(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1110,10 +1089,11 @@ def test_ufunc_isnan_c():
 
 
 def test_ufunc_isnan_f():
+
     @compare_numpy_output(check_dtype=True)
     def ufunc_isnan_f(A: dace.float32[10]):
         A[0] = np.inf
-        A[1] = np.NaN
+        A[1] = np.nan
         return np.isnan(A)
 
     args = dace.Config.get('compiler', 'cpu', 'args')
@@ -1130,11 +1110,10 @@ def test_ufunc_isnan_f():
 # NumPy accepts integer arrays in np.isnan.
 # However, if any element of an integer array is inf, it will fail because it
 # "<class 'OverflowError'>: cannot convert float infinity to integer"
-@pytest.mark.skip
 @compare_numpy_output(validation_func=lambda a: np.isnan(a))
 def test_ufunc_isnan_u(A: dace.uint32[10]):
     A[0] = np.inf
-    A[1] = np.NaN
+    A[1] = np.nan
     return np.isnan(A)
 
 
@@ -1304,6 +1283,21 @@ def test_ufunc_trunc_u(A: dace.uint32[10]):
     return np.trunc(A)
 
 
+@compare_numpy_output()
+def test_ufunc_clip(A: dace.float32[10]):
+    return np.clip(A, 0.2, 0.5)
+
+
+@compare_numpy_output()
+def test_ufunc_clip_min(A: dace.float32[10]):
+    return np.clip(A, 0.2, None)
+
+
+@compare_numpy_output()
+def test_ufunc_clip_max(A: dace.float32[10]):
+    return np.clip(A, None, a_max=0.5)
+
+
 if __name__ == "__main__":
     test_ufunc_add_ff()
     test_ufunc_subtract_ff()
@@ -1315,7 +1309,6 @@ if __name__ == "__main__":
     test_ufunc_logaddexp2_ff()
     test_ufunc_true_divide_ff()
     test_ufunc_true_divide_uu()
-    # test_ufunc_floor_divide_cc()
     test_ufunc_floor_divide_ff()
     test_ufunc_floor_divide_uu()
     test_ufunc_floor_divide_ss()
@@ -1481,15 +1474,12 @@ if __name__ == "__main__":
     test_ufunc_less_equal_ff()
     test_ufunc_equal_ff()
     test_ufunc_not_equal_ff()
-    # test_ufunc_logical_and_cc()  # TODO: How to convert to bool?
     test_ufunc_logical_and_ff()
     test_ufunc_logical_and_uu()
     test_ufunc_logical_and_su()
-    # test_ufunc_logical_or_cc()   # TODO: How to convert to bool?
     test_ufunc_logical_or_ff()
     test_ufunc_logical_or_uu()
     test_ufunc_logical_or_su()
-    # test_ufunc_logical_xor_cc()  # TODO: How to convert to bool?
     test_ufunc_logical_xor_ff()
     test_ufunc_logical_xor_uu()
     test_ufunc_logical_xor_su()
@@ -1503,13 +1493,13 @@ if __name__ == "__main__":
     test_ufunc_fmin_nan_ff()
     test_ufunc_isfinite_c()
     test_ufunc_isfinite_f()
-    # test_ufunc_isfinite_u()
+    test_ufunc_isfinite_u()
     test_ufunc_isinf_c()
     test_ufunc_isinf_f()
-    # test_ufunc_isinf_u())
+    test_ufunc_isinf_u()
     test_ufunc_isnan_c()
     test_ufunc_isnan_f()
-    # test_ufunc_isnan_u()
+    test_ufunc_isnan_u()
     test_ufunc_signbit_c()
     test_ufunc_signbit_f()
     test_ufunc_signbit_u()
@@ -1542,3 +1532,6 @@ if __name__ == "__main__":
     test_ufunc_trunc_c()
     test_ufunc_trunc_f()
     test_ufunc_trunc_u()
+    test_ufunc_clip()
+    test_ufunc_clip_min()
+    test_ufunc_clip_max()

@@ -15,9 +15,7 @@ sizes = [{M: 28, N: 32}, {M: 80, N: 100}, {M: 240, N: 260}, {M: 1200, N: 1400}, 
 args = [([N, M], datatype), ([M, M], datatype), ([M], datatype), ([M], datatype)]
 
 
-def init_array(data, corr, mean, stddev):
-    n = N.get()
-    m = M.get()
+def init_array(data, corr, mean, stddev, n, m):
     for i in range(n):
         for j in range(m):
             data[i, j] = datatype(i * j) / m + i
@@ -25,6 +23,7 @@ def init_array(data, corr, mean, stddev):
 
 @dace.program(datatype[N, M], datatype[M, M], datatype[M], datatype[M])
 def correlation(data, corr, mean, stddev):
+
     @dace.map
     def comp_mean(j: _[0:M], i: _[0:N]):
         inp << data[i, j]
@@ -67,8 +66,10 @@ def correlation(data, corr, mean, stddev):
 
     @dace.mapscope
     def comp_corr_row(i: _[0:M - 1]):
+
         @dace.mapscope
         def comp_corr_col(j: _[i + 1:M]):
+
             @dace.map
             def comp_cov_k(k: _[0:N]):
                 indi << data[k, i]
@@ -78,6 +79,7 @@ def correlation(data, corr, mean, stddev):
 
     @dace.mapscope
     def symmetrize(i: _[0:M - 1]):
+
         @dace.map
         def symmetrize_col(j: _[i + 1:M]):
             corrin << corr[i, j]

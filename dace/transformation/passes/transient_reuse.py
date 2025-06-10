@@ -6,9 +6,11 @@ import networkx as nx
 from dace import SDFG, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @properties.make_properties
+@explicit_cf_compatible
 class TransientReuse(ppl.Pass):
     """
     Reduces memory consumption by reusing allocated transient array memory. Only modifies arrays that can safely be
@@ -16,6 +18,12 @@ class TransientReuse(ppl.Pass):
     """
 
     CATEGORY: str = 'Memory Footprint Reduction'
+
+    verbose = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Print information about the memory reduction.",
+    )
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -44,7 +52,7 @@ class TransientReuse(ppl.Pass):
             if arrays[a] == 1:
                 transients.add(a)
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             # Copy the whole graph
             G = nx.MultiDiGraph()
             for n in state.nodes():
@@ -152,11 +160,12 @@ class TransientReuse(ppl.Pass):
                                     edge.data.data = new
 
         # Analyze memory savings and output them
-        memory_after = 0
-        for a in sdfg.arrays:
-            memory_after += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
+        if self.verbose:
+            memory_after = 0
+            for a in sdfg.arrays:
+                memory_after += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
+            print('memory before: ', memory_before, 'B')
+            print('memory after: ', memory_after, 'B')
+            print('memory savings: ', memory_before - memory_after, 'B')
 
-        print('memory before: ', memory_before, 'B')
-        print('memory after: ', memory_after, 'B')
-        print('memory savings: ', memory_before - memory_after, 'B')
         return result or None

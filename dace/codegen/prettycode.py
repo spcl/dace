@@ -1,23 +1,25 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Code I/O stream that automates indentation and mapping of code to SDFG 
+""" Code I/O stream that automates indentation and mapping of code to SDFG
     nodes. """
 
 import inspect
 from six import StringIO
 from dace.config import Config
 from dace.sdfg.graph import NodeNotFoundError
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 
 
 class CodeIOStream(StringIO):
-    """ Code I/O stream that automates indentation and mapping of code to SDFG 
+    """ Code I/O stream that automates indentation and mapping of code to SDFG
         nodes. """
+
     def __init__(self, base_indentation=0):
         super(CodeIOStream, self).__init__()
-        self._indent = 0
+        self._indent = base_indentation
         self._spaces = int(Config.get('compiler', 'indentation_spaces'))
         self._lineinfo = Config.get_bool('compiler', 'codegen_lineinfo')
 
-    def write(self, contents, sdfg=None, state_id=None, node_id=None):
+    def write(self, contents, cfg: ControlFlowRegion = None, state_id: int = None, node_id: int = None) -> None:
         # Delete single trailing newline, as this will be implicitly inserted
         # anyway
         if contents:
@@ -29,8 +31,8 @@ class CodeIOStream(StringIO):
             lines = contents
 
         # If SDFG/state/node location is given, annotate this line
-        if sdfg is not None:
-            location_identifier = '  ////__DACE:%d' % sdfg.sdfg_id
+        if cfg is not None:
+            location_identifier = '  ////__DACE:%d' % cfg.cfg_id
             if state_id is not None:
                 location_identifier += ':' + str(state_id)
                 if node_id is not None:
@@ -39,7 +41,8 @@ class CodeIOStream(StringIO):
                     for i, nid in enumerate(node_id):
                         if not isinstance(nid, int):
                             try:
-                                node_id[i] = sdfg.node(state_id).node_id(nid)
+                                state = cfg.state(state_id)
+                                node_id[i] = state.node_id(nid)
                             except NodeNotFoundError:
                                 node_id[i] = -1
                     location_identifier += ':' + ','.join([str(nid) for nid in node_id])

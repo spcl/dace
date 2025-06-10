@@ -119,9 +119,9 @@ sdfg.validate()
 if __name__ == '__main__':
     with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
         # init data structures
-        N.set(8192)
-        a = np.random.randint(0, 100, N.get()).astype(np.int32)
-        b = np.zeros((N.get(), )).astype(np.int32)
+        N = 8192
+        a = np.random.randint(0, 100, N).astype(np.int32)
+        b = np.zeros((N, )).astype(np.int32)
 
         # show initial values
         print("a={}, b={}".format(a, b))
@@ -133,5 +133,5 @@ if __name__ == '__main__':
         print("a={}, b={}".format(a, b))
 
         # check result
-        for i in range(N.get()):
+        for i in range(N):
             assert b[i] == a[i] + 42

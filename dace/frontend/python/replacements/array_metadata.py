@@ -15,7 +15,8 @@ def _len_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
             return sdfg.arrays[a].shape[0]
         if a in sdfg.constants_prop:
             return len(sdfg.constants[a])
-    raise TypeError(f'`len` is not supported for input "{a}" (type {type(a)})')
+    else:
+        return len(a)
 
 
 @oprepo.replaces_attribute('Array', 'size')

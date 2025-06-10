@@ -13,13 +13,19 @@ import warnings
 from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 
 try:
     from typing import get_origin, get_args
 except ImportError:
     from typing_compat import get_origin, get_args
+
+try:
+    import mpi4py
+    from dace.sdfg.utils import distributed_compile
+except ImportError:
+    mpi4py = None
 
 ArgTypes = Dict[str, Data]
 
@@ -53,9 +59,10 @@ def _get_locals_and_globals(f):
     result.update(f.__globals__)
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
-        result.update(
-            {k: v
-             for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])})
+        result.update({
+            k: v
+            for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])
+        })
 
     return result
 
@@ -86,14 +93,15 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
             desc = sdfg.arrays[arg_name]
             if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', []))
+            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, 'itemsize', 1)
                 given_strides = [s // factor for s in arg_val.strides]
-            given_values += given_strides
+            given_offset = [o for o in arg_val.offset] if hasattr(arg_val, 'offset') else []
+            given_values += given_strides + given_offset
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
@@ -135,6 +143,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
 class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
+
     def __init__(self,
                  f,
                  args,
@@ -145,7 +154,10 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recreate_sdfg: bool = True,
                  regenerate_code: bool = True,
                  recompile: bool = True,
-                 method: bool = False):
+                 distributed_compilation: bool = False,
+                 method: bool = False,
+                 use_explicit_cf: bool = True,
+                 ignore_type_hints: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -165,6 +177,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
+        self.use_explicit_cf = use_explicit_cf
+        self.distributed_compilation = distributed_compilation
+        self.ignore_type_hints = ignore_type_hints
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -310,15 +325,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         return self.argnames, self.constant_args
 
     def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """ 
-        Returns the closure arrays of the SDFG represented by the dace 
+        """
+        Returns the closure arrays of the SDFG represented by the dace
         program as a mapping between array name and the corresponding value.
 
         :param reevaluate: If given, re-evaluates closure elements based on the
                            input mapping (keys: array names, values: expressions
-                           to evaluate). Otherwise, re-evaluates 
+                           to evaluate). Otherwise, re-evaluates
                            ``self.closure_arg_mapping``.
-        :return: A dictionary mapping between a name in the closure and the 
+        :return: A dictionary mapping between a name in the closure and the
                  currently evaluated value.
         """
         # Move "self" from an argument into the closure
@@ -383,7 +398,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Start with default arguments, then add other arguments
         result = {**self.default_args}
         # Reconstruct keyword arguments
-        result.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        result.update({aname: arg for aname, arg in zip(self.argnames, args) if aname not in self.constant_args})
         result.update(kwargs)
 
         # Add closure arguments to the call
@@ -394,13 +409,14 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Update arguments with symbols in data shapes
         result.update(
-            infer_symbols_from_datadescriptor(
-                sdfg, {k: create_datadescriptor(v)
-                       for k, v in result.items() if k not in self.constant_args}))
+            infer_symbols_from_datadescriptor(sdfg, {
+                k: create_datadescriptor(v)
+                for k, v in result.items() if k not in self.constant_args
+            }))
         return result
 
     def __call__(self, *args, **kwargs):
-        """ Convenience function that parses, compiles, and runs a DaCe 
+        """ Convenience function that parses, compiles, and runs a DaCe
             program. """
         # Update global variables with current closure
         self.global_vars = _get_locals_and_globals(self.f)
@@ -443,9 +459,12 @@ class DaceProgram(pycommon.SDFGConvertible):
                 sdfg.simplify()
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
-            # Compile SDFG (note: this is done after symbol inference due to shape
-            # altering transformations such as Vectorization)
-            binaryobj = sdfg.compile(validate=self.validate)
+            if self.distributed_compilation and mpi4py:
+                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
+            else:
+                # Compile SDFG (note: this is done after symbol inference due to shape
+                # altering transformations such as Vectorization)
+                binaryobj = sdfg.compile(validate=self.validate)
 
             # Recreate key and add to cache
             cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
@@ -458,7 +477,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         return result
 
     def _parse(self, args, kwargs, simplify=None, save=False, validate=False) -> SDFG:
-        """ 
+        """
         Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
 
@@ -467,18 +486,22 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param args: The given arguments to the function.
         :param kwargs: The given keyword arguments to the function.
         :param simplify: Whether to apply simplification pass or not (None
-                       uses configuration-defined value). 
-        :param save: If True, saves the generated SDFG to 
+                       uses configuration-defined value).
+        :param save: If True, saves the generated SDFG to
                     ``_dacegraphs/program.sdfg`` after parsing.
         :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
-        # Avoid import loop
-        from dace.transformation.passes import scalar_to_symbol as scal2sym
-        from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
+
+        if not self.use_explicit_cf:
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                sdutils.inline_control_flow_regions(nsdfg)
+        sdfg.using_explicit_control_flow = self.use_explicit_cf
+
+        sdfg.reset_cfg_list()
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or
@@ -508,12 +531,12 @@ class DaceProgram(pycommon.SDFGConvertible):
     def _get_type_annotations(
             self, given_args: Tuple[Any],
             given_kwargs: Dict[str, Any]) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any], Set[str]]:
-        """ 
+        """
         Obtains types from decorator and/or from type annotations in a function.
 
         :param given_args: The call-site arguments to the dace.program.
         :param given_kwargs: The call-site keyword arguments to the program.
-        :return: A 4-tuple containing (argument type mapping, extra argument 
+        :return: A 4-tuple containing (argument type mapping, extra argument
                  mapping, extra global variable mapping, all given argument names)
         """
         types: ArgTypes = {}
@@ -536,6 +559,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                 continue
 
             ann = sig_arg.annotation
+            if self.ignore_type_hints:
+                ann = inspect._empty
 
             # Variable-length arguments: obtain from the remainder of given_*
             if sig_arg.kind is sig_arg.VAR_POSITIONAL:
@@ -678,7 +703,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Set __return* arrays from return type annotations
         rettype = self.signature.return_annotation
-        if not _is_empty(rettype):
+        if not self.ignore_type_hints and not _is_empty(rettype):
             if isinstance(rettype, tuple):
                 for i, subrettype in enumerate(rettype):
                     types[f'__return_{i}'] = create_datadescriptor(subrettype)
@@ -738,7 +763,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         if sdfg is not None:
             # Set regenerate and recompile flags
-            sdfg._regenerate_code = self.regenerate_code
+            sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
 
         return sdfg, self._cache.make_key(argtypes, given_args, self.closure_array_keys, self.closure_constant_keys,
@@ -761,7 +786,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
     def load_precompiled_sdfg(self, path: str, *args, **kwargs) -> None:
         """
-        Loads an external compiled SDFG object that will be invoked when the 
+        Loads an external compiled SDFG object that will be invoked when the
         function is called.
 
         :param path: Path to SDFG build folder (e.g., ".dacecache/program").
@@ -790,12 +815,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None) -> SDFG:
+    def _generate_pdp(self,
+                      args: Tuple[Any],
+                      kwargs: Dict[str, Any],
+                      simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
         """ Generates the parsed AST representation of a DaCe program.
-        
+
             :param args: The given arguments to the program.
             :param kwargs: The given keyword arguments to the program.
-            :param simplify: Whether to apply simplification pass when parsing 
+            :param simplify: Whether to apply simplification pass when parsing
                            nested dace programs.
             :return: A 2-tuple of (parsed SDFG object, was the SDFG retrieved
                      from cache).
@@ -905,7 +933,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             # TODO: Add to parsed SDFG cache
 
             # Set regenerate and recompile flags
-            sdfg._regenerate_code = self.regenerate_code
+            sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
 
         return sdfg, cached

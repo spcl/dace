@@ -129,7 +129,8 @@ class BankSplit(transformation.SingleStateTransformation):
         else:
             split_info = self.split_array_info
             if len(split_info) != ndim:
-                raise RuntimeError("Length of split_array_info must match number of " "dimensions")
+                raise RuntimeError("Length of split_array_info must match number of "
+                                   "dimensions")
         if functools.reduce(lambda a, b: a * b, split_info) != bank_count:
             raise RuntimeError("Splitting is not possible with the selected splits"
                                "and this number of HBM-banks (required number of banks "
@@ -162,8 +163,8 @@ class BankSplit(transformation.SingleStateTransformation):
         target_offset_str = ", ".join([f"({x}):({x}+{y})" for x, y in zip(target_offset, target_size)])
         if collect_src:
             copy_memlet = memlet.Memlet(f"{src.data}[{target_hbm_bank_str}, {target_size_str}]->"
-                                        f"{target_offset_str}")
+                                        f"[{target_offset_str}]")
         else:
-            copy_memlet = memlet.Memlet(f"{src.data}[{target_offset_str}]->{target_hbm_bank_str}, "
-                                        f"{target_size_str}")
+            copy_memlet = memlet.Memlet(f"{src.data}[{target_offset_str}]->[{target_hbm_bank_str}, "
+                                        f"{target_size_str}]")
         graph.add_edge(src, None, dst, None, copy_memlet)

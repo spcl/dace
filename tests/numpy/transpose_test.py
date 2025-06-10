@@ -50,7 +50,7 @@ def test_transpose():
 
 # TODO: Enable after fixing HPTT in CI
 # @pytest.mark.hptt
-@pytest.mark.skip
+@pytest.mark.skip('HPTT is not supported in CI')
 def test_hptt():
     with dace.config.set_temporary('library', 'ttranspose', 'default_implementation', value='HPTT'):
         test_transpose_axes0()

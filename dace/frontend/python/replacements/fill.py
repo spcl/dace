@@ -7,8 +7,9 @@ from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
+import copy
 from numbers import Number
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import sympy as sp
@@ -24,6 +25,8 @@ def _numpy_full(pv: ProgramVisitor,
     """ Creates and array of the specified shape and initializes it with
         the fill value.
     """
+    if isinstance(shape, Number) or symbolic.issymbolic(shape):
+        shape = [shape]
     is_data = False
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.dtype_to_typeclass(type(fill_value))
@@ -33,19 +36,33 @@ def _numpy_full(pv: ProgramVisitor,
         is_data = True
         vtype = sdfg.arrays[fill_value].dtype
     dtype = dtype or vtype
+
+    # Handle one-dimensional inputs
+    if isinstance(shape, (Number, str)) or symbolic.issymbolic(shape):
+        shape = [shape]
+
+    if any(isinstance(s, str) for s in shape):
+        raise DaceSyntaxError(
+            pv, None, f'Data-dependent shape {shape} is currently not allowed. Only constants '
+            'and symbolic values can be used.')
+
     name, _ = sdfg.add_temp_transient(shape, dtype)
 
     if is_data:
-        state.add_mapped_tasklet('_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                                                  for i, s in enumerate(shape)},
+        state.add_mapped_tasklet('_numpy_full_', {
+            "__i{}".format(i): "0: {}".format(s)
+            for i, s in enumerate(shape)
+        },
                                  dict(__inp=Memlet(data=fill_value, subset='0')),
                                  "__out = __inp",
                                  dict(__out=Memlet.simple(name, ",".join(["__i{}".format(i)
                                                                           for i in range(len(shape))]))),
                                  external_edges=True)
     else:
-        state.add_mapped_tasklet('_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                                                  for i, s in enumerate(shape)}, {},
+        state.add_mapped_tasklet('_numpy_full_', {
+            "__i{}".format(i): "0: {}".format(s)
+            for i, s in enumerate(shape)
+        }, {},
                                  "__out = {}".format(fill_value),
                                  dict(__out=Memlet.simple(name, ",".join(["__i{}".format(i)
                                                                           for i in range(len(shape))]))),
@@ -65,7 +82,7 @@ def _numpy_full_like(pv: ProgramVisitor,
     """ Creates and array of the same shape and dtype as a and initializes it
         with the fill value.
     """
-    if a not in sdfg.arrays.keys():
+    if a not in sdfg.arrays:
         raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
     desc = sdfg.arrays[a]
     dtype = dtype or desc.dtype
@@ -100,8 +117,10 @@ def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, va
     shape = sdfg.arrays[arr].shape
     state.add_mapped_tasklet(
         '_numpy_fill_',
-        map_ranges={f"__i{dim}": f"0:{s}"
-                    for dim, s in enumerate(shape)},
+        map_ranges={
+            f"__i{dim}": f"0:{s}"
+            for dim, s in enumerate(shape)
+        },
         inputs=inputs,
         code=f"__out = {body}",
         outputs={'__out': Memlet.simple(arr, ",".join([f"__i{dim}" for dim in range(len(shape))]))},
@@ -164,9 +183,9 @@ def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
     state.add_mapped_tasklet('eye',
-                             dict(i='0:%s' % N, j='0:%s' % M), {},
-                             'val = 1 if i == (j - %s) else 0' % k,
-                             dict(val=Memlet.simple(name, 'i, j')),
+                             dict(__i0='0:%s' % N, __i1='0:%s' % M), {},
+                             'val = 1 if __i0 == (__i1 - %s) else 0' % k,
+                             dict(val=Memlet.simple(name, '__i0, __i1')),
                              external_edges=True)
 
     return name
@@ -180,7 +199,12 @@ def _numpy_identity(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, dtype=d
 
 @oprepo.replaces('numpy.arange')
 @oprepo.replaces('dace.arange')
-def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
+def _arange(pv: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            *args,
+            dtype: dtypes.typeclass = None,
+            like: Optional[str] = None):
     """ Implementes numpy.arange """
 
     start = 0
@@ -195,30 +219,43 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     else:
         start, stop, step = args
 
+    if isinstance(start, str):
+        raise TypeError(f'Cannot compile numpy.arange with a scalar start value "{start}" (only constants and symbolic '
+                        'expressions are supported). Please use numpy.linspace instead.')
+    if isinstance(stop, str):
+        raise TypeError(f'Cannot compile numpy.arange with a scalar stop value "{stop}" (only constants and symbolic '
+                        'expressions are supported). Please use numpy.linspace instead.')
+    if isinstance(step, str):
+        raise TypeError(f'Cannot compile numpy.arange with a scalar step value "{step}" (only constants and symbolic '
+                        'expressions are supported). Please use numpy.linspace instead.')
+
     actual_step = step
     if isinstance(start, Number) and isinstance(stop, Number):
         actual_step = type(start + step)(start + step) - start
 
     if any(not isinstance(s, Number) for s in [start, stop, step]):
-        shape = (symbolic.int_ceil(stop - start, step), )
+        if step == 1:  # Common case where ceiling is not necessary
+            shape = (stop - start, )
+        else:
+            shape = (symbolic.int_ceil(stop - start, step), )
     else:
-        shape = (np.ceil((stop - start) / step), )
+        shape = (np.int64(np.ceil((stop - start) / step)), )
 
-    if not isinstance(shape[0], Number) and ('dtype' not in kwargs or kwargs['dtype'] == None):
-        raise NotImplementedError("The current implementation of numpy.arange requires that the output dtype is given "
-                                  "when at least one of (start, stop, step) is symbolic.")
+    # Infer dtype from input arguments
+    if dtype is None:
+        dtype, _ = _result_type(args)
+
     # TODO: Unclear what 'like' does
-    # if 'like' in kwargs and kwargs['like'] != None:
-    #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[kwargs['like']])
+    # if 'like' is not None:
+    #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[like])
     #     outarr.shape = shape
-    if 'dtype' in kwargs and kwargs['dtype'] != None:
-        dtype = kwargs['dtype']
-        if not isinstance(dtype, dtypes.typeclass):
-            dtype = dtypes.dtype_to_typeclass(dtype)
-        outname, outarr = sdfg.add_temp_transient(shape, dtype)
-    else:
-        dtype = dtypes.dtype_to_typeclass(type(shape[0]))
-        outname, outarr = sdfg.add_temp_transient(shape, dtype)
+
+    if not isinstance(dtype, dtypes.typeclass):
+        dtype = dtypes.dtype_to_typeclass(dtype)
+    outname, outarr = sdfg.add_temp_transient(shape, dtype)
+
+    start = f'decltype(__out)({start})'
+    actual_step = f'decltype(__out)({actual_step})'
 
     state.add_mapped_tasklet(name="_numpy_arange_",
                              map_ranges={'__i': f"0:{shape[0]}"},
@@ -228,3 +265,128 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
                              external_edges=True)
 
     return outname
+
+
+def _add_axis_to_shape(shape: Sequence[symbolic.SymbolicType], axis: int,
+                       axis_value: Any) -> List[symbolic.SymbolicType]:
+    if axis > len(shape):
+        raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+    if axis < 0:
+        naxis = len(shape) + 1 + axis
+        if naxis < 0 or naxis > len(shape):
+            raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+        axis = naxis
+
+    # Make a new shape list with the inserted dimension
+    new_shape = [None] * (len(shape) + 1)
+    for i in range(len(shape) + 1):
+        if i == axis:
+            new_shape[i] = axis_value
+        elif i < axis:
+            new_shape[i] = shape[i]
+        else:
+            new_shape[i] = shape[i - 1]
+
+    return new_shape
+
+
+@oprepo.replaces('numpy.linspace')
+def _linspace(pv: ProgramVisitor,
+              sdfg: SDFG,
+              state: SDFGState,
+              start: Union[Number, symbolic.SymbolicType, str],
+              stop: Union[Number, symbolic.SymbolicType, str],
+              num: Union[Integral, symbolic.SymbolicType] = 50,
+              endpoint: bool = True,
+              retstep: bool = False,
+              dtype: dtypes.typeclass = None,
+              axis: int = 0):
+    """ Implements numpy.linspace """
+    # Argument checks
+    if not isinstance(num, (Integral, sp.Basic)):
+        raise TypeError('numpy.linspace can only be compiled when the ``num`` argument is symbolic or constant.')
+    if not isinstance(axis, Integral):
+        raise TypeError('numpy.linspace can only be compiled when the ``axis`` argument is constant.')
+
+    # Start and stop are broadcast together, then, a new dimension is added to axis (taken from ``ndim + 1``),
+    # along which the numbers are filled.
+    start_shape = sdfg.arrays[start].shape if (isinstance(start, str) and start in sdfg.arrays) else []
+    stop_shape = sdfg.arrays[stop].shape if (isinstance(stop, str) and stop in sdfg.arrays) else []
+
+    shape, ranges, outind, ind1, ind2 = broadcast_together(start_shape, stop_shape)
+    shape_with_axis = _add_axis_to_shape(shape, axis, num)
+    ranges_with_axis = _add_axis_to_shape(ranges, axis, ('__sind', f'0:{symbolic.symstr(num)}'))
+    if outind:
+        outind_with_axis = _add_axis_to_shape(outind.split(', '), axis, '__sind')
+    else:
+        outind_with_axis = ['__sind']
+
+    if dtype is None:
+        # Infer output type from start and stop
+        start_type = sdfg.arrays[start] if (isinstance(start, str) and start in sdfg.arrays) else start
+        stop_type = sdfg.arrays[stop] if (isinstance(stop, str) and stop in sdfg.arrays) else stop
+
+        dtype, _ = _result_type((start_type, stop_type), 'Add')
+
+        # From the NumPy documentation: The inferred dtype will never be an integer; float is chosen even if the
+        # arguments would produce an array of integers.
+        if dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16, dtypes.uint32,
+                     dtypes.uint64):
+            dtype = dtypes.dtype_to_typeclass(float)
+
+    outname, _ = sdfg.add_temp_transient(shape_with_axis, dtype)
+
+    if endpoint == True:
+        num -= 1
+
+    # Fill in input memlets as necessary
+    inputs = {}
+    if isinstance(start, str) and start in sdfg.arrays:
+        index = f'[{ind1}]' if ind1 else ''
+        inputs['__start'] = Memlet(f'{start}{index}')
+        startcode = '__start'
+    else:
+        startcode = symbolic.symstr(start)
+
+    if isinstance(stop, str) and stop in sdfg.arrays:
+        index = f'[{ind2}]' if ind2 else ''
+        inputs['__stop'] = Memlet(f'{stop}{index}')
+        stopcode = '__stop'
+    else:
+        stopcode = symbolic.symstr(stop)
+
+    # Create tasklet code based on inputs
+    code = f'__out = {startcode} + __sind * decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})'
+
+    state.add_mapped_tasklet(name="linspace",
+                             map_ranges=ranges_with_axis,
+                             inputs=inputs,
+                             code=code,
+                             outputs={'__out': Memlet(f"{outname}[{','.join(outind_with_axis)}]")},
+                             external_edges=True)
+
+    if retstep == False:
+        return outname
+
+    # Return step if requested
+
+    # Handle scalar outputs
+    if not ranges:
+        ranges = [('__unused', '0:1')]
+    out_index = f'[{outind}]'
+
+    if len(shape) > 0:
+        stepname, _ = sdfg.add_temp_transient(shape, dtype)
+    else:
+        stepname, _ = sdfg.add_scalar(sdfg.temp_data_name(), dtype, transient=True)
+        out_index = '[0]'
+
+    state.add_mapped_tasklet(
+        'retstep',
+        ranges,
+        copy.deepcopy(inputs),
+        f'__out = decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})',
+        {'__out': Memlet(f"{stepname}{out_index}")},
+        external_edges=True)
+
+    return outname, stepname

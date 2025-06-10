@@ -10,8 +10,10 @@ N = dace.symbol('N')
 
 @dace.program(dace.float64[N], dace.float64[N])
 def cudahello(A, Vout):
+
     @dace.mapscope(_[0:ceiling(N / 32)])
     def multiplication(i):
+
         @dace.map(_[i * 32:min(N, (i + 1) * 32)])
         def mult_block(bi):
             in_V << A[bi]
@@ -20,18 +22,18 @@ def cudahello(A, Vout):
 
 
 def _test(sdfg):
-    N.set(144)
+    N = 144
 
-    print('Vector double CUDA (shared memory) %d' % (N.get()))
+    print('Vector double CUDA (shared memory) %d' % (N))
 
     V = dace.ndarray([N], dace.float64)
     Vout = dace.ndarray([N], dace.float64)
-    V[:] = np.random.rand(N.get()).astype(dace.float64.type)
+    V[:] = np.random.rand(N).astype(dace.float64.type)
     Vout[:] = dace.float64(0)
 
     sdfg(A=V, Vout=Vout, N=N)
 
-    diff = np.linalg.norm(2 * V - Vout) / N.get()
+    diff = np.linalg.norm(2 * V - Vout) / N
     print("Difference:", diff)
     assert diff <= 1e-5
 

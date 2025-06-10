@@ -4,7 +4,9 @@ Contains replacements for filtering functions.
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements.utils import ProgramVisitor, broadcast_together
-from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState
+from dace import data, dtypes, subsets, Memlet, SDFG, SDFGState, nodes
+
+from typing import Optional, Set
 
 
 @oprepo.replaces('numpy.where')
@@ -13,15 +15,24 @@ def _array_array_where(visitor: ProgramVisitor,
                        state: SDFGState,
                        cond_operand: str,
                        left_operand: str = None,
-                       right_operand: str = None):
+                       right_operand: str = None,
+                       generated_nodes: Optional[Set[nodes.Node]] = None,
+                       left_operand_node: Optional[nodes.AccessNode] = None,
+                       right_operand_node: Optional[nodes.AccessNode] = None):
     from dace.frontend.python.replacements.operators import result_type
 
     if left_operand is None or right_operand is None:
         raise ValueError('numpy.where is only supported for the case where x and y are given')
 
     cond_arr = sdfg.arrays[cond_operand]
-    left_arr = sdfg.arrays.get(left_operand, None)
-    right_arr = sdfg.arrays.get(right_operand, None)
+    try:
+        left_arr = sdfg.arrays[left_operand]
+    except KeyError:
+        left_arr = None
+    try:
+        right_arr = sdfg.arrays[right_operand]
+    except KeyError:
+        right_arr = None
 
     left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
     right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
@@ -66,12 +77,26 @@ def _array_array_where(visitor: ProgramVisitor,
                                     '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]))
         n0 = state.add_read(cond_operand)
         n3 = state.add_write(out_operand)
+        if generated_nodes is not None:
+            generated_nodes.add(tasklet)
+            generated_nodes.add(n0)
+            generated_nodes.add(n3)
         state.add_edge(n0, None, tasklet, '__incond', Memlet.from_array(cond_operand, cond_arr))
         if left_arr:
-            n1 = state.add_read(left_operand)
+            if left_operand_node:
+                n1 = left_operand_node
+            else:
+                n1 = state.add_read(left_operand)
+                if generated_nodes is not None:
+                    generated_nodes.add(n1)
             state.add_edge(n1, None, tasklet, '__in1', Memlet.from_array(left_operand, left_arr))
         if right_arr:
-            n2 = state.add_read(right_operand)
+            if right_operand_node:
+                n2 = right_operand_node
+            else:
+                n2 = state.add_read(right_operand)
+                if generated_nodes is not None:
+                    generated_nodes.add(n2)
             state.add_edge(n2, None, tasklet, '__in2', Memlet.from_array(right_operand, right_arr))
         state.add_edge(tasklet, '__out', n3, None, Memlet.from_array(out_operand, out_arr))
     else:
@@ -81,11 +106,68 @@ def _array_array_where(visitor: ProgramVisitor,
             inputs['__in1'] = Memlet.simple(left_operand, left_idx)
         if right_arr:
             inputs['__in2'] = Memlet.simple(right_operand, right_idx)
-        state.add_mapped_tasklet("_where_",
-                                 all_idx_dict,
-                                 inputs,
-                                 '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]),
-                                 {'__out': Memlet.simple(out_operand, out_idx)},
-                                 external_edges=True)
+
+        input_nodes = {}
+        if left_operand_node:
+            input_nodes[left_operand] = left_operand_node
+        if right_operand_node:
+            input_nodes[right_operand] = right_operand_node
+        tasklet, me, mx = state.add_mapped_tasklet("_where_",
+                                                   all_idx_dict,
+                                                   inputs,
+                                                   '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1],
+                                                                                               i2=tasklet_args[2]),
+                                                   {'__out': Memlet.simple(out_operand, out_idx)},
+                                                   external_edges=True,
+                                                   input_nodes=input_nodes)
+        if generated_nodes is not None:
+            generated_nodes.add(tasklet)
+            generated_nodes.add(me)
+            for ie in state.in_edges(me):
+                if ie.src is not left_operand_node and ie.src is not right_operand_node:
+                    generated_nodes.add(ie.src)
+            generated_nodes.add(mx)
+            for oe in state.out_edges(mx):
+                generated_nodes.add(oe.dst)
+
+    return out_operand
+
+
+@oprepo.replaces('numpy.select')
+def _array_array_select(visitor: ProgramVisitor,
+                        sdfg: SDFG,
+                        state: SDFGState,
+                        cond_list: List[str],
+                        choice_list: List[str],
+                        default=None):
+    if len(cond_list) != len(choice_list):
+        raise ValueError('numpy.select is only valid with same-length condition and choice lists')
+
+    default_operand = default if default is not None else 0
+
+    i = len(cond_list) - 1
+    cond_operand = cond_list[i]
+    left_operand = choice_list[i]
+    right_operand = default_operand
+    right_operand_node = None
+    out_operand = None
+    while i >= 0:
+        generated_nodes = set()
+        out_operand = _array_array_where(visitor,
+                                         sdfg,
+                                         state,
+                                         cond_operand,
+                                         left_operand,
+                                         right_operand,
+                                         generated_nodes=generated_nodes,
+                                         right_operand_node=right_operand_node)
+        i -= 1
+        cond_operand = cond_list[i]
+        left_operand = choice_list[i]
+        right_operand = out_operand
+        right_operand_node = None
+        for nd in generated_nodes:
+            if isinstance(nd, nodes.AccessNode) and nd.data == out_operand:
+                right_operand_node = nd
 
     return out_operand

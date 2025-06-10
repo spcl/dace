@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal
+from dace.symbolic import symstr, equal, equal_valued
 import dace.library
 from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
@@ -68,8 +68,9 @@ class ExpandGemmPure(ExpandTransformation):
             raise SyntaxError("Matrix sizes must match")
         res = equal(trans_shape_a[1], trans_shape_b[0])
         if res is None:
-            warnings.warn(f"First matrix columns {trans_shape_a[1]} may not match "
-                          f"second matrix rows {trans_shape_b[0]}", UserWarning)
+            warnings.warn(
+                f"First matrix columns {trans_shape_a[1]} may not match "
+                f"second matrix rows {trans_shape_b[0]}", UserWarning)
         elif not res:
             raise SyntaxError("Matrix sizes must match")
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
@@ -81,12 +82,12 @@ class ExpandGemmPure(ExpandTransformation):
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
-        if node.alpha == 1.0:
+        if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
         else:
             mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
 
-        if node.beta == 1:
+        if equal_valued(1, node.beta):
             state = sdfg.add_state(node.label + "_state")
         else:
             init_state = sdfg.add_state(node.label + "_initstate")
@@ -99,13 +100,15 @@ class ExpandGemmPure(ExpandTransformation):
         output_nodes = None
 
         # Initialization / beta map
-        if node.beta == 0:
+        if equal_valued(0, node.beta):
             init_state.add_mapped_tasklet(
-                'gemm_init', {'_o%d' % i: '0:%s' % symstr(d)
-                              for i, d in enumerate(shape_c)}, {},
+                'gemm_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(shape_c)
+                }, {},
                 'out = 0', {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
-        elif node.beta == 1:
+        elif equal_valued(1, node.beta):
             # Do nothing for initialization, only update the values
             pass
         else:
@@ -124,20 +127,23 @@ class ExpandGemmPure(ExpandTransformation):
             else:
                 raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
 
-            init_state.add_mapped_tasklet("gemm_init", {"__i%d" % i: "0:%s" % s
-                                                        for i, s in enumerate([M, N])}, {
-                                                            "__c": dace.Memlet.simple("_cin", memlet_idx),
-                                                        },
+            init_state.add_mapped_tasklet("gemm_init", {
+                "__i%d" % i: "0:%s" % s
+                for i, s in enumerate([M, N])
+            }, {
+                "__c": dace.Memlet.simple("_cin", memlet_idx),
+            },
                                           add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
                                           external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet("gemm", {"__i%d" % i: "0:%s" % s
-                                          for i, s in enumerate([M, N, K])},
-                                 {
-                                     "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-                                     "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
-                                 },
+        state.add_mapped_tasklet("gemm", {
+            "__i%d" % i: "0:%s" % s
+            for i, s in enumerate([M, N, K])
+        }, {
+            "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+            "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
+        },
                                  mul_program,
                                  {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
                                  external_edges=True,
@@ -395,7 +401,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 
-            if node.beta != 0.0:
+            if not equal_valued(0, node.beta):
                 rc = nstate.add_read('_c')
                 rgc = nstate.add_access('_c_gpu')
                 tasklet.add_in_connector('_conn_cin')
@@ -461,7 +467,7 @@ class ExpandGemmPBLAS(ExpandTransformation):
         (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
 
-        if node.beta != 0:
+        if not equal_valued(0, node.beta):
             raise NotImplementedError
 
         M = ashape[0]
@@ -588,7 +594,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         new_sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         new_sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
-        if node.beta != 0:
+        if not equal_valued(0, node.beta):
             new_sdfg.add_array("_cin", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         def make_read_A(state):
@@ -672,7 +678,7 @@ to_kernel = data""")
             # Receives the results and adds it to C
 
             pipe = state.add_read("C_pipe")
-            if node.beta != 0:
+            if not equal_valued(0, node.beta):
                 mem_read = state.add_read("_cin")
             mem = state.add_write("_c")
 
@@ -688,18 +694,18 @@ to_kernel = data""")
 
             # deal with out-of-bound accesses
 
-            mul_accumulated = f"{node.alpha} * from_kernel" if node.alpha != 1.0 else "from_kernel"
-            if node.beta != 0:
-                if node.beta != 1.0:
+            mul_accumulated = f"{node.alpha} * from_kernel" if not equal_valued(1, node.alpha) else "from_kernel"
+            if not equal_valued(0, node.beta):
+                if not equal_valued(1, node.beta):
                     add_prev_c = f" + {node.beta} * prev_c"
                 else:
                     add_prev_c = " + prev_c"
             else:
                 add_prev_c = ""
-            tasklet_inputs = {"from_kernel", "prev_c"} if node.beta != 0 else {"from_kernel"}
+            tasklet_inputs = {"from_kernel", "prev_c"} if not equal_valued(0, node.beta) else {"from_kernel"}
             tasklet = state.add_tasklet(
                 "write_C", tasklet_inputs, {"to_memory"}, f"""\
-if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :                                               
+if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
     to_memory = {mul_accumulated}{add_prev_c}
 """)
             state.add_memlet_path(pipe,
@@ -707,7 +713,7 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
                                   tasklet,
                                   dst_conn="from_kernel",
                                   memlet=dace.Memlet(f"C_pipe[{P}-1]"))
-            if node.beta != 0:
+            if not equal_valued(0, node.beta):
                 state.add_memlet_path(mem_read,
                                       entry_map,
                                       tasklet,
@@ -839,7 +845,7 @@ if m >= {L} and not {entry_pipeline.pipeline.drain_condition()}:
 # - if we are working on second assigned row or second tile and we have something to drain
 # - if k = K-1 and m>=L: each PE has just finished to compute something
 # - if we are in the draining phase
-# How: 
+# How:
 # - if k = K-1 and m>=L: then the PE drains its own result
 #-  otherwise, if k_drain<p forward data coming from previous PEs (this could happens also in the drain phase)
 if((n0 > 0 or tm > 0)  and k_drain <p and m_drain <{T}) or  (k=={K}-1 and m>= {L}) or ({entry_pipeline.pipeline.drain_condition()} and k_drain < p):
@@ -998,7 +1004,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, transA=False, transB=False, alpha=1, beta=0, cin=True):
         super().__init__(name,
                          location=location,
-                         inputs=({"_a", "_b", "_cin"} if beta != 0 and cin else {"_a", "_b"}),
+                         inputs=({"_a", "_b", "_cin"} if not equal_valued(0, beta) and cin else {"_a", "_b"}),
                          outputs={"_c"})
         self.transA = True if transA else False
         self.transB = True if transB else False
@@ -1091,7 +1097,7 @@ def gemm_libnode(pv: 'ProgramVisitor',
     state.add_edge(B_in, None, libnode, '_b', mm.Memlet(B))
     state.add_edge(libnode, '_c', C_out, None, mm.Memlet(C))
 
-    if beta != 0:
+    if not equal_valued(0, beta):
         C_in = state.add_read(C)
         state.add_edge(C_in, None, libnode, '_cin', mm.Memlet(C))
 

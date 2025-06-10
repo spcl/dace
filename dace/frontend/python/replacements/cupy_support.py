@@ -14,13 +14,7 @@ import numpy as np
 
 @oprepo.replaces("cupy._core.core.ndarray")
 @oprepo.replaces("cupy.ndarray")
-def _define_cupy_local(
-    pv: "ProgramVisitor",
-    sdfg: SDFG,
-    state: SDFGState,
-    shape: Shape,
-    dtype: dtypes.typeclass,
-):
+def _define_cupy_local(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dtypes.typeclass):
     """Defines a local array in a DaCe program."""
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
@@ -47,8 +41,10 @@ def _cupy_full(pv: ProgramVisitor,
     dtype = dtype or vtype
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
 
-    state.add_mapped_tasklet('_cupy_full_', {"__i{}".format(i): "0: {}".format(s)
-                                             for i, s in enumerate(shape)}, {},
+    state.add_mapped_tasklet('_cupy_full_', {
+        "__i{}".format(i): "0: {}".format(s)
+        for i, s in enumerate(shape)
+    }, {},
                              "__out = {}".format(fill_value),
                              dict(__out=Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
                              external_edges=True)

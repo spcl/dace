@@ -25,7 +25,11 @@ except (ImportError, ModuleNotFoundError):
 
 class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
-    def __init__(self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(self,
+                 sdfg: SDFG,
+                 i,
+                 j,
+                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="SubgraphFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
@@ -67,7 +71,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
         subgraph_fusion = sg.CompositeFusion()
-        subgraph_fusion.setup_match(subgraph, sdfg.sdfg_id, state_id)
+        subgraph_fusion.setup_match(subgraph, sdfg.cfg_id, state_id)
         subgraph_fusion.allow_tiling = True
         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
         if subgraph_fusion.can_be_applied(sdfg, subgraph):
@@ -117,7 +121,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
         subgraph_fusion = sg.CompositeFusion()
-        subgraph_fusion.setup_match(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        subgraph_fusion.setup_match(subgraph, candidate.cfg_id, candidate.node_id(candidate.start_state))
         subgraph_fusion.allow_tiling = True
         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
         if subgraph_fusion.can_be_applied(candidate, subgraph):
@@ -257,10 +261,12 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_state = experiment_sdfg.start_state
 
                         experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
-                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
+                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg,
+                                                                         graph=experiment_state,
+                                                                         map_entries=experiment_maps)
 
                         subgraph_fusion = sg.CompositeFusion()
-                        subgraph_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
+                        subgraph_fusion.setup_match(experiment_subgraph, experiment_sdfg.cfg_id,
                                                     experiment_sdfg.node_id(experiment_state))
                         subgraph_fusion.allow_tiling = True
                         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
@@ -291,11 +297,10 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                             best_pattern_runtime = pattern_runtime
                             best_pattern = subgraph_maps
 
-
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
                         subgraph_fusion = sg.CompositeFusion()
-                        subgraph_fusion.setup_match(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        subgraph_fusion.setup_match(subgraph, nsdfg.cfg_id, nsdfg.node_id(state))
                         subgraph_fusion.allow_tiling = True
                         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
                         subgraph_fusion.apply(nsdfg)
@@ -306,10 +311,10 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     else:
                         break
 
-
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:
-        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet), map(lambda edge: edge.dst, state.out_edges(map_entry)))
+        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet),
+                          map(lambda edge: edge.dst, state.out_edges(map_entry)))
         tasklets = set(tasklets)
 
         desc = []

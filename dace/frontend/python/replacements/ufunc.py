@@ -23,6 +23,8 @@ import warnings
 import numpy as np
 import sympy as sp
 
+numpy_version = np.lib.NumpyVersion(np.__version__)
+
 # TODO: Add all ufuncs in subsequent PR's.
 ufuncs = dict(
     add=dict(name="_numpy_add_",
@@ -169,7 +171,7 @@ ufuncs = dict(
               operator=None,
               inputs=["__in1"],
               outputs=["__out"],
-              code="__out = sign(__in1)",
+              code="__out = sign_numpy_2(__in1)" if numpy_version >= '2.0.0' else "__out = sign(__in1)",
               reduce=None,
               initial=np.sign.identity),
     heaviside=dict(name="_numpy_heaviside_",
@@ -242,6 +244,13 @@ ufuncs = dict(
                code="__out = log1p(__in1)",
                reduce=None,
                initial=np.log1p.identity),
+    clip=dict(name="_numpy_clip_",
+              operator=None,
+              inputs=["__in_a", "__in_amin", "__in_amax"],
+              outputs=["__out"],
+              code="__out = min(max(__in_a, __in_amin), __in_amax)",
+              reduce=None,
+              initial=np.inf),
     sqrt=dict(name="_numpy_sqrt_",
               operator="Sqrt",
               inputs=["__in1"],
@@ -1086,7 +1095,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                     cond_state.add_nedge(r, w, Memlet("{}[0]".format(r)))
                 true_state = sdfg.add_state(label=cond_state.label + '_true')
                 state = true_state
-                visitor.last_state = state
+                visitor.last_block = state
                 cond = name
                 cond_else = 'not ({})'.format(cond)
                 sdfg.add_edge(cond_state, true_state, InterstateEdge(cond))
@@ -1105,7 +1114,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                                Memlet.from_array(arg, sdfg.arrays[arg]))
         if has_where and isinstance(where, str) and where in sdfg.arrays.keys():
             visitor._add_state(label=cond_state.label + '_true')
-            sdfg.add_edge(cond_state, visitor.last_state, InterstateEdge(cond_else))
+            sdfg.add_edge(cond_state, visitor.last_block, InterstateEdge(cond_else))
     else:
         # Map needed
         if has_where:
@@ -1653,7 +1662,7 @@ def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg
     init_state = nested_sdfg.add_state(label="init")
     r = init_state.add_read(inpconn)
     w = init_state.add_write(outconn)
-    init_state.add_nedge(r, w, Memlet("{a}[{i}] -> {oi}".format(a=inpconn, i='0', oi='0')))
+    init_state.add_nedge(r, w, Memlet("{a}[{i}] -> [{oi}]".format(a=inpconn, i='0', oi='0')))
 
     body_state = nested_sdfg.add_state(label="body")
     r1 = body_state.add_read(inpconn)
@@ -1851,3 +1860,14 @@ def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr], kwargs)[0]
+
+
+@oprepo.replaces('numpy.clip')
+def _clip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a, a_min=None, a_max=None, **kwargs):
+    if a_min is None and a_max is None:
+        raise ValueError("clip() requires at least one of `a_min` or `a_max`")
+    if a_min is None:
+        return implement_ufunc(pv, None, sdfg, state, 'minimum', [a, a_max], kwargs)[0]
+    if a_max is None:
+        return implement_ufunc(pv, None, sdfg, state, 'maximum', [a, a_min], kwargs)[0]
+    return implement_ufunc(pv, None, sdfg, state, 'clip', [a, a_min, a_max], kwargs)[0]

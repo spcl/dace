@@ -1,0 +1,31 @@
+{% extends "sdfv_base.html" %}
+
+{% block scripts_after %}
+    <script>
+    var sdfgA_string = {{sdfgA|safe}};
+    var sdfgB_string = {{sdfgB|safe}};
+    var diffMap = {
+        addedKeys: new Set({{addedKeysList|safe}}),
+        removedKeys: new Set({{removedKeysList|safe}}),
+        changedKeys: new Set({{changedKeysList|safe}}),
+    };
+    document.addEventListener('DOMContentLoaded', function () {
+        const sdfvInst = WebSDFV.getInstance();
+        if (sdfvInst.initialized) {
+            sdfvInst.enterDiffView(
+                checkCompatLoad(parse_sdfg(sdfgA_string)),
+                checkCompatLoad(parse_sdfg(sdfgB_string)),
+                diffMap
+            );
+        } else {
+            sdfvInst.on('initialized', () => {
+                sdfvInst.enterDiffView(
+                    checkCompatLoad(parse_sdfg(sdfgA_string)),
+                    checkCompatLoad(parse_sdfg(sdfgB_string)),
+                    diffMap
+                );
+            });
+        }
+    });
+    </script>
+{% endblock %}

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 
 @dace.program
@@ -43,11 +44,11 @@ def augassign_wcr3(A: dace.int32[10, 10, 10], B: dace.int32[10], W: dace.bool_[1
 
 @dace.program
 def augassign_wcr4():
-    a = np.zeros((10,))
+    a = np.zeros((10, ))
     for i in dace.map[1:9]:
-        a[i-1] += 1
+        a[i - 1] += 1
         a[i] += 2
-        a[i+1] += 3
+        a[i + 1] += 3
     return a
 
 
@@ -59,8 +60,8 @@ def test_augassign_wcr():
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
         test_sdfg = augassign_wcr.to_sdfg(simplify=False)
     wcr_count = 0
-    for sdfg in test_sdfg.sdfg_list:
-        for state in sdfg.nodes():
+    for sdfg in test_sdfg.all_sdfgs_recursive():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.wcr:
                     wcr_count += 1
@@ -80,8 +81,8 @@ def test_augassign_wcr2():
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
         test_sdfg = augassign_wcr2.to_sdfg(simplify=False)
     wcr_count = 0
-    for sdfg in test_sdfg.sdfg_list:
-        for state in sdfg.nodes():
+    for sdfg in test_sdfg.all_sdfgs_recursive():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.wcr:
                     wcr_count += 1
@@ -104,8 +105,8 @@ def test_augassign_wcr3():
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=True):
         test_sdfg = augassign_wcr3.to_sdfg(simplify=False)
     wcr_count = 0
-    for sdfg in test_sdfg.sdfg_list:
-        for state in sdfg.nodes():
+    for sdfg in test_sdfg.all_sdfgs_recursive():
+        for state in sdfg.states():
             for edge in state.edges():
                 if edge.data.wcr:
                     wcr_count += 1
@@ -120,6 +121,7 @@ def test_augassign_wcr3():
 
 
 def test_augassign_no_wcr():
+
     @dace.program
     def no_wcr(A: dace.int32[5, 5, 5]):
         A[2, 3, :] += A[3, 2, :]
@@ -138,6 +140,7 @@ def test_augassign_no_wcr():
 
 
 def test_augassign_no_wcr2():
+
     @dace.program
     def no_wcr(A: dace.int32[5, 5, 5]):
         A[2, 3, 1:4] += A[2:5, 1, 4]
@@ -156,7 +159,7 @@ def test_augassign_no_wcr2():
 
 
 def test_augassign_wcr4():
-    
+
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=False):
         val = augassign_wcr4()
         ref = augassign_wcr4.f()

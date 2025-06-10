@@ -17,6 +17,7 @@ N = dace.symbol("N")
 
 @dace.program
 def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float32[1]):
+
     @dace.map
     def product(i: _[0:N]):
         a << A[i]
@@ -26,13 +27,13 @@ def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float32[1]):
 
 
 def run_dot(n, tile_first):
-    N.set(n)
+    N = n
     A = dace.ndarray([N], dtype=dace.float32)
     B = dace.ndarray([N], dtype=dace.float32)
     out_AB = dace.scalar(dace.float32)
 
-    A[:] = np.random.rand(N.get()).astype(dace.float32.type)
-    B[:] = np.random.rand(N.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(N).astype(dace.float32.type)
+    B[:] = np.random.rand(N).astype(dace.float32.type)
     out_AB[0] = dace.float32(0)
 
     sdfg = dot.to_sdfg()
@@ -45,7 +46,7 @@ def run_dot(n, tile_first):
 
     sdfg(A=A, B=B, out=out_AB, N=N)
 
-    diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N.get())
+    diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N)
     assert diff_ab <= 1e-5
 
     return sdfg

@@ -30,15 +30,15 @@ def program(A: dace.float64[N], C: dace.float64[N]):
 
 @pytest.mark.gpu
 def test():
-    N.set(50)
+    N = 50
 
     sdfg = program.to_sdfg()
     sdfg.apply_gpu_transformations()
     state = sdfg.nodes()[0]
 
-    A = np.random.rand(N.get()).astype(np.float64)
-    C1 = np.random.rand(N.get()).astype(np.float64)
-    C2 = np.random.rand(N.get()).astype(np.float64)
+    A = np.random.rand(N).astype(np.float64)
+    C1 = np.random.rand(N).astype(np.float64)
+    C2 = np.random.rand(N).astype(np.float64)
 
     csdfg = sdfg.compile()
     csdfg(A=A, C=C1, N=N)

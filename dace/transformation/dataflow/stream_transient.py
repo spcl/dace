@@ -6,7 +6,6 @@ import copy
 from dace.symbolic import symstr
 import warnings
 
-from numpy.core.numeric import outer
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import SymbolicProperty, make_properties, Property
@@ -186,18 +185,17 @@ class AccumulateTransient(transformation.SingleStateTransformation):
                                                                node_b=outer_map_exit)
 
         if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize ' 'newly-created transient!')
+            warnings.warn('AccumulateTransient did not properly initialize '
+                          'newly-created transient!')
             return
 
-        sdfg_state: SDFGState = sdfg.node(self.state_id)
-
-        map_entry = sdfg_state.entry_node(map_exit)
+        map_entry = graph.entry_node(map_exit)
 
         nested_sdfg: NestedSDFG = nest_state_subgraph(sdfg=sdfg,
-                                                      state=sdfg_state,
+                                                      state=graph,
                                                       subgraph=SubgraphView(
-                                                          sdfg_state, {map_entry, map_exit}
-                                                          | sdfg_state.all_nodes_between(map_entry, map_exit)))
+                                                          graph, {map_entry, map_exit}
+                                                          | graph.all_nodes_between(map_entry, map_exit)))
 
         nested_sdfg_state: SDFGState = nested_sdfg.sdfg.nodes()[0]
 
@@ -205,17 +203,19 @@ class AccumulateTransient(transformation.SingleStateTransformation):
 
         temp_array: Array = sdfg.arrays[data_node.data]
 
-        init_state.add_mapped_tasklet(
-            name='acctrans_init',
-            map_ranges={'_o%d' % i: '0:%s' % symstr(d)
-                        for i, d in enumerate(temp_array.shape)},
-            inputs={},
-            code='out = %s' % self.identity,
-            outputs={
-                'out':
-                dace.Memlet.simple(data=data_node.data,
-                                   subset_str=','.join(['_o%d' % i for i, _ in enumerate(temp_array.shape)]))
-            },
-            external_edges=True)
+        init_state.add_mapped_tasklet(name='acctrans_init',
+                                      map_ranges={
+                                          '_o%d' % i: '0:%s' % symstr(d)
+                                          for i, d in enumerate(temp_array.shape)
+                                      },
+                                      inputs={},
+                                      code='out = %s' % self.identity,
+                                      outputs={
+                                          'out':
+                                          dace.Memlet.simple(data=data_node.data,
+                                                             subset_str=','.join(
+                                                                 ['_o%d' % i for i, _ in enumerate(temp_array.shape)]))
+                                      },
+                                      external_edges=True)
 
         # TODO: use trivial map elimintation here when it will be merged to remove map if it has trivial ranges

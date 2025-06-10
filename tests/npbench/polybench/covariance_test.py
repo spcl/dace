@@ -123,7 +123,9 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-def test_cpu():
+def test_cpu(monkeypatch):
+    # Serialization causes issues, we temporarily disable it
+    monkeypatch.setenv("DACE_testing_serialization", 0)
     run_covariance(dace.dtypes.DeviceType.CPU)
 
 

@@ -192,7 +192,7 @@ def make_vadd_sdfg(N: dace.symbol, veclen: int = 8):
     return sdfg
 
 
-def make_vadd_multi_sdfg(N, M):
+def make_vadd_multi_sdfg(N, M, n, m):
     '''
     Function for constructing an SDFG that adds a constant (42) to a an array `A` of `N` elements into a vector `B`.
     Each instance of an adder is within its own Processing Element (PE), along with a reader and writer to/from global memory.
@@ -203,7 +203,7 @@ def make_vadd_multi_sdfg(N, M):
     :return: An SDFG that has arguments `A` and `B`.
     '''
     # add sdfg
-    sdfg = dace.SDFG(f'integer_vector_plus_42_multiple_kernels_{N.get() // M.get()}')
+    sdfg = dace.SDFG(f'integer_vector_plus_42_multiple_kernels_{n // m}')
 
     # add state
     state = sdfg.add_state('device_state')
@@ -216,12 +216,12 @@ def make_vadd_multi_sdfg(N, M):
 
     # add streams
     sdfg.add_stream('A_stream',
-                    shape=(int(N.get() / M.get()), ),
+                    shape=(int(n / m), ),
                     dtype=dace.int32,
                     transient=True,
                     storage=dace.StorageType.FPGA_Local)
     sdfg.add_stream('B_stream',
-                    shape=(int(N.get() / M.get()), ),
+                    shape=(int(n / m), ),
                     dtype=dace.int32,
                     transient=True,
                     storage=dace.StorageType.FPGA_Local)
@@ -329,18 +329,18 @@ def test_hardware_vadd():
 
     # add symbol
     N = dace.symbol('N')
-    N.set(32)
+    n = 32
     veclen = 4
     sdfg = make_vadd_sdfg(N, veclen)
-    a = np.random.randint(0, 100, N.get()).astype(np.float32)
+    a = np.random.randint(0, 100, n).astype(np.float32)
     b = np.random.randint(1, 100, 1)[0].astype(np.float32)
-    c = np.zeros((N.get(), )).astype(np.float32)
+    c = np.zeros((n, )).astype(np.float32)
 
     # call program
     sdfg(A=a, B=b, C=c, N=N)
 
     expected = a + b
-    diff = np.linalg.norm(expected - c) / N.get()
+    diff = np.linalg.norm(expected - c) / n
     assert diff <= 1e-5
 
     return sdfg
@@ -355,25 +355,24 @@ def test_hardware_add42_single():
     M = dace.symbol('M')
 
     # init data structures
-    N.set(32)  # elements
-    M.set(32)  # elements per kernel
-    a = np.random.randint(0, 100, N.get()).astype(np.int32)
-    b = np.zeros((N.get(), )).astype(np.int32)
-    sdfg = make_vadd_multi_sdfg(N, M)
-    sdfg.specialize(dict(N=N, M=M))
+    n = 32  # elements
+    m = 32  # elements per kernel
+    a = np.random.randint(0, 100, n).astype(np.int32)
+    b = np.zeros((n, )).astype(np.int32)
+    sdfg = make_vadd_multi_sdfg(N, M, n, m)
+    sdfg.specialize(dict(N=n, M=m))
 
     # call program
     sdfg(A=a, B=b)
 
     # check result
-    for i in range(N.get()):
+    for i in range(n):
         assert b[i] == a[i] + 42
 
     return sdfg
 
 
-@pytest.mark.skip(reason="This test is covered by the Xilinx tests.")
-def test_hardware_axpy_double_pump(veclen=2):
+def _hardware_axpy_double_pump(veclen=2):
     '''
     Tests manual application of the multi-pumping optimization applied to the AXPY program from BLAS.
 
@@ -389,11 +388,11 @@ def test_hardware_axpy_double_pump(veclen=2):
 
         # init data structures
         N = dace.symbol('N')
-        N.set(32)
+        n = 32
         a = np.random.rand(1)[0].astype(np.float32)
-        x = np.random.rand(N.get()).astype(np.float32)
-        y = np.random.rand(N.get()).astype(np.float32)
-        result = np.zeros((N.get(), )).astype(np.float32)
+        x = np.random.rand(n).astype(np.float32)
+        y = np.random.rand(n).astype(np.float32)
+        result = np.zeros((n, )).astype(np.float32)
 
         # Build the SDFG
         sdfg = axpy.make_sdfg(veclen)
@@ -403,7 +402,7 @@ def test_hardware_axpy_double_pump(veclen=2):
 
         # check result
         expected = a * x + y
-        diff = np.linalg.norm(expected - result) / N.get()
+        diff = np.linalg.norm(expected - result) / n
 
     assert diff <= 1e-5
 
@@ -415,7 +414,7 @@ def test_hardware_axpy_double_pump_vec2():
     '''
     Tests double pumping with a vector length of 2.
     '''
-    return test_hardware_axpy_double_pump(veclen=2)
+    return _hardware_axpy_double_pump(veclen=2)
 
 
 @rtl_test()
@@ -423,7 +422,7 @@ def test_hardware_axpy_double_pump_vec4():
     '''
     Tests double pumping with a vector length of 4.
     '''
-    return test_hardware_axpy_double_pump(veclen=4)
+    return _hardware_axpy_double_pump(veclen=4)
 
 
 @rtl_test()
@@ -441,10 +440,10 @@ def test_hardware_vadd_temporal_vectorization():
         size_n = 1024
         veclen = 4
         N = dace.symbol('N')
-        N.set(size_n)
-        x = np.random.rand(N.get()).astype(np.float32)
-        y = np.random.rand(N.get()).astype(np.float32)
-        result = np.zeros(N.get(), dtype=np.float32)
+        n = size_n
+        x = np.random.rand(n).astype(np.float32)
+        y = np.random.rand(n).astype(np.float32)
+        result = np.zeros(n, dtype=np.float32)
         expected = x + y
 
         # Generate the initial SDFG
@@ -486,32 +485,32 @@ def test_hardware_vadd_temporal_vectorization():
         [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
 
         # Run the program and verify the results
-        sdfg.specialize({'N': N.get()})
+        sdfg.specialize({'N': n})
         sdfg(x=x, y=y, __return=result)
         assert (np.allclose(expected, result))
 
         return sdfg
 
 
-# TODO disabled due to problem with array of streams in Vitis 2021.1
+# Disabled due to problem with array of streams in Vitis 2021.1
 #rtl_test()
 #def test_hardware_add42_multi():
 #    N = dace.symbol('N')
 #    M = dace.symbol('M')
 #
 #    # init data structures
-#    N.set(32)  # elements
-#    M.set(8)  # elements per kernel
-#    a = np.random.randint(0, 100, N.get()).astype(np.int32)
-#    b = np.zeros((N.get(), )).astype(np.int32)
-#    sdfg = make_vadd_multi_sdfg(N, M)
+#    n = 32  # elements
+#    n = 8   # elements per kernel
+#    a = np.random.randint(0, 100, n).astype(np.int32)
+#    b = np.zeros((n, )).astype(np.int32)
+#    sdfg = make_vadd_multi_sdfg(N, M, n, m)
 #    sdfg.specialize(dict(N=N, M=M))
 #
 #    # call program
 #    sdfg(A=a, B=b)
 #
 #    # check result
-#    for i in range(N.get()):
+#    for i in range(n):
 #        assert b[i] == a[i] + 42
 #
 #    return sdfg
@@ -522,7 +521,6 @@ if __name__ == '__main__':
         test_hardware_vadd(None)
         test_hardware_vadd_temporal_vectorization(None)
         test_hardware_add42_single(None)
-        # TODO disabled due to problem with array of streams in Vitis 2021.1
         #test_hardware_add42_multi(None)
         test_hardware_axpy_double_pump_vec2(None)
         test_hardware_axpy_double_pump_vec4(None)

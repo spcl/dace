@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dc
 import numpy as np
 import os
@@ -15,13 +15,13 @@ def nested_name_accesses(a: dc.float32, x: dc.float32[N, N, N], w: dc.float32[N,
 
 
 def test_nested_name_accesses():
-    N.set(10)
+    N = 10
     a = np.random.rand(1).astype(np.float32)[0]
-    x = np.random.rand(N.get(), N.get(), N.get()).astype(np.float32)
-    w = np.random.rand(N.get(), N.get()).astype(np.float32)
+    x = np.random.rand(N, N, N).astype(np.float32)
+    w = np.random.rand(N, N).astype(np.float32)
     dc_out = nested_name_accesses(a, x, w)
     np_out = np.empty(x.shape, x.dtype)
-    for i in range(N.get()):
+    for i in range(N):
         np_out[i] = a * x[i] @ w
     diff_norm = np.linalg.norm(dc_out - np_out)
     ref_norm = np.linalg.norm(np_out)
@@ -30,6 +30,7 @@ def test_nested_name_accesses():
 
 
 def test_nested_offset_access():
+
     @dc.program
     def nested_offset_access(inp: dc.float64[6, 5, 5]):
         out = np.zeros((5, 5, 5), np.float64)
@@ -46,6 +47,7 @@ def test_nested_offset_access():
 
 
 def test_nested_offset_access_dappy():
+
     @dc.program
     def nested_offset_access(inp: dc.float64[6, 5, 5]):
         out = np.zeros((5, 5, 5), np.float64)
@@ -66,6 +68,7 @@ def test_nested_offset_access_dappy():
 
 
 def test_nested_multi_offset_access():
+
     @dc.program
     def nested_offset_access(inp: dc.float64[6, 5, 10]):
         out = np.zeros((5, 5, 10), np.float64)
@@ -83,6 +86,7 @@ def test_nested_multi_offset_access():
 
 
 def test_nested_multi_offset_access_dappy():
+
     @dc.program
     def nested_offset_access(inp: dc.float64[6, 5, 10]):
         out = np.zeros((5, 5, 10), np.float64)
@@ -104,6 +108,7 @@ def test_nested_multi_offset_access_dappy():
 
 
 def test_nested_dec_offset_access():
+
     @dc.program
     def nested_offset_access(inp: dc.float64[6, 5, 5]):
         out = np.zeros((5, 5, 5), np.float64)
@@ -120,6 +125,7 @@ def test_nested_dec_offset_access():
 
 
 def test_nested_dec_offset_access_dappy():
+
     @dc.program
     def nested_offset_access(inp: dc.float64[6, 5, 5]):
         out = np.zeros((5, 5, 5), np.float64)
@@ -140,6 +146,7 @@ def test_nested_dec_offset_access_dappy():
 
 
 def test_nested_offset_access_nested_dependency():
+
     @dc.program
     def nested_offset_access_nested_dep(inp: dc.float64[6, 5, 5]):
         out = np.zeros((5, 5, 5), np.float64)
@@ -161,6 +168,7 @@ def test_nested_offset_access_nested_dependency():
 
 
 def test_nested_offset_access_nested_dependency_dappy():
+
     @dc.program
     def nested_offset_access_nested_dep(inp: dc.float64[6, 5, 10]):
         out = np.zeros((5, 5, 10), np.float64)
@@ -188,19 +196,19 @@ def test_access_to_nested_transient():
     NBLOCKS = 5
 
     @dc.program
-    def small_wip(inp: dc.float64[KLEV+1, KLON, NBLOCKS], out: dc.float64[KLEV, KLON, NBLOCKS]):
+    def small_wip(inp: dc.float64[KLEV + 1, KLON, NBLOCKS], out: dc.float64[KLEV, KLON, NBLOCKS]):
         for jn in dc.map[0:NBLOCKS]:
-            tmp = np.zeros([KLEV+1, KLON])
+            tmp = np.zeros([KLEV + 1, KLON])
             for jl in range(KLON):
                 for jk in range(KLEV):
-                    tmp[jk, jl] = inp[jk, jl, jn] + inp[jk+1, jl, jn]
+                    tmp[jk, jl] = inp[jk, jl, jn] + inp[jk + 1, jl, jn]
 
             for jl in range(KLON):
                 for jk in range(KLEV):
-                    out[jk, jl, jn] = tmp[jk, jl] + tmp[jk+1, jl]
-    
+                    out[jk, jl, jn] = tmp[jk, jl] + tmp[jk + 1, jl]
+
     rng = np.random.default_rng(42)
-    inp = rng.random((KLEV+1, KLON, NBLOCKS))
+    inp = rng.random((KLEV + 1, KLON, NBLOCKS))
     ref = np.zeros((KLEV, KLON, NBLOCKS))
     val = np.zeros((KLEV, KLON, NBLOCKS))
 
@@ -217,14 +225,14 @@ def test_access_to_nested_transient_dappy():
     NBLOCKS = 5
 
     @dc.program
-    def small_wip_dappy(inp: dc.float64[KLEV+1, KLON, NBLOCKS], out: dc.float64[KLEV, KLON, NBLOCKS]):
+    def small_wip_dappy(inp: dc.float64[KLEV + 1, KLON, NBLOCKS], out: dc.float64[KLEV, KLON, NBLOCKS]):
         for jn in dc.map[0:NBLOCKS]:
-            tmp = np.zeros([KLEV+1, KLON])
+            tmp = np.zeros([KLEV + 1, KLON])
             for jl in range(KLON):
                 for jk in range(KLEV):
                     with dc.tasklet():
                         in1 << inp[jk, jl, jn]
-                        in2 << inp[jk+1, jl, jn]
+                        in2 << inp[jk + 1, jl, jn]
                         out1 >> tmp[jk, jl]
                         out1 = in1 + in2
 
@@ -232,12 +240,12 @@ def test_access_to_nested_transient_dappy():
                 for jk in range(KLEV):
                     with dc.tasklet():
                         in1 << tmp[jk, jl]
-                        in2 << tmp[jk+1, jl]
+                        in2 << tmp[jk + 1, jl]
                         out1 >> out[jk, jl, jn]
                         out1 = in1 + in2
-    
+
     rng = np.random.default_rng(42)
-    inp = rng.random((KLEV+1, KLON, NBLOCKS))
+    inp = rng.random((KLEV + 1, KLON, NBLOCKS))
     ref = np.zeros((KLEV, KLON, NBLOCKS))
     val = np.zeros((KLEV, KLON, NBLOCKS))
 
@@ -245,6 +253,41 @@ def test_access_to_nested_transient_dappy():
     small_wip_dappy.f(inp, ref)
 
     assert np.allclose(val, ref)
+
+
+def test_issue_1139():
+    """
+    Regression test generated from issue #1139.
+
+    The origin of the bug was in the Python frontend: An SDFG parsed by the frontend kept
+    a number called ``_temp_transients`` that specifies how many ``__tmp*`` arrays have been created.
+    This number is used to avoid name clashes when inlining SDFGs (although unnecessary).
+    However, if a nested SDFG had already been simplified, where transformations may change the number
+    of transients (or add new ones via inlining, which is happening in this bug), the ``_temp_transients``
+    field becomes out of date and renaming the fields during inlining removes data descriptors.
+    """
+    XN = dc.symbol('XN')
+    YN = dc.symbol('YN')
+    N = dc.symbol('N')
+
+    @dc.program
+    def nester(start: dc.float64, stop: dc.float64, X: dc.float64[N]):
+        dist = (stop - start) / (N - 1)
+        for i in dc.map[0:N]:
+            X[i] = start + i * dist
+
+    @dc.program
+    def tester(xmin: dc.float64, xmax: dc.float64):
+        a = np.ndarray((XN, YN), dtype=np.int64)
+        b = np.ndarray((XN, YN), dtype=np.int64)
+        c = np.ndarray((XN, ), dtype=np.float64)
+        nester(xmin, xmax, c)
+        return c
+
+    xmin = 0.123
+    xmax = 4.567
+    c = tester(xmin, xmax, XN=30, YN=40)
+    assert np.allclose(c, np.linspace(xmin, xmax, 30))
 
 
 if __name__ == "__main__":
@@ -259,3 +302,4 @@ if __name__ == "__main__":
     test_nested_offset_access_nested_dependency_dappy()
     test_access_to_nested_transient()
     test_access_to_nested_transient_dappy()
+    test_issue_1139()

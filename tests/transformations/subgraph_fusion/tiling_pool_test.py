@@ -11,7 +11,6 @@ import pytest
 import itertools
 
 N = dace.symbol('N')
-N.set(100)
 
 
 @dace.program
@@ -56,10 +55,10 @@ def stencil_offset(A: dace.float64[2 * N], B: dace.float64[N]):
 
 def invoke_stencil(tile_size, offset=False, unroll=False):
 
-    A = np.random.rand(N.get() * 2).astype(np.float64)
-    B1 = np.zeros((N.get()), dtype=np.float64)
-    B2 = np.zeros((N.get()), dtype=np.float64)
-    B3 = np.zeros((N.get()), dtype=np.float64)
+    A = np.random.rand(100 * 2).astype(np.float64)
+    B1 = np.zeros((100), dtype=np.float64)
+    B2 = np.zeros((100), dtype=np.float64)
+    B3 = np.zeros((100), dtype=np.float64)
 
     if offset:
         sdfg = stencil_offset.to_sdfg()
@@ -71,7 +70,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     # baseline
     sdfg.name = f'baseline_{tile_size}_{offset}_{unroll}'
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B1, N=N)
+    csdfg(A=A, B=B1, N=100)
     del csdfg
 
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
@@ -86,7 +85,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
 
     sdfg.name = f'tiled_{tile_size}_{offset}_{unroll}'
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B2, N=N)
+    csdfg(A=A, B=B2, N=100)
     del csdfg
 
     sdfg.simplify()
@@ -98,7 +97,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
 
     sdfg.name = f'fused_{tile_size}_{offset}_{unroll}'
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B3, N=N)
+    csdfg(A=A, B=B3, N=100)
     del csdfg
 
     print(np.linalg.norm(B1))

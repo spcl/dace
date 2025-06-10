@@ -237,9 +237,9 @@ def make_outer_compute_state(sdfg):
     return state
 
 
-def make_sdfg(specialize_all):
-    name = "jacobi_fpga_systolic_{}_{}x{}x{}".format(P.get(), ("H" if not specialize_all else H.get()), W.get(),
-                                                     ("T" if not specialize_all else T.get()))
+def make_sdfg(specialize_all, h, w, t, p):
+    name = "jacobi_fpga_systolic_{}_{}x{}x{}".format(p, ("H" if not specialize_all else h), w,
+                                                     ("T" if not specialize_all else t))
 
     sdfg = dace.SDFG(name)
     sdfg.add_symbol('T', dace.int32)
@@ -272,35 +272,28 @@ def run_jacobi(w: int, h: int, t: int, p: int, specialize_all: bool = False):
 
     # Width and number of PEs must be known at compile time, as it will
     # influence the hardware layout
-    W.set(w)
-    P.set(p)
     if specialize_all:
         print("Specializing H and T...")
-        H.set(h)
-        T.set(t)
 
-    jacobi = make_sdfg(specialize_all)
-    jacobi.specialize(dict(W=W, P=P))
+    jacobi = make_sdfg(specialize_all, h, w, t, p)
+    jacobi.specialize(dict(W=w, P=p))
 
-    if not specialize_all:
-        H.set(h)
-        T.set(t)
-    else:
-        jacobi.specialize(dict(H=H, T=T))
+    if specialize_all:
+        jacobi.specialize(dict(H=h, T=t))
 
-    if T.get() % P.get() != 0:
+    if t % p != 0:
         raise ValueError("Iteration must be divisable by number of processing elements")
 
-    print("Jacobi Stencil {}x{} ({} steps) with {} PEs{}".format(H.get(), W.get(), T.get(), P.get(),
+    print("Jacobi Stencil {}x{} ({} steps) with {} PEs{}".format(h, w, t, p,
                                                                  (" (fully specialized)" if specialize_all else "")))
 
-    A = dace.ndarray([H, W], dtype=dace.float32)
+    A = dace.ndarray([h, w], dtype=dace.float32)
 
     # Initialize arrays: Randomize A, zero B
     A[:] = dace.float32(0)
-    A[2:H.get() - 2, 2:W.get() - 2] = 1
-    regression = np.ndarray([H.get() - 4, W.get() - 4], dtype=np.float32)
-    regression[:] = A[2:H.get() - 2, 2:W.get() - 2]
+    A[2:h - 2, 2:w - 2] = 1
+    regression = np.ndarray([h - 4, w - 4], dtype=np.float32)
+    regression[:] = A[2:h - 2, 2:w - 2]
 
     #############################################
     # Run DaCe program
@@ -308,16 +301,16 @@ def run_jacobi(w: int, h: int, t: int, p: int, specialize_all: bool = False):
     if specialize_all:
         jacobi(A=A)
     else:
-        jacobi(A=A, H=H, T=T)
+        jacobi(A=A, H=h, T=t)
 
     # Regression
     kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]], dtype=np.float32)
-    for i in range(T.get()):
+    for i in range(t):
         regression = ndimage.convolve(regression, kernel, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(A[2:H.get() - 2, 2:W.get() - 2] - regression) / (H.get() * W.get())
+    residual = np.linalg.norm(A[2:h - 2, 2:w - 2] - regression) / (h * w)
     print("Residual:", residual)
-    diff = np.abs(A[2:H.get() - 2, 2:W.get() - 2] - regression)
+    diff = np.abs(A[2:h - 2, 2:w - 2] - regression)
     wrong_elements = np.transpose(np.nonzero(diff >= 0.01))
     highest_diff = np.max(diff)
 
@@ -325,10 +318,10 @@ def run_jacobi(w: int, h: int, t: int, p: int, specialize_all: bool = False):
     if residual >= 0.01 or highest_diff >= 0.01:
         print("Verification failed!")
         print("Residual: {}".format(residual))
-        print("Incorrect elements: {} / {}".format(wrong_elements.shape[0], H.get() * W.get()))
+        print("Incorrect elements: {} / {}".format(wrong_elements.shape[0], h * w))
         print("Highest difference: {}".format(highest_diff))
-        print("** Result:\n", A[:min(6, H.get()), :min(6, W.get())])
-        print("** Reference:\n", regression[:min(5, H.get()), :min(4, W.get())])
+        print("** Result:\n", A[:min(6, h), :min(6, w)])
+        print("** Reference:\n", regression[:min(5, h), :min(4, w)])
         raise RuntimeError("Validation failed.")
 
     return jacobi

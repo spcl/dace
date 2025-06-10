@@ -12,7 +12,7 @@ from dace.properties import make_properties, ListProperty
 @make_properties
 class MapDimShuffle(transformation.SingleStateTransformation):
     """ Implements the map-dim shuffle transformation.
-    
+
         MapDimShuffle takes a map and a list of params.
         It reorders the dimensions in the map such that it matches the list.
     """
@@ -27,18 +27,19 @@ class MapDimShuffle(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry: nodes.MapEntry = self.map_entry
+        if self.parameters is None:
+            return False
+        if len(self.parameters) != len(map_entry.map.params):
+            return False
+        if set(self.parameters) != set(map_entry.map.params):
+            return False
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        map_entry = self.map_entry
-        if self.parameters is None:
-            return
+        map_entry: nodes.MapEntry = self.map_entry
+        new_map_order: list[int] = [map_entry.map.params.index(param) for param in self.parameters]
 
-        if set(self.parameters) != set(map_entry.map.params):
-            return
-
-        map_entry.range.ranges = [
-            r for list_param in self.parameters for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
-            if list_param == map_param
-        ]
-        map_entry.map.params = self.parameters
+        map_entry.range.ranges = [map_entry.range.ranges[new_pos] for new_pos in new_map_order]
+        map_entry.range.tile_sizes = [map_entry.range.tile_sizes[new_pos] for new_pos in new_map_order]
+        map_entry.map.params = [map_entry.map.params[new_pos] for new_pos in new_map_order]

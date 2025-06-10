@@ -1,26 +1,22 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the expansion transformation.
 """
 
-from dace import dtypes, registry, symbolic, subsets
+from dace import dtypes, symbolic, subsets
 from dace.sdfg import nodes
-from dace.memlet import Memlet
 from dace.sdfg import replace, SDFG, dynamic_map_inputs
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.properties import make_properties, Property
-from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.subgraph import helpers
 from collections import defaultdict
 
 from copy import deepcopy as dcpy
-from typing import List, Union
 
 import itertools
-import dace.libraries.standard as stdlib
 
 import warnings
-import sys
 
 
 def offset_map(state, map_entry):
@@ -39,7 +35,7 @@ def offset_map(state, map_entry):
 
 @make_properties
 class MultiExpansion(transformation.SubgraphTransformation):
-    """ 
+    """
     Implements the MultiExpansion transformation.
     Takes all the lowest scope maps in a given subgraph,
     for each of these maps splits it into an outer and inner map,
@@ -63,12 +59,12 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
     allow_offset = Property(dtype=bool, desc="Offset ranges to zero", default=True)
 
-    def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
         # get lowest scope maps of subgraph
         # grab first node and see whether all nodes are in the same graph
         # (or nested sdfgs therein)
 
-        graph = subgraph.graph
+        graph: SDFGState = subgraph.graph
 
         # next, get all the maps by obtaining a copy (for potential offsets)
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
@@ -128,7 +124,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         The resulting outer maps all have same range and indices, corresponding
         variables and memlets get changed accordingly. The inner map contains
         the leftover dimensions
-        
+
         :param sdfg: Underlying SDFG
         :param graph: Graph in which we expand
         :param map_entries: List of Map Entries(Type MapEntry) that we want to expand

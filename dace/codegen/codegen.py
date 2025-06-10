@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-import os
-from typing import List, Set
+from typing import List
 
 import dace
 from dace import dtypes
 from dace import data
-from dace.sdfg import SDFG, utils as sdutils
+from dace.sdfg import SDFG
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
+from dace.codegen import exceptions as exc
 from dace.config import Config
 from dace.sdfg import infer_types
 
@@ -95,7 +95,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     for node, parent in sdfg.all_nodes_recursive():
         # Query nodes and scopes
         if isinstance(node, SDFGState):
-            frame.targets.add(disp.get_state_dispatcher(parent, node))
+            frame.targets.add(disp.get_state_dispatcher(node.sdfg, node))
         elif isinstance(node, dace.nodes.EntryNode):
             frame.targets.add(disp.get_scope_dispatcher(node.schedule))
         elif isinstance(node, dace.nodes.Node):
@@ -149,7 +149,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def generate_code(sdfg, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 
@@ -186,10 +186,6 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
                 shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
                 raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
 
-    # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
-    # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
-    sdutils.inline_loop_blocks(sdfg)
-
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
 
@@ -205,6 +201,11 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
+    # Test for undefined symbols in SDFG arguments
+    if "?" in frame.arglist.keys():
+        raise exc.CodegenError("SDFG '%s' has undefined symbols in its arguments. "
+                               "Please ensure all symbols are defined before generating code." % sdfg.name)
+
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
     default_target = cpu.CPUCodeGen
@@ -215,9 +216,10 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
-    targets.update(
-        {v['name']: k(frame, sdfg)
-         for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets})
+    targets.update({
+        v['name']: k(frame, sdfg)
+        for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets
+    })
 
     # Query all code generation targets and instrumentation providers in SDFG
     _get_codegen_targets(sdfg, frame)

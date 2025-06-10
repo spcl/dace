@@ -3,7 +3,9 @@
 from functools import reduce
 from itertools import chain
 from string import ascii_letters
-from typing import Dict, Optional
+from typing import Dict, List, Optional
+
+import numpy as np
 
 import dace
 from dace import dtypes, subsets, symbolic
@@ -126,7 +128,7 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     BATCH, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (symbolic.symbol(s) if symbolic.issymbolic(
         strides[s]) else strides[s] for s in ['BATCH', 'sAM', 'sAK', 'sAB', 'sBK', 'sBN', 'sBB', 'sCM', 'sCN', 'sCB'])
 
-    batched = strides['BATCH'] != 1
+    batched = not symbolic.equal_valued(1, strides['BATCH'])
 
     _, xarr = sdfg.add_array('X',
                              dtype=dtype,
@@ -165,10 +167,43 @@ def create_einsum_sdfg(sdfg: SDFG,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
                        output: Optional[str] = None,
-                       nodes: Optional[Dict[str, AccessNode]] = None,
-                       init_output: bool = None,
-                       alpha: Optional[symbolic.SymbolicType] = None,
-                       beta: Optional[symbolic.SymbolicType] = None):
+                       alpha: Optional[symbolic.SymbolicType] = 1.0,
+                       beta: Optional[symbolic.SymbolicType] = 0.0):
+    return _create_einsum_internal(sdfg,
+                                   state,
+                                   str(einsum_string),
+                                   *arrays,
+                                   dtype=dtype,
+                                   optimize=optimize,
+                                   output=output,
+                                   alpha=alpha,
+                                   beta=beta)[0]
+
+
+def _build_einsum_views(tensors: str, dimension_dict: dict) -> List[np.ndarray]:
+    """
+    Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
+    Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
+    """
+    views = []
+    terms = tensors.split('->')[0].split(',')
+    for term in terms:
+        dims = [dimension_dict[x] for x in term]
+        views.append(np.random.rand(*dims))
+    return views
+
+
+def _create_einsum_internal(sdfg: SDFG,
+                            state: SDFGState,
+                            einsum_string: str,
+                            *arrays: str,
+                            dtype: Optional[dtypes.typeclass] = None,
+                            optimize: bool = False,
+                            output: Optional[str] = None,
+                            nodes: Optional[Dict[str, AccessNode]] = None,
+                            init_output: bool = None,
+                            alpha: Optional[symbolic.SymbolicType] = None,
+                            beta: Optional[symbolic.SymbolicType] = None):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
 
@@ -176,7 +211,7 @@ def create_einsum_sdfg(sdfg: SDFG,
         raise ValueError('Invalid number of arrays for einsum expression')
 
     if init_output is None:
-        init_output = (beta != 1.0)
+        init_output = not symbolic.equal_valued(1, beta)
 
     if alpha is None:
         alpha = 1.0
@@ -210,7 +245,7 @@ def create_einsum_sdfg(sdfg: SDFG,
 
         # Create optimal contraction path
         # noinspection PyTypeChecker
-        _, path_info = oe.contract_path(einsum_string, *oe.helpers.build_views(einsum_string, chardict))
+        _, path_info = oe.contract_path(einsum_string, *_build_einsum_views(einsum_string, chardict))
 
         input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
         result_node = None
@@ -254,14 +289,15 @@ def create_einsum_sdfg(sdfg: SDFG,
     if not is_conflicted and init_output is None:
         to_init = False
 
-    if einsum.is_reduce() and alpha == 1 and (beta == 0 or beta == 1):
+    if einsum.is_reduce() and symbolic.equal_valued(1, alpha) and (symbolic.equal_valued(0, beta)
+                                                                   or symbolic.equal_valued(1, beta)):
         from dace.libraries.standard.nodes.reduce import Reduce
         # Get reduce axes
         axes = tuple(i for i, s in enumerate(einsum.inputs[0]) if s not in einsum.output)
         rnode = Reduce('einsum_reduce')
         rnode.axes = axes
         rnode.wcr = 'lambda a, b: a + b'
-        if beta == 0:
+        if symbolic.equal_valued(0, beta):
             rnode.identity = 0
 
         c = state.add_write(output)
@@ -278,7 +314,7 @@ def create_einsum_sdfg(sdfg: SDFG,
         # Add state before this one to initialize the output value
         if to_init:
             init_state = sdfg.add_state_before(state)
-            if beta == 0.0:
+            if symbolic.equal_valued(0, beta):
                 inputs = {}
                 inputs_scalar = set()
                 code = f'out_{output} = 0'
@@ -298,23 +334,25 @@ def create_einsum_sdfg(sdfg: SDFG,
                 onode = init_state.add_write(output)
                 init_state.add_edge(t, 'out_%s' % output, onode, None, Memlet.simple(output, '0'))
 
-                if beta != 0.0:
+                if not symbolic.equal_valued(0, beta):
                     inode = init_state.add_read(output)
                     init_state.add_edge(inode, None, t, 'inp_%s' % output, Memlet.simple(output, '0'))
 
         wcr = 'lambda a,b: a+b' if is_conflicted else None
-        alphacode = '' if alpha == 1.0 else f'{alpha} * '
+        alphacode = '' if symbolic.equal_valued(1, alpha) else f'{alpha} * '
         # Pure einsum map
-        state.add_mapped_tasklet(
-            'einsum', {k: '0:%s' % v
-                       for k, v in chardict.items()},
-            {'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
-             for inp, arr in zip(einsum.inputs, arrays)},
-            'out_%s = %s%s' % (output, alphacode, ' * '.join('inp_%s' % arr for arr in arrays)),
-            {'out_%s' % output: Memlet.simple(output, output_index, wcr_str=wcr)},
-            input_nodes=input_nodes,
-            output_nodes={output: c},
-            external_edges=True)
+        state.add_mapped_tasklet('einsum', {
+            k: '0:%s' % v
+            for k, v in chardict.items()
+        }, {
+            'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
+            for inp, arr in zip(einsum.inputs, arrays)
+        },
+                                 'out_%s = %s%s' % (output, alphacode, ' * '.join('inp_%s' % arr for arr in arrays)),
+                                 {'out_%s' % output: Memlet.simple(output, output_index, wcr_str=wcr)},
+                                 input_nodes=input_nodes,
+                                 output_nodes={output: c},
+                                 external_edges=True)
     else:
         # Represent einsum as a GEMM or batched GEMM (using library nodes)
         a_shape = sdfg.arrays[arrays[0]].shape
@@ -353,7 +391,7 @@ def create_einsum_sdfg(sdfg: SDFG,
             strides['sCB'] = strides['sCM'] = strides['N']
 
         # Transposed output, swap order
-        if strides['sCM'] == 1:
+        if symbolic.equal_valued(1, strides['sCM']):
             strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
             strides['M'], strides['N'] = strides['N'], strides['M']
             (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'],

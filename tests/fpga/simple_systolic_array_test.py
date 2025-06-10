@@ -242,10 +242,13 @@ def make_fpga_state(sdfg):
     return state
 
 
-def make_sdfg(name=None):
+def make_sdfg(name=None, p=None):
 
     if name is None:
-        name = "simple_systolic_array_{}".format(P.get())
+        if p is not None:
+            name = "simple_systolic_array_{}".format(p)
+        else:
+            name = "simple_systolic_array_P"
 
     sdfg = dace.SDFG(name)
 
@@ -259,20 +262,20 @@ def make_sdfg(name=None):
     return sdfg
 
 
-@fpga_test()
+@fpga_test(xilinx=False)
 def test_simple_systolic_array():
 
-    P.set(4)
-    N.set(128)
+    P = 4
+    N = 128
 
     sdfg = make_sdfg()
     sdfg.specialize(dict(P=P, N=N))
 
     # Initialize arrays: Randomize A and B, zero C
-    A = np.ndarray([N.get()], dtype=dace.int32.type)
-    A[:] = np.random.randint(0, 1000, N.get()).astype(dace.int32.type)
+    A = np.ndarray([N], dtype=dace.int32.type)
+    A[:] = np.random.randint(0, 1000, N).astype(dace.int32.type)
 
-    A_Exp = A + P.get()
+    A_Exp = A + P
 
     sdfg(A=A)
     # print("A: ", A)

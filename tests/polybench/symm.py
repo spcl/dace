@@ -17,10 +17,7 @@ args = [([M, N], datatype), ([M, M], datatype), ([M, N], datatype), ([1], dataty
 outputs = [(0, 'C')]
 
 
-def init_array(C, A, B, alpha, beta):
-    n = N.get()
-    m = M.get()
-
+def init_array(C, A, B, alpha, beta, n, m):
     alpha[0] = datatype(1.5)
     beta[0] = datatype(1.2)
 
@@ -35,11 +32,10 @@ def init_array(C, A, B, alpha, beta):
             A[i, j] = -999
             # regions of arrays that should not be used
 
-    print('aval', beta[0] * C[0, 0] + alpha[0] * B[0, 0] * A[0, 0])
-
 
 @dace.program(datatype[M, N], datatype[M, M], datatype[M, N], datatype[1], datatype[1])
 def symm(C, A, B, alpha, beta):
+
     @dace.mapscope
     def comp_all(j: _[0:N], i: _[0:M]):
         temp2 = dace.define_local_scalar(datatype)
