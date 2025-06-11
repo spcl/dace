@@ -525,7 +525,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError('Start offset unsupported for registers')
             if node.setzero:
                 declaration_stream.write(
-                    "%s%s = {0};\n" % (nodedesc.as_arg(name=name), alignment_expr),
+                    "%s[%s]%s = {0};\n" % (nodedesc.as_arg(name=name), cpp.sym2cpp(arrsize), alignment_expr),
                     cfg,
                     state_id,
                     node,
@@ -534,7 +534,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
 
             declaration_stream.write(
-                "%s%s;\n" % (nodedesc.as_arg(name=name), alignment_expr),
+                "%s[%s]%s;\n" % (nodedesc.as_arg(name=name), cpp.sym2cpp(arrsize), alignment_expr),
                 cfg,
                 state_id,
                 node,

@@ -1553,10 +1553,6 @@ class Array(Data):
 
         if not with_types or for_call:
             return arrname
-        if self.storage == dtypes.StorageType.Register:
-            # If the array is stored in registers or on the stack, we define it as a C-style array
-            from dace.codegen.targets import cpp
-            return f"{self.dtype.ctype} {arrname}[{cpp.sym2cpp(self.total_size)}]"
         if self.may_alias:
             return str(self.dtype.ctype) + ' *' + arrname
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
