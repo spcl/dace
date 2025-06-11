@@ -1275,8 +1275,14 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     value.id = '*' * (src_ptrs - target_ptrs) + value.id
                     node.value = value
                 elif src_ptrs < target_ptrs:
-                    value.id = '&' * (target_ptrs - src_ptrs) + value.id
-                    node.value = value
+                    # Modify rhs to match the number of pointers in the lhs (not necessary)
+                    # value.id = '&' * (target_ptrs - src_ptrs) + value.id
+                    # node.value = value
+
+                    # If the rhs is a scalar (i.e., this is a store), modify lhs to match the rhs
+                    if isinstance(node.targets[-1], ast.Name) and src_ptrs == 0:
+                        node.targets[-1] = ast.copy_location(
+                            ast.Name(id='*' * (target_ptrs - src_ptrs) + node.targets[-1].id), node.targets[-1])
 
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts

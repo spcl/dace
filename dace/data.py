@@ -450,6 +450,10 @@ class Structure(Data):
         return 0
 
     @property
+    def alignment(self):
+        return 0
+
+    @property
     def strides(self):
         return [1]
 
@@ -1549,6 +1553,10 @@ class Array(Data):
 
         if not with_types or for_call:
             return arrname
+        if self.storage == dtypes.StorageType.Register:
+            # If the array is stored in registers or on the stack, we define it as a C-style array
+            from dace.codegen.targets import cpp
+            return f"{self.dtype.ctype} {arrname}[{cpp.sym2cpp(self.total_size)}]"
         if self.may_alias:
             return str(self.dtype.ctype) + ' *' + arrname
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
@@ -1681,6 +1689,10 @@ class Stream(Data):
 
     @property
     def start_offset(self):
+        return 0
+
+    @property
+    def alignment(self):
         return 0
 
     @property

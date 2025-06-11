@@ -242,7 +242,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 field_name = mpath[0].src_conn
 
             # Plain view into a container array
-            if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure) and nodedesc.dtype == vdesc.dtype:
+            if isinstance(vdesc, data.ContainerArray) and not isinstance(
+                    vdesc.stype, data.Structure) and nodedesc.dtype == vdesc.dtype:
                 offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                 value = f'{ptrname}[{offset}]'
             else:
@@ -399,6 +400,13 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
+        # Compute alignment expression
+        alignment = nodedesc.alignment
+        if alignment != 0:
+            alignment_expr = f' DACE_ALIGN({alignment})'
+        else:
+            alignment_expr = ''
+
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.as_arg(name=name)} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.dtype)
@@ -412,8 +420,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             # NOTE: Scalar members are already defined in the struct definition.
                             self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                         else:
-                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
-                                                declaration_stream, allocation_stream)
+                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v,
+                                                function_stream, declaration_stream, allocation_stream)
 
             return
         if isinstance(nodedesc, data.View):
@@ -501,7 +509,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared:
                 declaration_stream.write(f'{ctypedef.as_arg(name=name)};\n', cfg, state_id, node)
             allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
+                "%s = new %s%s[%s];\n" % (alloc_name, nodedesc.dtype.ctype, alignment_expr, cpp.sym2cpp(arrsize)), cfg,
                 state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
@@ -517,7 +525,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError('Start offset unsupported for registers')
             if node.setzero:
                 declaration_stream.write(
-                    "%s DACE_ALIGN(64) = {0};\n" % (nodedesc.as_arg(name=name)),
+                    "%s%s = {0};\n" % (nodedesc.as_arg(name=name), alignment_expr),
                     cfg,
                     state_id,
                     node,
@@ -526,7 +534,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
 
             declaration_stream.write(
-                "%s DACE_ALIGN(64);\n" % (nodedesc.as_arg(name=name)),
+                "%s%s;\n" % (nodedesc.as_arg(name=name), alignment_expr),
                 cfg,
                 state_id,
                 node,
@@ -550,9 +558,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
-                                                                              name=alloc_name,
-                                                                              arrsize=cpp.sym2cpp(arrsize)),
+                    {name} = new {ctype}{alignment}[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
+                                                                          name=alloc_name,
+                                                                          alignment=alignment_expr,
+                                                                          arrsize=cpp.sym2cpp(arrsize)),
                 cfg,
                 state_id,
                 node,
@@ -1101,9 +1110,11 @@ class CPUCodeGen(TargetCodeGenerator):
                                                       dtypes.AllocationLifetime.Persistent,
                                                       dtypes.AllocationLifetime.External)
                         try:
-                            defined_type, defined_ctype = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+                            defined_type, defined_ctype = self._dispatcher.declared_arrays.get(ptrname,
+                                                                                               is_global=is_global)
                         except KeyError:
-                            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname,
+                                                                                            is_global=is_global)
 
                         if defined_type == DefinedType.Scalar:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
