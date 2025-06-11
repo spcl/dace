@@ -323,4 +323,4 @@ def _einsum(pv: ProgramVisitor,
                               optimize=optimize,
                               output=output,
                               alpha=alpha,
-                              beta=beta)[0]
+                              beta=beta)
