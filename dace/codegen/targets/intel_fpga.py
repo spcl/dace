@@ -804,7 +804,10 @@ __kernel void \\
                 memlet_references.append((typedef, vconn, ref + expr))
                 # get the defined type (as defined in the parent)
                 # Register defined variable
-                self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, dtypes.opaque(typedef), allow_shadowing=True)
+                self._dispatcher.defined_vars.add(vconn,
+                                                  DefinedType.Pointer,
+                                                  dtypes.opaque(typedef),
+                                                  allow_shadowing=True)
             elif isinstance(desc, dace.data.Stream):
                 # streams are defined as global variables
                 continue
@@ -855,7 +858,10 @@ __kernel void \\
                                                      False, defined_type)
                     memlet_references.append((typedef, uconn, ref + expr))
                     # Register defined variable
-                    self._dispatcher.defined_vars.add(uconn, DefinedType.Pointer, dtypes.opaque(typedef), allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(uconn,
+                                                      DefinedType.Pointer,
+                                                      dtypes.opaque(typedef),
+                                                      allow_shadowing=True)
                 elif isinstance(desc, dace.data.Stream):
                     # streams are defined as global variables
                     continue
@@ -868,7 +874,10 @@ __kernel void \\
                         typedef = typedef + "*"
                     memlet_references.append(
                         (typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type, codegen=self._frame)))
-                    self._dispatcher.defined_vars.add(uconn, DefinedType.Pointer, dtypes.opaque(typedef), allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(uconn,
+                                                      DefinedType.Pointer,
+                                                      dtypes.opaque(typedef),
+                                                      allow_shadowing=True)
                 else:
                     memlet_references.append(
                         cpp.emit_memlet_reference(self._dispatcher,
