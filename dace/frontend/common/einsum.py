@@ -252,18 +252,18 @@ def _create_einsum_internal(sdfg: SDFG,
 
         # Follow path and create a chain of operation SDFG states
         for pair, nonfree, expr, after, blas in path_info.contraction_list:
-            result, result_node = create_einsum_sdfg(sdfg,
-                                                     state,
-                                                     expr,
-                                                     arrays[pair[0]],
-                                                     arrays[pair[1]],
-                                                     dtype=dtype,
-                                                     optimize=False,
-                                                     output=None,
-                                                     nodes=input_nodes,
-                                                     init_output=init_output,
-                                                     alpha=alpha,
-                                                     beta=beta)
+            result, result_node = _create_einsum_internal(sdfg,
+                                                          state,
+                                                          expr,
+                                                          arrays[pair[0]],
+                                                          arrays[pair[1]],
+                                                          dtype=dtype,
+                                                          optimize=False,
+                                                          output=None,
+                                                          nodes=input_nodes,
+                                                          init_output=init_output,
+                                                          alpha=alpha,
+                                                          beta=beta)
             arrays = ([a for i, a in enumerate(arrays) if i not in pair] + [result])
             input_nodes[result] = result_node
 

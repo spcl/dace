@@ -265,13 +265,15 @@ def _argminmax(pv: ProgramVisitor,
                func: str,
                result_type: dtypes.typeclass = dtypes.int32,
                return_both: bool = False):
+    from dace.frontend.python.replacements.array_manipulation import flat  # Avoid import loop
+    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
+
     nest = NestedCall(pv, sdfg, state)
 
     assert func in ['min', 'max']
 
     # Flatten the array if axis is not given
     if axis is None:
-        from dace.frontend.python.replacements.array_manipulation import flat  # Avoid import loop
         axis = 0
         a = flat(pv, sdfg, state, a)
 

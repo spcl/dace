@@ -9,6 +9,7 @@ import dace.frontend.python.memlet_parser as mem_parser
 from dace import data, dtypes, subsets, symbolic
 from dace import Memlet, SDFG, SDFGState
 
+import copy
 from numbers import Integral
 from typing import Any, Optional, List, Sequence, Tuple, Union
 
@@ -274,6 +275,7 @@ def _ndarray_flatten(pv: ProgramVisitor,
     new_arr = flat(pv, sdfg, state, arr, order)
     # `flatten` always returns a copy
     if isinstance(new_arr, data.View):
+        from dace.frontend.python.replacements.array_creation import _ndarray_copy  # Avoid circular import
         return _ndarray_copy(pv, sdfg, state, new_arr)
     return new_arr
 
