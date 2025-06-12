@@ -16,10 +16,6 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp, fpga
 from typing import List, Union, Tuple
 
-from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
-from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
-from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
-from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
 from dace.sdfg.state import ControlFlowRegion
 
 REDUCTION_TYPE_TO_HLSLIB = {
@@ -1143,6 +1139,12 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                         'CONFIG.SYNCHRONIZATION_STAGES': 8,
                     }
                 }
+
+            # Avoid importing submodule if not necessary
+            from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
+            from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
+            from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
+            from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
 
             # Trigger the generation
             self._ip_codes.append((f"{kernel_name}_control", 'v', rtllib_control(rtllib_config)))

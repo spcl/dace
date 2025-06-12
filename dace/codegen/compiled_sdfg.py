@@ -210,6 +210,10 @@ class CompiledSDFG(object):
         self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
 
+        if self.argnames is None and len(sdfg.arg_names) != 0:
+            warnings.warn('You passed `None` as `argnames` to `CompiledSDFG`, but the SDFG you passed has positional'
+                          ' arguments. This is allowed but deprecated.')
+
         self.has_gpu_code = False
         self.external_memory_types = set()
         for _, _, aval in self._sdfg.arrays_recursive():

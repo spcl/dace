@@ -26,6 +26,14 @@ from .jupyter import *
 # Import hooks from config last (as it may load classes from within dace)
 hooks._install_hooks_from_config()
 
+import sys
+import os
+
+raw_path = Config.get("external_transformations_path")
+if raw_path is not None:
+    __external_transformations_path__ = os.path.expanduser(os.path.expandvars(raw_path))
+    sys.path.insert(0, __external_transformations_path__)
+
 
 # Hack that enables using @dace as a decorator
 # See https://stackoverflow.com/a/48100440/6489142
