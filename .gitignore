@@ -143,6 +143,8 @@ src.VC.VC.opendb
 .dacecache/
 # Ignore dacecache if added as a symlink
 .dacecache
+# Local configuration file
+.dace.conf
 out.sdfg
 *.out
 results.log
