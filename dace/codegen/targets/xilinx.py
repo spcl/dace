@@ -1216,8 +1216,15 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
     def allocate_view(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: dace.SDFGState, state_id: int,
                       node: dace.nodes.AccessNode, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                       allocation_stream: CodeIOStream) -> None:
-        return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, global_stream, declaration_stream,
-                                               allocation_stream, decouple_array_interfaces=self._decouple_array_interfaces)
+        return self._cpu_codegen.allocate_view(sdfg,
+                                               cfg,
+                                               dfg,
+                                               state_id,
+                                               node,
+                                               global_stream,
+                                               declaration_stream,
+                                               allocation_stream,
+                                               decouple_array_interfaces=self._decouple_array_interfaces)
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         # Connectors that are both input and output share the same name, unless
