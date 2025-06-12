@@ -436,8 +436,43 @@ def test_gpu_strided_2D_copy():
     assert all(cp.all(ref[k] == res[k]) for k in ref.keys())
 
 
+@pytest.mark.gpu
+def test_global_to_global_error():
+    """
+    Test that Global to Global copies within GPU_Device maps raise a NotImplementedError.
+    """
+    sdfg = dace.SDFG("global_to_global_test")
+    state = sdfg.add_state(is_start_block=True)
+
+    # Create arrays with GPU_Global storage
+    sdfg.add_array("A", [100], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.add_array("B", [100], dace.float64, storage=dace.StorageType.GPU_Global)
+
+    # Create nodes
+    A_node = state.add_access("A")
+    B_node = state.add_access("B")
+
+    # Create a simple edge that should trigger GlobalToGlobal copy
+    state.add_nedge(A_node, B_node, dace.Memlet("A[0:100] -> B[0:100]"))
+
+    # Use a transformation to force GPU_Device schedule which should trigger the issue
+    from dace.transformation.interstate import GPUTransformSDFG
+
+    # Apply GPU transformation
+    gpu_transform = GPUTransformSDFG()
+    matches = gpu_transform.find_matches(sdfg)
+    if matches:
+        gpu_transform.setup_match(sdfg, matches[0][0], matches[0][1], matches[0][2], matches[0][3])
+        gpu_transform.apply(sdfg)
+
+    # This should raise NotImplementedError
+    with pytest.raises(NotImplementedError, match="GPU global memory to global memory copies"):
+        sdfg.compile()
+
+
 if __name__ == '__main__':
     test_gpu_shared_to_global_1D()
     test_gpu_shared_to_global_1D_accumulate()
     test_gpu_1d_copy()
     test_gpu_strided_2D_copy()
+    test_global_to_global_error()
