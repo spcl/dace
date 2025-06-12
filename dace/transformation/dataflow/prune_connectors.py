@@ -29,6 +29,10 @@ class PruneConnectors(pm.SingleStateTransformation):
         if not prune_in and not prune_out:
             return False
 
+        # Because we isolate the nested SDFG we have to ensure that it is possible to split the state.
+        if not helpers.isolate_nested_sdfg(state=graph, nsdfg_node=self.nsdfg, test_if_applicable=True):
+            return False
+
         return True
 
     def _get_prune_sets(self, state: SDFGState) -> Tuple[Set[str], Set[str]]:
@@ -64,7 +68,7 @@ class PruneConnectors(pm.SingleStateTransformation):
         prune_in, prune_out = self._get_prune_sets(state)
 
         # Fission subgraph around nsdfg into its own state to avoid data races
-        nsdfg_state = helpers.state_fission_after(state, nsdfg)
+        _, nsdfg_state, _ = helpers.isolate_nested_sdfg(state=state, nsdfg_node=nsdfg)
 
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
