@@ -1,7 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass, field
 
-from pyparsing import Opt
 from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
