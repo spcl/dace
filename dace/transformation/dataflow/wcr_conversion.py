@@ -282,26 +282,32 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         boundary_nodes = set()
         orig_edges = set()
 
+        # Find all dependencies of the Tasklet, which are all access nodes that generates data.
+        # TODO: What about viewes?
         for edge in state.in_edges(tlet):
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
 
-        # Collect nodes_to_move
+        # Find all consumer nodes of `tlet`.
         for edge in state.edge_bfs(tlet):
             nodes_to_move.add(edge.dst)
             orig_edges.add(edge)
 
+            # If a consumer is not an AccessNode we also have to relocate its dependencies.
             if not isinstance(edge.dst, nodes.AccessNode):
                 for iedge in state.in_edges(edge.dst):
                     if iedge == edge:
+                        continue
+                    if iedge.src in nodes_to_move:
+                        orig_edges.add(iedge)
                         continue
                     for e in state.memlet_path(iedge):
                         nodes_to_move.add(e.src)
                         orig_edges.add(e)
 
         # Define boundary nodes
-        for node in set(nodes_to_move):
+        for node in nodes_to_move:
             if isinstance(node, nodes.AccessNode):
                 for iedge in state.in_edges(node):
                     if iedge.src not in nodes_to_move:
