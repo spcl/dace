@@ -723,6 +723,13 @@ def isolate_nested_sdfg(
         that it can be performed by returning either `True` or `False`.
     """
 
+    # We can only isolate the nested SDFG if it is on global scope, for example
+    #  inside a Map it is impossible to split the state.
+    if state.scope_dict()[nsdfg_node] is not None:
+        if test_if_applicable:
+            return False
+        raise ValueError(f'Can not isolate NestedSDFG "{nsdfg_node}" because it is not on global scope.')
+
     # These are the nodes that will be moved to the Pre State, they are found through
     #  a backwards search starting from the nodes that serves as input to the nested
     #  SDFG. It is important that these nodes, that serves as input to the nested
