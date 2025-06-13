@@ -40,9 +40,10 @@ import sympy
 
 numpy_version = numpy.lib.NumpyVersion(numpy.__version__)
 
-# register replacements in oprepo
+# The following line registers replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type, broadcast_to, broadcast_together
+
+from dace.frontend.python.replacements.utils import sym_type, broadcast_to, broadcast_together
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -3421,7 +3422,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if result in self.sdfg.symbols:
                         rtype = self.sdfg.symbols[result]
                     elif symbolic.issymbolic(result):
-                        rtype = _sym_type(result)
+                        rtype = sym_type(result)
                     else:
                         rtype = type(result)
                     if name.startswith('__return'):
