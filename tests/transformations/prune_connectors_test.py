@@ -250,8 +250,7 @@ def test_prune_connectors(n=None):
 
     sdfg = make_sdfg()
 
-    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
-        raise RuntimeError("PruneConnectors was not applied.")
+    assert sdfg.apply_transformations_repeated(PruneConnectors) == 3
 
     arr_in = np.zeros((n, n), dtype=np.uint16)
     arr_out = np.empty((n, n), dtype=np.uint16)

@@ -29,9 +29,10 @@ class PruneConnectors(pm.SingleStateTransformation):
         if not prune_in and not prune_out:
             return False
 
-        # Because we isolate the nested SDFG we have to ensure that it is possible to split the state.
-        if not helpers.isolate_nested_sdfg(state=graph, nsdfg_node=self.nsdfg, test_if_applicable=True):
-            return False
+        # If the nested SDFG at global scope we must check if we can isolate it.
+        if graph.scope_dict()[self.nsdfg] is None:
+            if not helpers.isolate_nested_sdfg(state=graph, nsdfg_node=self.nsdfg, test_if_applicable=True):
+                return False
 
         return True
 
@@ -67,8 +68,11 @@ class PruneConnectors(pm.SingleStateTransformation):
         # Determine which connectors can be removed.
         prune_in, prune_out = self._get_prune_sets(state)
 
-        # Fission subgraph around nsdfg into its own state to avoid data races
-        _, nsdfg_state, _ = helpers.isolate_nested_sdfg(state=state, nsdfg_node=nsdfg)
+        # If the nested SDFG is at global scope, check if it can be isolated.
+        if state.scope_dict()[nsdfg] is None:
+            _, nsdfg_state, _ = helpers.isolate_nested_sdfg(state=state, nsdfg_node=nsdfg)
+        else:
+            nsdfg_state = state
 
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
