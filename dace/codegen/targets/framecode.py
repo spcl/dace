@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import copy
 import pathlib
@@ -486,16 +486,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         if sdfg.root_sdfg.recheck_using_explicit_control_flow():
             # Use control flow blocks embedded in the SDFG to generate control flow.
-            cft = cflow.structured_control_flow_tree_with_regions(sdfg, dispatch_state)
-        elif config.Config.get_bool('optimizer', 'detect_control_flow'):
-            # Handle specialized control flow
-            # Avoid import loop
-            from dace.transformation import helpers as xfh
-
-            # Clean up the state machine by separating combined condition and assignment
-            # edges.
-            xfh.split_interstate_edges(sdfg)
-
             cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
         else:
             # If disabled, generate entire graph as general control flow block

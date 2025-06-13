@@ -153,7 +153,7 @@ def test_irreducible_sub_sdfg():
     stree = as_schedule_tree(sdfg)
     node_types = [type(n) for n in stree.preorder_traversal()]
     assert node_types.count(tn.GBlock) == 1  # Only one gblock
-    assert node_types[-1] == tn.ForScope  # Check that loop was detected
+    assert node_types[-1] == tn.GeneralLoopScope  # Check that loop was detected
 
 
 def test_irreducible_in_loops():
@@ -181,8 +181,8 @@ def test_irreducible_in_loops():
     stree = as_schedule_tree(sdfg)
     node_types = [type(n) for n in stree.preorder_traversal()]
     assert node_types.count(tn.GBlock) == 1
-    assert node_types.count(tn.ForScope) >= 1
-    if node_types.count(tn.ForScope) == 1:  # If only one loop was detected, ensure goto is present
+    assert node_types.count(tn.GeneralLoopScope) >= 1
+    if node_types.count(tn.GeneralLoopScope) == 1:  # If only one loop was detected, ensure goto is present
         assert node_types[-1] == tn.GotoNode
 
 
