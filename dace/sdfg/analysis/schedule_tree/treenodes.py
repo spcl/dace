@@ -414,6 +414,7 @@ class ScheduleNodeTransformer(ScheduleNodeVisitor):
             node.children[:] = new_values
         return node
 
+
 def validate_has_no_other_node_types(stree: ScheduleTreeScope) -> None:
     """
     Validates that the schedule tree contains only nodes of type ScheduleTreeNode or its subclasses.

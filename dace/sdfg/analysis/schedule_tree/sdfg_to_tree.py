@@ -734,7 +734,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                     result.extend(edge_body)
                 else:
                     # Add "if condition" with the body above
-                    state_if_node = tn.StateIfScope(condition=e.data.condition, children=edge_body) 
+                    state_if_node = tn.StateIfScope(condition=e.data.condition, children=edge_body)
                     state_if_node.sdfg = block.sdfg
                     result.append(state_if_node)
             else:
