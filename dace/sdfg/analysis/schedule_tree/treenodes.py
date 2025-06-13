@@ -218,7 +218,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
 
         if simplify:
             from dace.transformation.passes.simplify import SimplifyPass
-            SimplifyPass(validate=validate, validate_all=validate_all, skip=skip, verbose=verbose).apply_pass(self, {})
+            SimplifyPass(validate=validate, validate_all=validate_all, skip=skip, verbose=verbose).apply_pass(sdfg, {})
 
         return sdfg
 
