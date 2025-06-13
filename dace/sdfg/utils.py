@@ -2109,3 +2109,79 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
             if isinstance(node, NestedSDFG):
                 node.sdfg.parent_sdfg = sdfg
                 set_nested_sdfg_parent_references(node.sdfg)
+
+
+def get_used_data(cfg: ControlFlowRegion | SDFGState) -> Set[str]:
+    """
+    Returns a set of all data names that are used in the given control flow region or state.
+    Data is considered used if there is an access node
+
+    :param cfg: The control flow region or state to check.
+    :return: A set of used data names.
+    """
+    used_data = set()
+    for state in cfg.all_states() if not isinstance(cfg, SDFGState) else [cfg]:
+        for node in state.nodes():
+            if isinstance(node, nd.AccessNode):
+                used_data.add(node.data)
+
+    cfgs_to_check = {cfg.nodes()}  if not isinstance(cfg, SDFGState) else {}
+
+    while cfgs_to_check:
+        node = cfgs_to_check.pop()
+        if not isinstance(node, SDFGState):
+            cfgs_to_check.add(node.nodes())
+
+        for out_edge in cfg.out_edges(node):
+            assert isinstance(out_edge, InterstateEdge)
+            edge = out_edge.data
+            interstate_used_data = edge.used_arrays(arrays=cfg.sdfg.arrays, union_lhs_symbols=True)
+            used_data.update(interstate_used_data)
+
+        if isinstance(node, ConditionalBlock):
+            for branch_code in node.branches:
+                pass
+
+        if isinstance(node, LoopRegion):
+            pass
+
+    return used_data
+
+def get_constant_data(cfg: ControlFlowRegion | SDFGState) -> Set[str]:
+    """
+    Returns a set of all constant data names in the given control flow region or state.
+    Data is considered constant if there is any incoming edge to an access node of the data.
+    Due to the semantics of SDFG, if a nested SDFG writes to the data container it needs to be
+    visible in the parent graph as well, so the function does not need to be recursive.
+
+    :param cfg: The control flow region or state to check.
+    :return: A set of constant data names.
+    """
+
+    data_written_to = set()
+    sdfg = cfg.sdfg
+    # Write accesses to scalars can happen through access nodes and interstate edges (assignments)
+    # Write accesses to arrays can only happen through access nodes
+    for state in cfg.all_states() if not isinstance(cfg, SDFGState) else [cfg]:
+        for node in state.nodes():
+            if isinstance(node, nd.AccessNode):
+                if state.in_degree(node) > 0:
+                    data_written_to.add(node.data)
+
+    cfgs_to_check = {cfg.nodes()}  if not isinstance(cfg, SDFGState) else {}
+
+    while cfgs_to_check:
+        node = cfgs_to_check.pop()
+        if not isinstance(node, SDFGState):
+            cfgs_to_check.add(node.nodes())
+
+        for out_edge in cfg.out_edges(node):
+            assert isinstance(out_edge, InterstateEdge)
+            edge = out_edge.data
+            written_scalars = [arr_name for arr_name in edge.assignments if arr_name in sdfg.arrays]
+            if written_scalars:
+                data_written_to.update(written_scalars)
+
+    all_accessed_data = set()
+    constants = all_accessed_data - data_written_to
+    return constants
