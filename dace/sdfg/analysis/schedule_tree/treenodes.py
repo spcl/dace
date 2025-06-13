@@ -8,11 +8,8 @@ from dace.sdfg.memlet_utils import MemletSet
 from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
 from dace.sdfg.state import SDFGState
-from dace.symbolic import symbol
 from dace.memlet import Memlet
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
-
-from dace.transformation.passes.simplify import SimplifyPass
 
 INDENTATION = '  '
 
@@ -194,7 +191,12 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     callback_mapping: Dict[str, str] = field(default_factory=dict)
     arg_names: List[str] = field(default_factory=list)
 
-    def as_sdfg(self, validate: bool = True, simplify: bool = True) -> SDFG:
+    def as_sdfg(self,
+                validate: bool = True,
+                simplify: bool = True,
+                validate_all: bool = False,
+                skip: Set[str] = set(),
+                verbose: bool = False) -> SDFG:
         """
         Convert this schedule tree representation (back) into an SDFG.
 
@@ -202,6 +204,9 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         :param simplify: If true, simplify generated SDFG. The conversion might insert things like extra
                          empty states that can be cleaned up automatically. The value of `validate` is
                          passed on to `simplify()`.
+        :param validate_all: When simplifying, validate all intermediate SDFGs. Unused if simplify is False.
+        :param skip: Set of names of simplify passes to skip. Unused if simplify is False.
+        :param verbose: Turn on verbose logging of simplify. Unused if simplify is False.
 
         :return: SDFG version of this schedule tree.
         """
@@ -212,7 +217,8 @@ class ScheduleTreeRoot(ScheduleTreeScope):
             sdfg.validate()
 
         if simplify:
-            sdfg.simplify(validate=validate)
+            from dace.transformation.passes.simplify import SimplifyPass
+            SimplifyPass(validate=validate, validate_all=validate_all, skip=skip, verbose=verbose).apply_pass(self, {})
 
         return sdfg
 
