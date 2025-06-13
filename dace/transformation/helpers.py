@@ -728,7 +728,7 @@ def isolate_nested_sdfg(
     if state.scope_dict()[nsdfg_node] is not None:
         if test_if_applicable:
             return False
-        raise ValueError(f'Can not isolate NestedSDFG "{nsdfg_node}" because it is not on global scope.')
+        raise ValueError(f'Cannot isolate NestedSDFG "{nsdfg_node}" because it is within a scope.')
 
     # These are the nodes that will be moved to the Pre State, they are found through
     #  a backwards search starting from the nodes that serves as input to the nested
