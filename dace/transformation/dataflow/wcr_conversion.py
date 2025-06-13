@@ -299,9 +299,6 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 for iedge in state.in_edges(edge.dst):
                     if iedge == edge:
                         continue
-                    if iedge.src in nodes_to_move:
-                        orig_edges.add(iedge)
-                        continue
                     for e in state.memlet_path(iedge):
                         nodes_to_move.add(e.src)
                         orig_edges.add(e)
