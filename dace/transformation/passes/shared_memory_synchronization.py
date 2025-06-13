@@ -1,5 +1,8 @@
 from typing import Union, Dict, Set
 
+import functools
+import sympy
+
 import dace
 from dace import SDFG, properties, SDFGState
 from dace import dtypes
@@ -12,6 +15,7 @@ from dace.sdfg.graph import Edge
 from dace.sdfg.state import LoopRegion, ControlFlowBlock
 from dace.sdfg.nodes import AccessNode, Map, MapEntry, MapExit
 
+from dace.transformation.passes import analysis as ap
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -296,11 +300,29 @@ class DefaultSharedMemorySync(ppl.Pass):
             if isinstance(scope, MapExit):
                 schedule = scope.schedule
                 if schedule == dtypes.ScheduleType.Sequential and innermost_sequential_scope is None:
+
+                    # Special: Skip if there is only one iteration
+                    size_per_dim = scope.map.range.size()
+                    number_total_iterations = functools.reduce(sympy.Mul, size_per_dim, 1)
+                    if number_total_iterations.is_number and number_total_iterations <= 1:
+                        continue
+
                     innermost_sequential_scope = scope
+
                 elif schedule == dtypes.ScheduleType.GPU_Device:
                     inside_gpu_kernel = True
                     break
             elif isinstance(scope, LoopRegion) and innermost_sequential_scope is None:
+
+                # Special: Skip if there is only one iteration
+                start = ap.get_init_assignment(scope)
+                end = ap.get_loop_end(scope)
+                stride = ap.get_loop_stride(scope)
+                nr_iter = (end - start) / stride
+
+                if nr_iter.is_number and nr_iter <= 1:
+                    continue
+
                 innermost_sequential_scope = scope
 
         # Validate that shared memory is used within GPU kernel context
@@ -319,10 +341,12 @@ class DefaultSharedMemorySync(ppl.Pass):
         if isinstance(innermost_sequential_scope, MapExit):
             self._add_post_sync_for_sequential_map(innermost_sequential_scope)
         elif isinstance(innermost_sequential_scope, LoopRegion):
-            self._add_post_sync_for_loop_region(innermost_sequential_scope)
+            # two options, see docstrings
+            self._add_post_sync_tasklets_for_loop_region(innermost_sequential_scope)
+           # _add_post_sync_state_for_loop_region(innermost_sequential_scope)
 
 
-    # TODO: Avoid synchronization if only one iteration
+    
     def _add_post_sync_for_sequential_map(self, seq_map_exit: MapExit) -> None:
         """
         Add post-synchronization barrier after a sequential map that may reuse shared memory.
@@ -333,7 +357,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         # Avoid duplicate synchronization
         if seq_map_exit in self._synchronized_scopes:
             return
-
+        
         # Find the state containing this map
         containing_state = self._map_exit_to_state[seq_map_exit]
         
@@ -358,9 +382,11 @@ class DefaultSharedMemorySync(ppl.Pass):
         # Mark as synchronized
         self._synchronized_scopes.add(seq_map_exit)
 
-    def _add_post_sync_for_loop_region(self, loop_region: LoopRegion) -> None:
+    def _add_post_sync_state_for_loop_region(self, loop_region: LoopRegion) -> None:
         """
         Add post-synchronization barrier for a loop region that reuses shared memory arrays.
+        It adds a new state, which contains only a synchronization tasklet that connects
+        to all sink blocks of the loop region.
         
         Args:
             loop_region: The LoopRegion that needs post-synchronization
@@ -390,5 +416,53 @@ class DefaultSharedMemorySync(ppl.Pass):
         for block in sink_blocks:
             loop_region.add_edge(block, syn_block, InterstateEdge())
 
+        # Mark as synchronized
+        self._synchronized_scopes.add(loop_region)
+
+
+    def _add_post_sync_tasklets_for_loop_region(self, loop_region: LoopRegion) -> None:
+        """
+        Add post-synchronization barrier for a loop region that reuses shared memory arrays.
+        Determines all sink blocks in the LoopRegion, and then, for each sink block, adds a new synchronization
+        tasklet that connects to all sink nodes within that sink block.
+        
+        Args:
+            loop_region: The LoopRegion that needs post-synchronization
+        """
+
+        sink_blocks: list[SDFGState] = []
+        for block in loop_region.nodes():
+
+            if not isinstance(block, SDFGState):
+                raise NotImplementedError(f"Block {block} is expected to be an SDFG state. But it is of type {type(block)}. "
+                                           "Extend use case if this should be valid."
+                                           )
+            
+            if loop_region.out_degree(block) == 0:
+                sink_blocks.append(block)
+
+        # No sync needed
+        if len(sink_blocks) < 0:
+            return
+        
+
+        # For each sink block, synchronize at the end
+        for block in sink_blocks:
+            
+            sink_nodes: list[nodes.Node] = block.sink_nodes()
+
+            # All sink nodes in the same block (= state) get the same sync tasklet
+            post_sync_barrier = block.add_tasklet(
+                name="post_sync_barrier",
+                inputs=set(),
+                outputs=set(),
+                code="__syncthreads();\n",
+                language=dtypes.Language.CPP
+            )
+
+            for snode in sink_nodes:
+                block.add_edge(snode, None, post_sync_barrier, None, dace.Memlet())
+
+            
         # Mark as synchronized
         self._synchronized_scopes.add(loop_region)
