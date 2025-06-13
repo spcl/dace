@@ -1,13 +1,18 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass, field
+
+from pyparsing import Opt
 from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ConditionalBlock, SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from typing import Dict, Iterator, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Set, Union
+
+if TYPE_CHECKING:
+    from dace import SDFG
 
 INDENTATION = '  '
 
@@ -18,7 +23,8 @@ class UnsupportedScopeException(Exception):
 
 @dataclass
 class ScheduleTreeNode:
-    parent: Optional['ScheduleTreeScope'] = field(default=None, init=False)
+    parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
+    sdfg: Optional['SDFG'] = field(default=None, init=False, repr=False)
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'
@@ -68,6 +74,7 @@ class ControlFlowScope(ScheduleTreeScope):
 @dataclass
 class DataflowScope(ScheduleTreeScope):
     node: nodes.EntryNode
+    state: Optional[SDFGState] = None
 
 
 @dataclass
@@ -114,46 +121,6 @@ class AssignNode(ScheduleTreeNode):
 
 
 @dataclass
-class ForScope(ControlFlowScope):
-    """
-    For loop scope.
-    """
-    header: cf.ForScope
-
-    def as_string(self, indent: int = 0):
-        node = self.header
-
-        result = (indent * INDENTATION + f'for {node.itervar} = {node.init}; {node.condition.as_string}; '
-                  f'{node.itervar} = {node.update}:\n')
-        return result + super().as_string(indent)
-
-
-@dataclass
-class WhileScope(ControlFlowScope):
-    """
-    While loop scope.
-    """
-    header: cf.WhileScope
-
-    def as_string(self, indent: int = 0):
-        result = indent * INDENTATION + f'while {self.header.test.as_string}:\n'
-        return result + super().as_string(indent)
-
-
-@dataclass
-class DoWhileScope(ControlFlowScope):
-    """
-    Do/While loop scope.
-    """
-    header: cf.DoWhileScope
-
-    def as_string(self, indent: int = 0):
-        header = indent * INDENTATION + 'do:\n'
-        footer = indent * INDENTATION + f'while {self.header.test.as_string}\n'
-        return header + super().as_string(indent) + footer
-
-
-@dataclass
 class GeneralLoopScope(ControlFlowScope):
     """
     General loop scope (representing a loop region).
@@ -196,6 +163,7 @@ class IfScope(ControlFlowScope):
     If branch scope.
     """
     condition: CodeBlock
+    cond_block: Optional[ConditionalBlock]
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
@@ -446,3 +414,14 @@ class ScheduleNodeTransformer(ScheduleNodeVisitor):
                 val.parent = node
             node.children[:] = new_values
         return node
+
+def validate_has_no_other_node_types(stree: ScheduleTreeScope) -> None:
+    """
+    Validates that the schedule tree contains only nodes of type ScheduleTreeNode or its subclasses.
+    Raises an exception if any other node type is found.
+    """
+    for child in stree.children:
+        if not isinstance(child, ScheduleTreeNode):
+            raise RuntimeError(f'Unsupported node type: {type(child).__name__}')
+        if isinstance(child, ScheduleTreeScope):
+            validate_has_no_other_node_types(child)
