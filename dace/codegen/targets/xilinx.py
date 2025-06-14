@@ -285,7 +285,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
             pass
         else:
             raise ValueError("Unsupported storage type: {}".format(desc.storage.name))
-        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer, '%s *' % dtype.ctype)
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer, dtypes.pointer(dtype))
 
     def define_shift_register(*args, **kwargs):
         raise NotImplementedError("Xilinx shift registers NYI")
@@ -890,12 +890,12 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                     # This is an external stream being passed to the module
                     # Add this to defined vars
                     if not self._dispatcher.defined_vars.has(argname):
-                        self._dispatcher.defined_vars.add(argname, DefinedType.Stream, arg.ctype)
+                        self._dispatcher.defined_vars.add(argname, DefinedType.Stream, arg)
                     continue
 
                 if (not (isinstance(arg, dt.Array) and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
                     continue
-                ctype = dtypes.pointer(arg.dtype).ctype
+                ctype = dtypes.pointer(arg.dtype)
                 ptr_name = fpga.fpga_ptr(argname,
                                          arg,
                                          sdfg,
@@ -905,7 +905,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                                          is_array_interface=True,
                                          decouple_array_interfaces=self._decouple_array_interfaces)
                 if not is_output and self._decouple_array_interfaces:
-                    ctype = f"const {ctype}"
+                    ctype.const = True
 
                 if self._decouple_array_interfaces:
                     self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctype)
@@ -1061,7 +1061,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
             buffer_size = dace.symbolic.evaluate(node.buffer_size, sdfg.constants)
             ctype = "dace::FIFO<{}, {}, {}>".format(node.dtype.base_type.ctype, node.dtype.veclen, buffer_size)
             num_streams = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
-            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, ctype)
+            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, dtypes.opaque(ctype))
             key = 0 if is_output else 1
 
             # Define here external streams
