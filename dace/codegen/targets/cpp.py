@@ -352,9 +352,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
     def make_const(expr: dtypes.typeclass) -> dtypes.typeclass:
-        # check whether const has already been added before
-        if getattr(expr, 'const', False):
-            expr.const = True
+        expr.const = True
         return expr
 
     if (defined_type == DefinedType.Pointer
@@ -423,7 +421,10 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(datadef + offset_expr, defined_ctype, conntype, is_scalar, defined_type)
+        if conntype != dtypes.typeclass(None):
+            expr = make_ptr_vector_cast(datadef + offset_expr, defined_ctype, conntype, is_scalar, defined_type)
+        else:
+            expr = datadef + offset_expr
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)

@@ -29,12 +29,16 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     scalar = (e.data.subset and e.data.subset.num_elements() == 1
               and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
     if e.data.data is not None:
-        allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
+        allocated_as_scalar = (sdfg.arrays[e.data.data].storage != dtypes.StorageType.GPU_Global)
     else:
         allocated_as_scalar = True
 
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):
+        if isinstance(node.sdfg.arrays[cname], data.Stream):
+            # Let code generation handle streams based on defined types (because a stream could be
+            # implemented as a StreamArrayView, Stream, GPUStream, etc.)
+            return None
         scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
         dtype = node.sdfg.arrays[cname].dtype
         ctype = (dtype if scalar else dtypes.pointer(dtype))

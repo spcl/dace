@@ -432,6 +432,7 @@ class typeclass(object):
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
         self.typename = typename
+        self.const = False  # Whether this type is constant (e.g., `const int`) in code generation
 
     def __hash__(self):
         return hash((self.type, self.ctype))
@@ -501,6 +502,8 @@ class typeclass(object):
         return _OCL_TYPES[self.type]
 
     def as_arg(self, name):
+        if self.const:
+            return 'const ' + self.ctype + ' ' + name
         return self.ctype + ' ' + name
 
 
@@ -632,6 +635,7 @@ class opaque(typeclass):
         self.ctype = typename
         self.ctype_unaligned = typename
         self.dtype = self
+        self.const = False
 
     def to_json(self):
         return {'type': 'opaque', 'ctype': self.ctype}
@@ -697,6 +701,14 @@ class pointer(typeclass):
         return numpy.dtype(self.as_ctypes())
 
     @property
+    def const(self):
+        return self._typeclass.const
+
+    @const.setter
+    def const(self, value):
+        self._typeclass.const = value
+
+    @property
     def base_type(self):
         return self._typeclass
 
@@ -718,6 +730,7 @@ class vector(typeclass):
         self._veclen = vector_length
         self.bytes = dtype.bytes * vector_length
         self.dtype = self
+        self.const = False  # Whether this type is constant (e.g., `const int`) in code generation
 
     def to_json(self):
         return {'type': 'vector', 'dtype': self.vtype.to_json(), 'elements': str(self.veclen)}
@@ -800,6 +813,7 @@ class struct(typeclass):
         self.ctype_unaligned = name
         self.dtype = self
         self._parse_field_and_types(**fields_and_types)
+        self.const = False  # Whether this type is constant (e.g., `const struct a`) in code generation
 
     @property
     def fields(self):
@@ -825,6 +839,7 @@ class struct(typeclass):
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
         ret._length = {k: v for k, v in json_obj['length']}
         ret.bytes = json_obj['bytes']
+        ret.const = json_obj['const']
 
         return ret
 
@@ -972,6 +987,7 @@ class callback(typeclass):
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
+        self.const = False  # Whether this type is constant (e.g., `const int`) in code generation
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -1048,7 +1064,8 @@ class callback(typeclass):
                     input_type_cstring.append(pointer(arg.dtype).ctype)
 
         retval = self.cfunc_return_type()
-        return f'{retval} (*{name})({", ".join(input_type_cstring)})'
+        const = ' const ' if self.const else ''
+        return f'{retval} (*{const}{name})({", ".join(input_type_cstring)})'
 
     @property
     def ctype(self):

@@ -1371,12 +1371,12 @@ class CPUCodeGen(TargetCodeGenerator):
         if is_scalar and is_pointer and list(memlet.subset.size()) == list(desc.shape):
             expr = ptr
 
-        # If there is a type mismatch, cast pointer
-        expr = codegen.make_ptr_vector_cast(expr, ctypedef, conntype, is_scalar, var_type)
-
         defined = None
 
         if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
+            # If there is a type mismatch, cast pointer
+            expr = codegen.make_ptr_vector_cast(expr, ctypedef, conntype, is_scalar, var_type)
+
             if output:
                 if is_pointer and var_type == DefinedType.ArrayInterface:
                     result += "{} = {};".format(memlet_type.as_arg(local_name), expr)
@@ -1694,7 +1694,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 restrict_args.append('')
 
         arguments += [
-            f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
+            f'{atype.as_arg(restrict + " " + aname)}'
+            for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
@@ -2099,12 +2100,14 @@ class CPUCodeGen(TargetCodeGenerator):
         # Take chunks into account
         if node.consume.chunksize == 1:
             ctype = dtypes.pointer(input_streamdesc.dtype)
-            chunk = "const " + ctype.as_arg("&__dace_" + node.consume.label + "_element")
+            ctype.const = True
+            chunk = "" + ctype.as_arg("&__dace_" + node.consume.label + "_element")
             self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_element", DefinedType.Scalar, ctype)
         else:
             ctype = dtypes.pointer(input_streamdesc.dtype)
-            chunk = "const %s, size_t %s" % (ctype.as_arg("__dace_" + node.consume.label + "_elements"),
-                                             "__dace_" + node.consume.label + "_numelems")
+            ctype.const = True
+            chunk = "%s, size_t %s" % (ctype.as_arg("__dace_" + node.consume.label + "_elements"),
+                                       "__dace_" + node.consume.label + "_numelems")
             self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_elements", DefinedType.Pointer, ctype)
             self._dispatcher.defined_vars.add("__dace_" + node.consume.label + "_numelems", DefinedType.Scalar,
                                               dtypes.opaque('size_t'))
