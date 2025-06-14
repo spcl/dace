@@ -203,9 +203,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate the viewed view before the view, if necessary
         mpath = dfg.memlet_path(edge)
         viewed_dnode: nodes.AccessNode = mpath[-1].dst if is_write else mpath[0].src
-        if isinstance(viewed_dnode.desc(sdfg), (data.View, data.Reference)):
-            self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg),
-                                               global_stream, allocation_stream)
+        self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg),
+                                           global_stream, allocation_stream)
 
         # Memlet points to view, construct mirror memlet
         memlet = edge.data
