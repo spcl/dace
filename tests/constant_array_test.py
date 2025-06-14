@@ -117,6 +117,7 @@ def test_constant_transient_double_nested_scalar():
 
     # modify cst to be a dace constant: the python frontend adds an assignment tasklet
     assign_state = sdfg.node(0)
+    assert 'assign' in assign_state.label
     sdfg.remove_node(assign_state)
 
     sdfg.add_constant('cst', 1.0, sdfg.arrays['cst'])

@@ -905,7 +905,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
             if isinstance(ctype, data.Array):
-                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype)
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, dtypes.pointer(ctype.dtype))
             else:
                 self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype)
 
