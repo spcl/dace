@@ -237,12 +237,21 @@ class Data:
         # Compute hash using serialized value (i.e., with all properties included)
         return hash(serialize.dumps(self))
 
-    def as_arg(self, with_types=True, for_call=False, name=None):
-        """Returns a string for a C++ function signature (e.g., `int *A`). """
+    def as_arg(self, with_types=True, for_call=False, name=None, byvalue=False):
+        """
+        Returns a string for a C++ function signature (e.g., ``int *A``).
+
+        :param with_types: If True, include the type in the string (e.g., ``int *A``).
+        :param for_call: If True, the string is used for a function call (e.g., ``A`` instead of ``&A``).
+        :param name: If provided, use this name instead of the default name.
+        :param byvalue: If True, the data is passed by value (e.g., ``int A`` instead of ``int *A``).
+                        This is used in code generation for allocating data on the stack.
+        :return: A string representing the data descriptor as a C++ argument.
+        """
         raise NotImplementedError
 
     def as_python_arg(self, with_types=True, for_call=False, name=None):
-        """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
+        """Returns a string for a Data-Centric Python function signature (e.g., ``A: dace.int32[M]``). """
         raise NotImplementedError
 
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
@@ -468,9 +477,9 @@ class Structure(Data):
     def __repr__(self):
         return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
 
-    def as_arg(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None, byvalue=False):
         if self.storage is dtypes.StorageType.GPU_Global:
-            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name, byvalue)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
@@ -1269,9 +1278,9 @@ class Scalar(Data):
             return False
         return True
 
-    def as_arg(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None, byvalue=False):
         if self.storage is dtypes.StorageType.GPU_Global:
-            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name, byvalue)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
@@ -1548,11 +1557,13 @@ class Array(Data):
                 return False
         return True
 
-    def as_arg(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None, byvalue=False):
         arrname = name
 
         if not with_types or for_call:
             return arrname
+        if byvalue:
+            return self.dtype.as_arg(arrname)
         if self.may_alias:
             return str(self.dtype.ctype) + ' *' + arrname
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
