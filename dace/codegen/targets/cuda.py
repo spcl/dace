@@ -156,9 +156,7 @@ class CUDACodeGen(TargetCodeGenerator):
                                       'CUDA',
                                       target_type=target_type)
 
-        sdfg.apply_transformations_once_everywhere(
-            dace.transformation.dataflow.add_threadblock_map.AddThreadBlockMap,
-        )
+        sdfg.apply_transformations_once_everywhere(dace.transformation.dataflow.add_threadblock_map.AddThreadBlockMap, )
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         from dace.transformation.dataflow import CopyToMap

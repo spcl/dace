@@ -11,6 +11,7 @@ from dace.transformation import transformation
 from dace.transformation.dataflow.tiling import MapTiling
 from dace import dtypes
 
+
 @make_properties
 class AddThreadBlockMap(transformation.SingleStateTransformation):
     """
@@ -65,16 +66,17 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         applied_gpu_block_dims[-used_dimensions:] = block_dims[-used_dimensions:]
         gpu_block_dims_ordered = list(reversed(applied_gpu_block_dims))
 
-
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
-        MapTiling.apply_to(sdfg=sdfg,
-                           options=dict(prefix="b",
-                                        #tile_offset=map_begins,
-                                        tile_sizes=tile_sizes,
-                                        divides_evenly=True,
-                                        tile_trivial=True,
-                                        skew=True),
-                            map_entry=map_entry)
+        MapTiling.apply_to(
+            sdfg=sdfg,
+            options=dict(
+                prefix="b",
+                #tile_offset=map_begins,
+                tile_sizes=tile_sizes,
+                divides_evenly=True,
+                tile_trivial=True,
+                skew=True),
+            map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
         map_entry.map.label = "ThreadBlockMap"
@@ -100,7 +102,6 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         for edge in edges_to_remove:
             state.remove_edge(edge)
         """
-
         """
         # In assignment maps it can be that the new map is not connected.
         out_edges = state.out_edges(dev_entry)
