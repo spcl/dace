@@ -417,7 +417,8 @@ class WithinGPUCopyStrategy(CopyStrategy):
         # Determine the schedule type of the innermost non-sequential map.
         # If no such map exists, use the default schedule.
         current_node = deeper_scope_node
-        while (current_node is None or current_node.map.schedule == dtypes.ScheduleType.Sequential):
+        while (current_node is None or not isinstance(current_node, nodes.MapEntry) or 
+               current_node.map.schedule == dtypes.ScheduleType.Sequential):
             
             parent = helpers.get_parent_map(state, current_node)
             if parent is None:
@@ -480,12 +481,12 @@ class WithinGPUCopyStrategy(CopyStrategy):
         # Retrieve kernel specs from the ExperimentalCUDACodegen instance (held in a dedicated class)
         # Only there block_dims is stored, which is needed in this case
         kernel_specifications: KernelSpec = copy_context.codegen._current_kernel_spec
-        block_dims = ', '.join(kernel_specifications.block_dims)
+        block_dims = ', '.join(symbolic_to_cpp(kernel_specifications.block_dims))
 
         # was called "is_async" previously. It determines whether a "__syncthreads()" is called at the
         # end of the copy. In ExperimentalCUDACodegen, a pass is responsible to insert such sync barriers,
         # so it is synchronized and we do not need "implicit" synchronization
-        synchronized = True
+        synchronized = "false"
 
         if any(symbolic.issymbolic(s, copy_context.sdfg.constants) for s in copy_shape):
             args_list = (
@@ -496,14 +497,14 @@ class WithinGPUCopyStrategy(CopyStrategy):
                 + dst_strides
                 + copy_shape
             )
-            args = ", ".join(args_list)
+            args = ", ".join(symbolic_to_cpp(args_list))
             callsite_stream.write(f"{function_name}Dynamic<{ctype}, {block_dims}, {synchronized}>{accum}({args});",
                                 cfg, state_id, [src_node, dst_node])
             
 
         elif function_name == "dace::SharedToGlobal1D":
             # special case: use a new template struct that provides functions for copy and reduction
-            copy_size = ', '.join(copy_shape)
+            copy_size = ', '.join(symbolic_to_cpp(copy_shape))
             accum = accum or '::Copy'
             args_list = (
                 [src_expr]
@@ -512,21 +513,21 @@ class WithinGPUCopyStrategy(CopyStrategy):
                 + dst_strides
                 + custom_reduction
             )
-            args = ", ".join(args_list)
+            args = ", ".join(symbolic_to_cpp(args_list))
             callsite_stream.write(f"{function_name}<{ctype}, {block_dims}, {copy_size}, {synchronized}>{accum}({args});",
                                   cfg, state_id, [src_node, dst_node])
             
         else:
-            copy_size = ', '.join(copy_shape)
-            accum = accum or '::Copy'
+            copy_size = ', '.join(symbolic_to_cpp(copy_shape))
             args_list = (
                 [src_expr]
                 + src_strides
                 + [dst_expr]
                 + custom_reduction
             )
-            args = ", ".join(args_list)
-            callsite_stream.write(f"{function_name}<{ctype}, {block_dims}, {copy_size}, {dst_strides}, {synchronized}>{accum}({args});",
+            args = ", ".join(symbolic_to_cpp(args_list))
+            dst_strides_unpacked = ", ".join(symbolic_to_cpp(dst_strides))
+            callsite_stream.write(f"{function_name}<{ctype}, {block_dims}, {copy_size}, {dst_strides_unpacked}, {synchronized}>{accum}({args});",
                                   cfg, state_id, [src_node, dst_node])
         
 

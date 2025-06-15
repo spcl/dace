@@ -22,7 +22,6 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets import cpp
 from dace.codegen.targets.cpp import (
     codeblock_to_cpp, 
     memlet_copy_to_absolute_strides, 
@@ -33,6 +32,7 @@ from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_a
 # DaCe transformation imports
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.gpustream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
 # Experimental CUDA helper imports
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
@@ -47,13 +47,17 @@ if TYPE_CHECKING:
 # TODO's easy:
 # 1. Handle memory pools release
 # 2. Handle sync properties
-# 3. Warning/Error that GPU_deive must be used before other GPU schedules
-# 4. Emit sync
-# 5. compute_release()
+# 3. Emit sync
 
 # TODO's harder:
-# 2. Include constant expressions
+# 1. Include constant expressions
 
+# Question: Getting "const" expressions leads to some issues.
+# So it looks like, that I need to do make this visible to lower
+# generation as well.
+
+
+# extended todo: get const, like in a general way without a hack in a scope
 
 
 @registry.autoregister_params(name='experimental_cuda')
@@ -206,6 +210,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # Initialize runtime GPU stream manager
         self._gpu_stream_manager = GPUStreamManager(sdfg, assigned_streams, gpu_stream_access_template)
+
+        #----------------- Shared Memory Synchronization related Logic -----------------
+
+        DefaultSharedMemorySync().apply_pass(sdfg, None)
 
         #------------------------- Memory Pool related Logic --------------------------
 
@@ -409,7 +417,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             function_stream.write('DACE_EXPORTED void __dace_runkernel_%s(%s);\n' % 
                                 (kernel_name, ', '.join(kernel_wrapper_args_typed)), cfg, state_id, scope_entry)
 
-            # Calling he function which launches the kernel (C++ code)
+            # Calling the function which launches the kernel (C++ code)
             callsite_stream.write( '__dace_runkernel_%s(%s);\n' %
                                 (kernel_name, ', '.join(kernel_wrapper_args)), cfg, state_id, scope_entry)
         
@@ -1171,6 +1179,7 @@ class KernelSpec:
         
         
         kernel_entry_node = dfg_scope.source_nodes()[0]
+        kernel_exit_node = dfg_scope.sink_nodes()[0]
         state: SDFGState = cfg.state(state_id)
 
         self._kernel_entry_node: nodes.MapEntry  = kernel_entry_node
@@ -1187,6 +1196,20 @@ class KernelSpec:
                 arglist = state.scope_subgraph(node).arglist(defined_syms, shared_transients)
                 break
         self._args: Dict = arglist
+
+        """
+        # const args
+        input_params = set(e.data.data for e in state.in_edges(kernel_entry_node))
+        output_params = set(e.data.data for e in state.out_edges(kernel_exit_node))
+        toplevel_params = set(node.data for node in dfg_scope.nodes()
+                            if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].toplevel)
+        dynamic_inputs = set(e.data.data for e in dace.sdfg.dynamic_map_inputs(state, kernel_entry_node))
+
+        const_args = input_params - (output_params | toplevel_params | dynamic_inputs)
+        self._args_typed: list[str] = [('const ' if aname in const_args else '') + adata.as_arg(name=aname) for aname, adata in self._args.items()]
+        """
+
+        # args typed correctly and as input
         self._args_typed: list[str] = [adata.as_arg(name=aname) for aname, adata in self._args.items()]
         self._args_as_input: list[str] = [ptr(aname, adata, sdfg, cudaCodeGen._frame) for aname, adata in self._args.items()]
 
