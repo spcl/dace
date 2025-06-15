@@ -29,6 +29,9 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers as xfh
+import dace.transformation
+import dace.transformation.dataflow
+import dace.transformation.dataflow.add_threadblock_map
 from dace.transformation.passes import analysis as ap
 
 if TYPE_CHECKING:
@@ -152,6 +155,10 @@ class CUDACodeGen(TargetCodeGenerator):
                                       CUDACodeGen,
                                       'CUDA',
                                       target_type=target_type)
+
+        sdfg.apply_transformations_once_everywhere(
+            dace.transformation.dataflow.add_threadblock_map.AddThreadBlockMap,
+        )
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         from dace.transformation.dataflow import CopyToMap
