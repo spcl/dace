@@ -12,7 +12,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg import nodes, InterstateEdge
 from dace.sdfg.graph import Edge
 
-from dace.sdfg.state import LoopRegion, ControlFlowBlock
+from dace.sdfg.state import LoopRegion, ConditionalBlock, ControlFlowBlock
 from dace.sdfg.nodes import AccessNode, Map, MapEntry, MapExit
 
 from dace.transformation.passes import analysis as ap
@@ -73,22 +73,34 @@ class DefaultSharedMemorySync(ppl.Pass):
         
         Args:
             sdfg: The SDFG to traverse
-            enclosing_scopes: Stack of enclosing execution scopes (maps, loops) of sdfg
+            enclosing_scopes: Stack of execution scopes (e.g., maps, loops) enclosing the SDFG as a whole.
         """
-        for node in sdfg.nodes():
+        for sdfg_elem in sdfg.nodes():
+            self._process_sdfg_element(sdfg, sdfg_elem, enclosing_scopes)
 
+            
+    def _process_sdfg_element(self, sdfg: SDFG, element: any,  enclosing_scopes: list[Union[MapExit, LoopRegion]]) -> None:
+        """
+        Identifies the type of the SDFG element and processes it using the corresponding handler.
 
-            if isinstance(node, LoopRegion):
-                self._process_loop_region(sdfg, node, enclosing_scopes)
+        Args:
+            sdfg: The current SDFG we are in (innermost if nested)
+            enclosing_scopes: Stack of enclosing execution scopes (maps, loops) wrapping the current SDFG
+        """
+        if isinstance(element, LoopRegion):
+            self._process_loop_region(sdfg, element, enclosing_scopes)
 
-            elif isinstance(node, SDFGState):
-                self._process_state(sdfg, node, enclosing_scopes)
+        elif isinstance(element, SDFGState):
+            self._process_state(sdfg, element, enclosing_scopes)
 
-            else:
-                raise NotImplementedError(
-                    f"{self.__class__.__name__}: Unsupported node type '{type(node).__name__}' "
-                    f"encountered during SDFG traversal. Please extend the implementation to handle this case."
-                )
+        elif isinstance(element, ConditionalBlock):
+            self._process_conditionalBlock(sdfg, element, enclosing_scopes)
+
+        else:
+            raise NotImplementedError(
+                f"{self.__class__.__name__}: Unsupported node type '{type(element).__name__}' "
+                f"encountered during SDFG traversal. Please extend the implementation to handle this case."
+            )
 
     def _process_loop_region(self, sdfg: SDFG, loop_region: LoopRegion, 
                            enclosing_scopes: list[Union[MapExit, LoopRegion]]) -> None:
@@ -176,6 +188,24 @@ class DefaultSharedMemorySync(ppl.Pass):
             self._process_sdfg(node.sdfg, nested_scopes)
             self._processed_nsdfg.add(node)
 
+
+    def _process_conditionalBlock(self, sdfg: SDFG, cond_block: ConditionalBlock, 
+                                  enclosing_scopes: list[Union[MapExit, LoopRegion]]) -> None:
+        """
+        Processes a ConditionalBlock by visiting each clause body and its elements.
+
+        Args:
+            sdfg: The current SDFG context.
+            cond_block: The ConditionalBlock to process (e.g., if-elif-else structure).
+            enclosing_scopes: Stack of execution scopes (e.g., maps, loops) enclosing the SDFG as a whole.
+        """
+        clause_bodies: list[ControlFlowBlock] = cond_block.nodes()
+        
+        for body in clause_bodies:
+            for sdfg_elem in body.nodes():
+                self._process_sdfg_element(sdfg, sdfg_elem, enclosing_scopes)
+
+        
 
     def _is_shared_memory_access_node(self, sdfg: SDFG, node: nodes.Node) -> bool:
         """
@@ -343,7 +373,7 @@ class DefaultSharedMemorySync(ppl.Pass):
         elif isinstance(innermost_sequential_scope, LoopRegion):
             # two options, see docstrings
             self._add_post_sync_tasklets_for_loop_region(innermost_sequential_scope)
-           # _add_post_sync_state_for_loop_region(innermost_sequential_scope)
+            # self._add_post_sync_state_for_loop_region(innermost_sequential_scope)
 
 
     

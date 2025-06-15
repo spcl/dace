@@ -457,7 +457,6 @@ required:
                             Yakup Koray Budanaz for Berkays master-thesis.
                         enum: [legacy, experimental]
                         default: experimental
-
                     gpu_index_type:
                         type: str
                         title: Thread/block/warp index data type
