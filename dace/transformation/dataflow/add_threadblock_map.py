@@ -21,15 +21,24 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    thread_block_size_x = SymbolicProperty(dtype=int, default=32, desc="Number threads in the threadBlock X Dim")
-    thread_block_size_y = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Y Dim")
-    thread_block_size_z = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Z Dim")
+    thread_block_size_x = SymbolicProperty(dtype=int, default=None, allow_none=True, desc="Number threads in the threadBlock X Dim")
+    thread_block_size_y = SymbolicProperty(dtype=int, default=None, allow_none=True, desc="Number threads in the threadBlock Y Dim")
+    thread_block_size_z = SymbolicProperty(dtype=int, default=None, allow_none=True, desc="Number threads in the threadBlock Z Dim")
 
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if self.thread_block_size_x is None or self.thread_block_size_y is None or self.thread_block_size_z is None:
+            x,y,z = dace.config.Config.get('compiler', 'cuda', 'default_block_size').split(',')
+            try:
+                self.thread_block_size_x = int(x)
+                self.thread_block_size_y = int(y)
+                self.thread_block_size_z = int(z)
+            except ValueError:
+                raise ValueError("Invalid default block size format. Expected 'x,y,z' where x, y, z are integers.")
+
         if self.thread_block_size_x * self.thread_block_size_y * self.thread_block_size_z > 1024:
             return False
 
