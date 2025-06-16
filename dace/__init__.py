@@ -6,12 +6,6 @@ from .dtypes import *
 # Import built-in hooks
 from .builtin_hooks import *
 
-# Python frontend
-from .frontend.python.interface import *
-from .frontend.python.wrappers import *
-from .frontend.python.ndloop import ndrange
-from .frontend.operations import reduce, elementwise
-
 from . import data, hooks, subsets
 from .codegen.compiled_sdfg import CompiledSDFG
 from .config import Config
@@ -19,6 +13,12 @@ from .sdfg import SDFG, SDFGState, InterstateEdge, nodes, ControlFlowRegion
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet
 from .symbolic import symbol
+
+# Python frontend
+from .frontend.python.interface import *
+from .frontend.python.wrappers import *
+from .frontend.python.ndloop import ndrange
+from .frontend.operations import reduce, elementwise
 
 # Run Jupyter notebook code
 from .jupyter import *
