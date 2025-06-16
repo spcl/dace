@@ -45,7 +45,6 @@ def test_lift_regular_for_loop():
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -101,7 +100,6 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -158,7 +156,6 @@ def test_lift_loop_llvm_canonical_while():
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -201,7 +198,6 @@ def test_do_while():
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)
@@ -242,7 +238,6 @@ def test_inverted_loop_with_additional_increment_assignment():
 
     sdfg.apply_transformations_repeated([LoopLifting])
 
-    assert sdfg.using_explicit_control_flow == True
     assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
 
     sdfg(A=A, N=N)

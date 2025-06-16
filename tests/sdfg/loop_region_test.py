@@ -8,7 +8,6 @@ from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as t
 
 def _make_regular_for_loop() -> SDFG:
     sdfg = dace.SDFG('regular_for')
-    sdfg.using_explicit_control_flow = True
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1',
                        condition_expr='i < 10',
@@ -31,7 +30,6 @@ def _make_regular_for_loop() -> SDFG:
 
 def _make_regular_while_loop() -> SDFG:
     sdfg = dace.SDFG('regular_while')
-    sdfg.using_explicit_control_flow = True
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1', condition_expr='i < 10')
     sdfg.add_array('A', [10], dace.float32)
@@ -51,7 +49,6 @@ def _make_regular_while_loop() -> SDFG:
 
 def _make_do_while_loop() -> SDFG:
     sdfg = dace.SDFG('do_while')
-    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1', condition_expr='i < 10', inverted=True)
@@ -71,7 +68,6 @@ def _make_do_while_loop() -> SDFG:
 
 def _make_do_for_loop() -> SDFG:
     sdfg = dace.SDFG('do_for')
-    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state0 = sdfg.add_state('state0', is_start_block=True)
@@ -96,7 +92,6 @@ def _make_do_for_loop() -> SDFG:
 
 def _make_do_for_inverted_cond_loop() -> SDFG:
     sdfg = dace.SDFG('do_for_inverted_cond')
-    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state0 = sdfg.add_state('state0', is_start_block=True)
@@ -122,7 +117,6 @@ def _make_do_for_inverted_cond_loop() -> SDFG:
 
 def _make_triple_nested_for_loop() -> SDFG:
     sdfg = dace.SDFG('gemm')
-    sdfg.using_explicit_control_flow = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)

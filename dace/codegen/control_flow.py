@@ -1151,32 +1151,4 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     :param sdfg: The SDFG to iterate over.
     :return: Control-flow block representing the entire SDFG.
     """
-    if sdfg.root_sdfg.using_explicit_control_flow:
-        return structured_control_flow_tree_with_regions(sdfg, dispatch_state)
-
-    # Avoid import loops
-    from dace.sdfg.analysis import cfg
-
-    # Get parent states and back-edges
-    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_block)
-    alldoms = cfg.all_dominators(sdfg, idom)
-    ptree = cfg.block_parent_tree(sdfg, idom=idom)
-    back_edges = cfg.back_edges(sdfg, idom, alldoms)
-
-    # Annotate branches
-    branch_merges: Dict[SDFGState, SDFGState] = cfg.branch_merges(sdfg, idom, alldoms)
-
-    root_block = GeneralBlock(dispatch_state=dispatch_state,
-                              parent=None,
-                              last_block=False,
-                              region=None,
-                              elements=[],
-                              gotos_to_ignore=[],
-                              gotos_to_continue=[],
-                              gotos_to_break=[],
-                              assignments_to_ignore=[],
-                              sequential=True)
-    _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree, branch_merges, back_edges, dispatch_state,
-                                       root_block)
-    _reset_block_parents(root_block)
-    return root_block
+    return structured_control_flow_tree_with_regions(sdfg, dispatch_state)

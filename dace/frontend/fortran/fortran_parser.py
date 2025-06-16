@@ -1148,7 +1148,6 @@ def create_sdfg_from_string(source_string: str,
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_cfg_list()
-    sdfg.using_explicit_control_flow = use_explicit_cf
     return sdfg
 
 
@@ -1186,5 +1185,4 @@ def create_sdfg_from_fortran_file(source_string: str, use_explicit_cf: bool = Fa
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
 
-    sdfg.using_explicit_control_flow = use_explicit_cf
     return sdfg
