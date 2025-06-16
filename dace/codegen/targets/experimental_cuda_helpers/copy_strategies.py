@@ -486,7 +486,7 @@ class WithinGPUCopyStrategy(CopyStrategy):
         # was called "is_async" previously. It determines whether a "__syncthreads()" is called at the
         # end of the copy. In ExperimentalCUDACodegen, a pass is responsible to insert such sync barriers,
         # so it is synchronized and we do not need "implicit" synchronization
-        synchronized = "false"
+        synchronized = "true"
 
         if any(symbolic.issymbolic(s, copy_context.sdfg.constants) for s in copy_shape):
             args_list = (
