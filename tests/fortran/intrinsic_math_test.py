@@ -194,41 +194,6 @@ def test_fortran_frontend_log():
         assert abs(f_res - p_res) < 10**-9
 
 
-def test_fortran_frontend_log():
-    test_string = """
-                    PROGRAM intrinsic_math_test_log
-                    implicit none
-                    double precision, dimension(2) :: d
-                    double precision, dimension(2) :: res
-                    CALL intrinsic_math_test_function(d, res)
-                    end
-
-                    SUBROUTINE intrinsic_math_test_function(d, res)
-                    double precision, dimension(2) :: d
-                    double precision, dimension(2) :: res
-
-                    res(1) = LOG(d(1))
-                    res(2) = LOG(d(2))
-
-                    END SUBROUTINE intrinsic_math_test_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
-    sdfg.simplify(verbose=True)
-    sdfg.compile()
-
-    size = 2
-    d = np.full([size], 42, order="F", dtype=np.float64)
-    d[0] = 2.71
-    d[1] = 4.5
-    res = np.full([2], 42, order="F", dtype=np.float64)
-    sdfg(d=d, res=res)
-    py_res = np.log(d)
-
-    for f_res, p_res in zip(res, py_res):
-        assert abs(f_res - p_res) < 10**-9
-
-
 def test_fortran_frontend_mod_float():
     test_string = """
                     PROGRAM intrinsic_math_test_mod
