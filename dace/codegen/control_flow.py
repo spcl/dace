@@ -32,8 +32,11 @@ def _child_of(node: SDFGState, parent: SDFGState, ptree: Dict[SDFGState, SDFGSta
     return False
 
 
-def _generate_interstate_edge_code(edge: Edge[InterstateEdge], sdfg: SDFG, cfg: ControlFlowRegion,
-                                   codegen: 'DaCeCodeGenerator', assignments_only: bool = False,
+def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
+                                   sdfg: SDFG,
+                                   cfg: ControlFlowRegion,
+                                   codegen: 'DaCeCodeGenerator',
+                                   assignments_only: bool = False,
                                    exit_on_else: bool = False) -> str:
     """
     Generates C++ code for an interstate edge, which may include a condition and assignments.
@@ -71,8 +74,8 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge], sdfg: SDFG, cfg: 
     return expr
 
 
-def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState], str],
-                         codegen: 'DaCeCodeGenerator', symbols: Dict[str, dtypes.typeclass]) -> str:
+def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState], str], codegen: 'DaCeCodeGenerator',
+                         symbols: Dict[str, dtypes.typeclass]) -> str:
     """
     Converts a LoopRegion to C++ code with the correct control flow expressions.
 
@@ -163,8 +166,10 @@ def _conditional_block_to_code(region: ConditionalBlock, dispatch_state: Callabl
     return expr
 
 
-def control_flow_region_to_code(region: AbstractControlFlowRegion, dispatch_state: Callable[[SDFGState], str],
-                                codegen: 'DaCeCodeGenerator', symbols: Dict[str, dtypes.typeclass],
+def control_flow_region_to_code(region: AbstractControlFlowRegion,
+                                dispatch_state: Callable[[SDFGState], str],
+                                codegen: 'DaCeCodeGenerator',
+                                symbols: Dict[str, dtypes.typeclass],
                                 start: Optional[ControlFlowBlock] = None,
                                 stop: Optional[ControlFlowBlock] = None,
                                 generate_children_of: Optional[ControlFlowBlock] = None,
@@ -230,7 +235,10 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion, dispatch_stat
             # Only one outgoing edge, continue to the next block.
             if out_edges[0].data.is_unconditional():
                 # If unconditional, just continue to the next state, no goto needed.
-                expr += _generate_interstate_edge_code(out_edges[0], region.sdfg, region, codegen,
+                expr += _generate_interstate_edge_code(out_edges[0],
+                                                       region.sdfg,
+                                                       region,
+                                                       codegen,
                                                        assignments_only=True)
             else:
                 # If conditional, generate a conditional goto and exit otherwise.

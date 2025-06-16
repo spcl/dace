@@ -312,7 +312,7 @@ def test_loop_to_stree_triple_nested_for():
 
     po_nodes = list(stree.preorder_traversal())[1:]
     assert [type(n) for n in po_nodes
-            ] == [tn.GeneralLoopScope, tn.GeneralLoopScope, tn.GeneralLoopScope, tn.TaskletNode, tn.LibraryCall]
+            ] == [tn.LoopScope, tn.LoopScope, tn.LoopScope, tn.TaskletNode, tn.LibraryCall]
 
 
 if __name__ == '__main__':

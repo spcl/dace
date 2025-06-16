@@ -2,10 +2,9 @@
 from dataclasses import dataclass, field
 
 from dace import nodes, data, subsets
-from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge
-from dace.sdfg.state import ConditionalBlock, SDFGState
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Set, Union
@@ -120,14 +119,14 @@ class AssignNode(ScheduleTreeNode):
 
 
 @dataclass
-class GeneralLoopScope(ControlFlowScope):
+class LoopScope(ControlFlowScope):
     """
     General loop scope (representing a loop region).
     """
-    header: cf.GeneralLoopScope
+    loop: LoopRegion
 
     def as_string(self, indent: int = 0):
-        loop = self.header.loop
+        loop = self.loop
         if loop.update_statement and loop.init_statement and loop.loop_variable:
             if loop.inverted:
                 if loop.update_before_condition:
@@ -162,7 +161,7 @@ class IfScope(ControlFlowScope):
     If branch scope.
     """
     condition: CodeBlock
-    cond_block: Optional[ConditionalBlock]
+    cond_block: Optional[ConditionalBlock] = None
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'

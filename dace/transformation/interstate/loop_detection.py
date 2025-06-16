@@ -189,7 +189,13 @@ class DetectLoop(transformation.PatternTransformation):
 
         # All nodes inside loop must be dominated by loop guard
         dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
-        loop_nodes = sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard)
+        loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard))
+        # If the exit state is in the loop nodes, this is not a valid loop
+        if self.exit_state in loop_nodes:
+            return None
+        elif nx.has_path(graph.nx, self.exit_state, guard):
+            # Simliarly, if there is a path from the exit state to the guard, this is not a valid loop.
+            return None
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):

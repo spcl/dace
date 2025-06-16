@@ -4,9 +4,9 @@ from collections import defaultdict
 from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
 import networkx as nx
 import sympy as sp
-from typing import Dict, Iterator, List, Optional, Set
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, ReturnBlock
 
 
 def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
@@ -57,6 +57,174 @@ def all_dominators(
         alldoms[node] = set(dst for _, dst in tc.out_edges(node))
 
     return alldoms
+
+
+def all_postdominators(
+        cfg: ControlFlowRegion,
+        ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+        sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+    """ Returns a mapping between each control flow block and all its postdominators. """
+    remove_sink = False
+    if sink is None:
+        remove_sink = True
+        sinks = set()
+        for block in cfg.nodes():
+            if cfg.out_degree(block) == 0 or isinstance(block, (ContinueBlock, BreakBlock, ReturnBlock)):
+                sinks.add(block)
+        sink = ControlFlowBlock('__DACE_dummy_sink')
+        cfg.add_node(sink)
+        for sink in sinks:
+            cfg.add_edge(sink, sink, InterstateEdge())
+
+    ipostdom = ipostdom or nx.immediate_dominators(cfg.nx.reverse(), sink)
+
+    # Create a dictionary of all postdominators of each node by using the transitive closure of the DAG induced by the
+    # ipostdoms
+    g = nx.DiGraph()
+    for node, pdom in ipostdom.items():
+        if node is pdom:
+            continue
+        g.add_edge(node, pdom)
+    tc = nx.transitive_closure_dag(g)
+    all_postdoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(set)
+    for node in tc:
+        all_postdoms[node] = set(dst for _, dst in tc.out_edges(node))
+
+    if remove_sink:
+        cfg.remove_node(sink)
+
+    return all_postdoms
+
+
+def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBlock]) -> Tuple[Set[ControlFlowBlock], Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
+    """
+    Find the smallest SESE region containing the target nodes.
+
+    :param graph: The control flow graph to analyze.
+    :param target_nodes: The set of target nodes to include in the SESE region.
+    :param start_node: The starting node of the SESE region. If None, the start node of the graph is used.
+    :param end_nodes: The end node of the SESE region. If None, a virtual sink node is created temporarily.
+    :return: A tuple containing:
+        - A set of nodes in the SESE region.
+        - The entry node of the SESE region.
+        - The exit node of the SESE region.
+    :raises ValueError: If no start node or end nodes are found and none are provided.
+    """
+    if not target_nodes:
+        return set(), None, None
+
+    sinks = set()
+    for block in graph.nodes():
+        if graph.out_degree(block) == 0 or isinstance(block, (ContinueBlock, BreakBlock, ReturnBlock)):
+            sinks.add(block)
+    sink = ControlFlowBlock('__DACE_dummy_sink')
+    graph.add_node(sink)
+    for s in sinks:
+        graph.add_edge(s, sink, InterstateEdge())
+    
+    # Compute dominators and post-dominators
+    dominators = all_dominators(graph)
+    post_dominators = all_postdominators(graph, sink=sink)
+    
+    # Find the entry node: the lowest common dominator of all target nodes
+    common_dominators = None
+    for node in target_nodes:
+        if node not in dominators:
+            continue
+        if common_dominators is None:
+            common_dominators = dominators[node].copy()
+        else:
+            common_dominators &= dominators[node]
+    
+    if not common_dominators:
+        return set(), None, None
+    
+    # The entry is the dominator closest to the target nodes
+    entry_node = None
+    min_distance = float('inf')
+    for dom in common_dominators:
+        # Find maximum distance to any target node
+        max_dist_to_targets = 0
+        for target in target_nodes:
+            if target in dominators and dom in dominators[target]:
+                # Count nodes between dom and target
+                path_exists = nx.has_path(graph.nx, dom, target)
+                if path_exists:
+                    try:
+                        dist = nx.shortest_path_length(graph.nx, dom, target)
+                        max_dist_to_targets = max(max_dist_to_targets, dist)
+                    except nx.NetworkXNoPath:
+                        max_dist_to_targets = float('inf')
+        
+        if max_dist_to_targets < min_distance:
+            min_distance = max_dist_to_targets
+            entry_node = dom
+    
+    # Find the exit node: the lowest common post-dominator of all target nodes
+    common_post_dominators = None
+    for node in target_nodes:
+        if node not in post_dominators:
+            continue
+        if common_post_dominators is None:
+            common_post_dominators = post_dominators[node].copy()
+        else:
+            common_post_dominators &= post_dominators[node]
+    
+    if not common_post_dominators:
+        return set(), entry_node, None
+    
+    # The exit is the post-dominator closest to the target nodes
+    exit_node = None
+    min_distance = float('inf')
+    for post_dom in common_post_dominators:
+        max_dist_from_targets = 0
+        for target in target_nodes:
+            if target in post_dominators and post_dom in post_dominators[target]:
+                path_exists = nx.has_path(graph.nx, target, post_dom)
+                if path_exists:
+                    try:
+                        dist = nx.shortest_path_length(graph.nx, target, post_dom)
+                        max_dist_from_targets = max(max_dist_from_targets, dist)
+                    except nx.NetworkXNoPath:
+                        max_dist_from_targets = float('inf')
+        
+        if max_dist_from_targets < min_distance:
+            min_distance = max_dist_from_targets
+            exit_node = post_dom
+    
+    # Find all nodes in the SESE region
+    if entry_node is None or exit_node is None:
+        return target_nodes.copy(), entry_node, exit_node
+    
+    # The region includes all nodes on paths from entry to exit
+    # that are reachable from entry and can reach exit
+    region_nodes = set()
+    
+    # Add all nodes reachable from entry that can also reach exit
+    reachable_from_entry = set()
+    if entry_node in graph:
+        reachable_from_entry = set(nx.descendants(graph.nx, entry_node)) | {entry_node}
+    
+    can_reach_exit = set()
+    if exit_node in graph:
+        # Find all nodes that can reach the exit
+        reverse_graph = graph.nx.reverse()
+        can_reach_exit = set(nx.descendants(reverse_graph, exit_node)) | {exit_node}
+    
+    # Region is intersection of reachable from entry and can reach exit
+    region_nodes = reachable_from_entry & can_reach_exit
+    
+    # Ensure all target nodes are included
+    region_nodes.update(target_nodes)
+
+    # Remove the dummy sink
+    graph.remove_node(sink)
+    if sink in region_nodes:
+        region_nodes.remove(sink)
+    if exit_node == sink:
+        exit_node = None
+    
+    return region_nodes, entry_node, exit_node
 
 
 def back_edges(cfg: ControlFlowRegion,

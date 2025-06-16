@@ -3813,6 +3813,14 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
 
 @make_properties
+class UnstructuredControlFlow(ControlFlowRegion):
+    """ Special control flow region to represent a region of unstructured control flow. """
+
+    def __repr__(self):
+        return f'UnstructuredCF ({self.label})'
+
+
+@make_properties
 class NamedRegion(ControlFlowRegion):
 
     debuginfo = DebugInfoProperty()
