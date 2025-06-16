@@ -123,51 +123,19 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         tile_sizes[-used_dimensions:] = block_dims[-used_dimensions:]
         applied_gpu_block_dims = [1, 1, 1]
         applied_gpu_block_dims[-used_dimensions:] = block_dims[-used_dimensions:]
-        gpu_block_dims_ordered = list(reversed(applied_gpu_block_dims))
 
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
-        MapTiling.apply_to(
-            sdfg=sdfg,
-            options=dict(
-                prefix="b",
-                #tile_offset=map_begins,
-                tile_sizes=tile_sizes,
-                divides_evenly=True,
-                tile_trivial=True,
-                skew=True),
-            map_entry=map_entry)
+        MapTiling.apply_to(sdfg=sdfg,
+                           options=dict(prefix="b",
+                                        tile_sizes=tile_sizes,
+                                        divides_evenly=True,
+                                        tile_trivial=True,
+                                        skew=True),
+                           map_entry=map_entry)
 
+        # The old dev_entry is the new tblock_map_entry
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
-        map_entry.map.label = "ThreadBlockMap"
-
-        for m in [map_entry.map]:
-            d = dict()
-            for param in m.params:
-                d[param] = dtypes.typeclass("intc")
-            m.param_types = d
-
-        # The dev map is a new map where the gpu_block_size param is not transferred over
-        dev_entry = state.entry_node(map_entry)
-        dev_entry.map.label = "KernelEntryMap"
-
-        # Clear the copied-over edges that are not between any connectors (happens if such an edge exist to ensure
-        # proper allocation of a constnat in after the device map)
-        """
-        edges_to_remove = []
-        for edge in state.out_edges(dev_entry):
-            u, u_conn, v, v_conn, memlet = edge
-            if u_conn == None and v_conn == None and memlet.data == None:
-                edges_to_remove.append(edge)
-        for edge in edges_to_remove:
-            state.remove_edge(edge)
-        """
-        """
-        # In assignment maps it can be that the new map is not connected.
-        out_edges = state.out_edges(dev_entry)
-        if len(out_edges) == 0:
-            state.add_edge(dev_entry, None, map_entry, None, None)
-        """
 
     @staticmethod
     def annotates_memlets():
-        return Fals
+        return False
