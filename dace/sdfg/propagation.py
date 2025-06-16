@@ -744,14 +744,12 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
     :note: This operates on the SDFG in-place.
     """
 
-    if True:
-        # Avoid cyclic imports
-        from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.analysis import StatePropagation
+    # Avoid cyclic imports
+    from dace.transformation.pass_pipeline import Pipeline
+    from dace.transformation.passes.analysis import StatePropagation
 
-        state_prop_pipeline = Pipeline([StatePropagation()])
-        state_prop_pipeline.apply_pass(sdfg, {})
-        return
+    state_prop_pipeline = Pipeline([StatePropagation()])
+    state_prop_pipeline.apply_pass(sdfg, {})
 
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge
