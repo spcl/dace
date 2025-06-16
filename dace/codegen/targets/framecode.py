@@ -5,12 +5,10 @@ import pathlib
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
-import networkx as nx
 import numpy as np
 
 import dace
 from dace import config, data, dtypes
-from dace import symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -22,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -484,24 +482,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        if sdfg.root_sdfg.recheck_using_explicit_control_flow():
-            # Use control flow blocks embedded in the SDFG to generate control flow.
-            cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
-        else:
-            # If disabled, generate entire graph as general control flow block
-            states_topological = list(sdfg.bfs_nodes(sdfg.start_state))
-            last = states_topological[-1]
-            cft = cflow.GeneralBlock(
-                dispatch_state, None, True, None,
-                [cflow.BasicCFBlock(dispatch_state, None, s is last, s)
-                 for s in states_topological], [], [], [], [], False)
-
-        callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
+        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
 
         opbar.done()
-
-        # Write exit label
-        callsite_stream.write(f'__state_exit_{sdfg.cfg_id}:;', sdfg)
 
         return states_generated
 
