@@ -247,10 +247,14 @@ class BlockTiling(transformation.SingleStateTransformation):
         for tiling_param, (beg, end, step), outer_work_map_param, (obeg, oend, ostep) in zip(matching_tiling_params, work_map.range, outer_work_map.params, outer_work_map.range):
             old_work_map_ranges.append((beg, end, step))
             sym_outer_work_map_param = symbol(outer_work_map_param)
-            if (oend+1-obeg)//ostep <= step*tiling_param-1:
-                work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + ((oend+1-obeg)//ostep), ((oend+1-obeg)//ostep)))
-                inner_work_map_range_list.append((0, (oend+1-obeg)//ostep, step))
-            else:
+            try:
+                if (oend+1-obeg)//ostep <= step*tiling_param-1:
+                    work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + ((oend+1-obeg)//ostep), ((oend+1-obeg)//ostep)))
+                    inner_work_map_range_list.append((0, (oend+1-obeg)//ostep, step))
+                else:
+                    work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + step*tiling_param-1, step))
+                    inner_work_map_range_list.append((0, step*tiling_param-1,step))
+            except Exception as e:
                 work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + step*tiling_param-1, step))
                 inner_work_map_range_list.append((0, step*tiling_param-1,step))
         work_map_range = subsets.Range(inner_work_map_range_list)
