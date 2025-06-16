@@ -10,6 +10,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.dataflow.tiling import MapTiling
 from dace import dtypes
+import warnings
 
 
 @make_properties
@@ -38,15 +39,53 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def preprocess_default_dims(self):
+        # If None is passed for the pass we will get the default configs
+        # 1. If arguments are passed:
+        #    1.1 Is the arguments passed
+        # 2. If no arguments are passed (at least one arg is None):
+        #   2.1. First check if the device map has gpu_block_size set
+        #   2.2. Otherwise check the global default
         if self.thread_block_size_x is None or self.thread_block_size_y is None or self.thread_block_size_z is None:
-            x, y, z = dace.config.Config.get('compiler', 'cuda', 'default_block_size').split(',')
-            try:
-                self.thread_block_size_x = int(x)
-                self.thread_block_size_y = int(y)
-                self.thread_block_size_z = int(z)
-            except ValueError:
-                raise ValueError("Invalid default block size format. Expected 'x,y,z' where x, y, z are integers.")
+            if self.map_entry.gpu_block_size is not None:
+                # If gpu_block_size is set, use it
+                self.thread_block_size_x = self.map_entry.gpu_block_size[0]
+                self.thread_block_size_y = self.map_entry.gpu_block_size[1]
+                self.thread_block_size_z = self.map_entry.gpu_block_size[2]
+            else:
+                x, y, z = dace.config.Config.get('compiler', 'cuda', 'default_block_size').split(',')
+                try:
+                    self.thread_block_size_x = int(x)
+                    self.thread_block_size_y = int(y)
+                    self.thread_block_size_z = int(z)
+                except ValueError:
+                    raise ValueError("Invalid default block size format. Expected 'x,y,z' where x, y, z are integers.")
+
+            num_dims_in_map = len(self.map_entry.map.range)
+            # Collapse missing thread block dimensions into y if 2 dimensions in the map, to x if 1 dimension in the map
+            if num_dims_in_map < 3:
+                print_warning = False
+                old_block = (self.thread_block_size_x, self.thread_block_size_y, self.thread_block_size_z)
+                if num_dims_in_map == 2:
+                    self.thread_block_size_y *= self.thread_block_size_z
+                    if self.thread_block_size_z > 1:
+                        print_warning = True
+                    self.thread_block_size_z = 1
+                elif num_dims_in_map == 1:
+                    self.thread_block_size_x *= self.thread_block_size_y * self.thread_block_size_z
+                    if self.thread_block_size_y > 1 or self.thread_block_size_z > 1:
+                        print_warning = True
+                    self.thread_block_size_y = 1
+                    self.thread_block_size_z = 1
+                new_block = (self.thread_block_size_x, self.thread_block_size_y, self.thread_block_size_z)
+                if print_warning:
+                    warnings.warn(
+                        UserWarning, f'Default block size has more dimensions ({old_block}) than kernel dimensions '
+                        f'({num_dims_in_map}) in map "{self.map_entry.map.label}". Linearizing block '
+                        f'size to {new_block}. Consider setting the ``gpu_block_size`` property.')
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        self.preprocess_default_dims()
 
         if self.thread_block_size_x * self.thread_block_size_y * self.thread_block_size_z > 1024:
             return False
@@ -66,6 +105,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         pass
 
     def apply(self, state: SDFGState, sdfg: SDFG):
+        self.preprocess_default_dims()
+
         map_entry = self.map_entry
 
         tx = self.thread_block_size_x
@@ -129,4 +170,4 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
     @staticmethod
     def annotates_memlets():
-        return False
+        return Fals
