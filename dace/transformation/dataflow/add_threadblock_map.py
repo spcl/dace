@@ -34,6 +34,10 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                                            default=None,
                                            allow_none=True,
                                            desc="Number threads in the threadBlock Z Dim")
+    tiles_evenly = SymbolicProperty(dtype=bool,
+                                    default=False,
+                                    desc="Whether the map should be tiled evenly or not. If False, the "
+                                    "transformation will try to tile the map as evenly as possible.")
 
     @classmethod
     def expressions(cls):
@@ -95,7 +99,9 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         kernel_nodes = graph.all_nodes_between(self.map_entry, graph.exit_node(self.map_entry))
         for node in kernel_nodes:
-            if isinstance(node, nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock:
+            if (isinstance(node, nodes.MapEntry)
+                    and (node.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
+                         or node.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlockDynamic)):
                 # If the map already has a thread block schedule, do not apply
                 return False
 
@@ -125,13 +131,15 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         applied_gpu_block_dims[-used_dimensions:] = block_dims[-used_dimensions:]
 
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
-        MapTiling.apply_to(sdfg=sdfg,
-                           options=dict(prefix="b",
-                                        tile_sizes=tile_sizes,
-                                        divides_evenly=True,
-                                        tile_trivial=True,
-                                        skew=True),
-                           map_entry=map_entry)
+        MapTiling.apply_to(
+            sdfg=sdfg,
+            options=dict(
+                prefix="b",
+                tile_sizes=tile_sizes,
+                divides_evenly=self.tiles_evenly,  # Todo improve this
+                tile_trivial=True,
+                skew=True),
+            map_entry=map_entry)
 
         # The old dev_entry is the new tblock_map_entry
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
