@@ -1047,7 +1047,9 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
         vanilla_method = getattr(cls, function_name)
 
         def blocksafe_wrapper(tgt, *args, **kwargs):
-            return vanilla_method(tgt, *args, **kwargs)
+            warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
+                          ' due to incompatibility with control flow blocks')
+            return None
 
         setattr(cls, function_name, blocksafe_wrapper)
 
