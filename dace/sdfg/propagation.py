@@ -744,7 +744,7 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
     :note: This operates on the SDFG in-place.
     """
 
-    if sdfg.using_explicit_control_flow:
+    if True:
         # Avoid cyclic imports
         from dace.transformation.pass_pipeline import Pipeline
         from dace.transformation.passes.analysis import StatePropagation

@@ -221,8 +221,6 @@ def test_work_depth(test_name):
 
     # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
     inline_control_flow_regions(sdfg)
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.using_explicit_control_flow = False
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
@@ -272,8 +270,6 @@ def test_avg_par(test_name: str):
 
     # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
     inline_control_flow_regions(sdfg)
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.using_explicit_control_flow = False
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)][0] / w_d_map[get_uuid(sdfg)][1]

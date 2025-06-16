@@ -110,17 +110,14 @@ class SimplifyPass(ppl.FixedPointPipeline):
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
-        if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(p, '__explicit_cf_compatible__') or p.__explicit_cf_compatible__ == False):
-                warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
-                              'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
-                              'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +
-                              'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                              'please annotate it with the class decorator ' +
-                              '`@dace.transformation.explicit_cf_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                              'for more information.')
-                return None
+        if (not hasattr(p, '__explicit_cf_compatible__') or p.__explicit_cf_compatible__ == False):
+            warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
+                          'explicit control flow blocks. If ' + p.__class__.__name__ +
+                          ' is compatible with explicit blocks, ' + 'please annotate it with the class decorator ' +
+                          '`@dace.transformation.explicit_cf_compatible`. see ' +
+                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                          'for more information.')
+            return None
 
         if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
             ret: Dict[int, Any] = {}

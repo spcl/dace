@@ -1047,19 +1047,7 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
         vanilla_method = getattr(cls, function_name)
 
         def blocksafe_wrapper(tgt, *args, **kwargs):
-            if isinstance(tgt, SDFG):
-                sdfg = tgt
-            elif kwargs and 'sdfg' in kwargs:
-                sdfg = kwargs['sdfg']
-            else:
-                sdfg = get_sdfg_arg(tgt, *args)
-            if sdfg and isinstance(sdfg, SDFG):
-                root_sdfg: SDFG = sdfg.cfg_list[0]
-                if not root_sdfg.using_explicit_control_flow:
-                    return vanilla_method(tgt, *args, **kwargs)
-                else:
-                    warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
-                                  ' due to incompatibility with experimental control flow blocks')
+            return vanilla_method(tgt, *args, **kwargs)
 
         setattr(cls, function_name, blocksafe_wrapper)
 

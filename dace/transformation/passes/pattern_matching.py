@@ -99,18 +99,15 @@ class PatternMatchAndApply(ppl.Pass):
 
         # For every transformation in the list, find first match and apply
         for xform in self.transformations:
-            if sdfg.root_sdfg.using_explicit_control_flow:
-                if (not hasattr(xform, '__explicit_cf_compatible__') or xform.__explicit_cf_compatible__ == False):
-                    warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
-                                  ' due to incompatibility with experimental control flow blocks. If the ' +
-                                  'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                  'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                                  xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                                  'please annotate it with the class decorator ' +
-                                  '`@dace.transformation.explicit_cf_compatible`. see ' +
-                                  '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                                  'for more information.')
-                    continue
+            if (not hasattr(xform, '__explicit_cf_compatible__') or xform.__explicit_cf_compatible__ == False):
+                warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
+                              ' due to incompatibility with explicit control flow blocks. If ' +
+                              xform.__class__.__name__ + ' is compatible with explicit blocks, ' +
+                              'please annotate it with the class decorator ' +
+                              '`@dace.transformation.explicit_cf_compatible`. see ' +
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
+                continue
 
             # Find only the first match
             try:
@@ -218,19 +215,15 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             while applied_anything:
                 applied_anything = False
                 for xform in xforms:
-                    if sdfg.root_sdfg.using_explicit_control_flow:
-                        if (not hasattr(xform, '__explicit_cf_compatible__')
-                                or xform.__explicit_cf_compatible__ == False):
-                            warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
-                                          ' due to incompatibility with experimental control flow blocks. If the ' +
-                                          'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                                          'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                                          xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                                          'please annotate it with the class decorator ' +
-                                          '`@dace.transformation.explicit_cf_compatible`. see ' +
-                                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                                          'for more information.')
-                            continue
+                    if (not hasattr(xform, '__explicit_cf_compatible__') or xform.__explicit_cf_compatible__ == False):
+                        warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
+                                      ' due to incompatibility with explicit control flow blocks. If ' +
+                                      xform.__class__.__name__ + ' is compatible with explicit blocks, ' +
+                                      'please annotate it with the class decorator ' +
+                                      '`@dace.transformation.explicit_cf_compatible`. see ' +
+                                      '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                                      'for more information.')
+                        continue
 
                     applied = True
                     while applied:
@@ -410,18 +403,14 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                 for oname, oval in opts.items():
                     setattr(match, oname, oval)
 
-        if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(match, '__explicit_cf_compatible__') or match.__explicit_cf_compatible__ == False):
-                warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
-                              ' due to incompatibility with experimental control flow blocks. If the ' +
-                              'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
-                              'not have `SDFG.using_explicit_control_flow` set to True. If ' +
-                              match.__class__.__name__ + ' is compatible with experimental blocks, ' +
-                              'please annotate it with the class decorator ' +
-                              '`@dace.transformation.explicit_cf_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                              'for more information.')
-                return None
+        if (not hasattr(match, '__explicit_cf_compatible__') or match.__explicit_cf_compatible__ == False):
+            warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
+                          ' due to incompatibility with explicit control flow blocks. If ' + match.__class__.__name__ +
+                          ' is compatible with explicit blocks, ' + 'please annotate it with the class decorator ' +
+                          '`@dace.transformation.explicit_cf_compatible`. see ' +
+                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                          'for more information.')
+            return None
 
         cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
         match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
