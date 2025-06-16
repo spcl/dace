@@ -2284,9 +2284,8 @@ class SDFG(ControlFlowRegion):
         """
         from dace.frontend.python.astutils import negate_expr  # Avoid import loops
 
-        warnings.warn(
-            "SDFG.add_loop is deprecated and will be removed in a future release. Use LoopRegions instead.",
-            DeprecationWarning)
+        warnings.warn("SDFG.add_loop is deprecated and will be removed in a future release. Use LoopRegions instead.",
+                      DeprecationWarning)
 
         # Argument checks
         if loop_var is None and (initialize_expr or increment_expr):

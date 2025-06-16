@@ -59,10 +59,9 @@ def all_dominators(
     return alldoms
 
 
-def all_postdominators(
-        cfg: ControlFlowRegion,
-        ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-        sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+def all_postdominators(cfg: ControlFlowRegion,
+                       ipostdom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+                       sink: Optional[ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """ Returns a mapping between each control flow block and all its postdominators. """
     remove_sink = False
     if sink is None:
@@ -96,7 +95,9 @@ def all_postdominators(
     return all_postdoms
 
 
-def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBlock]) -> Tuple[Set[ControlFlowBlock], Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
+def find_sese_region(
+    graph: ControlFlowRegion, target_nodes: Set[ControlFlowBlock]
+) -> Tuple[Set[ControlFlowBlock], Optional[ControlFlowBlock], Optional[ControlFlowBlock]]:
     """
     Find the smallest SESE region containing the target nodes.
 
@@ -121,11 +122,11 @@ def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBloc
     graph.add_node(sink)
     for s in sinks:
         graph.add_edge(s, sink, InterstateEdge())
-    
+
     # Compute dominators and post-dominators
     dominators = all_dominators(graph)
     post_dominators = all_postdominators(graph, sink=sink)
-    
+
     # Find the entry node: the lowest common dominator of all target nodes
     common_dominators = None
     for node in target_nodes:
@@ -135,10 +136,10 @@ def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBloc
             common_dominators = dominators[node].copy()
         else:
             common_dominators &= dominators[node]
-    
+
     if not common_dominators:
         return set(), None, None
-    
+
     # The entry is the dominator closest to the target nodes
     entry_node = None
     min_distance = float('inf')
@@ -155,11 +156,11 @@ def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBloc
                         max_dist_to_targets = max(max_dist_to_targets, dist)
                     except nx.NetworkXNoPath:
                         max_dist_to_targets = float('inf')
-        
+
         if max_dist_to_targets < min_distance:
             min_distance = max_dist_to_targets
             entry_node = dom
-    
+
     # Find the exit node: the lowest common post-dominator of all target nodes
     common_post_dominators = None
     for node in target_nodes:
@@ -169,10 +170,10 @@ def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBloc
             common_post_dominators = post_dominators[node].copy()
         else:
             common_post_dominators &= post_dominators[node]
-    
+
     if not common_post_dominators:
         return set(), entry_node, None
-    
+
     # The exit is the post-dominator closest to the target nodes
     exit_node = None
     min_distance = float('inf')
@@ -187,33 +188,33 @@ def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBloc
                         max_dist_from_targets = max(max_dist_from_targets, dist)
                     except nx.NetworkXNoPath:
                         max_dist_from_targets = float('inf')
-        
+
         if max_dist_from_targets < min_distance:
             min_distance = max_dist_from_targets
             exit_node = post_dom
-    
+
     # Find all nodes in the SESE region
     if entry_node is None or exit_node is None:
         return target_nodes.copy(), entry_node, exit_node
-    
+
     # The region includes all nodes on paths from entry to exit
     # that are reachable from entry and can reach exit
     region_nodes = set()
-    
+
     # Add all nodes reachable from entry that can also reach exit
     reachable_from_entry = set()
     if entry_node in graph:
         reachable_from_entry = set(nx.descendants(graph.nx, entry_node)) | {entry_node}
-    
+
     can_reach_exit = set()
     if exit_node in graph:
         # Find all nodes that can reach the exit
         reverse_graph = graph.nx.reverse()
         can_reach_exit = set(nx.descendants(reverse_graph, exit_node)) | {exit_node}
-    
+
     # Region is intersection of reachable from entry and can reach exit
     region_nodes = reachable_from_entry & can_reach_exit
-    
+
     # Ensure all target nodes are included
     region_nodes.update(target_nodes)
 
@@ -223,7 +224,7 @@ def find_sese_region(graph: ControlFlowRegion, target_nodes: Set[ControlFlowBloc
         region_nodes.remove(sink)
     if exit_node == sink:
         exit_node = None
-    
+
     return region_nodes, entry_node, exit_node
 
 
