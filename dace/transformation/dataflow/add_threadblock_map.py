@@ -3,7 +3,7 @@
     transformation."""
 
 import dace
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, ControlFlowRegion, SDFGState
 from dace.properties import make_properties, SymbolicProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -97,11 +97,19 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         if self.map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
             return False
 
-        kernel_nodes = graph.all_nodes_between(self.map_entry, graph.exit_node(self.map_entry))
-        for node in kernel_nodes:
+        # Recursively enter NestedSDFGs (and CFGs, only check if MapEntry node)
+        kernel_nodes = set(graph.all_nodes_between(self.map_entry, graph.exit_node(self.map_entry)))
+        while kernel_nodes:
+            node = kernel_nodes.pop(0)
+            # If NestedSDFG or ControlFlowRegion add further nodes, otherwise just check the popped
+            if isinstance(node, dace.nodes.NestedSDFG):
+                kernel_nodes = kernel_nodes.union(node.sdfg.nodes())
+            elif isinstance(node, ControlFlowRegion):
+                kernel_nodes = kernel_nodes.union(node.nodes())
+
             if (isinstance(node, nodes.MapEntry)
                     and (node.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock
-                         or node.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlockDynamic)):
+                         or node.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)):
                 # If the map already has a thread block schedule, do not apply
                 return False
 
