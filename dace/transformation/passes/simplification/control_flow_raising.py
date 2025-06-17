@@ -115,7 +115,11 @@ class ControlFlowRaising(ppl.Pass):
                 continue
 
             if region.has_cycles():
-                # Do not lift conditionals in cyclic regions, as this may lead to an infinite loop.
+                # Do not lift conditionals if there are cycles present, since lifting conditionals requires an acyclic
+                # dominance frontier for the analysis. This may lead to incorrect results if cycles are present.
+                # Note that the combinatio nof loop raising and unstructured control flow lifting should
+                # already have lifted all loops, so this should not occur in practice and this warning would be cause
+                # for closer inspection.
                 warnings.warn(
                     f'Control flow raising: Skipping lifting conditionals for region {region.name} with cycles.')
                 continue

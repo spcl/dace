@@ -249,6 +249,7 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
             # unstructured / irreducible control flow.
             for e in out_edges:
                 expr += _generate_interstate_edge_code(e, region.sdfg, region, codegen)
+                stack.append(e.dst)
 
     expr += f'__state_exit_{region.cfg_id}:;\n'
 
