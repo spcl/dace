@@ -60,7 +60,7 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
             for variable, value in edge.data.assignments.items()
         ] + [''])
 
-    if not edge.data.is_unconditional() and not assignments_only:
+    if not assignments_only:
         dst: ControlFlowBlock = edge.dst
         expr += 'goto __state_{}_{};\n'.format(cfg.cfg_id, dst.label)
 
@@ -191,6 +191,8 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
     start = start if start is not None else region.start_block
     visited = set() if visited is None else visited
 
+    contains_irreducible = any(region.out_degree(node) > 1 for node in region.nodes())
+
     stack = [region.start_block]
     while stack:
         node = stack.pop()
@@ -200,8 +202,8 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
             continue
         visited.add(node)
 
+        expr += '__state_{}_{}:;\n'.format(region.cfg_id, node.label)
         if isinstance(node, SDFGState):
-            expr += '__state_{}_{}:;\n'.format(region.cfg_id, node.label)
             if node.number_of_nodes() > 0:
                 expr += '{\n'
                 expr += dispatch_state(node)
@@ -210,13 +212,10 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
                 # Dispatch empty state in any case in order to register that the state was dispatched.
                 expr += dispatch_state(node)
         elif isinstance(node, BreakBlock):
-            expr += '__state_{}_{}:;\n'.format(region.cfg_id, node.label)
             expr += 'break;\n'
         elif isinstance(node, ContinueBlock):
-            expr += '__state_{}_{}:;\n'.format(region.cfg_id, node.label)
             expr += 'continue;\n'
         elif isinstance(node, ReturnBlock):
-            expr += '__state_{}_{}:;\n'.format(region.cfg_id, node.label)
             expr += 'return;\n'
         elif isinstance(node, LoopRegion):
             expr += _loop_region_to_code(node, dispatch_state, codegen, symbols)
@@ -234,12 +233,12 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
         elif len(out_edges) == 1:
             # Only one outgoing edge, continue to the next block.
             if out_edges[0].data.is_unconditional():
-                # If unconditional, just continue to the next state, no goto needed.
+                # If unconditional, just continue to the next state, adding an unconditional goto.
                 expr += _generate_interstate_edge_code(out_edges[0],
                                                        region.sdfg,
                                                        region,
                                                        codegen,
-                                                       assignments_only=True)
+                                                       assignments_only=(not contains_irreducible))
             else:
                 # If conditional, generate a conditional goto and exit otherwise.
                 expr += _generate_interstate_edge_code(out_edges[0], region.sdfg, region, codegen, exit_on_else=True)
