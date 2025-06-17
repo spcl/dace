@@ -1299,6 +1299,54 @@ def _detect_array_accesses(expr_str: str) -> Dict[str, int]:
     return array_dims
 
 
+def _extract_symbols(expr_str: str) -> Set[str]:
+    """
+    Extract all symbol names from a string expression.
+    Returns a set of identifier names that should be treated as symbols.
+    Excludes well-known function names.
+    """
+    import ast
+
+    symbols = set()
+
+    # Common mathematical functions that should not be treated as symbols
+    BUILTIN_FUNCTIONS = {
+        'abs', 'min', 'max', 'sqrt', 'sin', 'cos', 'tan', 'exp', 'log', 'ln', 'asin', 'acos', 'atan', 'sinh', 'cosh',
+        'tanh', 'floor', 'ceil', 'round', 'pow', 'atan2', 'log10', 'log2', 'degrees', 'radians'
+    }
+
+    class SymbolExtractor(ast.NodeVisitor):
+
+        def visit_Name(self, node):
+            # Only add to symbols if it's not a known function and not part of a function call
+            if node.id not in BUILTIN_FUNCTIONS:
+                symbols.add(node.id)
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            # For function calls, don't treat the function name as a symbol
+            if isinstance(node.func, ast.Name) and node.func.id in BUILTIN_FUNCTIONS:
+                # Don't add the function name, but visit the arguments
+                for arg in node.args:
+                    self.visit(arg)
+                for keyword in node.keywords:
+                    self.visit(keyword.value)
+            else:
+                self.generic_visit(node)
+
+    try:
+        tree = ast.parse(expr_str, mode='eval')
+        extractor = SymbolExtractor()
+        extractor.visit(tree)
+    except (SyntaxError, ValueError):
+        # If parsing fails, fall back to regex approach but filter out functions
+        import re
+        all_names = _NAME_TOKENS.findall(expr_str)
+        symbols.update(name for name in all_names if name not in BUILTIN_FUNCTIONS)
+
+    return symbols
+
+
 @lru_cache(maxsize=16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
@@ -1364,33 +1412,71 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     locals.update(_sympy_clash)
 
     if isinstance(expr, str):
+        # Check if expression will be transformed by AST converter
+        will_be_transformed = re.search(
+            r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|[\.]', expr)
+
+        # Detect array accesses early, but only add ArraySymbols if expression won't be transformed
+        array_dims = _detect_array_accesses(expr)
+
+        if array_dims and not will_be_transformed:
+            # Import ArraySymbol here to avoid import issues
+            from sympy.tensor.array.expressions import ArraySymbol
+
+            # Extract all symbols from the expression
+            all_symbols = _extract_symbols(expr)
+
+            # Add ArraySymbols for detected arrays
+            for array_name, num_dims in array_dims.items():
+                # Create ArraySymbol with symbolic dimensions
+                dims = tuple(sympy.Symbol(f'{array_name}_dim{i}', positive=True, integer=True) for i in range(num_dims))
+                locals[array_name] = ArraySymbol(array_name, dims)
+                all_symbols.discard(array_name)  # Remove from symbols to avoid duplication
+
+            # Add regular symbols for all other identifiers not already in locals
+            for symbol_name in all_symbols:
+                if symbol_name not in locals:
+                    locals[symbol_name] = sympy.Symbol(symbol_name)
+
         # Sympy processes "not/and/or" as direct evaluation. Replace with And/Or(x, y), Not(x)
         # Also replaces bitwise operations with user-functions since SymPy does not support bitwise operations.
-        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|[\.]', expr):
+        if will_be_transformed:
             expr = unparse(PythonOpToSympyConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
     except (TypeError, sympy.SympifyError):  # Symbol object is not subscriptable
-        # Detect array accesses and create ArraySymbols for better array expression support
+        # Try the ArraySymbol approach for expressions that weren't pre-processed
         if isinstance(expr, str):
             array_dims = _detect_array_accesses(expr)
             if array_dims:
                 # Import ArraySymbol here to avoid import issues
                 from sympy.tensor.array.expressions import ArraySymbol
 
-                # Add ArraySymbols to locals for detected arrays
+                # Create a new locals dict with ArraySymbols added
+                array_locals = locals.copy()
+
+                # Extract all symbols from the expression
+                all_symbols = _extract_symbols(expr)
+
+                # Add ArraySymbols for detected arrays
                 for array_name, num_dims in array_dims.items():
                     # Create ArraySymbol with symbolic dimensions
                     # Use a reasonable default size for each dimension
                     dims = tuple(
                         sympy.Symbol(f'{array_name}_dim{i}', positive=True, integer=True) for i in range(num_dims))
-                    locals[array_name] = ArraySymbol(array_name, dims)
+                    array_locals[array_name] = ArraySymbol(array_name, dims)
+                    all_symbols.discard(array_name)  # Remove from symbols to avoid duplication
 
-                # Try again with ArraySymbols in context
+                # Add regular symbols for all other identifiers not already in locals
+                for symbol_name in all_symbols:
+                    if symbol_name not in array_locals:
+                        array_locals[symbol_name] = sympy.Symbol(symbol_name)
+
+                # Try again with ArraySymbols and symbols in context
                 try:
-                    return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+                    return sympy_to_dace(sympy.sympify(expr, array_locals, evaluate=simplify), symbol_map)
                 except (TypeError, sympy.SympifyError):
                     pass  # Fall back to the original hack
 
