@@ -54,7 +54,7 @@ class MultipleBuffering(transformation.SingleStateTransformation):
     )
     synchronous = dace.properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc="Whether to use synchronous or asynchronous copies. "
              "If True, the transformation will use synchronous copies, "
              "which means that the copy operations will use synchronous API (use registers on GPUs). "
@@ -359,8 +359,10 @@ class MultipleBuffering(transformation.SingleStateTransformation):
         #     // Insert copy for i
 
         # Create SDFG for the prefill loop, and the prefill loop CFG
+        pipeline_names = dict()
         ret_tupl = self._add_prefill_state(state, prefill_loop_var_name,
-                                           e, prefill_copy_expressions, sdfg)
+                                           e, prefill_copy_expressions, sdfg,
+                                           pipeline_names)
         prefill_state: dace.SDFGState = ret_tupl[0]
         prefill_inputs: typing.Set[str] = ret_tupl[1]
         prefill_outputs: typing.Set[str] = ret_tupl[2]
@@ -385,7 +387,11 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 u_connector=out_edge.src_conn,
                 v=prefill_nsdfg,
                 v_connector=src_name,
-                memlet=dace.Memlet(data=src_name, subset=nsdfg_in_memlet.subset)
+                memlet=dace.Memlet.from_array(
+                    dataname=src_name,
+                    datadesc=sdfg.arrays[src_name],
+                    wcr=None,
+                )
             )
 
             # Need an intermediate out access node for the SDFG to be correct
@@ -419,7 +425,7 @@ class MultipleBuffering(transformation.SingleStateTransformation):
 
 
         ret_tupl = self._add_prefetch_state(state, map_param_p1,
-                                            e, prefetch_copy_expressions, sdfg)
+                                            e, prefetch_copy_expressions, sdfg, pipeline_names)
         prefetch_state: dace.SDFGState = ret_tupl[0]
         prefetch_inputs: typing.Set[str] = ret_tupl[1]
         prefetch_outputs: typing.Set[str] = ret_tupl[2]
@@ -436,12 +442,16 @@ class MultipleBuffering(transformation.SingleStateTransformation):
             assert len(in_edges) == 1
             in_edge = in_edges[0]
 
+            # I find it easier to let the whole array flow in to the Nested SDFG
             state.add_edge(
                 u=in_edge.src,
                 u_connector="OUT_prefetch_" + src_name,
                 v=prefetch_nsdfg,
                 v_connector=src_name,
-                memlet=dace.Memlet(data=src_name, subset=copy.deepcopy(memlet.subset))
+                memlet=dace.Memlet.from_array(
+                    dataname=src_name,
+                    datadesc=sdfg.arrays[src_name],
+                )
             )
 
             in_edge.src.add_out_connector("OUT_prefetch_" + src_name)
@@ -458,9 +468,11 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 u_connector="OUT_" + src_name,
                 v=parent_scope,
                 v_connector="IN_prefetch_" + src_name,
-                memlet=dace.Memlet(data=src_name, subset=dace.subsets.Range(
-                    ranges=propagated_updated_subset
-                )),
+                memlet=dace.Memlet.from_array(
+                    dataname=src_name,
+                    datadesc=sdfg.arrays[src_name],
+                    wcr=None,
+                ),
             )
             if not "OUT_" + src_name in parent_parent.out_connectors:
                 parent_parent.add_out_connector("OUT_" + src_name)
@@ -490,7 +502,11 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 u_connector=dst_name,
                 v=intermediate_out_access,
                 v_connector=None,
-                memlet=dace.Memlet(data=dst_name, subset=other_subset)
+                memlet=dace.Memlet.from_array(
+                    dataname=dst_name,
+                    datadesc=sdfg.arrays[dst_name],
+                    wcr=None,
+                )
             )
             state.add_edge(
                 u=intermediate_out_access,
@@ -521,11 +537,46 @@ class MultipleBuffering(transformation.SingleStateTransformation):
 
             # Rm access node if sync variant, forward the in edge
             if self.synchronous:
-                in_edge.dst_conn = out_edge.dst_conn
-                in_edge.dst = out_edge.dst
-
+                new_in_edge_tuple = (in_edge.src, in_edge.src_conn, out_edge.dst, out_edge.dst_conn, copy.deepcopy(in_edge.data))
                 state.remove_edge(out_edge)
+                state.remove_edge(in_edge)
                 state.remove_node(access_node)
+                state.add_edge(*new_in_edge_tuple)
+            else:
+                # Replace access node with a SyncTasklet
+                print(pipeline_names)
+                data_name = access_node.data
+                pipeline_name = pipeline_names[data_name]
+                sync_tasklet = state.add_tasklet(
+                    name=f"sync_{pipeline_name}",
+                    inputs={"_in1"},
+                    outputs={"_out1"},
+                    code=f"{pipeline_name}.consumer_wait();",
+                    language=dace.dtypes.Language.CPP,
+                )
+                assert in_edge.data.subset == out_edge.data.subset
+                new_in_edge_tuple = (in_edge.src, in_edge.src_conn, sync_tasklet, "_in1", copy.deepcopy(in_edge.data))
+                new_out_edge_tuple = (sync_tasklet, "_out1", out_edge.dst, out_edge.dst_conn, copy.deepcopy(out_edge.data))
+                state.remove_edge(out_edge)
+                state.remove_edge(in_edge)
+                state.remove_node(access_node)
+                state.add_edge(*new_in_edge_tuple)
+                state.add_edge(*new_out_edge_tuple)
+
+        if not self.synchronous:
+            # Release the consumer pipeline
+            exit_node = state.exit_node(parent_scope)
+            prev_exit_node = [state.exit_node(n) for n in state.nodes() if isinstance(n, dace.nodes.EntryNode) and state.entry_node(n) == parent_scope][0]
+            t2 = state.add_tasklet(
+                name=f"release_pipelines",
+                inputs={},
+                outputs={},
+                code=f"\n".join([f"{pipeline_name}.consumer_release();" for pipeline_name in pipeline_names.values()]),
+                language= dace.dtypes.Language.CPP,
+                side_effects=True,
+            )
+            state.add_edge(prev_exit_node, None, t2, None, dace.Memlet())
+            state.add_edge(t2, None, exit_node, None, dace.Memlet())
 
         MultipleBuffering._add_missing_symbols(
             parent_sdfg=sdfg,
@@ -590,7 +641,6 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                                 ranges=[(dace.symbolic.SymExpr(expand_expr), dace.symbolic.SymExpr(expand_expr), 1)] + subset_as_list,
                             )
 
-                        print(edge.data.data, ", ", subset_as_list, "->", new_subset)
                         edge.data = dace.Memlet(
                             data=edge.data.data,
                             subset=new_subset,
@@ -630,7 +680,8 @@ class MultipleBuffering(transformation.SingleStateTransformation):
         return new_other_subset
 
     def _add_prefill_state(self, state: dace.SDFGState, prefill_loop_var_name: str, map_range_end: typing.Any,
-                           prefill_copy_expressions: typing.List[typing.Tuple[str, str, dace.Memlet]], parent_sdfg: dace.SDFG):
+                           prefill_copy_expressions: typing.List[typing.Tuple[str, str, dace.Memlet]], parent_sdfg: dace.SDFG,
+                           pipeline_names: dict[str, str] ):
         prefill_main_sdfg = dace.SDFG(
             name=f"pipeline_prefill_main_sdfg_{self.prefill_cfg_id}",
             parent=state,
@@ -708,12 +759,14 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 memlet=dace.Memlet(data=src_name, subset=memlet.subset, other_subset=other_subset),
             )
             dst_access_node.async_copy = True
-            dst_access_node.async_pipeline = "pipeline"
+            dst_access_node.async_pipeline = f"pipeline_{dst_name}"
+            pipeline_names[dst_access_node.data] = dst_access_node.async_pipeline
 
         return prefill_state, inputs, outputs, nsdfg
 
     def _add_prefetch_state(self, state: dace.SDFGState, prefetch_cond_var_name: str, map_range_end: typing.Any,
-                           prefetch_copy_expressions: typing.List[typing.Tuple[str, str, dace.Memlet]], parent_sdfg: dace.SDFG):
+                           prefetch_copy_expressions: typing.List[typing.Tuple[str, str, dace.Memlet]], parent_sdfg: dace.SDFG,
+                           pipeline_names: dict[str, str]):
         prefetch_main_sdfg = dace.SDFG(
             name=f"pipeline_prefetch_main_sdfg_{self.prefetch_cfg_id}",
             parent=state,
@@ -777,7 +830,8 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                                    other_subset=other_subset),
             )
             dst_access_node.async_copy = True
-            dst_access_node.async_pipeline = "pipeline"
+            dst_access_node.async_pipeline = f"pipeline_{dst_name}"
+            pipeline_names[dst_access_node.data] = dst_access_node.async_pipeline
 
         return prefetch_state, inputs, outputs, nsdfg
 
