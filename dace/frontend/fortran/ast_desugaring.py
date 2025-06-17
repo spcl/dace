@@ -3010,7 +3010,27 @@ def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
     return stmt, spec, expart, subp
 
 
+def consolidate_specification_parts(ast: Program) -> Program:
+    spec_parents = [sp.parent for sp in reversed(walk(ast, Specification_Part)) if next(children_of_type(sp.parent, Specification_Part)) is sp]
+    for spp in spec_parents:
+        all_sps = list(children_of_type(spp, Specification_Part))
+        for sp in all_sps[1:]:
+            append_children(all_sps[0], sp.children)
+            remove_self(sp)
+    return ast
+
+def consolidate_execution_parts(ast: Program) -> Program:
+    exec_parents = [ex.parent for ex in reversed(walk(ast, Execution_Part)) if next(children_of_type(ex.parent, Execution_Part)) is ex]
+    for exp in exec_parents:
+        all_exs = list(children_of_type(exp, Execution_Part))
+        for ex in all_exs[1:]:
+            append_children(all_exs[0], ex.children)
+            remove_self(ex)
+    return ast
+
 def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Program:
+    ast = consolidate_specification_parts(ast)
+    ast = consolidate_execution_parts(ast)
     alias_map = alias_map or alias_specs(ast)
     for sp in reversed(walk(ast, Specification_Part)):
         # First, we do a surgery to fix the kind parameter of the literals that refer to a variable, but FParser leaves
