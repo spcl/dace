@@ -54,7 +54,7 @@ class MultipleBuffering(transformation.SingleStateTransformation):
     )
     synchronous = dace.properties.Property(
         dtype=bool,
-        default=False,
+        default=True,
         desc="Whether to use synchronous or asynchronous copies. "
              "If True, the transformation will use synchronous copies, "
              "which means that the copy operations will use synchronous API (use registers on GPUs). "
