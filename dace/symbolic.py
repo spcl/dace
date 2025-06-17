@@ -1137,6 +1137,52 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
+def _detect_array_accesses(expr_str: str) -> Dict[str, int]:
+    """
+    Detect array accesses in a string expression and determine the number of dimensions.
+    Returns a dictionary mapping array names to their maximum dimension count.
+    """
+    import ast
+
+    array_dims = {}
+
+    class ArrayAccessDetector(ast.NodeVisitor):
+
+        def visit_Subscript(self, node):
+            # Get the array name
+            if isinstance(node.value, ast.Name):
+                array_name = node.value.id
+
+                # Count dimensions
+                if isinstance(node.slice, ast.Tuple):
+                    # Multiple indices: A[i, j, k]
+                    num_dims = len(node.slice.elts)
+                else:
+                    # Single index: A[i]
+                    num_dims = 1
+
+                # Update maximum dimensions seen for this array
+                array_dims[array_name] = max(array_dims.get(array_name, 0), num_dims)
+
+            self.generic_visit(node)
+
+    try:
+        tree = ast.parse(expr_str, mode='eval')
+        detector = ArrayAccessDetector()
+        detector.visit(tree)
+    except (SyntaxError, ValueError):
+        # If parsing fails, fall back to regex approach
+        import re
+        pattern = r'([a-zA-Z_][a-zA-Z0-9_]*)\[([^\]]+)\]'
+        matches = re.findall(pattern, expr_str)
+        for array_name, indices_str in matches:
+            # Count commas to estimate dimensions
+            num_dims = indices_str.count(',') + 1
+            array_dims[array_name] = max(array_dims.get(array_name, 0), num_dims)
+
+    return array_dims
+
+
 @lru_cache(maxsize=16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
@@ -1212,7 +1258,28 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     try:
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
     except (TypeError, sympy.SympifyError):  # Symbol object is not subscriptable
-        # Replace subscript expressions with function calls
+        # Detect array accesses and create ArraySymbols for better array expression support
+        if isinstance(expr, str):
+            array_dims = _detect_array_accesses(expr)
+            if array_dims:
+                # Import ArraySymbol here to avoid import issues
+                from sympy.tensor.array.expressions import ArraySymbol
+
+                # Add ArraySymbols to locals for detected arrays
+                for array_name, num_dims in array_dims.items():
+                    # Create ArraySymbol with symbolic dimensions
+                    # Use a reasonable default size for each dimension
+                    dims = tuple(
+                        sympy.Symbol(f'{array_name}_dim{i}', positive=True, integer=True) for i in range(num_dims))
+                    locals[array_name] = ArraySymbol(array_name, dims)
+
+                # Try again with ArraySymbols in context
+                try:
+                    return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
+                except (TypeError, sympy.SympifyError):
+                    pass  # Fall back to the original hack
+
+        # Fall back to original approach: replace subscript expressions with function calls
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
