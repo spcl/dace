@@ -326,7 +326,8 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
             nsdfg = self._current_state.add_nested_sdfg(inner_sdfg,
                                                         sdfg,
                                                         inputs=connectors["inputs"],
-                                                        outputs=connectors["outputs"])
+                                                        outputs=connectors["outputs"],
+                                                        schedule=node.node.map.schedule)
 
             # connect nested SDFG to surrounding map scope
             assert self._dataflow_stack
