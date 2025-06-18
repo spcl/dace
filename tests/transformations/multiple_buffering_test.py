@@ -185,8 +185,12 @@ def test_standalone_execution():
     vals_C_2 = vals_C_orig.copy()
 
     # Execute SDFGs
+    print("===RUN ORIGINAL SDFG WITH SHR MEM===")
     original_sdfg_w_shr_mem(A=vals_A_orig, B=vals_B_orig, C=vals_C_orig, N=N_val)
+    print("====================================")
+    print("==========RUN ORIGINAL SDFG=========")
     original_sdfg(A=vals_A_2, B=vals_B_2, C=vals_C_2, N=N_val)
+    print("====================================")
     vals_C_close = cp.allclose(vals_C_orig, vals_C_2, rtol=1e-10, atol=1e-12)
 
     print(f"vals_C results match: {vals_C_close}")
@@ -204,7 +208,9 @@ def test_standalone_execution():
             print("Sample of differences:", cp.abs(vals_C_orig - vals_C_2)[:64])
     assert vals_C_close
 
+    print("=====RUN MULTIPLE BUFFERED SDFG=====")
     transformed_sdfg(A=vals_A_2, B=vals_B_2, C=vals_C_2, N=N_val)
+    print("====================================")
 
     # Check results
     vals_C_close = cp.allclose(vals_C_orig, vals_C_2, rtol=1e-10, atol=1e-12)
