@@ -617,16 +617,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             # Sanity checks
             if validate and len(eq) != 0:
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             entry_nodes = set(n for n in self.nodes() if isinstance(n, nd.EntryNode)) | {None}
             if (validate and len(result) != len(entry_nodes)):
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Some nodes were not processed: {}".format(entry_nodes - result.keys()))
 
             # Cache result
