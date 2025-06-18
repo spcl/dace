@@ -1,11 +1,15 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace
 import numpy as np
 
+from dace.sdfg.state import ConditionalBlock, ReturnBlock
+from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
-def test_for_loop_detection():
+
+def test_for_loop_generation():
     N = dace.symbol('N')
 
     @dace.program
@@ -14,8 +18,7 @@ def test_for_loop_detection():
             A[i] += 5
 
     sdfg: dace.SDFG = looptest.to_sdfg()
-    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-        assert 'for (' in sdfg.generate_code()[0].code
+    assert 'for (' in sdfg.generate_code()[0].code
 
     A = np.random.rand(20)
     expected = A + 5
@@ -23,36 +26,7 @@ def test_for_loop_detection():
     assert np.allclose(A, expected)
 
 
-def test_invalid_for_loop_detection():
-    sdfg = dace.SDFG('looptest')
-    sdfg.add_array('A', [20], dace.float64)
-    init = sdfg.add_state()
-    guard = sdfg.add_state()
-    loop = sdfg.add_state()
-    end = sdfg.add_state()
-    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments=dict(i='0')))
-    # Invalid: Edge between guard and loop state must not have assignments
-    # This edge will be split in code generation
-    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
-    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 20'))
-    sdfg.add_edge(loop, guard, dace.InterstateEdge(assignments=dict(i='i + 1')))
-
-    r = loop.add_read('A')
-    t = loop.add_tasklet('add', {'a'}, {'out'}, 'out = a + 5')
-    w = loop.add_write('A')
-    loop.add_edge(r, None, t, 'a', dace.Memlet('A[j]'))
-    loop.add_edge(t, 'out', w, None, dace.Memlet('A[j]'))
-
-    # If edge was split successfully, a for loop will be generated
-    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-        assert 'for (' in sdfg.generate_code()[0].code
-    A = np.random.rand(20)
-    expected = A + 5
-    sdfg(A=A)
-    assert np.allclose(A, expected)
-
-
-def test_edge_split_loop_detection():
+def test_edge_split_loop_generation():
 
     @dace.program
     def looptest():
@@ -100,6 +74,12 @@ def test_edge_sympy_function(mode):
     sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
     sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
 
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+    if mode != 'SwitchCase':
+        assert any(isinstance(node, ConditionalBlock) for node in sdfg.nodes())
+    else:
+        assert any(isinstance(node, ReturnBlock) for node in sdfg.nodes())
+
     sdfg.compile()
 
 
@@ -112,6 +92,9 @@ def test_single_outedge_branch():
                     dace.Memlet('result'))
 
     sdfg.add_edge(state1, state2, dace.InterstateEdge('1 > 0'))
+
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+    assert any(isinstance(node, ReturnBlock) for node in sdfg.nodes())
 
     sdfg.compile()
     res = np.random.rand(1)
@@ -201,9 +184,9 @@ def test_do_while_if_while(detect_control_flow):
 
 
 if __name__ == '__main__':
-    test_for_loop_detection()
+    test_for_loop_generation()
     test_invalid_for_loop_detection()
-    test_edge_split_loop_detection()
+    test_edge_split_loop_generation()
     test_edge_sympy_function('FalseTrue')
     test_edge_sympy_function('TrueFalse')
     test_edge_sympy_function('SwitchCase')

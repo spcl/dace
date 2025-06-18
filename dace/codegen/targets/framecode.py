@@ -21,7 +21,9 @@ from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -482,6 +484,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
+        if config.Config.get_bool('optimizer', 'detect_control_flow'):
+            FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
         callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
 
         opbar.done()
@@ -886,16 +891,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():
-            for e in cfr.dfs_edges(cfr.start_block):
-                symbols = e.data.new_symbols(sdfg, global_symbols)
-                # Inferred symbols only take precedence if global symbol not defined or None
-                symbols = {
-                    k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
-                    for k, v in symbols.items()
-                }
-                interstate_symbols.update(symbols)
-                global_symbols.update(symbols)
-
             if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
                 if not cfr.loop_variable in interstate_symbols:
                     if cfr.loop_variable in global_symbols:
@@ -910,6 +905,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
+
+            for e in cfr.dfs_edges(cfr.start_block):
+                symbols = e.data.new_symbols(sdfg, global_symbols)
+                # Inferred symbols only take precedence if global symbol not defined or None
+                symbols = {
+                    k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                    for k, v in symbols.items()
+                }
+                interstate_symbols.update(symbols)
+                global_symbols.update(symbols)
 
         for isvarName, isvarType in interstate_symbols.items():
             if isvarType is None:
