@@ -546,7 +546,7 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 data_name = access_node.data
                 pipeline_name = pipeline_names[data_name]
                 sync_tasklet = state.add_tasklet(
-                    name=f"sync_{pipeline_name}",
+                    name=f"acquire_{pipeline_name}",
                     inputs={"_in1"},
                     outputs={"_out1"},
                     code=f"{pipeline_name}.consumer_wait();",
@@ -565,17 +565,20 @@ class MultipleBuffering(transformation.SingleStateTransformation):
         next_entry_node = [n for n in state.nodes() if isinstance(n, dace.nodes.EntryNode) and state.entry_node(n) == parent_scope][0]
         prev_exit_node = state.exit_node(next_entry_node)
         if not self.synchronous:
-            # Release the consumer pipeline
-            t2 = state.add_tasklet(
-                name=f"release_pipelines",
-                inputs={},
-                outputs={},
-                code=f"\n".join([f"{pipeline_name}.consumer_release();" for pipeline_name in pipeline_names.values()]),
-                language= dace.dtypes.Language.CPP,
-                side_effects=True,
-            )
-            state.add_edge(prev_exit_node, None, t2, None, dace.Memlet())
-            state.add_edge(t2, None, exit_node, None, dace.Memlet())
+            for (src_name, dst_name, memlet, other_subset, access_node) in prefetch_copy_expressions:
+                data_name = access_node.data
+                pipeline_name = pipeline_names[data_name]
+                # Release the consumer pipeline
+                sync_tasklet_2 = state.add_tasklet(
+                    name=f"release_{pipeline_name}",
+                    inputs={},
+                    outputs={},
+                    code=f"{pipeline_name}.consumer_release();",
+                    language= dace.dtypes.Language.CPP,
+                    side_effects=True,
+                )
+                state.add_edge(prev_exit_node, None, sync_tasklet_2, None, dace.Memlet())
+                state.add_edge(sync_tasklet_2, None, exit_node, None, dace.Memlet())
         else:
             # Add a sync threads to the map exit and map entry before all other edges
             t2 = state.add_tasklet(
