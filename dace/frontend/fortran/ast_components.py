@@ -781,14 +781,15 @@ class InternalFortranAst:
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         prefix = get_child(children, ast_internal_classes.Prefix_Node)
 
-        type, elemental = (prefix.type, prefix.elemental) if prefix else ('VOID', False)
+        ftype, elemental = (prefix.type.upper(), prefix.elemental) if prefix else ('VOID', False)
         if prefix is not None and prefix.recursive:
             print("recursive found " + name.name)
 
         ret = get_child(children, ast_internal_classes.Suffix_Node)
         ret_args = args.args if args else []
         return ast_internal_classes.Function_Stmt_Node(
-            name=name, args=ret_args, line_number=get_line(node), ret=ret, elemental=elemental, type=ret)
+            name=name, args=ret_args, line_number=get_line(node), ret=ret, elemental=elemental,
+            type=ret if ret else ftype)
 
     def subroutine_stmt(self, node: FASTNode):
         # print(self.name_list)
