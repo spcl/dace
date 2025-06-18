@@ -3,6 +3,7 @@
 Functions for generating C++ code for control flow in SDFGs using control flow regions.
 """
 
+import re
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Set
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -62,7 +63,7 @@ def _generate_interstate_edge_code(edge: Edge[InterstateEdge],
 
     if not assignments_only:
         dst: ControlFlowBlock = edge.dst
-        expr += 'goto __state_{}_{};\n'.format(cfg.cfg_id, dst.label)
+        expr += 'goto __state_{}_{};\n'.format(cfg.cfg_id, re.sub(r'\s+', '_', dst.label))
 
     if not edge.data.is_unconditional() and not assignments_only:
         if exit_on_else:
@@ -202,7 +203,7 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
             continue
         visited.add(node)
 
-        expr += '__state_{}_{}:;\n'.format(region.cfg_id, node.label)
+        expr += '__state_{}_{}:;\n'.format(region.cfg_id, re.sub(r'\s+', '_', node.label))
         if isinstance(node, SDFGState):
             if node.number_of_nodes() > 0:
                 expr += '{\n'
