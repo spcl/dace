@@ -21,9 +21,7 @@ from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -483,12 +481,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             opbar.next()
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
-
-        if config.Config.get_bool('optimizer', 'detect_control_flow'):
-            # NOTE: This should likely be done either earlier in the future, or changed entirely in modular codegen.
-            # It is being done here to ensure that for now the semantics of the setting are preserved and legacy tests,
-            # where explicit control flow was not used, continue to work as expected.
-            FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
         callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
 
