@@ -485,6 +485,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             return stream.getvalue()
 
         if config.Config.get_bool('optimizer', 'detect_control_flow'):
+            # NOTE: This should likely be done either earlier in the future, or changed entirely in modular codegen.
+            # It is being done here to ensure that for now the semantics of the setting are preserved and legacy tests,
+            # where explicit control flow was not used, continue to work as expected.
             FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
         callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
