@@ -1,7 +1,6 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from logging import warn
 from typing import Dict, List, Optional, Tuple
 import warnings
 
@@ -267,9 +266,13 @@ class ControlFlowRaising(ppl.Pass):
                 for edge in cfg.edges():
                     if edge.src in unstructured_nodes and edge.dst in unstructured_nodes:
                         unstructured_region.add_edge(edge.src, edge.dst, edge.data)
-                for iedge in cfg.in_edges(region_entry):
-                    if iedge.src not in unstructured_nodes:
-                        cfg.add_edge(iedge.src, unstructured_region, iedge.data)
+                if cfg.in_degree(region_entry) == 0:
+                    # If there is no incoming edge, this is a start block.
+                    cfg.add_node(unstructured_region, is_start_block=True)
+                else:
+                    for iedge in cfg.in_edges(region_entry):
+                        if iedge.src not in unstructured_nodes:
+                            cfg.add_edge(iedge.src, unstructured_region, iedge.data)
                 if region_exit is not None:
                     for oedge in cfg.out_edges(region_exit):
                         if oedge.dst not in unstructured_nodes:

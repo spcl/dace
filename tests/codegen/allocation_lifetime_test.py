@@ -4,12 +4,8 @@ import pytest
 
 import dace
 from dace.codegen.targets import framecode
-from dace.properties import CodeBlock
 from dace.sdfg import infer_types
 import numpy as np
-
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
-from dace.transformation.pass_pipeline import FixedPointPipeline
 
 N = dace.symbol('N')
 
@@ -457,56 +453,53 @@ def test_branched_allocation(mode):
     sdfg.add_array('A', shape="N", dtype=dace.float32, transient=True)
 
     state_start = sdfg.add_state()
-
-    conditional = ConditionalBlock()
-    br1 = ControlFlowRegion()
-    br2 = ControlFlowRegion()
-    conditional.add_branch(CodeBlock("cnd != 0"), br1)
-    conditional.add_branch(CodeBlock("cnd == 0"), br2)
-    state_br1 = br1.add_state()
-    state_br1_1 = br1.add_state_after(state_br1)
-    state_br1_2 = br1.add_state_after(state_br1_1)
-    state_br2 = br2.add_state()
-    state_br2_1 = br2.add_state_after(state_br2)
-    state_br2_2 = br2.add_state_after(state_br2_1)
-
-    state_exit = sdfg.add_state()
+    state_condition = sdfg.add_state()
+    state_br1 = sdfg.add_state()
+    state_br1_1 = sdfg.add_state_after(state_br1)
+    state_br2 = sdfg.add_state()
+    state_br2_1 = sdfg.add_state_after(state_br2)
+    state_merge = sdfg.add_state()
 
     if mode == 'global':
-        sdfg.add_edge(state_start, conditional, dace.InterstateEdge())
+        sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('cnd != 0'))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('cnd == 0'))
     elif mode == 'singlevalue':
-        sdfg.add_edge(state_start, conditional, dace.InterstateEdge(assignments=dict(N=2)))
+        sdfg.add_edge(state_start, state_condition, dace.InterstateEdge(assignments=dict(N=2)))
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('cnd != 0'))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('cnd == 0'))
     elif mode == 'multivalue':
-        sdfg.add_edge(state_start, conditional, dace.InterstateEdge())
-        br1.edges_between(state_br1, state_br1_1)[0].data.assignments = dict(N=2)
-        br2.edges_between(state_br2, state_br2_1)[0].data.assignments = dict(N=3)
+        sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('cnd != 0', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('cnd == 0', dict(N=3)))
 
-    sdfg.add_edge(conditional, state_exit, dace.InterstateEdge())
+    sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
+    sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
 
-    tasklet1 = state_br1_1.add_tasklet(name="br1",
-                                       inputs=[],
-                                       outputs=["out"],
-                                       code="out = 1;",
-                                       language=dace.Language.CPP)
-    tasklet2 = state_br2_1.add_tasklet(name="br2",
-                                       inputs=[],
-                                       outputs=["out"],
-                                       code="out = 1;",
-                                       language=dace.Language.CPP)
+    tasklet1 = state_br1.add_tasklet(name="br1",
+                                     inputs=[],
+                                     outputs=["out"],
+                                     code="out = 1;",
+                                     language=dace.Language.CPP)
+    tasklet2 = state_br2.add_tasklet(name="br2",
+                                     inputs=[],
+                                     outputs=["out"],
+                                     code="out = 1;",
+                                     language=dace.Language.CPP)
 
-    arr_A = state_br1_1.add_write("A")
+    arr_A = state_br1.add_write("A")
     memlet = dace.Memlet(expr="A[1]")
-    state_br1_1.add_memlet_path(tasklet1, arr_A, src_conn="out", memlet=memlet)
+    state_br1.add_memlet_path(tasklet1, arr_A, src_conn="out", memlet=memlet)
 
-    arr_A = state_br2_1.add_write("A")
+    arr_A = state_br2.add_write("A")
     memlet = dace.Memlet(expr="A[1]")
-    state_br2_1.add_memlet_path(tasklet2, arr_A, src_conn="out", memlet=memlet)
+    state_br2.add_memlet_path(tasklet2, arr_A, src_conn="out", memlet=memlet)
 
-    state_br1_2.add_edge(state_br1_2.add_read('A'), None,
-                         state_br1_2.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
+    state_br1_1.add_edge(state_br1_1.add_read('A'), None,
+                         state_br1_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
                          dace.Memlet('A[1]'))
-    state_br2_2.add_edge(state_br2_2.add_read('A'), None,
-                         state_br2_2.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
+    state_br2_1.add_edge(state_br2_1.add_read('A'), None,
+                         state_br2_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
                          dace.Memlet('A[1]'))
 
     # Make sure array is allocated once or twice, depending on the test
@@ -598,7 +591,6 @@ def test_multisize():
 
 
 if __name__ == '__main__':
-    '''
     test_determine_alloc_scope()
     test_determine_alloc_state()
     test_determine_alloc_sdfg()
@@ -618,7 +610,6 @@ if __name__ == '__main__':
     test_persistent_loop_bound()
     test_double_nested_persistent_write()
     test_branched_allocation('global')
-    '''
     test_branched_allocation('singlevalue')
     # test_branched_allocation('multivalue')
     # test_scope_multisize()

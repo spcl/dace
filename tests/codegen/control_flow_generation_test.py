@@ -185,7 +185,6 @@ def test_do_while_if_while(detect_control_flow):
 
 if __name__ == '__main__':
     test_for_loop_generation()
-    test_invalid_for_loop_detection()
     test_edge_split_loop_generation()
     test_edge_sympy_function('FalseTrue')
     test_edge_sympy_function('TrueFalse')
