@@ -512,11 +512,10 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 u=intermediate_out_access,
                 u_connector=None,
                 v=out_edge.dst,
-                v_connector="prefetch_" + dst_name,
-                memlet=dace.Memlet(data=dst_name, subset=other_subset)
+                v_connector=None,
+                memlet=dace.Memlet()
             )
-            assert "prefetch_" + dst_name not in out_edge.dst.in_connectors
-            out_edge.dst.add_in_connector("prefetch_" + dst_name)
+
 
             # Before we had A[...1] -> shrA[...2]
             # It needs to be changed to shrA[...2] -> SyncTasklet -> A[...2]

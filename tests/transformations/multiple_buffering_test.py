@@ -196,7 +196,7 @@ def test_standalone_execution():
     print(f"vals_C results match: {vals_C_close}")
 
     if vals_C_close:
-        print("Test Fail: Naive ShrMem and Original SDFGs should preserve correctness")
+        print("Naive ShrMem and Original SDFGs should preserve correctness")
     else:
         if not vals_C_close:
             print(f"vals_C max difference: {cp.max(cp.abs(vals_C_orig - vals_C_2))}")
@@ -218,7 +218,7 @@ def test_standalone_execution():
     print(f"vals_C results match: {vals_C_close}")
 
     if vals_C_close:
-        print("Test Fail: Multiple Buffering transformations preserve correctness, but they should not be synchronized by the current codegen.")
+        print("Multiple Buffering transformations preserve correctness.")
     else:
         if not vals_C_close:
             print(f"vals_C max difference: {cp.max(cp.abs(vals_C_orig - vals_C_2))}")
