@@ -3403,8 +3403,6 @@ def create_sdfg_from_fortran_file_with_options(
         ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = sdfg
-        with open("/home/alex/fcdc/dycpreast_full.txt","w") as f:
-            f.write(str(program))
         ast2sdfg.translate(program, sdfg, sdfg)
         from dace.transformation.pass_pipeline import FixedPointPipeline
         from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
