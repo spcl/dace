@@ -54,7 +54,7 @@ class MultipleBuffering(transformation.SingleStateTransformation):
     )
     synchronous = dace.properties.Property(
         dtype=bool,
-        default=False,
+        default=True,
         desc="Whether to use synchronous or asynchronous copies. "
              "If True, the transformation will use synchronous copies, "
              "which means that the copy operations will use synchronous API (use registers on GPUs). "
@@ -544,7 +544,6 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 state.add_edge(*new_in_edge_tuple)
             else:
                 # Replace access node with a SyncTasklet
-                print(pipeline_names)
                 data_name = access_node.data
                 pipeline_name = pipeline_names[data_name]
                 sync_tasklet = state.add_tasklet(
@@ -563,10 +562,11 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 state.add_edge(*new_in_edge_tuple)
                 state.add_edge(*new_out_edge_tuple)
 
+        exit_node = state.exit_node(parent_scope)
+        next_entry_node = [n for n in state.nodes() if isinstance(n, dace.nodes.EntryNode) and state.entry_node(n) == parent_scope][0]
+        prev_exit_node = state.exit_node(next_entry_node)
         if not self.synchronous:
             # Release the consumer pipeline
-            exit_node = state.exit_node(parent_scope)
-            prev_exit_node = [state.exit_node(n) for n in state.nodes() if isinstance(n, dace.nodes.EntryNode) and state.entry_node(n) == parent_scope][0]
             t2 = state.add_tasklet(
                 name=f"release_pipelines",
                 inputs={},
@@ -577,6 +577,35 @@ class MultipleBuffering(transformation.SingleStateTransformation):
             )
             state.add_edge(prev_exit_node, None, t2, None, dace.Memlet())
             state.add_edge(t2, None, exit_node, None, dace.Memlet())
+        else:
+            # Add a sync threads to the map exit and map entry before all other edges
+            t2 = state.add_tasklet(
+                name=f"snyc_threads",
+                inputs={},
+                outputs={},
+                code=f"__syncthreads();",
+                language= dace.dtypes.Language.CPP,
+                side_effects=True,
+            )
+            state.add_edge(prev_exit_node, None, t2, None, dace.Memlet())
+            state.add_edge(t2, None, exit_node, None, dace.Memlet())
+
+            t3 = state.add_tasklet(
+                name=f"snyc_threads",
+                inputs={},
+                outputs={},
+                code=f"__syncthreads();",
+                language= dace.dtypes.Language.CPP,
+                side_effects=True,
+            )
+            sources = set([ie.src for ie in state.in_edges(next_entry_node)])
+            for src in sources:
+                if not isinstance(src, dace.nodes.Tasklet):
+                    state.add_edge(src, None, t3, None, dace.Memlet())
+
+            state.add_edge(t3, None, next_entry_node, None, dace.Memlet())
+
+
 
         MultipleBuffering._add_missing_symbols(
             parent_sdfg=sdfg,
@@ -735,6 +764,7 @@ class MultipleBuffering(transformation.SingleStateTransformation):
             parent=state,
             inputs=inputs,
             outputs=outputs,
+            schedule=dace.dtypes.ScheduleType.Sequential,
         )
 
         for (src_name, dst_name, memlet, other_subset, _) in prefill_copy_expressions:
@@ -805,6 +835,7 @@ class MultipleBuffering(transformation.SingleStateTransformation):
             parent=state,
             inputs=inputs,
             outputs=outputs,
+            schedule=dace.dtypes.ScheduleType.Sequential,
         )
 
         for (src_name, dst_name, memlet, other_subset, _) in prefetch_copy_expressions:
