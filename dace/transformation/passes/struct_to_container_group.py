@@ -611,7 +611,7 @@ class StructToContainerGroups(ppl.Pass):
         simplify: bool = True,
         validate: bool = True,
         validate_all: bool = False,
-        clean_container_grous: bool = True,
+        clean_container_groups: bool = True,
         save_steps: bool = False,
         interface_with_struct_copy: bool = True,
         interface_to_gpu: bool = False,
@@ -620,6 +620,7 @@ class StructToContainerGroups(ppl.Pass):
         shallow_copy: bool = False,
         shallow_copy_to_gpu: bool = False,
         taskloop: bool = False,
+        clean_structs: bool = True,
     ):
         if shallow_copy:
             assert shallow_copy_to_gpu is False and interface_to_gpu is False and interface_with_struct_copy is True
@@ -631,7 +632,7 @@ class StructToContainerGroups(ppl.Pass):
         self._simplify = simplify
         self._validate = validate
         self._validate_all = validate_all
-        self._clean_container_grous = clean_container_grous
+        self._clean_container_groups = clean_container_groups
         self._flattening_mode = flattening_mode
         self._call = 0
         self._save_steps = save_steps
@@ -647,6 +648,7 @@ class StructToContainerGroups(ppl.Pass):
         self._shallow_copy = shallow_copy
         self._shallow_copy_to_gpu = shallow_copy_to_gpu
         self._taskloop = taskloop
+        self._clean_structs = clean_structs
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -1552,24 +1554,25 @@ class StructToContainerGroups(ppl.Pass):
                 # Add the end replace the host_name stuff
 
             if not self._interface_with_struct_copy:
-                # Remove structs
-                to_rm = []
-                for name, desc in sdfg.arrays.items():
-                    if isinstance(desc, dace.data.Structure):
-                        to_rm.insert(0, name)
-                for name in to_rm:
-                    sdfg.remove_data(name=name, validate=True)
+                if self._clean_structs:
+                    # Remove structs
+                    to_rm = []
+                    for name, desc in sdfg.arrays.items():
+                        if isinstance(desc, dace.data.Structure):
+                            to_rm.insert(0, name)
+                    for name in to_rm:
+                        sdfg.remove_data(name=name, validate=True)
 
-                if self._save_steps:
-                    sdfg.save("data_removed.sdfgz", compress=True)
+                    if self._save_steps:
+                        sdfg.save("data_removed.sdfgz", compress=True)
 
-                nd_to_rm = []
-                for s in sdfg.states():
-                    for n in s.nodes():
-                        if s.in_degree(n) == 0 and s.out_degree(n) == 0:
-                            nd_to_rm.insert(0, (s, n))
-                for s, n in nd_to_rm:
-                    s.remove_node(n)
+                    nd_to_rm = []
+                    for s in sdfg.states():
+                        for n in s.nodes():
+                            if s.in_degree(n) == 0 and s.out_degree(n) == 0:
+                                nd_to_rm.insert(0, (s, n))
+                    for s, n in nd_to_rm:
+                        s.remove_node(n)
 
 
         # After removing views we might have in and out degree 0
@@ -1590,7 +1593,7 @@ class StructToContainerGroups(ppl.Pass):
                 if self._simplify:
                     sdfg.simplify(validate=self._validate, validate_all=self._validate_all)
 
-        if self._clean_container_grous:
+        if self._clean_container_groups:
             clean_container_groups(sdfg)
 
         if self._save_steps:
@@ -1609,7 +1612,7 @@ class StructToContainerGroups(ppl.Pass):
         if self._simplify:
             sdfg.simplify(validate=self._validate, validate_all=self._validate_all)
 
-        sdfg.save("done.sdfgz", compress=True)
+        #sdfg.save("done.sdfgz", compress=True)
 
     def _can_be_applied(
         self,
