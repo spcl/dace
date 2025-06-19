@@ -1525,8 +1525,8 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
-        if not hasattr(node, "_cuda_stream"):
-            node_stream = 0
+        #if not hasattr(node, "_cuda_stream"):
+        #    node._cuda_stream = 0
 
         node_stream = node._cuda_stream
         if isinstance(node_stream, str):
