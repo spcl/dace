@@ -805,7 +805,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
     the decision.
-    
+
     :return: None if the conflict is nonatomic, otherwise returns the scope entry
              node or SDFG that caused the decision to be made.
     """
@@ -967,7 +967,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
 
                 if isinstance(node_stream, str):
                   node_stream = int(node_stream)
-                
+
                 if node_stream >= max_streams and max_streams > 0:
                   warnings.warn(
                       f"Node {node.label} is using CUDA stream {node_stream}, which exceeds the maximum number of allowed streams ({max_streams})."
@@ -1118,7 +1118,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         desc = self.sdfg.arrays[t.id]
         ref = '' if not isinstance(desc, data.View) else '*'
         self.write(ref + ptr(t.id, desc, self.sdfg, self.codegen))
-    
+
     def _Attribute(self, t: ast.Attribute):
         from dace.frontend.python.astutils import rname, unparse
 
@@ -1525,10 +1525,13 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
+        if not hasattr(node, "_cuda_stream"):
+            node_stream = 0
+
         node_stream = node._cuda_stream
         if isinstance(node_stream, str):
             node_stream = int(node_stream)
-        
+
         if node_stream >= max_streams and max_streams > 0:
             warnings.warn(
                 f"Node {node.label} is using CUDA stream {node_stream}, which exceeds the maximum number of allowed streams ({max_streams})."
@@ -1584,7 +1587,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
 
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
                     and edge.dst._cuda_stream != node._cuda_stream):
-                
+
                 edge_stream = edge.dst._cuda_stream
                 if isinstance(edge_stream, str):
                     edge_stream = int(edge_stream)
@@ -1634,7 +1637,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                             f"Node {node.label} is using CUDA stream {edge_stream} in an out-edge, which exceeds the maximum number of allowed streams ({max_streams})."
                         )
                         edge_stream = edge_stream % max_streams
-                      
+
                     callsite_stream.write(
                         """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
     {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".

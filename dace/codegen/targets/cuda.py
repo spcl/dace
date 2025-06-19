@@ -1735,8 +1735,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
-            if hasattr(scope_entry, '_cuda_stream') and scope_entry._cuda_stream is not None:
-                scope_stream = scope_entry._cuda_stream
+            if hasattr(scope_entry, '_cuda_stream'):
+                if scope_entry._cuda_stream is not None:
+                    scope_stream = scope_entry._cuda_stream
+                else:
+                    scope_stream = 0
             else:
                 scope_stream = 0
 
