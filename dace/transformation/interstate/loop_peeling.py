@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop peeling transformation """
 
 import sympy as sp
@@ -77,6 +77,7 @@ class LoopPeeling(LoopUnroll):
             for i in range(self.count):
                 # Instantiate loop contents as a new control flow region with iterate value.
                 current_index = start + (i * stride)
+                is_symbolic |= symbolic.issymbolic(current_index)
                 iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
                                                                    str(i) if is_symbolic else None)
 
@@ -100,6 +101,7 @@ class LoopPeeling(LoopUnroll):
             for i in reversed(range(self.count)):
                 # Instantiate loop contents as a new control flow region with iterate value.
                 current_index = pystr_to_symbolic(self.loop.loop_variable) + (i * stride)
+                is_symbolic |= symbolic.issymbolic(current_index)
                 iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
                                                                    str(i) if is_symbolic else None)
 
