@@ -25,7 +25,9 @@ from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (
     codeblock_to_cpp, 
     memlet_copy_to_absolute_strides, 
-    mangle_dace_state_struct_name
+    mangle_dace_state_struct_name,
+    ptr,
+    sym2cpp
 )
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
 
@@ -36,7 +38,7 @@ from dace.transformation.passes.shared_memory_synchronization import DefaultShar
 
 # Experimental CUDA helper imports
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp, product
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp, product, emit_sync_debug_checks
 
 # Type checking imports (conditional)
 if TYPE_CHECKING:
@@ -45,19 +47,13 @@ if TYPE_CHECKING:
 
 
 # TODO's easy:
-# 1. Handle memory pools release
-# 2. Handle sync properties
-# 3. Emit sync
+# 3. Emit sync -> yea not easy
+
+# add symbolic_to_cpp !
 
 # TODO's harder:
 # 1. Include constant expressions
 
-# Question: Getting "const" expressions leads to some issues.
-# So it looks like, that I need to do make this visible to lower
-# generation as well.
-
-
-# extended todo: get const, like in a general way without a hack in a scope
 
 
 @registry.autoregister_params(name='experimental_cuda')
@@ -92,8 +88,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                       target_type=target_type)
 
 
-
-        self._scope_has_collaborative_copy = False
 
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
@@ -197,6 +191,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         #------------------------- GPU Stream related Logic --------------------------
 
+
         # Register GPU context in state struct
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
@@ -213,7 +208,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         #----------------- Shared Memory Synchronization related Logic -----------------
 
-        DefaultSharedMemorySync().apply_pass(sdfg, None)
+        auto_sync = Config.get('compiler', 'cuda', 'auto_syncthreads_insertion')
+        if auto_sync:
+            DefaultSharedMemorySync().apply_pass(sdfg, None)
 
         #------------------------- Memory Pool related Logic --------------------------
 
@@ -263,10 +260,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                         if all(nx.has_path(state.nx, an2, an1) for an2 in ans if an2 is not an1):
                             terminator = an1
                             break
-
+                    
+                    # Old logic below, now we use the gpu_stream manager which returns nullptr automatically
+                    # to all nodes thatdid not got assigned a cuda stream
+                    """
                     # Enforce a cuda_stream field so that the state-wide deallocation would work
                     if not hasattr(an1, '_cuda_stream'):
                         an1._cuda_stream = 'nullptr'
+                    """
 
                     # If access node was found, find the point where all its reads are complete
                     terminators = set()
@@ -502,6 +503,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             
 
             self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
+            emit_sync_debug_checks(self.backend, self._localcode)
             self._localcode.write('}')
 
     ###########################################################################
@@ -517,8 +519,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             CopyContext,
             CopyStrategy,
             OutOfKernelCopyStrategy,
-            WithinGPUCopyStrategy,
-            FallBackGPUCopyStrategy,
+            SyncCollaboritveGPUCopyStrategy,
+            AsyncCollaboritveGPUCopyStrategy,
+            FallBackGPUCopyStrategy
         )
 
         context = CopyContext(self, self._gpu_stream_manager, state_id, src_node, dst_node, edge,
@@ -527,7 +530,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Order matters: fallback must come last
         strategies: List[CopyStrategy] = [
             OutOfKernelCopyStrategy(),
-            WithinGPUCopyStrategy(),
+            SyncCollaboritveGPUCopyStrategy(),
+            AsyncCollaboritveGPUCopyStrategy(),
             FallBackGPUCopyStrategy()
         ]
 
@@ -580,28 +584,37 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = False) -> None:
         
-        if ExperimentalCUDACodeGen._in_kernel_code:
-            self.generate_devicelevel_state(sdfg, cfg, state, function_stream, callsite_stream)
-        else:
-            self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
-
-    def generate_devicelevel_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState,
-                                   function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        # Special case: if this is a GPU grid state and something is reading
-        # from a possible result of a collaborative write, sync first
-        if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
-            for node in state.nodes():
-                if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
-                        and state.in_degree(node) == 0 and state.out_degree(node) > 0):
-                    break
-            return
-
+        # User frame code  to generate state
         self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
 
-    def _emit_sync(self, codestream: CodeIOStream):
-        if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-            codestream.write('''DACE_GPU_CHECK({backend}GetLastError());
-            DACE_GPU_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
+        # Special: Release of pooled memory if not in device code that need to be released her
+        if not ExperimentalCUDACodeGen._in_kernel_code:
+
+            handled_keys = set()
+            backend = self.backend
+            for (pool_sdfg, name), (pool_state, _) in self.pool_release.items():
+
+                if (pool_sdfg is not sdfg) or (pool_state is not state):
+                    continue
+
+                data_descriptor = pool_sdfg.arrays[name]
+                ptrname = ptr(name, data_descriptor, pool_sdfg, self._frame)
+
+                # Adjust if there is an offset
+                if isinstance(data_descriptor, dt.Array) and data_descriptor.start_offset != 0:
+                    ptrname = f'({ptrname} - {sym2cpp(data_descriptor.start_offset)})'
+
+                # Free the memory
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}Free({ptrname}));\n', pool_sdfg)
+
+                emit_sync_debug_checks(self.backend, callsite_stream)
+
+                # We handled the key (pool_sdfg, name) and can remove it later
+                handled_keys.add((pool_sdfg, name))
+
+            # Delete the handled keys here (not in the for loop, which would cause issues)
+            for key in handled_keys:
+                del self.pool_release[key]
     
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -739,14 +752,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         arrsize_malloc = f'{symbolic_to_cpp(arrsize)} * sizeof({nodedesc.dtype.ctype})'
 
         if nodedesc.pool:
-            cudastream = getattr(node, '_cuda_stream', 'nullptr')
-            if cudastream != 'nullptr':
-                cudastream = f'__state->gpu_context->streams[{cudastream}]'
+            gpu_stream_manager = self._gpu_stream_manager
+            gpu_stream = gpu_stream_manager.get_stream_node(node)
+            if gpu_stream != 'nullptr':
+                gpu_stream = f'__state->gpu_context->streams[{gpu_stream}]'
             allocation_stream.write(
-                f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n',
+                f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {gpu_stream}));\n',
                 cfg, state_id, node
             )
-            self._emit_sync(allocation_stream)
+            emit_sync_debug_checks(self.backend, allocation_stream)
         else:
             # Strides are left to the user's discretion
             allocation_stream.write(
@@ -966,6 +980,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._codeobject.code = """
 #include <{backend_header}>
 #include <dace/dace.h>
+
+// New, cooperative groups and asnyc copy
+#include <cooperative_groups/memcpy_async.h>
+#include <cuda/pipeline>
+
+namespace cg = cooperative_groups;
 
 {file_header}
 

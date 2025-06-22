@@ -17,7 +17,7 @@ def test_correctness_and_reuse():
     smem locations which they also write to, so synchronization is not stictly needed here)
     """
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    sdfg_path = os.path.join(current_dir, '../../scratch/yakups_examples/nice_global_to_shared_copy.sdfg')
+    sdfg_path = os.path.join(current_dir, '../../scratch/yakups_examples/smem_related/nice_global_to_shared_copy.sdfg')
     sdfg = dace.SDFG.from_file(sdfg_path)
 
     size = 512

@@ -1,8 +1,10 @@
 import functools  
 import sympy      
 
-from dace import symbolic                     
-from dace.codegen import cppunparse           
+from dace import Config, symbolic  
+
+from dace.codegen import cppunparse
+from dace.codegen.prettycode import CodeIOStream    
 
 
 def symbolic_to_cpp(arr):
@@ -26,3 +28,17 @@ def product(iterable):
     Purpose: This function is used to improve readability of the codeGen.
     """
     return functools.reduce(sympy.Mul, iterable, 1)
+
+def emit_sync_debug_checks(backend: str, codestream: CodeIOStream):
+    """
+    Emit backend sync and error-check calls if synchronous debugging is enabled.
+    
+    Args:
+        backend (str): Backend API prefix (e.g., 'cuda').
+        codestream (CodeIOStream): Stream to write code to.
+    """
+    if Config.get_bool('compiler', 'cuda', 'syncdebug'):
+        codestream.write(
+            f"DACE_GPU_CHECK({backend}GetLastError());\n"
+            f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n"
+        )

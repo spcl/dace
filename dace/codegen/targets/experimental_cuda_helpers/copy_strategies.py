@@ -5,7 +5,7 @@ from dace import symbolic
 from dace import Memlet, dtypes
 from dace.dtypes import StorageType
 from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen, GPUStreamManager, KernelSpec
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import product, symbolic_to_cpp
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import product, symbolic_to_cpp, emit_sync_debug_checks
 
 
 from dace.codegen.prettycode import CodeIOStream
@@ -251,6 +251,9 @@ class OutOfKernelCopyStrategy(CopyStrategy):
             # sanity check
             assert num_dims > 2, f"Expected copy shape with more than 2 dimensions, but got {num_dims}."
             self._generate_nd_copy(copy_context)
+
+        # We use library calls thus for debugging we provide sync option
+        emit_sync_debug_checks(copy_context.backend, copy_context.callsite_stream)
             
     def _generate_1d_copy(self, copy_context: CopyContext) -> None:
         """
@@ -268,10 +271,10 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         # ----------------- Generate backend call --------------------
         if copy_context.is_contiguous_copy():
             # Memory is linear: can use {backend}MemcpyAsync
-            num_bytes = f'{product(copy_shape)} * sizeof({ctype})'
+            copysize = ' * '.join(symbolic_to_cpp(copy_shape))
+            copysize += f' * sizeof({ctype})' 
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
-
-            call = f'DACE_GPU_CHECK({backend}MemcpyAsync({dst_expr}, {src_expr}, {num_bytes}, {kind}, {cudastream}));\n'
+            call = f'DACE_GPU_CHECK({backend}MemcpyAsync({dst_expr}, {src_expr}, {copysize}, {kind}, {cudastream}));\n'
             
         else:
             # Memory is strided: use {backend}Memcpy2DAsync with dpitch/spitch
@@ -380,14 +383,14 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         callsite_stream.write(call, cfg, state_id, [src_node, dst_node])
 
         # Write for-loop footers
-        for d in range(num_dims - 2):
+        for dim in range(num_dims - 2):
                 callsite_stream.write("}")
 
 
 ################ TODO, Might need to modified further #############
 
 # Below: Does collaborative copy 
-class WithinGPUCopyStrategy(CopyStrategy):
+class SyncCollaboritveGPUCopyStrategy(CopyStrategy):
           
     def applicable(self, copy_context: CopyContext) -> bool:
         """
@@ -406,6 +409,14 @@ class WithinGPUCopyStrategy(CopyStrategy):
                 copy_context.dst_storage in gpu_storages):
             return False
         
+
+
+        dst_node = copy_context.dst_node
+        if isinstance(dst_node, nodes.AccessNode) and dst_node.async_copy:
+            return False
+
+
+
         # --- Condition 2: Inside a GPU_Device map scope ---
         state = copy_context.state_dfg
         scope_dict = state.scope_dict()
@@ -543,6 +554,117 @@ class WithinGPUCopyStrategy(CopyStrategy):
         return storage_name[storage_name.rindex('_') + 1:]
 
     
+
+
+class AsyncCollaboritveGPUCopyStrategy(CopyStrategy):
+
+    def applicable(self, copy_context: CopyContext)-> bool:
+
+        from dace.sdfg import scope_contains_scope
+        from dace.transformation import helpers
+
+        # --- Condition 1: GPU to GPU memory transfer ---
+        gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
+        if not (copy_context.src_storage in gpu_storages and 
+                copy_context.dst_storage in gpu_storages):
+            return False
+        
+
+
+        dst_node = copy_context.dst_node
+        if not (isinstance(dst_node, nodes.AccessNode) and dst_node.async_copy):
+            return False
+
+
+        # --- Condition 2: Inside a GPU_Device map scope ---
+        state = copy_context.state_dfg
+        scope_dict = state.scope_dict()
+
+        # Determine which node (src or dst) is in the deeper scope
+        src, dst = copy_context.src_node, copy_context.dst_node
+        deeper_scope_node = dst if scope_contains_scope(scope_dict, src, dst) else src
+
+        # Determine the schedule type of the innermost non-sequential map.
+        # If no such map exists, use the default schedule.
+        current_node = deeper_scope_node
+        while (current_node is None or not isinstance(current_node, nodes.MapEntry) or 
+               current_node.map.schedule == dtypes.ScheduleType.Sequential):
+            
+            parent = helpers.get_parent_map(state, current_node)
+            if parent is None:
+                current_node = None
+                break
+            current_node, state = parent
+
+        if current_node is None:
+            schedule_type = dtypes.SCOPEDEFAULT_SCHEDULE[None]
+        else:
+            schedule_type = current_node.map.schedule
+
+        return schedule_type == dtypes.ScheduleType.GPU_Device
+    
+
+    
+    def generate_copy(self, copy_context: CopyContext):
+        
+        # Show Yakup: 
+        # Asynchronous memory copies are only allowed if they are contiguous
+        if not copy_context.is_contiguous_copy():
+            raise NotImplementedError("Asynchronous memory copies are not supported for not contigous memory copies")
+
+
+        # Get required copy information
+        copy_shape, src_strides, dst_strides = copy_context.get_transfer_layout()
+        src_expr, dst_expr = copy_context.src_expr, copy_context.dst_expr
+
+        sdfg = copy_context.sdfg
+        dtype = copy_context.src_node.desc(sdfg).dtype
+        ctype = dtype.ctype
+   
+        # Get write context:
+        callsite_stream, cfg, state_id, src_node, dst_node = copy_context.get_write_context()
+        # copy dimension
+        num_dims = len(copy_shape)
+
+        if num_dims == 1:
+            pipeline = dst_node.async_pipeline
+            size = f'{product(copy_shape)} *sizeof({ctype})'
+            callsite_stream.write(f"cuda::memcpy_async(block, {dst_expr}, {src_expr}, {size}, {pipeline});\n", cfg, state_id, [src_node, dst_node])
+
+        elif num_dims > 1:
+
+            # No built-in functionality for higher dimension copies-
+            # But solvable looping and doing 1D copies
+
+            # write for-loop header:
+            for dim in range(num_dims - 1):
+                callsite_stream.write(
+                    f"for (int __copyidx{dim} = 0; __copyidx{dim} < {copy_shape[dim]}; ++__copyidx{dim}) {{")
+
+
+            offset_src = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(src_strides[:-1]))
+            offset_dst = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(dst_strides[:-1]))
+
+            size = f'{copy_shape[-1]} *sizeof({ctype})'
+            src = f'{src_expr} + {offset_src}' 
+            dst = f'{dst_expr} + {offset_dst}' 
+
+            callsite_stream.write(f"cuda::memcpy_async(block, {dst}, {src}, {size}, {pipeline});\n", cfg, state_id, [src_node, dst_node])
+
+            # Write for-loop footers
+            for dim in range(num_dims - 2):
+                    callsite_stream.write("}")
+
+
+        else:
+            # Should not be possible- otherwise, doing nothing is also okay
+            # because a empty copy shape means we don't copy anything
+            pass
+
+
+        emit_sync_debug_checks(copy_context.backend, copy_context.callsite_stream)
+
+
 
 class FallBackGPUCopyStrategy(CopyStrategy):
 

@@ -13,7 +13,7 @@ def test_gemm():
     of a GEMM SDFG using 2D block tiling with custom copy.
     """
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    sdfg_path = os.path.join(current_dir, '../../scratch/yakups_examples/2d_blocktiled_gemm_with_custom_copy.sdfg')
+    sdfg_path = os.path.join(current_dir, '../../scratch/yakups_examples/smem_related/2d_blocktiled_gemm_with_custom_copy.sdfg')
     sdfg = dace.SDFG.from_file(sdfg_path)
 
     m, n, k = 1024, 1024, 1024

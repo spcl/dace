@@ -78,7 +78,12 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                           function_stream=function_stream, callsite_stream=callsite_stream, comment="Kernel scope") as scope_manager:
             
 
-             # ----------------- Retrieve kernel configuration -----------------------
+            # ----------------- Initialize Kernel Scope Constructs -----------------------
+
+            self._generate_kernel_initialization(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+        
+            # ----------------- Retrieve kernel configuration -----------------------
+
             kernel_spec = self._current_kernel_spec
             kernel_entry_node = kernel_spec._kernel_entry_node # = dfg_scope.source_nodes()[0]
             kernel_map = kernel_spec.kernel_map
@@ -193,7 +198,60 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             f'__global__ void {launch_bounds} {kernel_name}({", ".join(kernel_args)}) ',
             cfg, state_id, node
         )     
+
+    def _generate_kernel_initialization(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
+                                        state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+        
+        """
+        Tell yakup:
+        1. This is as far as I know really cuda specific- maybe I should raise an error if wrong backend is used
+        2. What about the shared state allocation? Is it correct to tell about this allocation? generally, did I
+           tell the dispatcher everything correctly?
+        """
+
+        # Skip this if there are no metada, nothing to initialize
+        metadata = sdfg.metadata
+        if metadata == None:
+            return
+        
+        node = dfg_scope.source_nodes()[0]
+
+        callsite_stream.write(f"\n", cfg, state_id, node)
+        # initialize block group using coopertive groups
+        tblock_obj_name = "block"
+        tblock_obj_ctype = "auto"
+        callsite_stream.write(f"{tblock_obj_ctype} {tblock_obj_name} = cg::this_thread_block();\n", cfg, state_id, node)
+        self._dispatcher.defined_vars.add(tblock_obj_name, DefinedType.Object, tblock_obj_ctype)
+
+        # initialize pipeline 
+        pipelines = dict()
+        for node_guid, node_meta in metadata.items():
+            pipelines = node_meta.get("pipelines", {})
+            for pipeline_name, pipeline_info in pipelines.items():
+                pipelines[pipeline_name] = pipeline_info["pipeline_depth"]
+            
+
     
+        for pipeline_name, pipeline_depth in pipelines.items():
+            callsite_stream.write(f"\n", cfg, state_id, node)
+            # initialize pipeline depth scalar
+            depth_name = f"pipeline_depth_{pipeline_name}"
+            depth_ctype = "const uint"
+            callsite_stream.write(f"{depth_ctype} {depth_name} = {pipeline_depth};\n", cfg, state_id, node)
+            self._dispatcher.defined_vars.add(depth_name, DefinedType.Scalar, depth_ctype)
+
+            # allocate shared pipeline state 
+            shared_state_name = f"shared_state_{pipeline_name}"
+            shared_state_ctype = f"cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, {depth_name}>"
+            callsite_stream.write(f" __shared__ {shared_state_ctype} {shared_state_name};\n")
+            self._dispatcher.declared_arrays.add(shared_state_name, DefinedType.Pointer, shared_state_ctype)
+
+            # intialize the pipeline
+            pipeline_ctype = "auto"
+            callsite_stream.write(f"{pipeline_ctype} {pipeline_name} = cuda::make_pipeline({tblock_obj_name}, &{shared_state_name});\n", cfg, state_id, node)
+            self._dispatcher.defined_vars.add(pipeline_name, DefinedType.Object, pipeline_ctype)
+    
+        callsite_stream.write(f"\n", cfg, state_id, node)
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
     

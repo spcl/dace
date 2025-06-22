@@ -457,6 +457,7 @@ required:
                             Yakup Koray Budanaz for Berkays master-thesis.
                         enum: [legacy, experimental]
                         default: experimental
+
                     gpu_index_type:
                         type: str
                         title: Thread/block/warp index data type
@@ -469,6 +470,7 @@ required:
                             range, or to reduce memory usage. This replaces ``thread_id_type`` in 
                             ``ExperimentalCUDACodeGen`` , as the new name more accurately reflects its broader
                             usage.
+
                     cuda_warp_size:
                         type: int
                         title: CUDA warp size
@@ -487,6 +489,17 @@ required:
                             The default value for AMD GPUs is typically 64. This setting should only be modified 
                             if you have a clear understanding of what you are doing.
                         default: 64
+                    
+                    auto_syncthreads_insertion:
+                        type: bool
+                        title: Insert Default __syncthreads() Tasklets
+                        description: >
+                            If enabled, inserts default __syncthreads() tasklets during preprocessing 
+                            in ExperimentalCUDACodeGen to ensure shared memory is ready before access. 
+                            This is a simple safeguard for correctness—it may not be complete, but it 
+                            does the job for basic SDFGs. Disable if you handle synchronization manually 
+                            or use other mechanisms like async copies or pipelines.
+                        default: True
 
             #############################################
             # General FPGA flags
