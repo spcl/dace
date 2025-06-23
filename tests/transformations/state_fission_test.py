@@ -275,6 +275,50 @@ def _make_split_multiple_writes() -> Tuple[dace.SDFG, dace.SDFGState, nodes.Acce
     return sdfg, state, a, tlet1, tlet2, tlet3, b, c
 
 
+def _make_split_with_view() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry, nodes.AccessNode,
+                                     nodes.AccessNode, nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("split_with_view"))
+    state = sdfg.add_state()
+
+    sdfg.add_array(
+        "a",
+        shape=(10, ),
+        dtype=dace.float64,
+        transient=False,
+    )
+    sdfg.add_view(
+        "v",
+        shape=(10, ),
+        dtype=dace.float64,
+    )
+    for name in "bc":
+        sdfg.add_array(
+            name,
+            shape=(10, 2),
+            dtype=dace.float64,
+            transient=False,
+        )
+    a, v, b, c = (state.add_access(name) for name in "avbc")
+
+    _, me, _ = state.add_mapped_tasklet(
+        "computation",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("a[__i]")},
+        code="__out = __in + 3.2",
+        outputs={"__out": dace.Memlet("v[__i]")},
+        input_nodes={a},
+        output_nodes={v},
+        external_edges=True,
+    )
+
+    state.add_edge(v, "views", b, None, dace.Memlet("v[0:10] -> [0:10, 1]"))
+    state.add_nedge(b, c, dace.Memlet("b[0:10, 0:2] -> [0:10, 0:2]"))
+
+    sdfg.validate()
+
+    return sdfg, state, a, me, v, b, c
+
+
 def test_state_fission():
     """
     Tests state fission. The starting point is a stae SDFG with two
@@ -626,7 +670,49 @@ def test_state_fission_multiple_writes(add_b_to_subgraph: bool):
     assert {b, c} == set(state.nodes())
 
 
+def test_split_with_view():
+    sdfg, state, a, me, v, b, c = _make_split_with_view()
+    assert state.number_of_nodes() == 7
+    assert state.number_of_edges() == 6
+    assert count_nodes(state, nodes.AccessNode) == 4
+    assert count_nodes(state, nodes.Tasklet) == 1
+    assert count_nodes(state, nodes.MapExit) == 1
+
+    subgraph_nodes = list(state.scope_subgraph(me).nodes())
+    subgraph = graph.SubgraphView(state, subgraph_nodes)
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    # The new state will have all nodes except of `c`. However, the containing `b` node
+    #  is a copy (which is an implementation detail).
+    assert new_state.number_of_nodes() == 6
+    assert new_state.number_of_edges() == 5
+    assert count_nodes(new_state, nodes.Tasklet) == 1
+    assert count_nodes(new_state, nodes.MapExit) == 1
+    assert me in new_state.nodes()
+    new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
+    assert len(new_state_ac) == 3
+    assert {a, v}.issubset(new_state_ac)
+    new_b = next(iter(ac for ac in new_state_ac if ac.data == "b"))
+
+    assert new_state.out_degree(new_b) == 0
+    assert new_state.in_degree(new_b) == 1
+    assert new_state.degree(v) == 2
+    v_to_b_edges = new_state.edges_between(v, new_b)
+    assert len(v_to_b_edges) == 1
+    assert v_to_b_edges[0].src_conn == "views"
+    assert v_to_b_edges[0].dst_conn is None
+
+    # The second state (original) simply contains the `b` and `c` node, both of them
+    #  are original; which is an implementation detail.
+    assert state.number_of_nodes() == 2
+    assert state.number_of_edges() == 1
+    assert count_nodes(state, nodes.AccessNode) == 2
+    assert {b, c} == set(state.nodes())
+
+
 if __name__ == "__main__":
     test_state_fission()
     test_simple_split_with_map_1()
     test_state_fission_multiple_read()
+    test_split_with_view()
