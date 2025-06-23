@@ -223,6 +223,58 @@ def _make_split_multiple_reads() -> Tuple[dace.SDFG, dace.SDFGState, nodes.Acces
     return sdfg, state, a, tlet1, tlet2, b, c
 
 
+def _make_split_multiple_writes() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet,
+                                           nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("split_with_multiple_writes"))
+    state = sdfg.add_state()
+
+    sdfg.add_scalar(
+        "a",
+        dtype=dace.float64,
+        transient=False,
+    )
+    for name in "bc":
+        sdfg.add_array(
+            name,
+            shape=(3, ),
+            dtype=dace.float64,
+            transient=False,
+        )
+    a, b, c = (state.add_access(name) for name in "abc")
+
+    tlet1 = state.add_tasklet(
+        "tlet1",
+        inputs={},
+        outputs={"__out"},
+        code="__out = 2.3",
+    )
+    tlet2 = state.add_tasklet(
+        "tlet2",
+        inputs={"__in"},
+        outputs={"__out"},
+        code="__out = __in + 1.0",
+    )
+    tlet3 = state.add_tasklet(
+        "tlet3",
+        inputs={},
+        outputs={"__out"},
+        code="__out = -6.0",
+    )
+
+    state.add_edge(tlet1, "__out", b, None, dace.Memlet("b[0]"))
+
+    state.add_edge(a, None, tlet2, "__in", dace.Memlet("a[0]"))
+    state.add_edge(tlet2, "__out", b, None, dace.Memlet("b[1]"))
+
+    state.add_edge(tlet3, "__out", b, None, dace.Memlet("b[2]"))
+
+    state.add_nedge(b, c, dace.Memlet("b[0:3] -> [0:3]"))
+
+    sdfg.validate()
+
+    return sdfg, state, a, tlet1, tlet2, tlet3, b, c
+
+
 def test_state_fission():
     """
     Tests state fission. The starting point is a stae SDFG with two
@@ -528,6 +580,53 @@ def test_state_fission_multiple_read():
     assert all(oedge.data.src_subset[0][0] == 0 for oedge in state.out_edges(a))
 
 
+@pytest.mark.parametrize("add_b_to_subgraph", [True, False])
+def test_state_fission_multiple_writes(add_b_to_subgraph: bool):
+    """
+    The subgraph is described by `tlet2`, if `add_b_to_subgraph` is `True`, then also
+    `b` is included. However, in every case the all nodes except `c` will be moved to the
+    new state. This is because otherwise we would have multiple locations where we write to
+    `b`. Which is an invariant that we want to preserve.
+    """
+    sdfg, state, a, tlet1, tlet2, tlet3, b, c = _make_split_multiple_writes()
+    assert state.number_of_nodes() == 6
+    assert state.number_of_edges() == 5
+
+    subgraph_nodes = [tlet2]
+    if add_b_to_subgraph:
+        subgraph_nodes.append(b)
+
+    subgraph = graph.SubgraphView(state, subgraph_nodes)
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    # Everything except `c` has been relocated to the new state. However, the `b` node is
+    #  actually a copy (implementation detail).
+    assert new_state.number_of_edges() == 4
+    assert new_state.number_of_nodes() == 5
+    assert set(count_nodes(new_state, nodes.Tasklet, True)) == {tlet1, tlet2, tlet3}
+    new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
+    assert len(new_state_ac) == 2
+    assert a in new_state_ac
+    assert b not in new_state_ac
+    new_b = next(iter(ac for ac in new_state_ac if ac is not a))
+    assert new_b.data == "b"
+    assert new_state.in_degree(new_b) == 3
+    assert new_state.out_degree(new_b) == 0
+
+    for i, tlet in enumerate([tlet1, tlet2, tlet3]):
+        tlet_b_edges = new_state.edges_between(tlet, new_b)
+        assert len(tlet_b_edges) == 1
+        assert tlet_b_edges[0].data.dst_subset[0][0] == i
+
+    # The second (original) state, contains a `c` to `b` connection. They are both the
+    #  original, which is an implementation detail.
+    assert state.number_of_nodes() == 2
+    assert state.number_of_edges() == 1
+    assert {b, c} == set(state.nodes())
+
+
 if __name__ == "__main__":
     test_state_fission()
     test_simple_split_with_map_1()
+    test_state_fission_multiple_read()
