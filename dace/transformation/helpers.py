@@ -623,11 +623,10 @@ def state_fission(
             to_scan.update(iedge.src for iedge in state.in_edges(node_to_scan) if iedge.src not in scanned_nodes)
             scanned_nodes.add(node_to_scan)
 
-    # These are all nodes that are located inside the first state.
-    first_nodes: Set[nodes.Node] = set(subgraph.nodes())
-
-    # Find the dependency of the initial nodes that are assigned to the first state.
-    for node in list(first_nodes):
+    # These are all nodes that are located inside the first state. These are the nodes inside the
+    #  subgraph and all of its dependencies.
+    first_nodes: Set[nodes.Node] = set()
+    for node in subgraph.nodes():
         find_generating_nodes(
             node_to_start=node,
             state=state,
