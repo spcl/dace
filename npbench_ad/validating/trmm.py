@@ -5,12 +5,14 @@ from dace.autodiff import add_backward_pass
 M = 32
 N = 32
 
+L_M, L_N = 32, 32
+
 
 @dc.program
 def trmm(alpha: dc.float64, A: dc.float64[M, M], B: dc.float64[M, N], S: dc.float64[1]):
 
-    for i in range(M):
-        for j in range(N):
+    for i in range(L_M):
+        for j in range(L_N):
             B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])
     B *= alpha
 
@@ -28,13 +30,14 @@ A = np.ones(shape=[M, M])
 B = np.ones(shape=[M, N])
 S = np.zeros(shape=[1])
 gradient_S = np.ones(shape=[1])
-gradient_A = np.zeros(shape=[M, N])
+gradient_B = np.zeros(shape=[M, N])
 sdfg = trmm.to_sdfg(alpha=alpha, beta=beta, A=A)
 
 sdfg.save("log_sdfgs/trmm_forward.sdfg")
 
-add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["S"])
-
+add_backward_pass(sdfg=sdfg, inputs=["B"], outputs=["S"], autooptimize=True)
+# sdfg.save("log_sdfgs/trmm_backward_bs.sdfg")
+# sdfg.simplify()
 sdfg.save("log_sdfgs/trmm_backward.sdfg")
 
 sdfg(
@@ -42,7 +45,7 @@ sdfg(
     A,
     B,
     S,
-    gradient_A=gradient_A,
+    gradient_B=gradient_B,
     gradient_S=gradient_S,
 )
 
@@ -52,8 +55,8 @@ import jax.numpy as jnp
 
 
 def k2mm_jax(alpha, A, B):
-    for i in range(M):
-        for j in range(N):
+    for i in range(L_M):
+        for j in range(L_N):
             B = B.at[i, j].set(B[i, j] + jnp.dot(A[i + 1:, i], B[i + 1:, j]))
     B *= alpha
     return jnp.sum(B)
@@ -66,5 +69,5 @@ B = jnp.ones(shape=[M, N])
 
 gradient_A_jax = jax_grad(alpha, A, B)
 print(gradient_A_jax)
-print(gradient_A)
-assert np.allclose(gradient_A_jax, gradient_A)
+print(gradient_B)
+assert np.allclose(gradient_A_jax, gradient_B)

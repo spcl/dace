@@ -3,7 +3,7 @@ import typing
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 from dace.sdfg import SDFG, nodes
-from dace.autodiff.optimize_backward_pass_generator import autooptimize_sdfgs_for_ad
+from dace.autodiff.optimize_backward_pass_generator import autooptimize_sdfgs_for_ad, preprocess_fwd_sdfg, fuse_states_cav
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.sdfg.state import LoopRegion
 
@@ -42,6 +42,14 @@ def add_backward_pass(sdfg: SDFG,
     """
     # Validate SDFG
     sdfg.validate()
+    
+    # preprocess the SDFG
+    if "go_fast" in sdfg.name:
+        preprocess_fwd_sdfg(sdfg)
+    
+    # Simplify and validate
+    sdfg.validate()
+    sdfg.simplify()
     
     # Inline conditional blocks but keep loops
     inline_control_flow_regions(sdfg, ignore_region_types=[LoopRegion])

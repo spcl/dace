@@ -1,7 +1,7 @@
 import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
-
+from dace.sdfg.utils import inline_control_flow_regions
 N, Nt = 32, 32
 
 # @dc.program
@@ -157,9 +157,12 @@ def nbody(mass: dc.float64[N], pos: dc.float64[N, 3], vel: dc.float64[N, 3], dt:
 
 
 sdfg = nbody.to_sdfg()
+# inline_control_flow_regions(sdfg, ignore_region_types=[dc.sdfg.state.LoopRegion])
 
+# sdfg.validate()
 sdfg.save("log_sdfgs/nbody_forward.sdfg")
 
-add_backward_pass(sdfg=sdfg, inputs=["mass"], outputs=["S"])
+add_backward_pass(sdfg=sdfg, inputs=["mass"], outputs=["S"],autooptimize=True)
 
 sdfg.save("log_sdfgs/nbody_backward.sdfg")
+sdfg.compile()

@@ -2,7 +2,7 @@ import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
 
-nx, ny, nit = 61, 61, 5
+nx, ny, nit, nt = 201, 201, 100, 100
 
 
 @dc.program
@@ -82,3 +82,4 @@ sdfg.save("log_sdfgs/cavity_flow_forward.sdfg")
 add_backward_pass(sdfg=sdfg, inputs=["u"], outputs=["S"])
 
 sdfg.save("log_sdfgs/cavity_flow_backward.sdfg")
+sdfg.compile()

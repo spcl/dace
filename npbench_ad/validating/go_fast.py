@@ -28,9 +28,11 @@ sdfg = go_fast.to_sdfg()
 
 sdfg.save("log_sdfgs/go_fast_forward.sdfg")
 
-add_backward_pass(sdfg=sdfg, inputs=["a"], outputs=["S"])
-
+add_backward_pass(sdfg=sdfg, inputs=["a"], outputs=["S"], autooptimize=True)
+# sdfg.save("log_sdfgs/go_fast_backward_bs.sdfg")
+# sdfg.simplify()
 sdfg.save("log_sdfgs/go_fast_backward.sdfg")
+
 
 a = np.ones(shape=[N, N])
 S = np.zeros(shape=[1])
@@ -55,5 +57,5 @@ jax_grad = jax.grad(k2mm_jax, argnums=[0])
 a = jnp.copy(a)
 
 gradient_A_jax = jax_grad(a)
-print(gradient_A_jax - gradient_a)
+print(np.max(np.abs(gradient_A_jax - gradient_a)))
 assert np.allclose(gradient_A_jax, gradient_a)

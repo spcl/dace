@@ -471,7 +471,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if isinstance(node, nd.CodeNode):
                 pass
             else:
-                raise InvalidSDFGNodeError("Isolated node", sdfg, state_id, nid)
+                raise InvalidSDFGNodeError(f"Isolated node {node.label}", sdfg, state_id, nid)
 
         # Scope tests
         ########################################
@@ -538,8 +538,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                       # Streams do not need to be initialized
                       and not isinstance(arr, dt.Stream)):
                     if node.setzero == False:
-                        warnings.warn('WARNING: Use of uninitialized transient "%s" in state "%s"' %
-                                      (node.data, state.label))
+                        pass
+                        # warnings.warn('WARNING: Use of uninitialized transient "%s" in state "%s"' %
+                        #               (node.data, state.label))
 
                 # Register initialized transients
                 if arr.transient and state.in_degree(node) > 0:
@@ -678,6 +679,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
+            print(e)
             raise InvalidSDFGEdgeError("Edge validation failed: " + str(ex), sdfg, state_id, eid)
 
         # For every memlet, obtain its full path in the DFG

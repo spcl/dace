@@ -27,15 +27,15 @@ add_backward_pass(sdfg=sdfg, inputs=["array_2"], outputs=["S"])
 
 sdfg.save("log_sdfgs/compute_backward.sdfg")
 
-array_1 = np.ones(shape=[M, N])
-array_2 = np.ones(shape=[M, N])
-B = np.ones(shape=[M, N])
-a = 10
-b = 15
-c = 3
-S = np.zeros(shape=[1])
-gradient_S = np.ones(shape=[1])
-gradient_A = np.zeros(shape=[N, N])
+array_1 = np.ones(shape=[M, N], dtype=np.float64)
+array_2 = np.ones(shape=[M, N], dtype=np.float64)
+B = np.ones(shape=[M, N], dtype=np.float64)
+a = float(10)
+b = float(15)
+c = float(3)
+S = np.zeros(shape=[1], dtype=np.float64)
+gradient_S = np.ones(shape=[1], dtype=np.float64)
+gradient_A = np.zeros(shape=[N, N], dtype=np.float64)
 sdfg(array_1, array_2, a, b, B, c, S, gradient_S=gradient_S, gradient_array_2=gradient_A)
 
 # JAX
@@ -53,4 +53,5 @@ jax_grad = jax.grad(k2mm_jax, argnums=[1])
 B = jnp.ones(shape=[M, N])
 
 gradient_A_jax = jax_grad(array_1, array_2, a, b, B, c)
+print(gradient_A_jax)
 assert np.allclose(gradient_A_jax, gradient_A)

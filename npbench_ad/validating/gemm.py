@@ -3,13 +3,13 @@ import dace as dc
 from dace.autodiff import add_backward_pass
 
 NI = 32
-NJ = 32
-NK = 32
-NL = 32
+NJ = 36
+NK = 38
+NL = 42
 
 
 @dc.program
-def gemm(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK, NJ],
+def gemm(alpha: dc.float64, beta: dc.float64, A: dc.float64[NI, NK], B: dc.float64[NK, NJ], C: dc.float64[NI, NJ],
          D: dc.float64[NI, NJ], S: dc.float64[1]):
 
     D[:] = alpha * A @ B + beta * C
@@ -20,11 +20,11 @@ def gemm(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float
 alpha = 0.2
 beta = 1.2
 
-A = np.ones(shape=[NI, NJ])
+A = np.ones(shape=[NI, NK])
 B = np.ones(shape=[NK, NJ])
-C = np.ones(shape=[NJ, NL])
-D = np.ones(shape=[NI, NL])
-gradient_A = np.zeros(shape=[NI, NL])
+C = np.ones(shape=[NI, NJ])
+D = np.ones(shape=[NI, NJ])
+gradient_A = np.zeros(shape=[NI, NK])
 gradient_S = np.ones(shape=[1])
 S = np.zeros(shape=[1])
 
@@ -42,6 +42,8 @@ sdfg(alpha, beta, A, B, C, D, S, gradient_A=gradient_A, gradient_S=gradient_S)
 import jax
 import jax.numpy as jnp
 
+jax.config.update("jax_enable_x64", True)
+
 
 def k2mm_jax(alpha, beta, A, B, C, D):
     D = D.at[:].set(alpha * A @ B + beta * C)
@@ -50,10 +52,11 @@ def k2mm_jax(alpha, beta, A, B, C, D):
 
 jax_grad = jax.grad(k2mm_jax, argnums=[2])
 
-A = jnp.ones(shape=[NI, NJ])
+A = jnp.ones(shape=[NI, NK])
 B = jnp.ones(shape=[NK, NJ])
-C = jnp.ones(shape=[NJ, NL])
-D = jnp.ones(shape=[NI, NL])
+C = jnp.ones(shape=[NI, NJ])
+D = jnp.ones(shape=[NI, NJ])
 
 gradient_A_jax = jax_grad(alpha, beta, A, B, C, D)
+print(np.max(gradient_A_jax - gradient_A))
 assert np.allclose(gradient_A_jax, gradient_A)

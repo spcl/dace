@@ -68,5 +68,4 @@ y_1 = jnp.ones(shape=[N])
 y_2 = jnp.ones(shape=[N])
 
 gradient_A_jax = jax_grad(x1, x2, y_1, y_2, A)
-print(gradient_A_jax)
 assert np.allclose(gradient_A_jax, gradient_A)

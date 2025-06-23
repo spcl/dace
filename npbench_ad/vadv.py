@@ -102,3 +102,4 @@ sdfg.save("log_sdfgs/vadv_forward_loops.sdfg")
 add_backward_pass(sdfg=sdfg, inputs=["utens"], outputs=["S"])
 
 sdfg.save("log_sdfgs/vadv_backward_loops.sdfg")
+sdfg.compile()

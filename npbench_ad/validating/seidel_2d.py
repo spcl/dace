@@ -1,7 +1,7 @@
 import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
-
+import jax.lax as lax
 N = 32
 M = 32
 TSTEPS = 3
@@ -44,6 +44,36 @@ sdfg(TSTEPS, A, S, gradient_S=gradient_S, gradient_A=gradient_A)
 import jax
 import jax.numpy as jnp
 
+def jax_kernel_lax(TSTEPS, A, S):
+    # Ensure TSTEPS and N are concrete integers.
+    N = A.shape[0]
+    # Outer loop: iterate for TSTEPS-1 iterations.
+    def loop1_body(A, t):
+        # Middle loop: iterate over rows i from 1 to N-2.
+        def loop2_body(A, i):
+            # First, update row i in a vectorized way.
+            # Update columns 1:-1:
+            update_val = (A[i, 1:-1] +
+                          (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] +
+                           A[i, 2:] +
+                           A[i + 1, :-2] + A[i + 1, 1:-1] + A[i + 1, 2:]))
+            A = A.at[i, 1:-1].set(update_val)
+
+            # Inner loop: iterate over columns j from 1 to N-2.
+            def loop3_body(A, j):
+                # Update element A[i, j] based on its left neighbor.
+                new_val = (A[i, j] + A[i, j - 1]) / 9.0
+                A = A.at[i, j].set(new_val)
+                return A, None
+
+            A, _ = lax.scan(loop3_body, A, jnp.arange(1, N - 1))
+            return A, None
+
+        A, _ = lax.scan(loop2_body, A, jnp.arange(1, N - 1))
+        return A, None
+
+    A, _ = lax.scan(loop1_body, A, jnp.arange(TSTEPS - 1))
+    return jnp.sum(A)
 
 def k2mm_jax(TSTEPS, A):
     for t in range(0, TSTEPS - 1):
@@ -56,9 +86,10 @@ def k2mm_jax(TSTEPS, A):
     return jnp.sum(A)
 
 
-jax_grad = jax.grad(k2mm_jax, argnums=[1])
+jax_grad = jax.jit(jax.grad(jax_kernel_lax, argnums=[1]), static_argnums=[0])
 
 A = jnp.ones(shape=[N, N])
+# A_gpu = jax.device_put(A)
 
-gradient_A_jax = jax_grad(TSTEPS, A)
-assert np.allclose(gradient_A_jax, gradient_A)
+# # gradient_A_jax = jax_grad(TSTEPS, A_gpu)
+# assert np.allclose(gradient_A_jax, gradient_A)

@@ -3,8 +3,8 @@ import dace as dc
 from dace.autodiff import add_backward_pass
 
 NP = 32
-NQ = 32
-NR = 32
+NQ = 34
+NR = 36
 
 
 @dc.program
@@ -20,7 +20,7 @@ sdfg = doitgen.to_sdfg()
 
 sdfg.save("log_sdfgs/doitgen_forward.sdfg")
 
-add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["S"])
+add_backward_pass(sdfg=sdfg, inputs=["A"], outputs=["S"], autooptimize=True)
 
 sdfg.save("log_sdfgs/doitgen_backward.sdfg")
 

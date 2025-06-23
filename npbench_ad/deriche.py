@@ -61,3 +61,4 @@ sdfg.save("log_sdfgs/deriche_forward.sdfg")
 add_backward_pass(sdfg=sdfg, inputs=["imgIn"], outputs=["S"])
 
 sdfg.save("log_sdfgs/deriche_backward.sdfg")
+sdfg.compile()

@@ -126,3 +126,4 @@ sdfg.save("log_sdfgs/channel_flow_forward.sdfg")
 add_backward_pass(sdfg=sdfg, inputs=["p"], outputs=["S"])
 
 sdfg.save("log_sdfgs/channel_flow_backward.sdfg")
+sdfg.compile()

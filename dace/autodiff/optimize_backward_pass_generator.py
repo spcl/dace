@@ -4,12 +4,17 @@ from dace.libraries.blas.nodes.matmul import MatMul
 from dace.libraries.blas.nodes.dot import Dot
 from dace.libraries.standard import Transpose
 import copy
+import networkx as nx
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.dtypes import DeviceType
 from dace.libraries.blas.blas_helpers import to_blastype
 import dace.sdfg.nodes as nodes
-                  
+from dace.sdfg.utils import inline_control_flow_regions
+from dace.sdfg.state import LoopRegion
+from dace.sdfg import utils as sdutil
+from dace.transformation.interstate import StateFusion
+from dace import data as dt, dtypes, registry, sdfg, subsets
 def autooptimize_sdfgs_for_ad(bwd_generator: BackwardPassGenerator):
     """
     A pass that will be applied after getting the backward SDFG to optimize the SDFG.
@@ -21,7 +26,10 @@ def autooptimize_sdfgs_for_ad(bwd_generator: BackwardPassGenerator):
     # 1- Revert MatMul back to a library node and clbals calls
     forward_gemm_to_library_node(forward_sdfg)
     backward_gemm_to_library_node(backward_sdfg)
-    
+    cavity_flow_opt(backward_sdfg)
+    fuse_states_cav(backward_sdfg)
+    backward_sdfg.save("log_sdfgs/backward_sdfg_after_flow.sdfg")
+
     # # 2- We make all the arrays in the SDFG transient except for the gradient computations
     fwd_modified = []
     for state in forward_sdfg.states():
@@ -44,14 +52,20 @@ def autooptimize_sdfgs_for_ad(bwd_generator: BackwardPassGenerator):
                             (node.data, backward_sdfg.arrays[node.data]))
                     backward_sdfg.arrays[node.data].transient = True
 
+    
+    if "go_fast" in forward_sdfg.name or "seidel" in forward_sdfg.name:
+        print("Preprocessing the SDFG")
+        # manually remove the forward pass states if there is no storing
+        remove_forward_pass_if_no_Store(bwd_generator)
+        
     # 3- Call autoopt for CPU
     backward_sdfg_opt = backward_sdfg
     forward_sdfg_opt = forward_sdfg
     forward_sdfg_opt.simplify()
-    forward_sdfg_opt = auto_optimize(forward_sdfg, DeviceType.CPU)
+    forward_sdfg_opt = auto_optimize(forward_sdfg, DeviceType.GPU)
     if bwd_generator.separate_sdfgs:
         backward_sdfg.simplify()
-        backward_sdfg_opt = auto_optimize(backward_sdfg, DeviceType.CPU)
+        backward_sdfg_opt = auto_optimize(backward_sdfg, DeviceType.GPU)
 
     # 4- Reset the non-transient arrays to avoid modifying the signature of the function
     for data, desc in fwd_modified:
@@ -69,11 +83,402 @@ def autooptimize_sdfgs_for_ad(bwd_generator: BackwardPassGenerator):
 
     post_processing_pass(forward_sdfg_opt)
     post_processing_pass(backward_sdfg_opt)
-    
+
     # Change the generator to use the optimized SDFG
     bwd_generator.backward_sdfg = backward_sdfg_opt
     bwd_generator.sdfg = forward_sdfg_opt
 
+
+def cavity_flow_opt(sdfg: SDFG):
+    """
+    """
+    for state in sdfg.all_states():
+        if state.label == "cavity_flow_pressure_poisson_62_call_37_reversed":
+            # Remove all nodes from this state
+            for node in state.nodes():
+                state.remove_node(node)
+
+        if state.label == "call_40_reversed":
+            # Remove all nodes from this state
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and "gradient_pn" == node.data and state.in_degree(node) == 2:
+                    target_node = node
+                    # Do a bfs to see what to remove
+                    nodes_to_remove = state.bfs_nodes(target_node)
+                    nodes_to_remove = [n for n in list(nodes_to_remove) if n != target_node] 
+                    state.remove_nodes_from(nodes_to_remove)
+                    target_node.data = "gradient_p"
+                    state.in_edges(target_node)[0].data.data = "gradient_p"
+                    first_map = state.in_edges(target_node)[0].src
+                    state.in_edges(first_map)[0].data.data = "gradient_p"
+                    state.in_edges(first_map)[1].data.data = "gradient_p"
+                    state.in_edges(target_node)[1].data.data = "gradient_p"
+                    second_map = state.in_edges(target_node)[1].src
+                    state.in_edges(second_map)[0].data.data = "gradient_p"
+                    state.in_edges(second_map)[1].data.data = "gradient_p"
+                    
+                    break
+                
+def remove_forward_pass_if_no_Store(backward_gen: BackwardPassGenerator):
+    """
+    Remove the forward pass if there is no storing of the output
+    """
+    for node, parent in backward_gen.backward_sdfg.all_nodes_recursive():
+        if isinstance(node, SDFGState) and node in backward_gen.reversed_states_map.keys():
+            for snode in node.nodes():
+                node.remove_node(snode)
+    
+    # Remove empty loops
+    for node, parent in backward_gen.backward_sdfg.all_nodes_recursive():
+        if isinstance(node, LoopRegion) and len(node.nodes()) == 0:
+            print(f"Removing empty loop {node} in {backward_gen.sdfg.name}")
+            parent.remove_node(node)
+            
+        if isinstance(node, LoopRegion) and len(node.nodes()) == 1 and isinstance(node.nodes()[0], SDFGState) and len(node.nodes()[0].nodes()) == 0:
+            in_edges = parent.in_edges(node)
+            out_edges = parent.out_edges(node)
+            if not len(in_edges) == 1 or not len(out_edges) == 1:
+                continue
+            in_edge = in_edges[0]
+            out_edge = out_edges[0]
+            parent.add_edge(in_edge.src, out_edge.dst, in_edge.data)
+            print(f"Removing {node}")
+            parent.remove_node(node)
+            
+    # Also remove wcr edge if unncecessary
+    for node, parent in backward_gen.backward_sdfg.all_nodes_recursive():
+        if "BinOp_23_reversed" == parent.label and isinstance(node, nodes.AccessNode) and parent.in_degree(node) == 1 and parent.out_degree(node) == 0:
+            in_edge = parent.in_edges(node)[0]
+            if "gradient_a" not in in_edge.dst.label:
+                continue
+            if isinstance(in_edge.src, nodes.MapExit) and in_edge.data.wcr is not None:
+                print(f"Resstign unnecessary wcr edge {in_edge} in {backward_gen.sdfg.name}")
+                for tree_edge in parent.memlet_tree(in_edge):
+                    tree_edge.data.wcr = None
+                
+def preprocess_fwd_sdfg(forward_sdfg: SDFG):
+    """
+    Some preprocessing steps to make AD easier. Mainly pattern detect softmax to remove the max reduction
+    """
+
+    # Remove Softmax max reduction
+    # for node, parent in forward_sdfg.all_nodes_recursive():
+    #     # Chec if the node is still in the SDFG in case the pattern has been removed
+    #     if node not in parent.nodes():
+    #         continue
+    #     is_soft_max, pattern_nodes = _is_softmax_reduction(node, parent)
+    #     if is_soft_max:
+    #         _softmax_reduction_to_lib_node(pattern_nodes, parent)
+    
+    # Remove unnecessary temporary Scalars
+    for node, parent in forward_sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.AccessNode) and "tmp1" in node.data:
+            in_edges = parent.in_edges(node)
+            out_edges = parent.out_edges(node)
+            if len(in_edges) == 1 and len(out_edges) == 1:
+                in_edge = in_edges[0]
+                out_edge = out_edges[0]
+                if isinstance(in_edge.src, nodes.AccessNode):
+                    node_desc = forward_sdfg.arrays[node.data]
+                    in_desc = forward_sdfg.arrays[in_edge.src.data]
+                    if node_desc.shape == (1, ) and node_desc.transient and not in_desc.transient:
+                        # skip connection to out edge directly
+                        new_memlet = copy.deepcopy(in_edge.data)
+                        new_memlet.other_subset = None
+                        parent.add_edge(in_edge.src, in_edge.src_conn, out_edge.dst, out_edge.dst_conn, new_memlet)
+                        parent.remove_node(node)
+
+def fuse_states_cav(sdfg_bwd_ao: SDFG):
+    """
+    """
+    if sdfg_bwd_ao.name != "cavity_flow":
+        return
+    for node, parent in sdfg_bwd_ao.all_nodes_recursive():
+        # if isinstance(node, SDFGState) and "assign_80_8_reversed" == node.label:
+        #     state2 = node
+        # if isinstance(node, SDFGState) and "assign_81_8_reversed" == node.label:
+        #     state3 = node
+        # if isinstance(node, SDFGState) and "assign_83_8_reversed" == node.label:
+        #     state4 = node
+        # if isinstance(node, SDFGState) and "assign_84_8_reversed" == node.label:
+        #     state5 = node
+        # if isinstance(node, SDFGState) and "assign_85_8_reversed" == node.label:
+        #     state6 = node
+        
+        if isinstance(node, SDFGState) and "assign_79_8" == node.label:
+            state20 = node
+        if isinstance(node, SDFGState) and "assign_80_8" == node.label:
+            state30 = node
+        if isinstance(node, SDFGState) and "assign_81_8" == node.label:
+            state40 = node
+        if isinstance(node, SDFGState) and "assign_83_8" == node.label:
+            state50 = node
+        if isinstance(node, SDFGState) and "assign_84_8" == node.label:
+            state60 = node
+        if isinstance(node, SDFGState) and "assign_85_8" == node.label:
+            state70 = node
+    
+            
+    # cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state2, second_state=state3)
+    # cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state2, second_state=state4)
+    # cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state2, second_state=state5)
+    # cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state2, second_state=state6)
+    # cycle_edge = state2.parent_graph.in_edges(state2)[0]
+    # state2.parent_graph.remove_edge(cycle_edge)
+    
+    
+    cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state20, second_state=state30)
+    cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state20, second_state=state40)
+    cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state20, second_state=state50)
+    cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state20, second_state=state60)
+    cavity_flow_fuse_initial_states(sdfg_bwd_ao, first_state=state20, second_state=state70)
+        
+def top_level_nodes(state: SDFGState):
+    return state.scope_children()[None]
+
+def cavity_flow_fuse_initial_states(sdfg: SDFG, first_state: SDFGState, second_state: SDFGState):
+    """
+    Fuse the initial states of the cavity flow SDFG
+    """
+
+    graph = first_state.parent_graph
+
+    # Remove interstate edge(s)
+    edges = graph.edges_between(first_state, second_state)
+    for edge in edges:
+        if edge.data.assignments:
+            for src, dst, other_data in graph.in_edges(first_state):
+                other_data.assignments.update(edge.data.assignments)
+        graph.remove_edge(edge)
+
+    # Special case 1: first state is empty
+    if first_state.is_empty():
+        sdutil.change_edge_dest(graph, first_state, second_state)
+        graph.remove_node(first_state)
+        if graph.start_block == first_state:
+            graph.start_block = graph.node_id(second_state)
+        return
+
+    # Special case 2: second state is empty
+    if second_state.is_empty():
+        sdutil.change_edge_src(graph, second_state, first_state)
+        sdutil.change_edge_dest(graph, second_state, first_state)
+        graph.remove_node(second_state)
+        if graph.start_block == second_state:
+            graph.start_block = graph.node_id(first_state)
+        return
+
+    # Normal case: both states are not empty
+
+    # Find source/sink (data) nodes
+    first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
+    first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
+    second_input = [node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)]
+
+    top2 = top_level_nodes(second_state)
+
+    # first input = first input - first output
+    first_input = [
+        node for node in first_input if next((x for x in first_output if x.data == node.data), None) is None
+    ]
+
+    # NOTE: We exclude Views from the process of merging common data nodes because it may lead to double edges.
+    second_mid = [
+        x for x in list(nx.topological_sort(second_state._nx)) if isinstance(x, nodes.AccessNode)
+        and second_state.out_degree(x) > 0 and not isinstance(sdfg.arrays[x.data], dt.View)
+    ]
+
+    # Merge second state to first state
+    # First keep a backup of the topological sorted order of the nodes
+    sdict = first_state.scope_dict()
+    order = [
+        x for x in reversed(list(nx.topological_sort(first_state._nx)))
+        if isinstance(x, nodes.AccessNode) and sdict[x] is None
+    ]
+    for node in second_state.nodes():
+        if isinstance(node, nodes.NestedSDFG):
+            # update parent information
+            node.sdfg.parent = first_state
+        first_state.add_node(node)
+    for src, src_conn, dst, dst_conn, data in second_state.edges():
+        first_state.add_edge(src, src_conn, dst, dst_conn, data)
+
+    top = top_level_nodes(first_state)
+
+    # Merge common (data) nodes
+    merged_nodes = set()
+    removed_nodes = set()
+    for node in second_mid:
+
+        # merge only top level nodes, skip everything else
+        if node not in top2:
+            continue
+
+        candidates = [x for x in order
+                        if x.data == node.data and x in top and x not in merged_nodes and x not in removed_nodes]
+        source_node = first_state.in_degree(node) == 0
+
+        # If not source node, try to connect every memlet-intersecting candidate
+        if not source_node:
+            for cand in candidates:
+                if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                    if nx.has_path(first_state._nx, cand, node):  # Do not create cycles
+                        continue
+                    sdutil.change_edge_src(first_state, cand, node)
+                    sdutil.change_edge_dest(first_state, cand, node)
+                    first_state.remove_node(cand)
+                    removed_nodes.add(cand)
+            continue
+
+        if len(candidates) == 0:
+            continue
+        elif len(candidates) == 1:
+            n = candidates[0]
+        else:
+            # Choose first candidate that intersects memlets
+            for cand in candidates:
+                if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                    n = cand
+                    break
+            else:
+                # No node intersects, use topologically-last node
+                n = candidates[0]
+
+        sdutil.change_edge_src(first_state, node, n)
+        sdutil.change_edge_dest(first_state, node, n)
+        first_state.remove_node(node)
+        removed_nodes.add(node)
+        merged_nodes.add(n)
+
+    # Redirect edges and remove second state
+    sdutil.change_edge_src(graph, second_state, first_state)
+    graph.remove_node(second_state)
+    if graph.start_block == second_state:
+        graph.start_block = graph.node_id(first_state)
+              
+def _is_softmax_reduction(node: nodes.NestedSDFG, parent: SDFGState):
+        """
+        Change the forward pass for the softmax function to avoid having a max reduction
+        """
+        if isinstance(node, nodes.NestedSDFG) and "softmax" in node.label.lower():
+            return True, node
+        
+        # Pattern match the softmax start node
+        if not isinstance(node, nodes.AccessNode) or parent.out_degree(node) != 2:
+            return False, None
+        out_edges = parent.out_edges(node)
+        
+        reduction = out_edges[0].dst if isinstance(out_edges[0].dst, nodes.LibraryNode) else out_edges[1].dst
+        map_entry = out_edges[0].dst if isinstance(out_edges[0].dst, dace.nodes.MapEntry) else out_edges[1].dst
+        if not isinstance(reduction, nodes.LibraryNode) or not isinstance(map_entry, dace.nodes.MapEntry):
+            return False, None
+        
+        if not "Reduce" in reduction.label:
+            return False, None
+        
+        # Get the map exit node
+        map_exit = parent.exit_node(map_entry)
+        
+        # out edges of exit 
+        out_edges = parent.out_edges(map_exit)
+        if len(out_edges) != 1:
+            return False, None
+        first_exit_out_edge = out_edges[0]
+        
+        # should point to an
+        if not isinstance(first_exit_out_edge.dst, nodes.AccessNode):
+            return False, None
+        
+        edges = parent.out_edges(first_exit_out_edge.dst)
+        if len(edges) != 1:
+            return False, None
+        second_map = edges[0].dst
+        
+        second_exit = parent.exit_node(second_map)
+        edges = parent.out_edges(second_exit)
+        if len(edges) != 1:
+            return False, None
+        second_exit_out_edge = edges[0]
+        
+        # should be an
+        if not isinstance(second_exit_out_edge.dst, nodes.AccessNode):
+            return False, None
+        
+        # shoudl have two edges out
+        edges = parent.out_edges(second_exit_out_edge.dst)
+        if len(edges) != 2:
+            return False, None
+        
+        second_reduction = edges[0].dst if isinstance(edges[0].dst, nodes.LibraryNode) else edges[1].dst
+        second_map_entry = edges[0].dst if isinstance(edges[0].dst, dace.nodes.MapEntry) else edges[1].dst
+        if not isinstance(second_reduction, nodes.LibraryNode) or not isinstance(second_map_entry, dace.nodes.MapEntry):
+            return False, None
+        
+        # final map exit 
+        final_map_exit = parent.exit_node(second_map_entry)
+        edges = parent.out_edges(final_map_exit)
+        if len(edges) != 1:
+            return False, None
+        final_exit_out_edge = edges[0]
+        
+        output_node = final_exit_out_edge.dst
+        if not isinstance(output_node, nodes.AccessNode):
+            return False, None
+        
+        nodes_list = parent.all_nodes_between(node, output_node)
+        nodes_list = list(nodes_list)
+        nodes_list.insert(0, node)
+        nodes_list.append(output_node)
+        return True, nodes_list
+        
+            
+        
+def _softmax_reduction_to_lib_node(pattern_nodes, parent: SDFGState):
+        """
+        Change the forward pass for the softmax function to avoid having a max reduction
+        """
+        import dace.libraries.onnx as donnx 
+        # Get the equivelent library node
+        lib_node = donnx.ONNXSoftmax("Softmax")
+        parent.add_node(lib_node)
+        
+        if isinstance(pattern_nodes, nodes.NestedSDFG):
+            node = pattern_nodes
+            
+            # in edges
+            in_edges = parent.in_edges(node)
+            assert len(in_edges) == 1
+            in_edge = in_edges[0]
+            
+            # out edges
+            out_edges = parent.out_edges(node)
+            assert len(out_edges) == 1
+            out_edge = out_edges[0]
+            
+            # Connect it to the input and output
+            parent.add_edge(in_edge.src, in_edge.src_conn, lib_node, "input", in_edge.data)
+            parent.add_edge(lib_node, "output", out_edge.dst, out_edge.dst_conn, out_edge.data)
+            
+            # Remove the nested SDFG
+            parent.remove_node(node)
+        else: 
+            input = pattern_nodes[0]
+            in_edge = parent.out_edges(input)
+            assert len(in_edge) == 2
+            assert in_edge[0].data == in_edge[1].data
+            in_edge = in_edge[0]
+            parent.add_edge(in_edge.src, in_edge.src_conn, lib_node, "input", in_edge.data)
+            
+            output = pattern_nodes[-1]
+            out_edge = parent.in_edges(output)
+            assert len(out_edge) == 1
+            out_edge = out_edge[0]
+            parent.add_edge(lib_node, "output", out_edge.dst, out_edge.dst_conn, out_edge.data)
+            
+            pattern_nodes = pattern_nodes[1:-1] 
+            # Remove the list of nodes from the parent
+            parent.remove_nodes_from(pattern_nodes)
+            
 def post_processing_pass(sdfg: SDFG):
     """
     A pass that will be applied after getting the optimized backward SDFG.
@@ -98,10 +503,18 @@ def post_processing_pass(sdfg: SDFG):
         
         if out_edge.src_conn is None or node.out_connectors[out_edge.src_conn] != dace.dtypes.float64:
             continue
-        
-        assert False
+    
         node.out_connectors[out_edge.src_conn] = dace.dtypes.pointer(dace.dtypes.float64)
     
+    
+    # Avoid wcr on the first sum reduction
+    # for node, parent in sdfg.all_nodes_recursive():
+    #     if isinstance(node, dace.nodes.AccessNode) and "gradient_A" in node.data and parent.in_degree(node) == 1 and parent.out_degree(node) == 0:
+    #         in_edge = parent.in_edges(node)[0]
+    #         if isinstance(in_edge.src, nodes.MapExit) and in_edge.data.wcr is not None:
+    #             for tree_edge in parent.memlet_tree(in_edge):
+    #                 tree_edge.data.wcr = None
+            
 
 def scale_matrix_to_cblas_call(sdfg: SDFG):
     """

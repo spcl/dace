@@ -71,7 +71,7 @@ def lenet5(input: dc.float32[N, H, W, 1], conv1: dc.float32[5, 5, 1, 6],
            conv2bias: dc.float32[16], fc1w: dc.float32[C_before_fc1, 120],
            fc1b: dc.float32[120], fc2w: dc.float32[120, 84],
            fc2b: dc.float32[84], fc3w: dc.float32[84,
-                                                  10], fc3b: dc.float32[10], S:dc.float64[1]):
+                                                  10], fc3b: dc.float32[10], S:dc.float32[1]):
 
 
     x1 = relu4(conv2d(input, conv1) + conv1bias)
@@ -84,11 +84,7 @@ def lenet5(input: dc.float32[N, H, W, 1], conv1: dc.float32[5, 5, 1, 6],
 
     D = x7 @ fc3w + fc3b
 
-    @dc.map(_[0:10])
-    def summap(i):
-        s >> S(1, lambda x, y: x + y)[0]
-        z << D[i]
-        s = z
+    S[0] = np.sum(D)
     return D
 
 
@@ -96,8 +92,31 @@ sdfg = lenet5.to_sdfg()
 
 sdfg.save("log_sdfgs/lenet_forward.sdfg")
 
-
 add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["S"])
 
 sdfg.save("log_sdfgs/lenet_backward.sdfg")
+sdfg.compile()
 
+# @dc.program
+# def maxpool2d(x: dc.float32[S0, S1, S2, S3], S: dc.float64[1]):
+#     # output = np.empty(
+#     #     [x.shape[0], x.shape[1] // 2, x.shape[2] // 2, x.shape[3]],
+#     #     dtype=x.dtype)
+#     output = np.ndarray([S0, S1 // 2, S2 // 2, S3], dtype=np.float32)
+#     # for i in range(x.shape[1] // 2):
+#     #     for j in range(x.shape[2] // 2):
+#     for i in range(S1 // 2):
+#         for j in range(S2 // 2):
+#             output[:, i, j, :] = np.max(x[:, 2 * i:2 * i + 2,
+#                                           2 * j:2 * j + 2, :],
+#                                         axis=(1, 2))
+#     return output
+
+# sdfg = maxpool2d.to_sdfg()
+
+# sdfg.save("log_sdfgs/maxpool2d_forward.sdfg")
+
+# add_backward_pass(sdfg=sdfg, inputs=["x"], outputs=["S"])
+
+# sdfg.save("log_sdfgs/maxpool2d_backward.sdfg")
+# sdfg.compile()
