@@ -180,6 +180,49 @@ def _make_simple_split_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes
     return sdfg, state, a, me, tlet, t, b, c
 
 
+def _make_split_multiple_reads() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet,
+                                          nodes.AccessNode, nodes.AccessNode]:
+
+    sdfg = dace.SDFG(unique_name("simple_split_with_multiple_reads"))
+    state = sdfg.add_state()
+
+    sdfg.add_array(
+        "a",
+        shape=(2, ),
+        dtype=dace.float64,
+        transient=False,
+    )
+    for name in "bc":
+        sdfg.add_scalar(
+            name,
+            dtype=dace.float64,
+            transient=False,
+        )
+    a, b, c = (state.add_access(name) for name in "abc")
+
+    tlet1 = state.add_tasklet(
+        "tlet1",
+        inputs={"__in"},
+        outputs={"__out"},
+        code="__out = __in + 3.0",
+    )
+    tlet2 = state.add_tasklet(
+        "tlet2",
+        inputs={"__in"},
+        outputs={"__out"},
+        code="__out = __in + 4.0",
+    )
+
+    state.add_edge(a, None, tlet1, "__in", dace.Memlet("a[0]"))
+    state.add_edge(tlet1, "__out", b, None, dace.Memlet("b[0]"))
+    state.add_edge(a, None, tlet2, "__in", dace.Memlet("a[1]"))
+    state.add_edge(tlet2, "__out", c, None, dace.Memlet("c[0]"))
+
+    sdfg.validate()
+
+    return sdfg, state, a, tlet1, tlet2, b, c
+
+
 def test_state_fission():
     """
     Tests state fission. The starting point is a stae SDFG with two
@@ -454,6 +497,35 @@ def test_simple_split_with_map_2_only_tasklet():
     """If we only include the Tasklet then the MapExit node will not be included.
     """
     _test_simple_split_with_map_2_impl(include="tasklet")
+
+
+def test_state_fission_multiple_read():
+    sdfg, state, a, tlet1, tlet2, b, c = _make_split_multiple_reads()
+    assert state.number_of_nodes() == 5
+    assert state.number_of_edges() == 4
+
+    subgraph = graph.SubgraphView(state, [tlet2])
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    assert new_state.number_of_nodes() == 3
+    assert new_state.number_of_edges() == 2
+    assert {tlet2, c}.issubset(new_state.nodes())
+    new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
+
+    # `a` is classified as boundary node, thus it is copied,
+    assert len(new_state_ac) == 2
+    assert a not in new_state_ac
+    assert c in new_state_ac
+    new_a = next(iter(ac for ac in new_state_ac if ac is not c))
+    assert new_a.data == "a"
+    assert all(oedge.data.src_subset[0][0] == 1 for oedge in new_state.out_edges(new_a))
+
+    # The second state contains the original `a`.
+    assert state.number_of_nodes() == 3
+    assert state.number_of_edges() == 2
+    assert {a, tlet1, b} == set(state.nodes())
+    assert all(oedge.data.src_subset[0][0] == 0 for oedge in state.out_edges(a))
 
 
 if __name__ == "__main__":
