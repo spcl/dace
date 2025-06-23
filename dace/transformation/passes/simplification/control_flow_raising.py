@@ -293,7 +293,7 @@ class ControlFlowRaising(ppl.Pass):
             lifted_loops += sdfg.apply_transformations_repeated([LoopLifting], validate_all=False, validate=False)
             lifted_unstructured += self._lift_unstructured(sdfg)
             lifted_branches += self._lift_conditionals(sdfg)
-        if lifted_branches == 0 and lifted_loops == 0:
+        if lifted_branches == 0 and lifted_loops == 0 and lifted_unstructured == 0 and lifted_returns == 0:
             return None
         top_sdfg.reset_cfg_list()
         return lifted_returns, lifted_loops, lifted_branches, lifted_unstructured

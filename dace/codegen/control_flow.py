@@ -247,9 +247,15 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
         else:
             # If multiple outgoing edges, generate a conditional goto for each edge. This is the case for
             # unstructured / irreducible control flow.
+            has_unconditional = False
             for e in out_edges:
+                if e.data.is_unconditional():
+                    has_unconditional = True
                 expr += _generate_interstate_edge_code(e, region.sdfg, region, codegen)
                 stack.append(e.dst)
+            if not has_unconditional:
+                # If no unconditional edge, we need to exit the region if none of the conditions are met.
+                expr += f'goto __state_exit_{region.cfg_id};\n'
 
     expr += f'__state_exit_{region.cfg_id}:;\n'
 
