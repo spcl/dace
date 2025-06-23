@@ -22,7 +22,7 @@ The Python frontend preprocessing pipeline in `preprocessing.py` includes:
 2. **ModuleResolver**: Resolves imported modules
 3. **MPIResolver**: Handles MPI-specific constructs
 4. **ModuloConverter**: Converts modulo operations
-5. **GlobalResolver**: Resolves constants and symbols
+5. **GlobalResolver**: Resolves global variables outside the function context
 6. **Multiple passes loop**:
    - **LoopUnroller**: Unrolls loops where possible
    - **ExpressionInliner**: Inlines dace.inline() expressions
@@ -107,78 +107,6 @@ Existing nodes in `treenodes.py`:
 - `TaskletNode`, `LibraryCall`, `CopyNode`, `ViewNode`
 - `AssignNode`, `GotoNode`, `BreakNode`, `ContinueNode`
 - `StateLabel`, `RefSetNode`
-
-### 3.2 Required Extensions for Frontend Support
-
-Based on analysis of Python and Fortran frontends, the following extensions are needed:
-
-#### 3.2.1 Function Call Support
-```python
-@dataclass
-class FunctionCallNode(ScheduleTreeNode):
-    """
-    Represents a function call that may need to be converted to nested SDFG or tasklet.
-    """
-    function_name: str
-    args: List[Any]
-    kwargs: Dict[str, Any]
-    return_type: Optional[data.Data]
-    is_callback: bool = False
-```
-
-#### 3.2.2 Array/Data Operations
-```python
-@dataclass
-class ArrayAccessNode(ScheduleTreeNode):
-    """
-    Represents array access patterns that need special handling.
-    """
-    array_name: str
-    indices: List[Any]
-    access_type: str  # 'read', 'write', 'readwrite'
-```
-
-#### 3.2.3 Type Conversion and Casting
-```python
-@dataclass
-class TypeCastNode(ScheduleTreeNode):
-    """
-    Represents explicit type conversions.
-    """
-    target_type: dtypes.typeclass
-    source_expr: Any
-```
-
-#### 3.2.4 Language-Specific Constructs
-```python
-@dataclass
-class LanguageSpecificNode(ScheduleTreeNode):
-    """
-    Container for language-specific constructs that need special handling.
-    """
-    language: str
-    construct_type: str
-    data: Any
-```
-
-#### 3.2.5 Exception Handling (Python)
-```python
-@dataclass
-class TryScope(ControlFlowScope):
-    """
-    Try-except block scope.
-    """
-    except_handlers: List['ExceptHandler']
-    finally_block: Optional['ScheduleTreeScope']
-
-@dataclass
-class ExceptHandler(ControlFlowScope):
-    """
-    Exception handler scope.
-    """
-    exception_type: Optional[str]
-    exception_name: Optional[str]
-```
 
 ## 4. Pipeline Definitions
 
@@ -381,16 +309,7 @@ LibraryCall(
 
 ### 7.1 Unit Testing Framework
 
-```python
-class ScheduleTreeTestCase:
-    """Base class for Schedule Tree testing."""
-
-    def assert_schedule_tree_equivalent(self, tree1: ScheduleTreeScope, tree2: ScheduleTreeScope):
-        """Assert two schedule trees are semantically equivalent."""
-
-    def assert_sdfg_equivalent(self, sdfg1: SDFG, sdfg2: SDFG):
-        """Assert two SDFGs produce equivalent results."""
-```
+Pytest.
 
 ### 7.2 Test Categories
 
