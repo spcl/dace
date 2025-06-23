@@ -2083,8 +2083,8 @@ def get_control_flow_block_dominators(sdfg: SDFG,
             if k.parent_graph is not sdfg and (k is sinks_per_cfg[k.parent_graph]
                                                or isinstance(k.parent_graph, ConditionalBlock)):
                 next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and (next_pdom is sinks_per_cfg[next_pdom.parent_graph] or
-                                                              isinstance(next_pdom.parent_graph, ConditionalBlock)):
+                while next_pdom.parent_graph is not sdfg and (next_pdom is sinks_per_cfg[next_pdom.parent_graph]
+                                                              or isinstance(next_pdom.parent_graph, ConditionalBlock)):
                     next_pdom = ipostdom[next_pdom.parent_graph]
                 ipostdom[k] = next_pdom
         changed = True
