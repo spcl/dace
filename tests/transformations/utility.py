@@ -50,7 +50,7 @@ def make_sdfg_args(sdfg: dace.SDFG, ) -> tuple[dict[str, Any], dict[str, Any]]:
     ref = {
         name: (np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype()) if isinstance(
             desc, dace_data.Array) else np.array(np.random.rand(1), copy=True, dtype=desc.dtype.as_numpy_dtype())[0])
-        for name, desc in sdfg.arrays.items() if not desc.transient
+        for name, desc in sdfg.arrays.items() if (not desc.transient) and (not name.startswith("__return"))
     }
     res = copy.deepcopy(ref)
     return ref, res
