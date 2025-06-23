@@ -75,6 +75,13 @@ Language AST → [Pass 1: Preprocessing] → [Pass 2: AST→ScheduleTree] → [P
 - **Shared**: Common across all frontends
 - **Examples**: Loop invariant code motion, dead code elimination, constant propagation
 
+**Optimization Strategy**:
+- **Source-level optimizations** stay at Schedule Tree level (constant folding, dead code elimination)
+- **Execution-level optimizations** remain at SDFG level (memory optimization, parallelization)
+- **Some optimizations may be duplicated** but with different focuses:
+  - Schedule Tree: Structure-preserving, source-aware
+  - SDFG: Performance-focused, execution-aware
+
 #### Pass 4: Schedule Tree → SDFG Conversion
 - **Purpose**: Generate final SDFG from Schedule Tree
 - **Input**: Schedule Tree
@@ -83,11 +90,40 @@ Language AST → [Pass 1: Preprocessing] → [Pass 2: AST→ScheduleTree] → [P
 
 ### 2.3 Schedule Tree as Intermediate Representation
 
+#### 2.3.1 Schedule Tree vs CFG-based SDFG Architecture
+
+DaCe has recently introduced a CFG-based SDFG architecture with `ControlFlowRegion`, `LoopRegion`, and other control flow constructs. This raises the question: why introduce Schedule Tree as an intermediate representation when SDFGs now have better control flow support?
+
+**Key Differences and Benefits:**
+
+1. **Abstraction Level**:
+   - **Schedule Tree**: Higher-level, closer to source language constructs
+   - **CFG-based SDFG**: Lower-level, closer to execution model
+   - **Benefit**: Schedule Tree preserves source-level structure for optimizations that require it
+
+2. **Optimization Focus**:
+   - **Schedule Tree**: Source-level optimizations (constant folding, dead code elimination, loop transformations)
+   - **CFG-based SDFG**: Execution-level optimizations (memory management, scheduling, parallelization)
+   - **Benefit**: Clear separation of optimization concerns
+
+3. **Frontend Complexity**:
+   - **Direct AST → CFG-SDFG**: Requires frontends to handle complex control flow mapping
+   - **AST → Schedule Tree → CFG-SDFG**: Frontends only handle high-level structure mapping
+   - **Benefit**: Simpler frontend implementation, shared CFG-SDFG generation logic
+
+4. **Verification and Debugging**:
+   - **Schedule Tree**: Easier to verify against source code structure
+   - **CFG-based SDFG**: Harder to trace back to original source constructs
+   - **Benefit**: Better debugging and verification capabilities
+
+#### 2.3.2 Schedule Tree Rationale
+
 Schedule Tree serves as the common IR because:
 - **Existing Infrastructure**: Already implemented in `dace/sdfg/analysis/schedule_tree/`
-- **Appropriate Abstraction**: Higher level than SDFG, lower level than language AST
+- **Appropriate Abstraction**: Higher level than CFG-SDFG, lower level than language AST
 - **Control Flow Representation**: Natural representation of structured control flow
 - **Visitor Pattern Support**: Built-in visitor/transformer patterns for manipulation
+- **Complementary to CFG-SDFG**: Provides source-level view while CFG-SDFG provides execution view
 
 ## 3. Schedule Tree Extensions
 
@@ -414,7 +450,37 @@ class ConstantPropagationPass(ScheduleTreeOptimizationPass):
 - **API stability**: Frontend APIs should remain stable
 - **Migration path**: Clear path for migrating existing code
 
-### 10.3 Maintainability Considerations
+### 10.4 Optimization Pass Strategy
+
+#### 10.4.1 Schedule Tree vs SDFG Optimization Levels
+
+**Schedule Tree Level Optimizations:**
+- **Source-preserving transformations**: Maintain traceability to original source
+- **High-level semantic optimizations**: Constant propagation, dead code elimination
+- **Control flow simplifications**: Loop fusion, condition simplification
+- **Language-agnostic optimizations**: Shared across all frontends
+
+**SDFG Level Optimizations:**
+- **Execution-focused transformations**: Memory layout optimization, parallelization
+- **Hardware-specific optimizations**: GPU kernel fusion, vectorization
+- **Performance-critical optimizations**: Memory access patterns, data movement
+
+#### 10.4.2 Optimization Pass Exclusivity
+
+**Non-exclusive optimizations** (may appear at both levels):
+- **Constant propagation**: Schedule Tree (source-aware) vs SDFG (execution-aware)
+- **Dead code elimination**: Schedule Tree (structural) vs SDFG (performance-focused)
+
+**Schedule Tree exclusive optimizations**:
+- **Source-level transformations**: Preserving language semantics
+- **Frontend-specific optimizations**: Language-specific idiom recognition
+
+**SDFG exclusive optimizations**:
+- **Memory management**: Buffer allocation, data layout
+- **Hardware mapping**: Device-specific optimizations
+- **Execution scheduling**: Task and data parallelism
+
+### 10.5 Maintainability Considerations
 - **Documentation**: Need comprehensive documentation for new architecture
 - **Testing**: Extensive test suite required
 - **Code organization**: Clear organization of frontend passes
@@ -433,11 +499,23 @@ The phased migration strategy ensures minimal disruption while providing clear b
 
 ## 12. Next Steps
 
+### 12.1 Design Document Dependencies
+
+This design builds upon existing Schedule Tree infrastructure but should be coordinated with:
+
+1. **Schedule Tree Design Documents**: Any ongoing Schedule Tree design/implementation documents should be finalized first to ensure consistency
+2. **CFG-based SDFG Documentation**: Integration points with the new CFG-based SDFG architecture need clear specification
+3. **Pass Pipeline Documentation**: Coordination with existing pass pipeline infrastructure documentation
+
+### 12.2 Implementation Roadmap
+
 1. **Community Review**: Gather feedback on proposed architecture
-2. **Prototype Implementation**: Implement core infrastructure
-3. **Pilot Migration**: Start with Python frontend migration
-4. **Performance Validation**: Ensure no significant performance regression
-5. **Full Implementation**: Complete migration of all frontends
+2. **Schedule Tree Design Coordination**: Finalize any pending Schedule Tree-related design documents
+3. **CFG-SDFG Integration Specification**: Define clear interfaces between Schedule Tree and CFG-based SDFG
+4. **Prototype Implementation**: Implement core infrastructure
+5. **Pilot Migration**: Start with Python frontend migration
+6. **Performance Validation**: Ensure no significant performance regression
+7. **Full Implementation**: Complete migration of all frontends
 
 ---
 
