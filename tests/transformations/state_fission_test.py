@@ -343,6 +343,7 @@ def test_simple_split_with_map_1():
 
     subgraph = graph.SubgraphView(state, [b])
     new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
 
     # The new state is before the original state.
     assert sdfg.number_of_nodes() == 2
@@ -375,5 +376,86 @@ def test_simple_split_with_map_1():
     assert {"a", "t", "b"} == {ac.data for ac in new_state_ac}
 
 
+def _test_simple_split_with_map_2_impl(include: str):
+    """
+    Here the Map is isolated, it will also isolate `a`, because it is a dependency
+    of the map. It is possible which nodes should be added to the `subgraph`, the
+    supported values are:
+    - `full`: All nodes inside the Map scope are added.
+    - `partial`: Only the MapEntry and Tasklet node are added.
+    - `tasklet`: Only the Tasklet node is added.
+    """
+    sdfg, state, a, me, tlet, t, b, c = _make_simple_split_with_map_sdfg()
+    assert sdfg.number_of_nodes() == 1
+    assert state.number_of_nodes() == 7
+    assert count_nodes(state, nodes.AccessNode) == 4
+    assert count_nodes(state, nodes.Tasklet) == 1
+    assert count_nodes(state, nodes.MapEntry) == 1
+
+    if include == "full":
+        subgraph_nodes = [me, tlet, t, state.exit_node(me)]
+    elif include == "partial":
+        subgraph_nodes = [me, tlet]
+    elif include == "tasklet":
+        subgraph_nodes = [tlet]
+    else:
+        raise NotImplementedError(f'`include` mode "{include}" is not supported.')
+
+    subgraph = graph.SubgraphView(state, subgraph_nodes)
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    # The new state is before the original state.
+    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_edges() == 1
+    assert sdfg.out_degree(new_state) == 1
+    assert sdfg.in_degree(new_state) == 0
+    assert {state} == {oedge.dst for oedge in sdfg.out_edges(new_state)}
+    assert sdfg.out_degree(state) == 0
+    assert sdfg.in_degree(state) == 1
+
+    # The second (original) state contains the `b` AccessNode that copies into the
+    #  `c` AccessNode. Both are the originals, which is an implementation detail.
+    assert state.number_of_nodes() == 2
+    assert state.number_of_edges() == 1
+    org_state_ac = count_nodes(state, nodes.AccessNode, True)
+    assert set(org_state_ac) == {b, c}
+    b_c_edge = next(iter(state.out_edges(b)))
+    assert b_c_edge.data.src_subset == dace.subsets.Range.from_string("1:11")
+    assert b_c_edge.data.dst_subset == dace.subsets.Range.from_string("0:10")
+
+    # The other nodes contains the other nodes, together with a copy of the `b` node.
+    assert new_state.number_of_nodes() == 6
+    assert new_state.number_of_edges() == 5
+    assert set(count_nodes(new_state, nodes.Tasklet, True)) == {tlet}
+    assert set(count_nodes(new_state, nodes.MapEntry, True)) == {me}
+    new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
+    assert len(new_state_ac) == 3
+    assert {a, t}.issubset(new_state_ac)
+    assert b not in new_state_ac  # Implementation detail.
+    assert {"a", "t", "b"} == {ac.data for ac in new_state_ac}
+
+
+def test_simple_split_with_map_2_with_full_map_scope():
+    _test_simple_split_with_map_2_impl(include="full")
+
+
+@pytest.mark.xfail(reason="This feature is not yet implemented.")
+def test_simple_split_with_map_2_with_partial_map_scope():
+    """If we do not include the function will not work. Because the function does not
+    figuring it out on its own. The function would work if there is no `t` inside the
+    Map scope, because without it, the first node set would have to be expanded.
+    """
+    _test_simple_split_with_map_2_impl(include="partial")
+
+
+@pytest.mark.xfail(reason="This feature is not yet implemented.")
+def test_simple_split_with_map_2_only_tasklet():
+    """If we only include the Tasklet then the MapExit node will not be included.
+    """
+    _test_simple_split_with_map_2_impl(include="tasklet")
+
+
 if __name__ == "__main__":
     test_state_fission()
+    test_simple_split_with_map_1()
