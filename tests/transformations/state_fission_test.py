@@ -1,13 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
-# The scope of the test is to verify state fission.
-# We use vector addition
+from typing import Tuple
 
 import dace
 import numpy as np
+import pytest
 
 from dace.memlet import Memlet
+from dace.sdfg import nodes, graph
 from dace.transformation import helpers
+
+from .utility import count_nodes, unique_name, make_sdfg_args, compile_and_run_sdfg
 
 
 def make_vecAdd_sdfg(symbol_name: str, sdfg_name: str, access_nodes_dict: dict, dtype=dace.float32):
@@ -109,6 +111,35 @@ def make_nested_sdfg_cpu():
     return sdfg
 
 
+def _make_simple_split_with_access_nodes_sdfg(
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("simple_split_with_access_nodes_sdfg"))
+    state = sdfg.add_state()
+
+    for name in "abc":
+        sdfg.add_scalar(
+            name,
+            dtype=dace.float64,
+            transient=False,
+        )
+    a, b, c = (state.add_access(name) for name in "abc")
+
+    tlet = state.add_tasklet(
+        "computation",
+        inputs={"__in"},
+        outputs={"__out"},
+        code="__out = __in + 3.0",
+    )
+
+    state.add_edge(a, None, tlet, "__in", dace.Memlet("a[0]"))
+    state.add_edge(tlet, "__out", b, None, dace.Memlet("b[0]"))
+    state.add_nedge(b, c, dace.Memlet("b[0] -> [0]"))
+
+    sdfg.validate()
+
+    return sdfg, state, a, tlet, b, c
+
+
 def test_state_fission():
     """
     Tests state fission. The starting point is a stae SDFG with two
@@ -152,6 +183,107 @@ def test_state_fission():
     diff2 = np.linalg.norm(ref2 - u) / size_m
 
     assert (diff1 <= 1e-5 and diff2 <= 1e-5)
+
+
+@pytest.mark.parametrize("allow_isolated_nodes", [True, False])
+def test_simple_split_with_access_nodes_1(allow_isolated_nodes: bool):
+    """
+    We only put `a` into the subgraph, thus it will be alone inside the new state.
+    The original state will still have the same structure.
+    """
+    sdfg, state, a, tlet, b, c = _make_simple_split_with_access_nodes_sdfg()
+    assert state.number_of_nodes() == 4
+    assert count_nodes(state, nodes.AccessNode) == 3
+    assert sdfg.number_of_nodes() == 1
+
+    subgraph = graph.SubgraphView(state, [a])
+    new_state = helpers.state_fission(subgraph, allow_isolated_nodes=allow_isolated_nodes)
+
+    # The new state is before the original state.
+    assert sdfg.number_of_nodes() == 2
+    assert sdfg.out_degree(new_state) == 1
+    assert sdfg.in_degree(new_state) == 0
+    assert {state} == {oedge.dst for oedge in sdfg.out_edges(new_state)}
+    assert sdfg.out_degree(state) == 0
+    assert sdfg.in_degree(state) == 1
+
+    # The original state has still the same structure. Because of how the function
+    #  is implemented the original nodes will still be there.
+    assert state.number_of_nodes() == 4
+    assert set(state.nodes()) == {a, tlet, b, c}
+
+    if allow_isolated_nodes:
+        # The new state only contains `a`, however, since it is only a boundary node
+        #  it has been copied; this is an implementation detail.
+        assert new_state.number_of_nodes() == 1
+        assert a not in new_state.nodes()
+        assert {"a"} == {ac.data for ac in new_state.data_nodes()}
+        assert all(new_state.degree(node) == 0 for node in new_state.nodes())
+
+        # Because of the isolated node it is not valid.
+        assert not sdfg.is_valid()
+
+        # But if we remove the node, then it will be okay.
+        new_state.remove_nodes_from(list(new_state.nodes()))
+        sdfg.validate()
+
+    else:
+        # If we do not allow isolated nodes, then the new state is empty and the SDFG is valid.
+        assert new_state.number_of_nodes() == 0
+        sdfg.validate()
+
+
+@pytest.mark.parametrize("relocation_set", [0, 1, 2])
+def test_simple_split_with_access_nodes_2(relocation_set: int):
+    """
+    There are several modes for this test, indicated by `relocation_set`:
+    - 0: `a` and `tlet` are in the subgraph, but that has to be extend by `b`.
+    - 1: `a`, `tlet` and `b` are in the relocation set.
+    - 2: Only `tlet` is added, but `a` and `b` have to be added automatically.
+
+    Regardless of `relocation_set` the nodes `a`, `tlet` and `b` will be moved to the new state
+    while `c` remains in the original state.
+    """
+    sdfg, state, a, tlet, b, c = _make_simple_split_with_access_nodes_sdfg()
+    assert state.number_of_nodes() == 4
+    assert count_nodes(state, nodes.AccessNode) == 3
+    assert sdfg.number_of_nodes() == 1
+
+    if relocation_set == 0:
+        subgraph = graph.SubgraphView(state, [a, tlet])
+    elif relocation_set == 1:
+        subgraph = graph.SubgraphView(state, [a, tlet, b])
+    elif relocation_set == 2:
+        subgraph = graph.SubgraphView(state, [tlet])
+    else:
+        raise NotImplementedError(f'`relocation_set={relocation_set}` is unknown.')
+
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    # The new state is before the original state.
+    assert sdfg.number_of_nodes() == 2
+    assert sdfg.out_degree(new_state) == 1
+    assert sdfg.in_degree(new_state) == 0
+    assert {state} == {oedge.dst for oedge in sdfg.out_edges(new_state)}
+    assert sdfg.out_degree(state) == 0
+    assert sdfg.in_degree(state) == 1
+
+    # `a`, `tlet` and `b` have been moved into the new state. However, since `b` is a boundary node
+    #  it was not moved but copied (this is an implementation detail).
+    assert new_state.number_of_nodes() == 3
+    new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
+    assert len(new_state_ac) == 2
+    assert {a, tlet}.issubset(new_state.nodes())
+    assert a in new_state_ac
+    assert b not in new_state_ac
+    assert {'a', 'b'} == {ac.data for ac in new_state_ac}
+
+    # The second (original) state contains the `b` AccessNode that copies into the
+    #  `c` AccessNode. Both are the originals, which is an implementation detail.
+    assert state.number_of_nodes() == 2
+    org_state_ac = count_nodes(state, nodes.AccessNode, True)
+    assert set(org_state_ac) == {b, c}
 
 
 if __name__ == "__main__":
