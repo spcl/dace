@@ -17,55 +17,6 @@ from dace import data, dtypes
 from dace.properties import CodeBlock
 
 # =====================================
-# Schedule Tree Extensions (Proposed)
-# =====================================
-
-
-@dataclass
-class FunctionCallNode(ScheduleTreeNode):
-    """
-    Represents a function call that may need to be converted to nested SDFG or tasklet.
-    """
-    function_name: str
-    args: List[Any]
-    kwargs: Dict[str, Any]
-    return_type: Optional[data.Data] = None
-    is_callback: bool = False
-
-    def as_string(self, indent: int = 0):
-        args_str = ', '.join(str(arg) for arg in self.args)
-        kwargs_str = ', '.join(f'{k}={v}' for k, v in self.kwargs.items())
-        all_args = ', '.join(filter(None, [args_str, kwargs_str]))
-        return f"{' ' * indent}{self.function_name}({all_args})"
-
-
-@dataclass
-class ArrayAccessNode(ScheduleTreeNode):
-    """
-    Represents array access patterns that need special handling.
-    """
-    array_name: str
-    indices: List[Any]
-    access_type: str  # 'read', 'write', 'readwrite'
-
-    def as_string(self, indent: int = 0):
-        indices_str = ', '.join(str(idx) for idx in self.indices)
-        return f"{' ' * indent}{self.array_name}[{indices_str}] ({self.access_type})"
-
-
-@dataclass
-class TypeCastNode(ScheduleTreeNode):
-    """
-    Represents explicit type conversions.
-    """
-    target_type: dtypes.typeclass
-    source_expr: Any
-
-    def as_string(self, indent: int = 0):
-        return f"{' ' * indent}({self.target_type}){self.source_expr}"
-
-
-# =====================================
 # Frontend Pass Base Classes
 # =====================================
 
@@ -100,7 +51,7 @@ class ASTToScheduleTreePass(FrontendPass):
         pass
 
 
-class ScheduleTreeOptimizationPass(FrontendPass):
+class ScheduleTreeOptimization(FixedPointPipeline):
     """Base class for Schedule Tree optimization passes."""
 
     @abstractmethod
@@ -108,16 +59,6 @@ class ScheduleTreeOptimizationPass(FrontendPass):
                                                                                   Any]) -> Optional[ScheduleTreeScope]:
         """Apply optimizations to Schedule Tree."""
         pass
-
-
-class ScheduleTreeToSDFGPass(FrontendPass):
-    """Base class for Schedule Tree → SDFG conversion (shared across frontends)."""
-
-    def apply_pass(self, schedule_tree: ScheduleTreeScope, pipeline_results: Dict[str, Any]) -> Optional[SDFG]:
-        """Convert Schedule Tree to SDFG."""
-        # This would implement the shared Schedule Tree → SDFG conversion logic
-        # referenced in issue #1466
-        raise NotImplementedError("This pass would implement the shared Schedule Tree → SDFG conversion")
 
 
 # =====================================
@@ -192,11 +133,7 @@ class PythonFrontendPipeline(Pipeline):
             PythonASTToScheduleTreePass(),
 
             # Pass 3: Schedule Tree Optimizations (shared across frontends)
-            ConstantPropagationPass(),
-            # ... other optimization passes would go here
-
-            # Pass 4: Schedule Tree → SDFG (shared across frontends)
-            ScheduleTreeToSDFGPass()
+            ScheduleTreeOptimization(),
         ]
         super().__init__(passes)
 
@@ -207,82 +144,18 @@ class FortranFrontendPipeline(Pipeline):
     def __init__(self):
         passes = [
             # Pass 1: AST Preprocessing (Fortran-specific)
-            # FortranSymbolTablePass(),
-            # FortranArrayAnalysisPass(),
+            FortranSymbolTablePass(),
+            FortranArrayAnalysisPass(),
 
             # Pass 2: AST → Schedule Tree (Fortran-specific)
-            # FortranASTToScheduleTreePass(),
+            FortranASTToScheduleTreePass(),
 
             # Pass 3: Schedule Tree Optimizations (shared)
             ConstantPropagationPass(),
 
             # Pass 4: Schedule Tree → SDFG (shared)
-            ScheduleTreeToSDFGPass()
+            ScheduleTreeOptimization(),
         ]
         super().__init__(passes)
 
 
-# =====================================
-# Usage Example
-# =====================================
-
-
-def example_usage():
-    """Example of how the new architecture would be used."""
-
-    print("=== Modular Frontend Architecture Prototype ===")
-    print()
-
-    # Example Python AST (in practice, this would come from parsing Python source)
-    python_ast = ast.parse("for i in range(10): A[i] = B[i] + C[i]")
-    print(f"Example Python AST: {ast.dump(python_ast)}")
-    print()
-
-    # Demonstrate individual passes
-    print("=== Individual Pass Examples ===")
-
-    # Example 1: AST Preprocessing Pass
-    loop_unroll_pass = PythonLoopUnrollingPass()
-    print(f"Loop Unrolling Pass: {loop_unroll_pass.__class__.__name__}")
-
-    # Example 2: AST to Schedule Tree Pass
-    ast_to_tree_pass = PythonASTToScheduleTreePass()
-    try:
-        schedule_tree = ast_to_tree_pass.apply_pass(python_ast, {})
-        print(f"AST to Schedule Tree conversion: {schedule_tree}")
-    except Exception as e:
-        print(f"AST to Schedule Tree conversion (skeleton): {e}")
-
-    # Example 3: Optimization Pass
-    const_prop_pass = ConstantPropagationPass()
-    print(f"Constant Propagation Pass: {const_prop_pass.__class__.__name__}")
-
-    print()
-    print("=== Pipeline Structure ===")
-
-    # Show pipeline structure
-    python_pipeline = PythonFrontendPipeline()
-    print(f"Python Frontend Pipeline has {len(python_pipeline.passes)} passes:")
-    for i, pass_obj in enumerate(python_pipeline.passes, 1):
-        print(f"  {i}. {pass_obj.__class__.__name__} ({pass_obj.CATEGORY})")
-
-    print()
-    print("=== Schedule Tree Extensions ===")
-
-    # Demonstrate new Schedule Tree nodes
-    func_call = FunctionCallNode(function_name="numpy.matmul", args=["A", "B"], kwargs={"dtype": "float64"})
-    print(f"Function Call Node: {func_call.as_string()}")
-
-    array_access = ArrayAccessNode(array_name="result", indices=["i", "j"], access_type="write")
-    print(f"Array Access Node: {array_access.as_string()}")
-
-    type_cast = TypeCastNode(target_type=dtypes.float64, source_expr="int_value")
-    print(f"Type Cast Node: {type_cast.as_string()}")
-
-    print()
-    print("This prototype demonstrates the proposed architecture structure.")
-    print("Full implementation would require completing all pass implementations.")
-
-
-if __name__ == '__main__':
-    example_usage()
