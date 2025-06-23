@@ -180,8 +180,9 @@ def _make_state_fission_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, node
     return sdfg, state, a, me, tlet, t, b, c
 
 
-def _make_state_fission_multiple_reads_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet,
-                                                       nodes.Tasklet, nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_multiple_reads_sdfg(
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet, nodes.Tasklet, nodes.AccessNode,
+           nodes.AccessNode, nodes.AccessNode]:
 
     sdfg = dace.SDFG(unique_name("split_with_multiple_reads"))
     state = sdfg.add_state()
@@ -192,13 +193,13 @@ def _make_state_fission_multiple_reads_sdfg() -> Tuple[dace.SDFG, dace.SDFGState
         dtype=dace.float64,
         transient=False,
     )
-    for name in "bc":
+    for name in "bcd":
         sdfg.add_scalar(
             name,
             dtype=dace.float64,
             transient=False,
         )
-    a, b, c = (state.add_access(name) for name in "abc")
+    a, b, c, d = (state.add_access(name) for name in "abcd")
 
     tlet1 = state.add_tasklet(
         "tlet1",
@@ -212,15 +213,25 @@ def _make_state_fission_multiple_reads_sdfg() -> Tuple[dace.SDFG, dace.SDFGState
         outputs={"__out"},
         code="__out = __in + 4.0",
     )
+    tlet3 = state.add_tasklet(
+        "tlet2",
+        inputs={},
+        outputs={"__out"},
+        code="__out = -55.0",
+    )
 
     state.add_edge(a, None, tlet1, "__in", dace.Memlet("a[0]"))
     state.add_edge(tlet1, "__out", b, None, dace.Memlet("b[0]"))
+
     state.add_edge(a, None, tlet2, "__in", dace.Memlet("a[1]"))
     state.add_edge(tlet2, "__out", c, None, dace.Memlet("c[0]"))
 
+    state.add_edge(a, None, tlet3, None, dace.Memlet())
+    state.add_edge(tlet3, "__out", d, None, dace.Memlet("d[0]"))
+
     sdfg.validate()
 
-    return sdfg, state, a, tlet1, tlet2, b, c
+    return sdfg, state, a, tlet1, tlet2, tlet3, b, c, d
 
 
 def _make_state_fission_multiple_writes_sdfg(
@@ -637,9 +648,9 @@ def test_state_fission_with_map_2_only_tasklet():
 
 
 def test_state_fission_multiple_read():
-    sdfg, state, a, tlet1, tlet2, b, c = _make_state_fission_multiple_reads_sdfg()
-    assert state.number_of_nodes() == 5
-    assert state.number_of_edges() == 4
+    sdfg, state, a, tlet1, tlet2, tlet3, b, c, d = _make_state_fission_multiple_reads_sdfg()
+    assert state.number_of_nodes() == 7
+    assert state.number_of_edges() == 6
 
     subgraph = graph.SubgraphView(state, [tlet2])
     new_state = helpers.state_fission(subgraph)
@@ -658,11 +669,22 @@ def test_state_fission_multiple_read():
     assert new_a.data == "a"
     assert all(oedge.data.src_subset[0][0] == 1 for oedge in new_state.out_edges(new_a))
 
-    # The second state contains the original `a`.
-    assert state.number_of_nodes() == 3
-    assert state.number_of_edges() == 2
-    assert {a, tlet1, b} == set(state.nodes())
-    assert all(oedge.data.src_subset[0][0] == 0 for oedge in state.out_edges(a))
+    # The second state contains the original `a` and the `tlet1` and `tlet3` Tasklet
+    #  and the `d` AccessNode. Note that the `tlet3` Tasklet is still connected through
+    #  an empty Memlet to the `a` node.
+    assert state.number_of_nodes() == 5
+    assert state.number_of_edges() == 4
+    assert {a, tlet1, tlet3, b, d} == set(state.nodes())
+    assert state.in_degree(a) == 0
+    a_out_edges = list(state.out_edges(a))
+    assert len(a_out_edges) == 2
+
+    a_to_tlet1_edge = next(iter(e for e in a_out_edges if e.dst is tlet1))
+    assert not a_to_tlet1_edge.data.is_empty()
+    assert a_to_tlet1_edge.data.src_subset[0][0] == 0
+
+    a_to_tlet3_edge = next(iter(e for e in a_out_edges if e.dst is tlet3))
+    assert a_to_tlet3_edge.data.is_empty()
 
 
 @pytest.mark.parametrize("add_b_to_subgraph", [True, False])
