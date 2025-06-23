@@ -576,21 +576,24 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> Tuple[SDFGState, SDFGState]:
-    """Splits the state, containing `subgraph`, into two connected states and `subgraph` is located in the first/top state.
+def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
+    """Splits the state into two connected states such that `subgraph` is located in the first/top state.
 
-    The function splits that state such that "everything" that reads from `subgraph` will
-    be moved to the second/bottom state, while `subgraph` and all of its dependencies are
-    in the first/top state.
-    There are certain exceptions, the function will try to maintain the number of writes,
-    i.e. the number of writes, measured in incoming edges to a node. To ensure this not all
-    downstream nodes of `subgraph` will end up in the second state, but some might remain
-    in the first state.
+    The function will create a new state before `state`, which is also returned. Then the function
+    then distribute the data flow among these two states. In general it will move the dataflow
+    defined by `subgraph` and all its dependencies into the first/top state, that was newly
+    created.
+    There are certain exceptions, the function will try to maintain the number of writes, i.e. the
+    number of writes, measured in incoming edges to a node. To ensure this not all downstream nodes
+    of `subgraph` will remain in the second state, i.e. `state`, but some might remain in the
+    first state.
+
 
     :param subgraph: The graph that describes the split location.
     :param label: The label to use for the new state.
 
-    :return: The function returns the first state, i.e. the one containing `subgraph`.
+    :return: The function returns the first state, i.e. the one containing `subgraph` and
+        that was newly created.
     """
     state: SDFGState = subgraph.graph
     sdfg: SDFG = state.sdfg
@@ -607,25 +610,25 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
             to_scan.update(iedge.src for iedge in state.in_edges(node_to_scan) if iedge.src not in scanned_nodes)
             scanned_nodes.add(node_to_scan)
 
-    # These are all nodes that are inside the first state.
+    # These are all nodes that are located inside the first state.
     first_nodes: Set[nodes.Node] = set(subgraph.nodes())
 
-    # Find dependencies.
-    for node in subgraph.nodes():
+    # Find the dependency of the initial nodes that are assigned to the first state.
+    for node in list(first_nodes):
         find_generating_nodes(
             node_to_start=node,
             state=state,
-            seen=first_nodes,  # Inplace update.
+            seen=first_nodes,  # Inplace update, thus copy over what we iterate.
         )
 
-    # Now we look at nodes at the boundaries of the first state, i.e. the nodes that are inside
+    # Now we look at nodes at the boundary of the first state nodes, i.e. the nodes that are inside
     #  `first_nodes` but that have outgoing edges to nodes that are not inside `first_nodes`.
     #  Such a node is called "boundary node", it is written inside the first state, but it will
-    #  be read inside the second state and has thus be replicated there. However, a node can only
-    #  be a boundary node iff it is a non view AccessNode. If this does not hold, we have to add
-    #  all consumer and their dependencies, to the first if we want to maintain the invariant
-    #  that the number of writes, measured in incoming edges, remains the same. Furthermore,
-    #  if this happens we have to perform a rescan.
+    #  be read inside the second state and has thus be present there as well. However, a node can
+    #  only be a boundary node iff it is a non view AccessNode. If this does not hold, we have to
+    #  add all consumer and their dependencies, to the first state if we want to maintain the
+    #  invariant that the number of writes, measured in incoming edges, remains the same. If this
+    #  happens we have to perform a rescan.
     needs_rescan = True
     while needs_rescan:
         needs_rescan = False
@@ -636,8 +639,7 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
             if len(non_first_state_consumer) == 0:
                 continue
 
-            # If `fnode` is an AccessNode, then it is a boundary node, i.e. we need to replicate
-            #   it inside the second state such that it can be read.
+            # If `fnode` is an AccessNode, then it is a boundary node, as it has to be in both states.
             if isinstance(fnode, nodes.AccessNode) and (not isinstance(fnode.desc(sdfg, data.View))):
                 boundary_nodes.add(fnode)
                 continue
@@ -650,51 +652,69 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
                 find_generating_nodes(
                     node_to_start=new_first_state_node_seed,
                     state=state,
-                    seen=first_nodes,  # Inplace update.
+                    seen=first_nodes,  # Inplace update!
                 )
+            break
 
-    # Now create the new states on which we will operate.
-    first_state = state
-    second_state = state.parent_graph.add_state_after(first_state, label=label)
+    # Ensure that all dependencies are assigned to the first state.
+    assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
+    assert all(boundary_node in first_nodes for boundary_node in boundary_nodes)
+    assert all(all(iedge.src in first_nodes for iedge in state.in_edges(bnode)) for bnode in boundary_nodes)
 
-    # In certain cases all nodes are assigned to the first state. In that case we can stop here.
-    if first_state.number_of_nodes() == len(first_nodes):
-        assert len(boundary_nodes) == 0
-        return first_state
+    # Now create the new states on which we will operate. It is important that the newly created
+    #  state is at the top.
+    # NOTE: There is the case that `subgraph` contains the entire dataflow in `state`, in that
+    #   case one might think, that we could perform an optimization, as just create a new state
+    #   and keep the nodes. However, this is not possible, since the function only returns the
+    #   new state and code assumes that this is the first/top state containing the `subgraph`
+    #   dataflow. Thus we have to perform the relocation. This could be solved if we would change
+    #   this function to return a `tuple`.
+    second_state = state
+    first_state = state.parent_graph.add_state_before(state, label=label)
 
-    # These are the nodes that were assigned to the second state. It is important that the second
-    #  state also contains the boundary nodes (which are also inside the first state), but these
-    #  nodes here exclude them.
-    pure_second_nodes: List[nodes.Node] = [node for node in state.nodes() if node not in first_nodes]
+    # Part of the first state nodes that are not boundary nodes.
+    pure_first_nodes: List[nodes.Node] = [node for node in first_nodes if node not in boundary_nodes]
 
-    # This maps the node from the old state to the corresponding node in the second state.
-    #  We can reuse the "pure second state nodes" as we will purge them from the first state.
-    #  However, we have to clone the boundary nodes, but they are AccessNodes anyway.
-    second_nodes_map: Dict[nodes.Node, nodes.Node] = {node: node for node in pure_second_nodes}
-    second_nodes_map.update({old_bnode: copy.deepcopy(old_bnode) for old_bnode in boundary_nodes})
+    # This map maps the nodes from the old/original state to the corresponding node in the first/new
+    #  state. The pure nodes are the exact same objects, but the we copy the boundary nodes, since
+    #  they have also to be present inside the second state.
+    first_nodes_map: Dict[nodes.Node, nodes.Node] = {node: node for node in pure_first_nodes}
+    first_nodes_map.update({old_bnode: copy.deepcopy(old_bnode) for old_bnode in boundary_nodes})
 
-    # Now populate the second state. Note that currently some nodes are also inside the
-    #  first state. But we will resolve that later.
-    second_state.add_nodes_from(second_nodes_map.values())
+    # Now populate the first state. It is important that the `pure_first_nodes` are at this point
+    #  also inside the second state.
+    first_state.add_nodes_from(first_nodes_map.values())
 
-    # Now copy the edges. For that we will look at all outgoing edges of the second state nodes.
-    #  If the node is a boundary node then we have to deepcopy the Memlet otherwise we can reuse it.
-    for node in second_nodes_map.keys():
-        reuse_mlet = node in pure_second_nodes
-        for oedge in first_state.out_edges(node):
-            second_state.add_edge(second_nodes_map[oedge.src], oedge.src_conn, second_nodes_map[oedge.dst],
-                                  oedge.dst_conn, oedge.data if reuse_mlet else copy.deepcopy(oedge.data))
+    # Recreate the edge structure. For that we go to the pure first state nodes and recreate all
+    #  outgoing edges it had in the original (second) state. This also allows to reuse the Memlets
+    #  because any destination node is, by construction, member of the first state.
+    for node in pure_first_nodes:
+        for oedge in second_state.out_edges(node):
+            first_state.add_edge(
+                first_nodes_map[oedge.src],
+                oedge.src_conn,
+                first_nodes_map[oedge.dst],
+                oedge.dst_conn,
+                oedge.data,
+            )
 
-    # Now we have to remove the nodes that we have relocated to the second state from the first
-    #  state (with the exception of the boundary nodes). The edges are handled automatically.
+    # Now we have to remove the nodes that were relocated into the first state from the second
+    #  state, with the exception of the boundary nodes which remains here.
     # TODO: Investigate if there are side effect from the removal (mutating the nodes), since we
     #   have not deepcopied them.
-    first_state.remove_nodes_from(pure_second_nodes)
+    second_state.remove_nodes_from(pure_first_nodes)
 
-    # Cleaning the connectors.
-    # TODO: Is this enough?
-    for first_state_boundary_node in boundary_nodes:
-        second_nodes_map[first_state_boundary_node]._in_connectors.clear()
+    # Cleaning the connectors of the boundary nodes. In the first state we have to remove all
+    #  outgoing connectors and in the second state all incoming.
+    # NOTE: I am actually not sure why this is here, it was in the original code, so I retained it.
+    #   Since, only non view AccessNodes can transmit data across states, the connectors for them
+    #   should be `None` anyway.
+    for second_state_boundary_node in boundary_nodes:
+        first_state_boundary_node = first_nodes_map[second_state_boundary_node]
+        assert first_state.out_degree(first_state_boundary_node) == 0
+        assert second_state.in_degree(second_state_boundary_node) == 0
+        first_state_boundary_node._out_connectors.clear()
+        second_state_boundary_node._in_connectors.clear()
 
     return first_state
 
