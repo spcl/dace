@@ -39,13 +39,6 @@ Language AST → [Pass 1: Preprocessing] → [Pass 2: AST→ScheduleTree] → [P
 3. **Phase 3**: Migrate Fortran frontend
 4. **Phase 4**: Add optimizations and cleanup
 
-## Schedule Tree Extensions Needed
-- `FunctionCallNode`: For function call handling
-- `ArrayAccessNode`: For array operations
-- `TypeCastNode`: For type conversions
-- `TryScope`/`ExceptHandler`: For Python exception handling
-- `LanguageSpecificNode`: For language-specific constructs
-
 ## Implementation Timeline
 - **Infrastructure Setup**: 1-2 weeks
 - **Python Migration**: 2-3 weeks
