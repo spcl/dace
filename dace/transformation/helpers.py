@@ -698,18 +698,20 @@ def state_fission(
     #  also inside the second state.
     first_state.add_nodes_from(first_nodes_map.values())
 
-    # Recreate the edge structure. For that we go to the pure first state nodes and recreate all
-    #  outgoing edges it had in the original (second) state. This also allows to reuse the Memlets
-    #  because any destination node is, by construction, member of the first state.
-    for node in pure_first_nodes:
+    # Recreate the edge structure. For that we go through all first node and create the edges,
+    #  but only if both belong to the first state.
+    for node in first_nodes:
         for oedge in second_state.out_edges(node):
-            first_state.add_edge(
-                first_nodes_map[oedge.src],
-                oedge.src_conn,
-                first_nodes_map[oedge.dst],
-                oedge.dst_conn,
-                oedge.data,
-            )
+            if oedge.dst in first_nodes:
+                first_state.add_edge(
+                    first_nodes_map[oedge.src],
+                    oedge.src_conn,
+                    first_nodes_map[oedge.dst],
+                    oedge.dst_conn,
+                    oedge.data,
+                )
+            else:
+                assert oedge.src in boundary_nodes
 
     # Now we have to remove the nodes that were relocated into the first state from the second
     #  state, with the exception of the boundary nodes which remains here.
@@ -724,7 +726,6 @@ def state_fission(
     #   should be `None` anyway.
     for second_state_boundary_node in boundary_nodes:
         first_state_boundary_node = first_nodes_map[second_state_boundary_node]
-        assert first_state.out_degree(first_state_boundary_node) == 0
         assert second_state.in_degree(second_state_boundary_node) == 0
         first_state_boundary_node._out_connectors.clear()
         second_state_boundary_node._in_connectors.clear()
