@@ -115,18 +115,21 @@ Existing nodes in `treenodes.py`:
 ```python
 class PythonFrontendPipeline(Pipeline):
     def __init__(self):
-        passes = [
-            # Pass 1: AST Preprocessing
-            StructTransformationPass(),
-            ModuleResolutionPass(),
-            MPIResolutionPass(),
-            ModuloConversionPass(),
+        ast_preprocessing_passes = FixedPointPipeline([
             GlobalResolutionPass(),
             LoopUnrollingPass(),
             ExpressionInliningPass(),
             ContextManagerInliningPass(),
             ConditionalResolutionPass(),
             DeadCodeEliminationPass(),
+        ])
+        passes = [
+            # Pass 1: AST Preprocessing
+            StructTransformationPass(),
+            ModuleResolutionPass(),
+            MPIResolutionPass(),
+            ModuloConversionPass(),
+            ast_preprocessing_passes,
 
             # Pass 2: AST → Schedule Tree
             PythonASTToScheduleTreePass(),
