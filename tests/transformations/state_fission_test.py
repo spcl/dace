@@ -140,6 +140,46 @@ def _make_simple_split_with_access_nodes_sdfg(
     return sdfg, state, a, tlet, b, c
 
 
+def _make_simple_split_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry,
+                                                nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("simple_split_with_map_sdfg"))
+    state = sdfg.add_state()
+
+    for name in "abc":
+        sdfg.add_array(
+            name,
+            shape=((20, ) if name != "c" else (10, )),
+            dtype=dace.float64,
+            transient=False,
+        )
+    a, b, c = (state.add_access(name) for name in "abc")
+
+    me, mx = state.add_map("computation", ndrange={"__i": "0:20"})
+    tlet = state.add_tasklet(
+        "computation",
+        inputs={"__in"},
+        outputs={"__out"},
+        code="__out = __in + 3.0",
+    )
+    sdfg.add_scalar("t", dtype=dace.float64, transient=True)
+    t = state.add_access("t")
+
+    state.add_edge(a, None, me, "IN_a", dace.Memlet("a[0:20]"))
+    state.add_edge(me, "OUT_a", tlet, "__in", dace.Memlet("a[__i]"))
+    me.add_scope_connectors("a")
+
+    state.add_edge(tlet, "__out", t, None, dace.Memlet("t[0]"))
+    state.add_edge(t, None, mx, "IN_b", dace.Memlet("t[0] -> [__i]"))
+    state.add_edge(mx, "OUT_b", b, None, dace.Memlet("b[0:20]"))
+    mx.add_scope_connectors("b")
+
+    state.add_nedge(b, c, dace.Memlet("b[1:11] -> [0:10]"))
+
+    sdfg.validate()
+
+    return sdfg, state, a, me, tlet, t, b, c
+
+
 def test_state_fission():
     """
     Tests state fission. The starting point is a stae SDFG with two
@@ -210,12 +250,14 @@ def test_simple_split_with_access_nodes_1(allow_isolated_nodes: bool):
     # The original state has still the same structure. Because of how the function
     #  is implemented the original nodes will still be there.
     assert state.number_of_nodes() == 4
+    assert state.number_of_edges() == 3
     assert set(state.nodes()) == {a, tlet, b, c}
 
     if allow_isolated_nodes:
         # The new state only contains `a`, however, since it is only a boundary node
         #  it has been copied; this is an implementation detail.
         assert new_state.number_of_nodes() == 1
+        assert new_state.number_of_edges() == 0
         assert a not in new_state.nodes()
         assert {"a"} == {ac.data for ac in new_state.data_nodes()}
         assert all(new_state.degree(node) == 0 for node in new_state.nodes())
@@ -230,6 +272,7 @@ def test_simple_split_with_access_nodes_1(allow_isolated_nodes: bool):
     else:
         # If we do not allow isolated nodes, then the new state is empty and the SDFG is valid.
         assert new_state.number_of_nodes() == 0
+        assert new_state.number_of_edges() == 0
         sdfg.validate()
 
 
@@ -272,6 +315,7 @@ def test_simple_split_with_access_nodes_2(relocation_set: int):
     # `a`, `tlet` and `b` have been moved into the new state. However, since `b` is a boundary node
     #  it was not moved but copied (this is an implementation detail).
     assert new_state.number_of_nodes() == 3
+    assert new_state.number_of_edges() == 2
     new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
     assert len(new_state_ac) == 2
     assert {a, tlet}.issubset(new_state.nodes())
@@ -282,8 +326,53 @@ def test_simple_split_with_access_nodes_2(relocation_set: int):
     # The second (original) state contains the `b` AccessNode that copies into the
     #  `c` AccessNode. Both are the originals, which is an implementation detail.
     assert state.number_of_nodes() == 2
+    assert state.number_of_edges() == 1
     org_state_ac = count_nodes(state, nodes.AccessNode, True)
     assert set(org_state_ac) == {b, c}
+
+
+def test_simple_split_with_map_1():
+    """We only select `v`, however, we have to include all of its dependencies.
+    """
+    sdfg, state, a, me, tlet, t, b, c = _make_simple_split_with_map_sdfg()
+    assert sdfg.number_of_nodes() == 1
+    assert state.number_of_nodes() == 7
+    assert count_nodes(state, nodes.AccessNode) == 4
+    assert count_nodes(state, nodes.Tasklet) == 1
+    assert count_nodes(state, nodes.MapEntry) == 1
+
+    subgraph = graph.SubgraphView(state, [b])
+    new_state = helpers.state_fission(subgraph)
+
+    # The new state is before the original state.
+    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_edges() == 1
+    assert sdfg.out_degree(new_state) == 1
+    assert sdfg.in_degree(new_state) == 0
+    assert {state} == {oedge.dst for oedge in sdfg.out_edges(new_state)}
+    assert sdfg.out_degree(state) == 0
+    assert sdfg.in_degree(state) == 1
+
+    # The second (original) state contains the `b` AccessNode that copies into the
+    #  `c` AccessNode. Both are the originals, which is an implementation detail.
+    assert state.number_of_nodes() == 2
+    assert state.number_of_edges() == 1
+    org_state_ac = count_nodes(state, nodes.AccessNode, True)
+    assert set(org_state_ac) == {b, c}
+    b_c_edge = next(iter(state.out_edges(b)))
+    assert b_c_edge.data.src_subset == dace.subsets.Range.from_string("1:11")
+    assert b_c_edge.data.dst_subset == dace.subsets.Range.from_string("0:10")
+
+    # The other nodes contains the other nodes, together with a copy of the `b` node.
+    assert new_state.number_of_nodes() == 6
+    assert new_state.number_of_edges() == 5
+    assert set(count_nodes(new_state, nodes.Tasklet, True)) == {tlet}
+    assert set(count_nodes(new_state, nodes.MapEntry, True)) == {me}
+    new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
+    assert len(new_state_ac) == 3
+    assert {a, t}.issubset(new_state_ac)
+    assert b not in new_state_ac  # Implementation detail.
+    assert {"a", "t", "b"} == {ac.data for ac in new_state_ac}
 
 
 if __name__ == "__main__":
