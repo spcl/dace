@@ -576,7 +576,11 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
+def state_fission(
+    subgraph: graph.SubgraphView,
+    label: Optional[str] = None,
+    allow_isolated_nodes: bool = True,
+) -> SDFGState:
     """Splits the state into two connected states such that `subgraph` is located in the first/top state.
 
     The function will create a new state before `state`, which is also returned. Then the function
@@ -588,12 +592,21 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     of `subgraph` will remain in the second state, i.e. `state`, but some might remain in the
     first state.
 
+    Note, the split might result in a state where nodes become isolated inside a state. By default
+    the function allows this in either state. This will result in a validation error. However, by
+    setting `allow_isolated_nodes` to `False` the function will remove the isolated nodes in
+    either state.
 
     :param subgraph: The graph that describes the split location.
     :param label: The label to use for the new state.
+    :param allow_isolated_nodes: If `True`, the default, then the function might create isolated
+        nodes. If it is `False` all isolated nodes will be removed after the split in both states.
 
     :return: The function returns the first state, i.e. the one containing `subgraph` and
         that was newly created.
+
+    :todo: Handle isolated `CodeNode`s.
+    :todo: Handle empty Memlets, allow them in some cases.
     """
     state: SDFGState = subgraph.graph
     sdfg: SDFG = state.sdfg
@@ -660,6 +673,7 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
     assert all(boundary_node in first_nodes for boundary_node in boundary_nodes)
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(bnode)) for bnode in boundary_nodes)
+    assert len(first_nodes) >= 1
 
     # Now create the new states on which we will operate. It is important that the newly created
     #  state is at the top.
@@ -715,6 +729,17 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
         assert second_state.in_degree(second_state_boundary_node) == 0
         first_state_boundary_node._out_connectors.clear()
         second_state_boundary_node._in_connectors.clear()
+
+    # Remove isolated nodes.
+    # TODO(phimuell): Is this the best approach, it might be a bit too far reaching.
+    if not allow_isolated_nodes:
+        for state_to_clean in [first_state, second_state]:
+            for node in list(state_to_clean.nodes()):
+                # This is how the validation defines isolated.
+                if isinstance(node, nodes.CodeNode):
+                    continue
+                elif state_to_clean.degree(node) == 0:
+                    state_to_clean.remove_node(node)
 
     return first_state
 
