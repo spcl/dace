@@ -70,8 +70,7 @@ class SpecializeEinsum(xf.ExpandTransformation):
         #######################################
 
         # Fill SDFG with einsum contents
-        einsum.create_einsum_sdfg(None,
-                                  sdfg,
+        einsum.create_einsum_sdfg(sdfg,
                                   state,
                                   node.einsum_str,
                                   *sorted(inputs),
