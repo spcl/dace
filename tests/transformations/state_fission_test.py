@@ -111,9 +111,9 @@ def make_nested_sdfg_cpu():
     return sdfg
 
 
-def _make_simple_split_with_access_nodes_sdfg(
+def _make_state_fission_with_access_nodes_sdfg(
 ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode]:
-    sdfg = dace.SDFG(unique_name("simple_split_with_access_nodes_sdfg"))
+    sdfg = dace.SDFG(unique_name("split_with_access_nodes_sdfg"))
     state = sdfg.add_state()
 
     for name in "abc":
@@ -140,9 +140,9 @@ def _make_simple_split_with_access_nodes_sdfg(
     return sdfg, state, a, tlet, b, c
 
 
-def _make_simple_split_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry,
-                                                nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
-    sdfg = dace.SDFG(unique_name("simple_split_with_map_sdfg"))
+def _make_state_fission_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry,
+                                                 nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("split_with_map_sdfg"))
     state = sdfg.add_state()
 
     for name in "abc":
@@ -180,10 +180,10 @@ def _make_simple_split_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes
     return sdfg, state, a, me, tlet, t, b, c
 
 
-def _make_split_multiple_reads() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet,
-                                          nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_multiple_reads_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet,
+                                                       nodes.Tasklet, nodes.AccessNode, nodes.AccessNode]:
 
-    sdfg = dace.SDFG(unique_name("simple_split_with_multiple_reads"))
+    sdfg = dace.SDFG(unique_name("split_with_multiple_reads"))
     state = sdfg.add_state()
 
     sdfg.add_array(
@@ -223,8 +223,9 @@ def _make_split_multiple_reads() -> Tuple[dace.SDFG, dace.SDFGState, nodes.Acces
     return sdfg, state, a, tlet1, tlet2, b, c
 
 
-def _make_split_multiple_writes() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet,
-                                           nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_multiple_writes_sdfg(
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.Tasklet, nodes.Tasklet, nodes.AccessNode,
+           nodes.AccessNode, nodes.AccessNode]:
     sdfg = dace.SDFG(unique_name("split_with_multiple_writes"))
     state = sdfg.add_state()
 
@@ -275,8 +276,8 @@ def _make_split_multiple_writes() -> Tuple[dace.SDFG, dace.SDFGState, nodes.Acce
     return sdfg, state, a, tlet1, tlet2, tlet3, b, c
 
 
-def _make_split_with_view() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry, nodes.AccessNode,
-                                     nodes.AccessNode, nodes.AccessNode]:
+def _make_state_fission_with_view_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.MapEntry,
+                                                  nodes.AccessNode, nodes.AccessNode, nodes.AccessNode]:
     sdfg = dace.SDFG(unique_name("split_with_view"))
     state = sdfg.add_state()
 
@@ -365,12 +366,12 @@ def test_state_fission():
 
 
 @pytest.mark.parametrize("allow_isolated_nodes", [True, False])
-def test_simple_split_with_access_nodes_1(allow_isolated_nodes: bool):
+def test_state_fission_with_access_nodes_1(allow_isolated_nodes: bool):
     """
     We only put `a` into the subgraph, thus it will be alone inside the new state.
     The original state will still have the same structure.
     """
-    sdfg, state, a, tlet, b, c = _make_simple_split_with_access_nodes_sdfg()
+    sdfg, state, a, tlet, b, c = _make_state_fission_with_access_nodes_sdfg()
     assert state.number_of_nodes() == 4
     assert count_nodes(state, nodes.AccessNode) == 3
     assert sdfg.number_of_nodes() == 1
@@ -416,7 +417,7 @@ def test_simple_split_with_access_nodes_1(allow_isolated_nodes: bool):
 
 
 @pytest.mark.parametrize("relocation_set", [0, 1, 2])
-def test_simple_split_with_access_nodes_2(relocation_set: int):
+def test_state_fission_with_access_nodes_2(relocation_set: int):
     """
     There are several modes for this test, indicated by `relocation_set`:
     - 0: `a` and `tlet` are in the subgraph, but that has to be extend by `b`.
@@ -426,7 +427,7 @@ def test_simple_split_with_access_nodes_2(relocation_set: int):
     Regardless of `relocation_set` the nodes `a`, `tlet` and `b` will be moved to the new state
     while `c` remains in the original state.
     """
-    sdfg, state, a, tlet, b, c = _make_simple_split_with_access_nodes_sdfg()
+    sdfg, state, a, tlet, b, c = _make_state_fission_with_access_nodes_sdfg()
     assert state.number_of_nodes() == 4
     assert count_nodes(state, nodes.AccessNode) == 3
     assert sdfg.number_of_nodes() == 1
@@ -470,10 +471,10 @@ def test_simple_split_with_access_nodes_2(relocation_set: int):
     assert set(org_state_ac) == {b, c}
 
 
-def test_simple_split_with_map_1():
+def test_state_fission_with_map_1():
     """We only select `v`, however, we have to include all of its dependencies.
     """
-    sdfg, state, a, me, tlet, t, b, c = _make_simple_split_with_map_sdfg()
+    sdfg, state, a, me, tlet, t, b, c = _make_state_fission_with_map_sdfg()
     assert sdfg.number_of_nodes() == 1
     assert state.number_of_nodes() == 7
     assert count_nodes(state, nodes.AccessNode) == 4
@@ -515,7 +516,7 @@ def test_simple_split_with_map_1():
     assert {"a", "t", "b"} == {ac.data for ac in new_state_ac}
 
 
-def _test_simple_split_with_map_2_impl(include: str):
+def _test_state_fission_with_map_2_impl(include: str):
     """
     Here the Map is isolated, it will also isolate `a`, because it is a dependency
     of the map. It is possible which nodes should be added to the `subgraph`, the
@@ -524,7 +525,7 @@ def _test_simple_split_with_map_2_impl(include: str):
     - `partial`: Only the MapEntry and Tasklet node are added.
     - `tasklet`: Only the Tasklet node is added.
     """
-    sdfg, state, a, me, tlet, t, b, c = _make_simple_split_with_map_sdfg()
+    sdfg, state, a, me, tlet, t, b, c = _make_state_fission_with_map_sdfg()
     assert sdfg.number_of_nodes() == 1
     assert state.number_of_nodes() == 7
     assert count_nodes(state, nodes.AccessNode) == 4
@@ -575,28 +576,28 @@ def _test_simple_split_with_map_2_impl(include: str):
     assert {"a", "t", "b"} == {ac.data for ac in new_state_ac}
 
 
-def test_simple_split_with_map_2_with_full_map_scope():
-    _test_simple_split_with_map_2_impl(include="full")
+def test_state_fission_with_map_2_with_full_map_scope():
+    _test_state_fission_with_map_2_impl(include="full")
 
 
 @pytest.mark.xfail(reason="This feature is not yet implemented.")
-def test_simple_split_with_map_2_with_partial_map_scope():
+def test_state_fission_with_map_2_with_partial_map_scope():
     """If we do not include the function will not work. Because the function does not
     figuring it out on its own. The function would work if there is no `t` inside the
     Map scope, because without it, the first node set would have to be expanded.
     """
-    _test_simple_split_with_map_2_impl(include="partial")
+    _test_state_fission_with_map_2_impl(include="partial")
 
 
 @pytest.mark.xfail(reason="This feature is not yet implemented.")
-def test_simple_split_with_map_2_only_tasklet():
+def test_state_fission_with_map_2_only_tasklet():
     """If we only include the Tasklet then the MapExit node will not be included.
     """
-    _test_simple_split_with_map_2_impl(include="tasklet")
+    _test_state_fission_with_map_2_impl(include="tasklet")
 
 
 def test_state_fission_multiple_read():
-    sdfg, state, a, tlet1, tlet2, b, c = _make_split_multiple_reads()
+    sdfg, state, a, tlet1, tlet2, b, c = _make_state_fission_multiple_reads_sdfg()
     assert state.number_of_nodes() == 5
     assert state.number_of_edges() == 4
 
@@ -632,7 +633,7 @@ def test_state_fission_multiple_writes(add_b_to_subgraph: bool):
     new state. This is because otherwise we would have multiple locations where we write to
     `b`. Which is an invariant that we want to preserve.
     """
-    sdfg, state, a, tlet1, tlet2, tlet3, b, c = _make_split_multiple_writes()
+    sdfg, state, a, tlet1, tlet2, tlet3, b, c = _make_state_fission_multiple_writes_sdfg()
     assert state.number_of_nodes() == 6
     assert state.number_of_edges() == 5
 
@@ -670,8 +671,8 @@ def test_state_fission_multiple_writes(add_b_to_subgraph: bool):
     assert {b, c} == set(state.nodes())
 
 
-def test_split_with_view():
-    sdfg, state, a, me, v, b, c = _make_split_with_view()
+def test_state_fission_with_view():
+    sdfg, state, a, me, v, b, c = _make_state_fission_with_view_sdfg()
     assert state.number_of_nodes() == 7
     assert state.number_of_edges() == 6
     assert count_nodes(state, nodes.AccessNode) == 4
@@ -713,6 +714,6 @@ def test_split_with_view():
 
 if __name__ == "__main__":
     test_state_fission()
-    test_simple_split_with_map_1()
+    test_state_fission_with_map_1()
     test_state_fission_multiple_read()
-    test_split_with_view()
+    test_state_fission_with_view()
