@@ -319,6 +319,46 @@ def _make_state_fission_with_view_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nod
 
     return sdfg, state, a, me, v, b, c
 
+    return sdfg, state, ar, tlet1, tlet2, b, aw
+
+
+def _make_state_fission_with_empty_memlet_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.AccessNode, nodes.Tasklet,
+                                                          nodes.Tasklet, nodes.AccessNode, nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("split_with_empty_memlet_sdfg"))
+    state = sdfg.add_state()
+
+    for name in "ab":
+        sdfg.add_scalar(
+            name,
+            dtype=dace.float64,
+            transient=False,
+        )
+    ar, b, aw = (state.add_access(name) for name in "aba")
+
+    tlet1 = state.add_tasklet(
+        "tlet1",
+        inputs={"__in"},
+        outputs={"__out"},
+        code="__out = __in + 2.3",
+    )
+    tlet2 = state.add_tasklet(
+        "tlet2",
+        inputs={},
+        outputs={"__out"},
+        code="__out = -10.0",
+    )
+
+    state.add_edge(ar, None, tlet1, "__in", dace.Memlet("a[0]"))
+    state.add_edge(tlet1, "__out", b, None, dace.Memlet("b[0]"))
+
+    state.add_edge(tlet2, "__out", aw, None, dace.Memlet("a[0]"))
+
+    state.add_nedge(tlet1, tlet2, dace.Memlet())
+
+    sdfg.validate()
+
+    return sdfg, state, ar, tlet1, tlet2, b, aw
+
 
 def test_state_fission():
     """
@@ -712,8 +752,59 @@ def test_state_fission_with_view():
     assert {b, c} == set(state.nodes())
 
 
+def test_state_fission_with_empty_memlet_1():
+    sdfg, state, ar, tlet1, tlet2, b, aw = _make_state_fission_with_empty_memlet_sdfg()
+    assert state.number_of_nodes() == 5
+    assert state.number_of_edges() == 4
+    assert count_nodes(state, nodes.AccessNode) == 3
+    assert count_nodes(state, nodes.Tasklet) == 2
+    assert state.in_degree(tlet2) == 1
+
+    subgraph = graph.SubgraphView(state, [tlet1])
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    # The first (new state) contains `ar`, `tlet1` and `b`. The empty memlet between
+    #  `tlet1` and `tlet2` is longer needed, that they are now in case of states.
+    assert new_state.number_of_nodes() == 3
+    assert new_state.number_of_edges() == 2
+    assert {ar, tlet1, b} == set(new_state.nodes())
+    assert new_state.degree(ar) == 1
+    assert new_state.degree(b) == 1
+    assert new_state.out_degree(tlet1) == 1
+    assert new_state.in_degree(tlet1) == 1
+
+    # The second state (original) only contains `tlet2` and `aw`.
+    assert state.number_of_nodes() == 2
+    assert state.number_of_edges() == 1
+    assert state.in_degree(tlet2) == 0
+    assert {tlet2, aw} == set(state.nodes())
+
+
+def test_state_fission_with_empty_memlet_2():
+    sdfg, state, ar, tlet1, tlet2, b, aw = _make_state_fission_with_empty_memlet_sdfg()
+    assert state.number_of_nodes() == 5
+    assert state.number_of_edges() == 4
+    assert count_nodes(state, nodes.AccessNode) == 3
+    assert count_nodes(state, nodes.Tasklet) == 2
+
+    # There we start from `tlet2` which means that the empty memlet is considered in the normal way.
+    #  Therefore everything will end up in the first state and the second state is empty.
+    subgraph = graph.SubgraphView(state, [tlet2])
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    assert new_state.number_of_nodes() == 5
+    assert new_state.number_of_edges() == 4
+    assert {ar, tlet1, tlet2, b, aw} == set(new_state.nodes())
+
+    assert state.number_of_nodes() == 0
+
+
 if __name__ == "__main__":
     test_state_fission()
     test_state_fission_with_map_1()
     test_state_fission_multiple_read()
     test_state_fission_with_view()
+    test_state_fission_with_empty_memlet_1()
+    test_state_fission_with_empty_memlet_2()
