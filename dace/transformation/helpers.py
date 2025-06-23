@@ -640,7 +640,7 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
                 continue
 
             # If `fnode` is an AccessNode, then it is a boundary node, as it has to be in both states.
-            if isinstance(fnode, nodes.AccessNode) and (not isinstance(fnode.desc(sdfg, data.View))):
+            if isinstance(fnode, nodes.AccessNode) and (not isinstance(fnode.desc(sdfg), data.View)):
                 boundary_nodes.add(fnode)
                 continue
 
