@@ -75,10 +75,7 @@ def test_edge_sympy_function(mode):
     sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
-    if mode != 'SwitchCase':
-        assert any(isinstance(node, ConditionalBlock) for node in sdfg.nodes())
-    else:
-        assert any(isinstance(node, ReturnBlock) for node in sdfg.nodes())
+    assert any(isinstance(node, ConditionalBlock) for node in sdfg.nodes())
 
     sdfg.compile()
 
@@ -94,7 +91,7 @@ def test_single_outedge_branch():
     sdfg.add_edge(state1, state2, dace.InterstateEdge('1 > 0'))
 
     FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
-    assert any(isinstance(node, ReturnBlock) for node in sdfg.nodes())
+    assert any(isinstance(node, ConditionalBlock) for node in sdfg.nodes())
 
     sdfg.compile()
     res = np.random.rand(1)

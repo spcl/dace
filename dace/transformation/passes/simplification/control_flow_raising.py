@@ -201,7 +201,7 @@ class ControlFlowRaising(ppl.Pass):
                         graph.remove_nodes_from(branch_nodes)
 
                     # Connect to the end of the branch / what happens after.
-                    if dummy_exit is None or merge_block is not dummy_exit:
+                    if (dummy_exit is None or merge_block is not dummy_exit) and merge_block is not None:
                         graph.add_edge(conditional, merge_block, InterstateEdge())
             if dummy_exit is not None:
                 region.remove_node(dummy_exit)
@@ -300,6 +300,7 @@ class ControlFlowRaising(ppl.Pass):
 
     def report(self, pass_retval: Optional[Tuple[int, int, int]]):
         if pass_retval and any([x > 0 for x in pass_retval]):
-            return f'Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, and {pass_retval[3]} unstructured control flow regions'
+            return (f'Lifted {pass_retval[0]} returns, {pass_retval[1]} loops, {pass_retval[2]} conditional blocks, ' +
+                    f'and {pass_retval[3]} unstructured control flow regions')
         else:
             return 'No control flow lifted'

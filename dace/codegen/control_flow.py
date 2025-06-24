@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional, Set
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
-                             ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState)
+                             ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState, UnstructuredControlFlow)
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.codegen.common import unparse_interstate_edge
@@ -192,7 +192,8 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
     start = start if start is not None else region.start_block
     visited = set() if visited is None else visited
 
-    contains_irreducible = any(region.out_degree(node) > 1 for node in region.nodes())
+    contains_irreducible = any(region.out_degree(node) > 1
+                               for node in region.nodes()) or isinstance(region, UnstructuredControlFlow)
 
     stack = [region.start_block]
     while stack:

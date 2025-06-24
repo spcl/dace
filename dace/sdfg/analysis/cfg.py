@@ -174,7 +174,8 @@ def find_sese_region(
     if not common_post_dominators:
         return set(), entry_node, None
 
-    # The exit is the post-dominator closest to the target nodes
+    # The exit is the post-dominator closest to the target nodes, from which none of the target nodes can be reached
+    # anymore.
     exit_node = None
     min_distance = float('inf')
     for post_dom in common_post_dominators:
@@ -182,7 +183,8 @@ def find_sese_region(
         for target in target_nodes:
             if target in post_dominators and post_dom in post_dominators[target]:
                 path_exists = nx.has_path(graph.nx, target, post_dom)
-                if path_exists:
+                reverse_path_exists = any(nx.has_path(graph.nx, post_dom, t) for t in target_nodes)
+                if path_exists and not reverse_path_exists:
                     try:
                         dist = nx.shortest_path_length(graph.nx, target, post_dom)
                         max_dist_from_targets = max(max_dist_from_targets, dist)
@@ -505,7 +507,7 @@ def _blockorder_topological_sort(
                     continue
             # Otherwise, passthrough to branch
         # Branch
-        if node in branch_merges:
+        if node in branch_merges and branch_merges[node] is not None:
             # Try to find merge block and traverse until reaching that
             mergeblock = branch_merges[node]
         else:
