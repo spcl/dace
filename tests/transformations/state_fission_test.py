@@ -631,7 +631,6 @@ def test_state_fission_with_map_2_with_full_map_scope():
     _test_state_fission_with_map_2_impl(include="full")
 
 
-@pytest.mark.xfail(reason="This feature is not yet implemented.")
 def test_state_fission_with_map_2_with_partial_map_scope():
     """If we do not include the function will not work. Because the function does not
     figuring it out on its own. The function would work if there is no `t` inside the
@@ -640,7 +639,6 @@ def test_state_fission_with_map_2_with_partial_map_scope():
     _test_state_fission_with_map_2_impl(include="partial")
 
 
-@pytest.mark.xfail(reason="This feature is not yet implemented.")
 def test_state_fission_with_map_2_only_tasklet():
     """If we only include the Tasklet then the MapExit node will not be included.
     """

@@ -593,6 +593,11 @@ def state_fission(
     possible, i.e. there must be a non view AccessNode to transmit data from the first to the
     second state. Another reason is that the function maintains the number of "writing nodes", i.e
     AccessNodes with incoming connections, this behaviour is analogous to `isolate_nested_sdfg()`.
+    Another reason why more nodes are moved to the first state are scopes. It is only possible to
+    split a state at the top scope, not as an example, within a Map. Thus if a node inside `subgraph`
+    if not at the global scope the function will include its containing state. Thus if you only
+    pass a Tasklet, with a Map, as `subgraph` then the function will add the surrounding Map
+    to the first state as well.
 
     Note, the split might result in a state where nodes become isolated inside a state. By default
     the function allows this to happen in either state. However, it will cause a validation error.
@@ -630,13 +635,41 @@ def state_fission(
                 if ((iedge.src not in scanned_nodes) and (True if follow_empty_memlets else not iedge.data.is_empty())))
             scanned_nodes.add(node_to_scan)
 
+    # State fissions can not occur within a scope, i.e. the MapEntry of a Map scope can not end up
+    #  in the first state while the MapExit lands in the second state. Extend the set of nodes to
+    #  make sure we have only top level nodes and their scope.
+    initial_first_nodes: Set[nodes.Node] = set()
+    scope_dict = state.scope_dict()
+    for node in subgraph.nodes():
+        containing_scope = scope_dict[node]
+
+        if node in initial_first_nodes:
+            continue  # Already added by a previous node.
+
+        elif isinstance(node, nodes.EntryNode):
+            # Add the whole body of the Map to the first state. ExitNodes are handled by the scope
+            #  implementation, as they are located inside the scope of their associated EntryNode.
+            initial_first_nodes.update(state.scope_subgraph(node).nodes())
+
+        elif containing_scope is None:
+            initial_first_nodes.add(node)  # Global node just add it.
+
+        else:
+            # Note at global scope, find the top most scope node and add the defining subgraph.
+            while scope_dict[containing_scope] is not None:
+                assert isinstance(containing_scope, nodes.EntryNode)
+                containing_scope = scope_dict[containing_scope]
+            top_entry_node = containing_scope
+            assert isinstance(top_entry_node, nodes.EntryNode)
+            initial_first_nodes.update(state.scope_subgraph(top_entry_node).nodes())
+
     # These are all nodes that should be placed into the first state. These are all nodes listed
     #  in `subgraph` as well as their dependencies. It is important that in the backtracking of
     #  the dependency we have to follow empty Memlets here, because if we wouldn't then some
     #  nodes in the first state would be executed before their dependencies, which end up in the
     #  second state.
     first_nodes: Set[nodes.Node] = set()
-    for node in subgraph.nodes():
+    for node in initial_first_nodes:
         find_generating_nodes(
             node_to_start=node,
             state=state,
