@@ -9,6 +9,7 @@ import numpy as np
 
 import dace
 from dace import dtypes, subsets, symbolic
+from dace.data import _prod as prod
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
@@ -159,15 +160,9 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     return sdfg
 
 
-def prod(iterable):
-    return reduce(lambda x, y: x * y, iterable, 1)
-
-
-@oprepo.replaces('numpy.einsum')
-def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
-                       sdfg: SDFG,
+def create_einsum_sdfg(sdfg: SDFG,
                        state: SDFGState,
-                       einsum_string: StringLiteral,
+                       einsum_string: str,
                        *arrays: str,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
@@ -399,8 +394,9 @@ def _create_einsum_internal(sdfg: SDFG,
         if symbolic.equal_valued(1, strides['sCM']):
             strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
             strides['M'], strides['N'] = strides['N'], strides['M']
-            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'], strides['sBB']) = \
-                (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'], strides['sAB'])
+            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'],
+             strides['sBB']) = (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'],
+                                strides['sAB'])
             a, b = b, a
 
         # Create nested SDFG for GEMM
