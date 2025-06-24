@@ -7,7 +7,7 @@ import pytest
 
 from dace.memlet import Memlet
 from dace.sdfg import nodes, graph
-from dace.transformation import helpers
+from dace.transformation import helpers, dataflow
 
 from .utility import count_nodes, unique_name, make_sdfg_args, compile_and_run_sdfg
 
@@ -578,8 +578,11 @@ def _test_state_fission_with_map_2_impl(include: str):
     - `full`: All nodes inside the Map scope are added.
     - `partial`: Only the MapEntry and Tasklet node are added.
     - `tasklet`: Only the Tasklet node is added.
+    - `tasklet2`: Expand the map first and only passes the tasklet.
     """
     sdfg, state, a, me, tlet, t, b, c = _make_state_fission_with_map_sdfg()
+    mes = {me}
+
     assert sdfg.number_of_nodes() == 1
     assert state.number_of_nodes() == 7
     assert count_nodes(state, nodes.AccessNode) == 4
@@ -592,6 +595,20 @@ def _test_state_fission_with_map_2_impl(include: str):
         subgraph_nodes = [me, tlet]
     elif include == "tasklet":
         subgraph_nodes = [tlet]
+    elif include == "tasklet2":
+        subgraph_nodes = [tlet]
+
+        # Expand the Map such that `tlet` is nested.
+        dataflow.MapExpansion.apply_to(
+            sdfg=sdfg,
+            map_entry=me,
+        )
+        sdfg.validate()
+        mes = set(count_nodes(state, nodes.MapEntry, True))
+        assert state.number_of_nodes() == 9
+        assert len(mes) == 2
+        assert state.scope_dict()[state.scope_dict()[state.scope_dict()[tlet]]] is None
+
     else:
         raise NotImplementedError(f'`include` mode "{include}" is not supported.')
 
@@ -619,10 +636,17 @@ def _test_state_fission_with_map_2_impl(include: str):
     assert b_c_edge.data.dst_subset == dace.subsets.Range.from_string("0:10")
 
     # The other nodes contains the other nodes, together with a copy of the `b` node.
-    assert new_state.number_of_nodes() == 6
-    assert new_state.number_of_edges() == 5
+    if include != "tasklet2":
+        assert new_state.number_of_nodes() == 6
+        assert new_state.number_of_edges() == 5
+        assert new_state.scope_dict()[new_state.scope_dict()[tlet]] is None
+    else:
+        assert new_state.number_of_nodes() == 8
+        assert new_state.number_of_edges() == 7
+        assert new_state.scope_dict()[new_state.scope_dict()[new_state.scope_dict()[tlet]]] is None
+
     assert set(count_nodes(new_state, nodes.Tasklet, True)) == {tlet}
-    assert set(count_nodes(new_state, nodes.MapEntry, True)) == {me}
+    assert set(count_nodes(new_state, nodes.MapEntry, True)) == mes
     new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
     assert len(new_state_ac) == 3
     assert {a, t}.issubset(new_state_ac)
@@ -646,6 +670,12 @@ def test_state_fission_with_map_2_only_tasklet():
     """If we only include the Tasklet then the MapExit node will not be included.
     """
     _test_state_fission_with_map_2_impl(include="tasklet")
+
+
+def test_state_fission_with_map_2_only_tasklet_nested_scope():
+    """The Map is expanded, i.e. we have nesting Maps and only specify the Tasklet.
+    """
+    _test_state_fission_with_map_2_impl(include="tasklet2")
 
 
 def test_state_fission_multiple_read():
