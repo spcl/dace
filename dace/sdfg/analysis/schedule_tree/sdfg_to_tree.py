@@ -609,7 +609,7 @@ def _state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
 
 def _isedge_schedule_tree(graph: ControlFlowRegion,
                           edge: gr.Edge[InterstateEdge],
-                          emit_gotos: bool = False) -> List[tn.ScheduleTreeNode]:
+                          emit_goto_for_successors: bool = False) -> List[tn.ScheduleTreeNode]:
     result: List[tn.ScheduleTreeNode] = []
     for aname, aval in edge.data.assignments.items():
         assign_node = tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval}))
@@ -617,7 +617,7 @@ def _isedge_schedule_tree(graph: ControlFlowRegion,
         result.append(assign_node)
 
     edge_body: List[tn.ScheduleTreeNode] = []
-    if emit_gotos:
+    if emit_goto_for_successors:
         goto_node = tn.GotoNode(target=edge.dst.label)
         goto_node.sdfg = graph.sdfg
         edge_body.append(goto_node)
@@ -625,9 +625,15 @@ def _isedge_schedule_tree(graph: ControlFlowRegion,
     if edge.data.is_unconditional():
         result.extend(edge_body)
     else:
-        if emit_gotos:
+        # The edge carries a condition, thus the successor is not necessarily executed.
+        if emit_goto_for_successors:
+            # This indicates that we are in unstructured control flow, so a goto for all successors is placed
+            # regardless. No goto needs to be placed for the exit.
             state_if_node = tn.StateIfScope(condition=edge.data.condition, children=edge_body)
         else:
+            # If not emitting gotos for successors, this indicates that we are in structured control flow. In this case,
+            # rather than hiding any successors behind a condition, we create a return / exit goto node that is executed
+            # if the inverse of the condition holds, i.e., the successor is NOT executed.
             exit_goto = tn.GotoNode(target=None)
             exit_goto.sdfg = graph.sdfg
             state_if_node = tn.StateIfScope(condition=CodeBlock(negate_expr(edge.data.condition)), children=[exit_goto])
@@ -654,7 +660,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                 subnodes.extend(_block_schedule_tree(n))
                 for oe in block.out_edges(n):
                     if oe not in processed_edges:
-                        subnodes.extend(_isedge_schedule_tree(block, oe, emit_gotos=True))
+                        subnodes.extend(_isedge_schedule_tree(block, oe, emit_goto_for_successors=True))
                         processed_edges.add(oe)
             gblock = tn.GBlock(children=subnodes)
             gblock.sdfg = block.sdfg
@@ -667,7 +673,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                 oedges = block.out_edges(pivot)
                 if len(oedges) == 1:
                     pivot = oedges[0].dst
-                    children.extend(_isedge_schedule_tree(block, oedges[0], emit_gotos=False))
+                    children.extend(_isedge_schedule_tree(block, oedges[0], emit_goto_for_successors=False))
                 else:
                     pivot = None
 
@@ -680,8 +686,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
     elif isinstance(block, ConditionalBlock):
         result: List[tn.ScheduleTreeNode] = []
         if_node = tn.IfScope(condition=block.branches[0][0],
-                             children=_block_schedule_tree(block.branches[0][1]),
-                             cond_block=block)
+                             children=_block_schedule_tree(block.branches[0][1]))
         if_node.sdfg = block.sdfg
         result.append(if_node)
         for cond, branch_body in block.branches[1:]:

@@ -89,7 +89,6 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
     sdfg = region.sdfg
     loop = region
     cond = unparse_interstate_edge(loop.loop_condition.code[0], sdfg, codegen=codegen, symbols=symbols)
-    cond = cond.strip(';')
 
     expr = ''
 

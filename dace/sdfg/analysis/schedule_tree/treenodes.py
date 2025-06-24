@@ -7,7 +7,7 @@ from dace.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Set, Union
+from typing import TYPE_CHECKING, Dict, Iterator, List, Literal, Optional, Set, Union
 
 if TYPE_CHECKING:
     from dace import SDFG
@@ -125,34 +125,49 @@ class LoopScope(ControlFlowScope):
     """
     loop: LoopRegion
 
+    def _check_loop_variant(self) -> Union[Literal['for'], Literal['while'],
+                                           Literal['do-while'], Literal['do-for-uncond-increment'], Literal['do-for']]:
+        if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
+            if self.loop.inverted:
+                if self.loop.update_before_condition:
+                    return 'do-for-uncond-increment'
+                else:
+                    return 'do-for'
+            else:
+                return 'for'
+        else:
+            if self.loop.inverted:
+                return 'do-while'
+            else:
+                return 'while'
+
     def as_string(self, indent: int = 0):
         loop = self.loop
-        if loop.update_statement and loop.init_statement and loop.loop_variable:
-            if loop.inverted:
-                if loop.update_before_condition:
-                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
-                    header = indent * INDENTATION + 'do:\n'
-                    pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
-                    footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
-                else:
-                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
-                    header = indent * INDENTATION + 'while True:\n'
-                    pre_footer = (indent + 1) * INDENTATION + f'if (not {loop.loop_condition.as_string}):\n'
-                    pre_footer += (indent + 2) * INDENTATION + 'break\n'
-                    footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
-                return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
-            else:
-                result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
-                          f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
-                return result + super().as_string(indent)
-        else:
-            if loop.inverted:
-                header = indent * INDENTATION + 'do:\n'
-                footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
-                return header + super().as_string(indent) + '\n' + footer
-            else:
-                result = indent * INDENTATION + f'while {loop.loop_condition.as_string}:\n'
-                return result + super().as_string(indent)
+        loop_variant = self._check_loop_variant()
+        if loop_variant == 'do-for-uncond-increment':
+            pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+            header = indent * INDENTATION + 'do:\n'
+            pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
+            footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+            return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
+        elif loop_variant == 'do-for':
+            pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+            header = indent * INDENTATION + 'while True:\n'
+            pre_footer = (indent + 1) * INDENTATION + f'if (not {loop.loop_condition.as_string}):\n'
+            pre_footer += (indent + 2) * INDENTATION + 'break\n'
+            footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
+            return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
+        elif loop_variant == 'for':
+            result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
+                        f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
+            return result + super().as_string(indent)
+        elif loop_variant == 'while':
+            result = indent * INDENTATION + f'while {loop.loop_condition.as_string}:\n'
+            return result + super().as_string(indent)
+        else:   # 'do-while'
+            header = indent * INDENTATION + 'do:\n'
+            footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+            return header + super().as_string(indent) + '\n' + footer
 
 
 @dataclass
@@ -161,7 +176,6 @@ class IfScope(ControlFlowScope):
     If branch scope.
     """
     condition: CodeBlock
-    cond_block: Optional[ConditionalBlock] = None
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'

@@ -116,7 +116,7 @@ class ControlFlowRaising(ppl.Pass):
             if region.has_cycles():
                 # Do not lift conditionals if there are cycles present, since lifting conditionals requires an acyclic
                 # dominance frontier for the analysis. This may lead to incorrect results if cycles are present.
-                # Note that the combinatio nof loop raising and unstructured control flow lifting should
+                # Note that the combination of loop raising and unstructured control flow lifting should
                 # already have lifted all loops, so this should not occur in practice and this warning would be cause
                 # for closer inspection.
                 warnings.warn(
@@ -234,22 +234,16 @@ class ControlFlowRaising(ppl.Pass):
             # Compute immediate dominators
             idom: Dict[ControlFlowBlock, ControlFlowBlock] = nx.immediate_dominators(cfg.nx, cfg.start_block)
 
-            # Find back edges (u, v) where v dominates u
-            back_edges = []
-            all_edges = set(cfg.nx.edges)
-            for u, v in all_edges:
-                # v dominates u and v is a successor of u (cycle)
-                if v in nx.descendants(cfg.nx, u) and idom[u] == v:
-                    back_edges.append((u, v))
+            back_edges = set([(e.src, e.dst) for e in cfg_analysis.back_edges(cfg, idom)])
 
             # DFS tree edges
             dfs_tree_edges = set(nx.dfs_edges(cfg.nx, cfg.start_block))
 
             # Structured edges: DFS tree edges + back edges
-            structured_edges = set(dfs_tree_edges) | set(back_edges)
+            structured_edges = dfs_tree_edges | back_edges
 
             # Unstructured edges: all edges not in structured set
-            unstructured_edges = all_edges - structured_edges
+            unstructured_edges = set(cfg.nx.edges) - structured_edges
 
             # Find the single entry / single exit region around the unstructured edges and turn it into a region
             # of unstructured control flow.
