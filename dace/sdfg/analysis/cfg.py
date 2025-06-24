@@ -72,8 +72,8 @@ def all_postdominators(cfg: ControlFlowRegion,
                 sinks.add(block)
         sink = ControlFlowBlock('__DACE_dummy_sink')
         cfg.add_node(sink)
-        for sink in sinks:
-            cfg.add_edge(sink, sink, InterstateEdge())
+        for s in sinks:
+            cfg.add_edge(s, sink, InterstateEdge())
 
     ipostdom = ipostdom or nx.immediate_dominators(cfg.nx.reverse(), sink)
 

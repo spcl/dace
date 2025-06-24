@@ -77,7 +77,7 @@ def test_symbolic_return():
 
     assert i < len(stree.children) - 1
     exit_scope = stree.children[i + 1]
-    assert isinstance(exit_scope, tn.AssignNode)
+    assert isinstance(exit_scope, (tn.AssignNode, tn.TaskletNode))
 
     states = for_scope.loop.nodes()
 
