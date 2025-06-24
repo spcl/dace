@@ -180,11 +180,12 @@ def find_sese_region(
     min_distance = float('inf')
     for post_dom in common_post_dominators:
         max_dist_from_targets = 0
+        if any(nx.has_path(graph.nx, post_dom, t) for t in target_nodes):
+            continue
         for target in target_nodes:
             if target in post_dominators and post_dom in post_dominators[target]:
                 path_exists = nx.has_path(graph.nx, target, post_dom)
-                reverse_path_exists = any(nx.has_path(graph.nx, post_dom, t) for t in target_nodes)
-                if path_exists and not reverse_path_exists:
+                if path_exists:
                     try:
                         dist = nx.shortest_path_length(graph.nx, target, post_dom)
                         max_dist_from_targets = max(max_dist_from_targets, dist)
@@ -209,10 +210,9 @@ def find_sese_region(
         reachable_from_entry = set(nx.descendants(graph.nx, entry_node)) | {entry_node}
 
     can_reach_exit = set()
-    if exit_node in graph:
-        # Find all nodes that can reach the exit
-        reverse_graph = graph.nx.reverse()
-        can_reach_exit = set(nx.descendants(reverse_graph, exit_node)) | {exit_node}
+    # Find all nodes that can reach the exit
+    reverse_graph = graph.nx.reverse()
+    can_reach_exit = set(nx.descendants(reverse_graph, exit_node)) | {exit_node}
 
     # Region is intersection of reachable from entry and can reach exit
     region_nodes = reachable_from_entry & can_reach_exit

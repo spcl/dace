@@ -265,7 +265,7 @@ class ControlFlowRaising(ppl.Pass):
                 unstructured_region = UnstructuredControlFlow('unstructured_' + str(cfg.name) + '_' + str(lifted))
                 unstructured_region.add_node(region_entry, is_start_block=True)
                 for edge in cfg.edges():
-                    if edge.src in unstructured_nodes and edge.dst in unstructured_nodes:
+                    if edge.src in unstructured_nodes and edge.dst in unstructured_nodes or edge.dst is region_exit:
                         unstructured_region.add_edge(edge.src, edge.dst, edge.data)
                 if cfg.in_degree(region_entry) == 0:
                     # If there is no incoming edge, this is a start block.
