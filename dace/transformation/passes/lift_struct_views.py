@@ -301,7 +301,8 @@ class InterstateEdgeRecoder(ast.NodeTransformer):
                 pre_node: ControlFlowBlock = self.element.src
                 self._lifting_state = pre_node.parent_graph.add_state_after(pre_node, self.data_name + '_lifting')
             else:
-                self._lifting_state = self.element[0].parent_graph.add_state_before(self.element[0])
+                self._lifting_state = self.element[0].parent_graph.add_state_before(self.element[0],
+                                                                                    self.data_name + '_lifting')
 
         # Add a node for the original data container so the view can be connected to it. This may already be a view from
         # a previous iteration of lifting, but in that case it is already correctly connected to a root data container.
@@ -384,21 +385,26 @@ class LiftStructViews(ppl.Pass):
     def _lift_control_flow_region_access(self, cfg: ControlFlowRegion, result: Dict[str, Set[str]]) -> bool:
         lifted_something = False
         lifting_state = None
-        for code_block in cfg.get_meta_codeblocks():
-            codes = code_block.code if isinstance(code_block.code, list) else [code_block.code]
-            for code in codes:
-                for data in _data_containers_in_ast(code, cfg.sdfg.arrays.keys()):
-                    if '.' in data:
-                        continue
-                    container = cfg.sdfg.arrays[data]
-                    if isinstance(container, (dt.Structure, dt.ContainerArray)):
-                        if lifting_state is None:
-                            lifting_state = cfg.parent_graph.add_state_before(cfg)
-                        visitor = InterstateEdgeRecoder(cfg.sdfg, (cfg, code_block), data, container, lifting_state)
-                        visitor.visit(code)
-                        if visitor.views_constructed:
-                            result[data].update(visitor.views_constructed)
-                            lifted_something = True
+        while True:
+            lifted_something_this_round = False
+            for code_block in cfg.get_meta_codeblocks():
+                codes = code_block.code if isinstance(code_block.code, list) else [code_block.code]
+                for code in codes:
+                    for data in _data_containers_in_ast(code, cfg.sdfg.arrays.keys()):
+                        if '.' in data:
+                            continue
+                        container = cfg.sdfg.arrays[data]
+                        if isinstance(container, (dt.Structure, dt.ContainerArray)):
+                            if lifting_state is None:
+                                lifting_state = cfg.parent_graph.add_state_before(cfg, data + '_lifting')
+                            visitor = InterstateEdgeRecoder(cfg.sdfg, (cfg, code_block), data, container, lifting_state)
+                            visitor.visit(code)
+                            if visitor.views_constructed:
+                                result[data].update(visitor.views_constructed)
+                                lifted_something_this_round = True
+                                lifted_something = True
+            if not lifted_something_this_round:
+                break
         return lifted_something
 
     def _lift_isedge(self, cfg: ControlFlowRegion, edge: Edge[InterstateEdge], result: Dict[str, Set[str]]) -> bool:
