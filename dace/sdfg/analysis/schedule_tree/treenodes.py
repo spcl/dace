@@ -125,8 +125,10 @@ class LoopScope(ControlFlowScope):
     """
     loop: LoopRegion
 
-    def _check_loop_variant(self) -> Union[Literal['for'], Literal['while'],
-                                           Literal['do-while'], Literal['do-for-uncond-increment'], Literal['do-for']]:
+    def _check_loop_variant(
+        self
+    ) -> Union[Literal['for'], Literal['while'], Literal['do-while'], Literal['do-for-uncond-increment'],
+               Literal['do-for']]:
         if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
             if self.loop.inverted:
                 if self.loop.update_before_condition:
@@ -159,12 +161,12 @@ class LoopScope(ControlFlowScope):
             return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
         elif loop_variant == 'for':
             result = (indent * INDENTATION + f'for {loop.init_statement.as_string}; ' +
-                        f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
+                      f'{loop.loop_condition.as_string}; ' + f'{loop.update_statement.as_string}:\n')
             return result + super().as_string(indent)
         elif loop_variant == 'while':
             result = indent * INDENTATION + f'while {loop.loop_condition.as_string}:\n'
             return result + super().as_string(indent)
-        else:   # 'do-while'
+        else:  # 'do-while'
             header = indent * INDENTATION + 'do:\n'
             footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
             return header + super().as_string(indent) + '\n' + footer

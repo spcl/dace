@@ -685,8 +685,7 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
         return children
     elif isinstance(block, ConditionalBlock):
         result: List[tn.ScheduleTreeNode] = []
-        if_node = tn.IfScope(condition=block.branches[0][0],
-                             children=_block_schedule_tree(block.branches[0][1]))
+        if_node = tn.IfScope(condition=block.branches[0][0], children=_block_schedule_tree(block.branches[0][1]))
         if_node.sdfg = block.sdfg
         result.append(if_node)
         for cond, branch_body in block.branches[1:]:
