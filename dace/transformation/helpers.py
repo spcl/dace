@@ -613,6 +613,7 @@ def state_fission(
 
     def find_generating_nodes(node_to_start: nodes.Node,
                               state: SDFGState,
+                              follow_empty_memlets: bool,
                               seen: Optional[Set[nodes.Node]] = None) -> None:
         to_scan: Set[nodes.Node] = {node_to_start}
         scanned_nodes: Set[nodes.Node] = set() if seen is None else seen
@@ -620,53 +621,67 @@ def state_fission(
             node_to_scan = to_scan.pop()
             if node_to_scan in scanned_nodes:
                 continue
-            to_scan.update(iedge.src for iedge in state.in_edges(node_to_scan) if iedge.src not in scanned_nodes)
+            to_scan.update(
+                iedge.src for iedge in state.in_edges(node_to_scan)
+                if ((iedge.src not in scanned_nodes) and (True if follow_empty_memlets else not iedge.data.is_empty())))
             scanned_nodes.add(node_to_scan)
 
-    # These are all nodes that are located inside the first state. These are the nodes inside the
-    #  subgraph and all of its dependencies.
+    # These are all nodes that should be placed into the first state. These are all nodes listed
+    #  in `subgraph` as well as their dependencies. It is important that in the backtracking of
+    #  the dependency we have to follow empty Memlets here, because if we wouldn't then some
+    #  nodes in the first state would be executed before their dependencies, which end up in the
+    #  second state.
     first_nodes: Set[nodes.Node] = set()
     for node in subgraph.nodes():
         find_generating_nodes(
             node_to_start=node,
             state=state,
+            follow_empty_memlets=True,
             seen=first_nodes,  # Inplace update, thus copy over what we iterate.
         )
 
-    # Now we look at nodes at the boundary of the first state nodes, i.e. the nodes that are inside
-    #  `first_nodes` but that have outgoing edges to nodes that are not inside `first_nodes`.
-    #  Such a node is called "boundary node", it is written inside the first state, but it will
-    #  be read inside the second state and has thus be present there as well. However, a node can
-    #  only be a boundary node iff it is a non view AccessNode. If this does not hold, we have to
-    #  add all consumer and their dependencies, to the first state if we want to maintain the
-    #  invariant that the number of writes, measured in incoming edges, remains the same. If this
-    #  happens we have to perform a rescan.
+    # Now determine the boundary nodes, see bellow. For that we have to check the consumer structure
+    #  of every node in `first_nodes`. However, this might also lead to an expansion of the initial
+    #  `first_nodes` set. Thus the entire process has to be iterative.
     needs_rescan = True
     while needs_rescan:
         needs_rescan = False
         boundary_nodes: Set[nodes.Node] = set()
 
-        for fnode in list(first_nodes):
-            non_first_state_consumer = [oedge.dst for oedge in state.out_edges(fnode) if oedge.dst not in first_nodes]
+        for fnode in first_nodes:
+            # We now check if `fnode` has consumers that are not moved into the first state, however,
+            #  we can ignore consumer connected through an empty Memlet. Because since `fnode` will
+            #  end up in the first state and the consumer will be put into the second state, the
+            #  "happens before" notion of the empty Memlet is still honored.
+            non_first_state_consumer = [
+                oedge.dst for oedge in state.out_edges(fnode)
+                if (oedge.dst not in first_nodes) and (not oedge.data.is_empty())
+            ]
             if len(non_first_state_consumer) == 0:
                 continue
 
-            # If `fnode` is an AccessNode, then it is a boundary node, as it has to be in both states.
+            # If there are consumer, check if `fnode` qualifies to be a boundary node.
             if isinstance(fnode, nodes.AccessNode) and (not isinstance(fnode.desc(sdfg), data.View)):
                 boundary_nodes.add(fnode)
                 continue
 
-            # In case `fnode` is not an AccessNode, we can not simply replicate it, instead we
-            #  have to add all consumers of `fnode` and their dependencies, to the first state.
-            #  Because of that a rescan is needed.
+            # If we are here then `fnode` would need to be a boundary node, but does not qualify.
+            #  In that case we have to add all of its consumers as well as their dependencies to
+            #  `first_nodes`. We could now go on and test all nodes currently inside `first_nodes`
+            #  but instead we will stop here.
             needs_rescan = True
+            break
+
+        if needs_rescan:
             for new_first_state_node_seed in non_first_state_consumer:
+                # While we follow empty Memlets in dependencies, we ignore the consumer that were
+                #  connected by them, see above.
                 find_generating_nodes(
                     node_to_start=new_first_state_node_seed,
                     state=state,
+                    follow_empty_memlets=True,
                     seen=first_nodes,  # Inplace update!
                 )
-            break
 
     # Ensure that all dependencies are assigned to the first state.
     assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
@@ -676,12 +691,11 @@ def state_fission(
 
     # Now create the new states on which we will operate. It is important that the newly created
     #  state is at the top.
-    # NOTE: There is the case that `subgraph` contains the entire dataflow in `state`, in that
-    #   case one might think, that we could perform an optimization, as just create a new state
-    #   and keep the nodes. However, this is not possible, since the function only returns the
-    #   new state and code assumes that this is the first/top state containing the `subgraph`
-    #   dataflow. Thus we have to perform the relocation. This could be solved if we would change
-    #   this function to return a `tuple`.
+    # NOTE: There is the case that `subgraph` contains the entire dataflow in `state`, in that case
+    #   one might think, that we could perform an optimization, such as just create a new state and
+    #   keep the nodes. However, this is not possible, since the function only returns the new state
+    #   and code assumes that this is the first/top state containing the `subgraph` dataflow. Thus
+    #   we have to perform the relocation.
     second_state = state
     first_state = state.parent_graph.add_state_before(state, label=label)
 
@@ -710,6 +724,10 @@ def state_fission(
                     oedge.dst_conn,
                     oedge.data,
                 )
+            elif oedge.data.is_empty():
+                # This empty Memlet is no longer needed, as `src` is moved to the first state and
+                #  `dst` will end up in the second state.
+                pass
             else:
                 assert oedge.src in boundary_nodes
 
