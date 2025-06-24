@@ -267,17 +267,33 @@ def branch_merges(
 
         # Try to obtain common DF to find merge state
         common_frontier = set()
+        descendants_blacklist = set()
+        disjoint_edges = set()
         for oedge in oedges:
+            branch_descendants = set(cfg.dfs_edges(oedge.dst))
+            branch_descendants.add(oedge.dst)
             frontier = adf[oedge.dst]
             if not frontier:
-                frontier = {oedge.dst}
+                # If no dominance frontier is found for this edge, there are two possible scenarios under which this
+                # may still lead to a valid merge state:
+                # 1: The edge destination is itself the branch merge state. To cover this, the frontier consisits of
+                #    the destination block itself, and if there is a concrete merge state, that will result in a single
+                #    common frontier block.
+                # 2: The edge leads to a completely separate control flow path that does not reconnect to the branch
+                #    merge state and can not reach any of the other branch descendants.
+                if not (branch_descendants & descendants_blacklist):
+                    disjoint_edges.add(oedge)
+                    continue
+                else:
+                    frontier = {oedge.dst}
             common_frontier |= frontier
+            descendants_blacklist.update(branch_descendants)
         if len(common_frontier) == 1:
             merge = next(iter(common_frontier))
             if block in alldoms[merge]:
                 result[block] = merge
-        # elif len(common_frontier) > 1 and ipostdom and ipostdom[block] in common_frontier:
-        #     result[block] = ipostdom[block]
+        elif len(common_frontier) == 0 and len(disjoint_edges) == len(oedges):
+            result[block] = None  # No merge state found, but the branches are disjoint.
 
     return result
 
