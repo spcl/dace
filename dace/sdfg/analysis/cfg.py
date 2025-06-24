@@ -217,9 +217,6 @@ def find_sese_region(
     # Region is intersection of reachable from entry and can reach exit
     region_nodes = reachable_from_entry & can_reach_exit
 
-    # Ensure all target nodes are included
-    region_nodes.update(target_nodes)
-
     # Remove the dummy sink
     graph.remove_node(sink)
     if sink in region_nodes:
