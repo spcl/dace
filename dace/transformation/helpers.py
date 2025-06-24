@@ -583,30 +583,34 @@ def state_fission(
 ) -> SDFGState:
     """Splits the state into two connected states such that `subgraph` is located in the first/top state.
 
-    The function will create a new state before `state`, which is also returned. Then the function
-    then distribute the data flow among these two states. In general it will move the dataflow
-    defined by `subgraph` and all its dependencies into the first/top state, that was newly
-    created.
-    There are certain exceptions, the function will try to maintain the number of writes, i.e. the
-    number of writes, measured in incoming edges to a node. To ensure this not all downstream nodes
-    of `subgraph` will remain in the second state, i.e. `state`, but some might remain in the
-    first state.
+    The function will create a new state before the state in which `subgraph` is located in, this
+    new state is also returned. Then the function will then distribute the dataflow onto these two
+    states. In general it will move the dataflow defined by `subgraph`, together with all its
+    dependencies into the first/top state and the rest will be in the second state (which is the
+    current state).
+    Beside the dependencies of `subgraph` the function might also move nodes located downstream of
+    `subgraph` into the first state. The first reason is that the "cut" at that location is not
+    possible, i.e. there must be a non view AccessNode to transmit data from the first to the
+    second state. Another reason is that the function maintains the number of "writing nodes", i.e
+    AccessNodes with incoming connections, this behaviour is analogous to `isolate_nested_sdfg()`.
 
     Note, the split might result in a state where nodes become isolated inside a state. By default
-    the function allows this in either state. This will result in a validation error. However, by
-    setting `allow_isolated_nodes` to `False` the function will remove the isolated nodes in
-    either state.
+    the function allows this to happen in either state. However, it will cause a validation error.
+    By  etting `allow_isolated_nodes` to `False` the function will remove all isolated nodes in
+    both states.
 
     :param subgraph: The graph that describes the split location.
     :param label: The label to use for the new state.
     :param allow_isolated_nodes: If `True`, the default, then the function might create isolated
         nodes. If it is `False` all isolated nodes will be removed after the split in both states.
 
-    :return: The function returns the first state, i.e. the one containing `subgraph` and
-        that was newly created.
+    :return: The newly created state that is located before the one containing `subgraph`.
 
-    :todo: Handle isolated `CodeNode`s.
-    :todo: Handle empty Memlets, allow them in some cases.
+    :note: Currently scopes are not handled, if for example `subgraph` only contains a Tasklet from
+        inside a Map, then the function will add all dependencies, i.e. the MapEntry, but will
+        most likely fail to pick up the MapExit.
+
+    :todo: Handle partial Map scopes.
     """
     state: SDFGState = subgraph.graph
     sdfg: SDFG = state.sdfg
