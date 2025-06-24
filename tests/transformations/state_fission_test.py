@@ -148,13 +148,16 @@ def _make_state_fission_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, node
     for name in "abc":
         sdfg.add_array(
             name,
-            shape=((20, ) if name != "c" else (10, )),
+            shape=((
+                20,
+                10,
+            ) if name != "c" else (10, )),
             dtype=dace.float64,
             transient=False,
         )
     a, b, c = (state.add_access(name) for name in "abc")
 
-    me, mx = state.add_map("computation", ndrange={"__i": "0:20"})
+    me, mx = state.add_map("computation", ndrange={"__i": "0:20", "__j": "0:10"})
     tlet = state.add_tasklet(
         "computation",
         inputs={"__in"},
@@ -164,16 +167,16 @@ def _make_state_fission_with_map_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, node
     sdfg.add_scalar("t", dtype=dace.float64, transient=True)
     t = state.add_access("t")
 
-    state.add_edge(a, None, me, "IN_a", dace.Memlet("a[0:20]"))
-    state.add_edge(me, "OUT_a", tlet, "__in", dace.Memlet("a[__i]"))
+    state.add_edge(a, None, me, "IN_a", dace.Memlet("a[0:20, 0:10]"))
+    state.add_edge(me, "OUT_a", tlet, "__in", dace.Memlet("a[__i, __j]"))
     me.add_scope_connectors("a")
 
     state.add_edge(tlet, "__out", t, None, dace.Memlet("t[0]"))
-    state.add_edge(t, None, mx, "IN_b", dace.Memlet("t[0] -> [__i]"))
-    state.add_edge(mx, "OUT_b", b, None, dace.Memlet("b[0:20]"))
+    state.add_edge(t, None, mx, "IN_b", dace.Memlet("t[0] -> [__i, __j]"))
+    state.add_edge(mx, "OUT_b", b, None, dace.Memlet("b[0:20, 0:10]"))
     mx.add_scope_connectors("b")
 
-    state.add_nedge(b, c, dace.Memlet("b[1:11] -> [0:10]"))
+    state.add_nedge(b, c, dace.Memlet("b[1:11, 3] -> [0:10]"))
 
     sdfg.validate()
 
@@ -552,7 +555,7 @@ def test_state_fission_with_map_1():
     org_state_ac = count_nodes(state, nodes.AccessNode, True)
     assert set(org_state_ac) == {b, c}
     b_c_edge = next(iter(state.out_edges(b)))
-    assert b_c_edge.data.src_subset == dace.subsets.Range.from_string("1:11")
+    assert b_c_edge.data.src_subset == dace.subsets.Range.from_string("1:11, 3")
     assert b_c_edge.data.dst_subset == dace.subsets.Range.from_string("0:10")
 
     # The other nodes contains the other nodes, together with a copy of the `b` node.
@@ -612,7 +615,7 @@ def _test_state_fission_with_map_2_impl(include: str):
     org_state_ac = count_nodes(state, nodes.AccessNode, True)
     assert set(org_state_ac) == {b, c}
     b_c_edge = next(iter(state.out_edges(b)))
-    assert b_c_edge.data.src_subset == dace.subsets.Range.from_string("1:11")
+    assert b_c_edge.data.src_subset == dace.subsets.Range.from_string("1:11, 3")
     assert b_c_edge.data.dst_subset == dace.subsets.Range.from_string("0:10")
 
     # The other nodes contains the other nodes, together with a copy of the `b` node.
