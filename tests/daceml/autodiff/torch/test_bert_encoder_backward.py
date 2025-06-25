@@ -15,7 +15,10 @@ def test_bert_encoder_backward(gpu, sdfg_name):
     hidden_size = 768
 
     input = copy_to_gpu(gpu, torch.randn([batch_size, seq_len, hidden_size]))
-    ptmodel = copy_to_gpu(gpu, BertLayer(BertConfig(hidden_act="relu")).eval())
+    ptmodel = copy_to_gpu(
+        gpu,
+        BertLayer(BertConfig(hidden_act="relu",
+                             hidden_size=hidden_size)).eval())
 
     dace_model = DaceModule(ptmodel,
                             training=False,
@@ -32,3 +35,7 @@ def test_bert_encoder_backward(gpu, sdfg_name):
     dace_model(dace_input).sum().backward()
 
     torch_tensors_close("input_grad", ptinput.grad, dace_input.grad)
+
+
+if __name__ == "__main__":
+    test_bert_encoder_backward(gpu=False, sdfg_name="bert_encoder_backward")

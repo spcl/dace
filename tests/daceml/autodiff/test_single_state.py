@@ -18,6 +18,7 @@ from dace.autodiff import AutoDiffException, add_backward_pass
 
 
 def run_correctness(func):
+
     def test_correctness():
         runner, pytorch_func, inputs = func()
         sdfg_dict = {name: arr.copy() for name, arr in inputs.items()}
@@ -50,6 +51,7 @@ def run_correctness(func):
 
 
 class SDFGBackwardRunner:
+
     def __init__(self, sdfg, target, simplify=True):
         if simplify:
             sdfg.simplify()
@@ -105,6 +107,7 @@ class SDFGBackwardRunner:
 
 @run_correctness
 def test_gemm():
+
     def torch_gemm(*, X, Y):
         Z = X @ Y
         S = Z.sum()
@@ -141,6 +144,7 @@ def test_gemm():
 
 @run_correctness
 def test_sum():
+
     def torch_sum(*, X, Y):
         Z = X + Y
         Z = Z * Z
@@ -179,6 +183,7 @@ def test_sum():
 
 @run_correctness
 def test_complex_tasklet():
+
     def torch_sum(*, X, Y):
         Z = X + Y
         Z = Z * Z
@@ -221,6 +226,7 @@ def test_complex_tasklet():
 
 
 def test_inplace_error():
+
     @dace.program
     def dace_inplace1(
         X: dace.float32[3, 3],
@@ -312,6 +318,7 @@ def test_reused_scalar_inplace_error(sdfg_name):
 
 @run_correctness
 def test_tasklets_direct_scalar_edges():
+
     def torch_func(*, A):
         tmp_a = torch.sqrt(A)
         tmp_b = torch.log(tmp_a + 1)
@@ -362,6 +369,7 @@ def test_tasklets_direct_scalar_edges():
 
 @run_correctness
 def test_tasklets_only_reuse():
+
     def torch_func(*, A):
         tmp_a = torch.sqrt(A)
         tmp_b = torch.log(A + 1)
@@ -406,6 +414,7 @@ def test_tasklets_only_reuse():
 
 @run_correctness
 def test_tasklets_multioutput():
+
     def torch_func(*, A, B):
         tmp_a = torch.sqrt(A)
         tmp_b = torch.log(B + 1)
@@ -458,6 +467,7 @@ def test_tasklets_multioutput():
 
 @run_correctness
 def test_tasklets_only():
+
     def torch_func(*, A, B):
         tmp_a = torch.sqrt(A)
         tmp_b = torch.log(B + 1)
@@ -506,6 +516,7 @@ def test_tasklets_only():
 
 @run_correctness
 def test_add_mmul_transpose_log():
+
     def torch_func(*, X, Y, W):
 
         Xt = X.T
@@ -550,6 +561,7 @@ def test_add_mmul_transpose_log():
 
 @run_correctness
 def test_reduce_node_1_axis_and_none_axis():
+
     def torch_func(*, X, Y, W):
 
         Xt = X.T
@@ -590,6 +602,7 @@ def test_reduce_node_1_axis_and_none_axis():
 @pytest.mark.skip()
 @run_correctness
 def test_reduce_max_simple():
+
     def torch_func(*, W):
 
         Z = torch.max(W, dim=1)
@@ -616,6 +629,7 @@ def test_reduce_max_simple():
 @pytest.mark.skip("max unimplemented for now")
 @run_correctness
 def test_reduce_max_node_1_axis():
+
     def torch_func(*, X, Y, W):
 
         Xt = X.T
@@ -654,6 +668,7 @@ def test_reduce_max_node_1_axis():
 
 @run_correctness
 def test_reshape():
+
     @dace.program
     def single_state_reshape(inp: dace.float64[9], bias: dace.float64[3],
                              target_shape: dace.int64[2]):

@@ -87,15 +87,19 @@ def test_extension():
 
     BUILD_PATH = os.path.join('.dacecache', "pt_extension")
     compiler.generate_program_folder(None, [program], BUILD_PATH)
-    compiler.configure_and_compile(BUILD_PATH)
-    torch.ops.load_library(
-        os.path.join(BUILD_PATH, "build", "libpt_extension.so"))
+    torch.utils.cpp_extension.load(
+        name='pt_extension',
+        sources=[os.path.join(BUILD_PATH, 'src', 'cpu', 'myadd.cpp')],
+        is_python_module=False,
+    )
     print(torch.ops.myops.myadd(torch.randn(32, 32), torch.rand(32, 32)))
 
 
 def test_module_with_constant(gpu, sdfg_name):
+
     @dace.module(cuda=gpu, sdfg_name=sdfg_name)
     class Module(nn.Module):
+
         def forward(self, x):
             return x + 1
 

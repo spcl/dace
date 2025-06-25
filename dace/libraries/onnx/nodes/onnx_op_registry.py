@@ -1,0 +1,374 @@
+import itertools
+import logging
+import collections
+from typing import Iterator, Tuple, List, Dict, Type
+
+import dace
+import dace.library
+import dace.sdfg.nodes as nd
+import dace.frontend.common.op_repository as dace_op_repo
+from dace.frontend.python.newast import ProgramVisitor
+from dace import SDFG, SDFGState, dtypes, data
+from dace.properties import Property, ListProperty, make_properties
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.transformation.transformation import ExpandTransformation
+
+from dace.libraries.onnx.environments import ONNXRuntime
+from dace.libraries.onnx.nodes.node_utils import parse_variadic_param
+from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, ONNXAttribute, ONNXParameter, ONNXTypeConstraint
+from dace.libraries.onnx.nodes.node_codegen import expand_node
+from dace.libraries.onnx.forward_implementation_abc import ONNXForward
+
+import dace.libraries.onnx.nodes.onnx_op as onnx_op
+
+import onnx
+
+# This import is necessary, it registers implementations that will appear in ONNXForward.extensions()
+import dace.libraries.onnx.op_implementations
+
+log = logging.getLogger(__name__)
+
+
+def _get_typecons_docstring(cons: ONNXTypeConstraint) -> str:
+    return "    * **{}** -- {}".format(
+        cons.type_str,
+        ", ".join(":class:`{}`".format(t.to_string()) for t in cons.types))
+
+
+def _get_connector_docstring(param: ONNXParameter) -> str:
+    return "    * **{}** ({}, {}) -- {}".format(param.name, param.type_str,
+                                                param.param_type.name.lower(),
+                                                param.description)
+
+
+def _get_attr_docstring(attr: ONNXAttribute) -> str:
+    param_doc = ":param {}: {}".format(attr.name, attr.description)
+
+    if attr.attribute_type is ONNXAttributeType.Unsupported:
+        return ""
+
+    if attr.attribute_type is ONNXAttributeType.Tensor:
+        type_string = "numpy.ndarray"
+    else:
+        type_string = _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type].__name__
+
+    type_string = ":class:`{}`".format(type_string)
+
+    if attr.attribute_type in [
+            ONNXAttributeType.Ints, ONNXAttributeType.Floats,
+            ONNXAttributeType.Strings
+    ]:
+        type_string = ":class:`List` [{}]".format(type_string)
+
+    if not attr.required:
+        type_string = ":class:`Optional` [{}], default={}".format(
+            type_string, repr(attr.default_value))
+
+    param_type = ":type {}: {}".format(attr.name, type_string)
+
+    return param_doc + "\n" + param_type
+
+
+def _get_latest_schemas():
+    name_to_schemas = collections.defaultdict(list)
+    for schema in onnx.defs.get_all_schemas_with_history():
+        name_to_schemas[schema.name].append(schema)
+
+    all_schemas = []
+    for name, schemas in name_to_schemas.items():
+        # Sort by version and take the latest one
+        schemas = sorted(schemas, key=lambda x: x.since_version)
+        all_schemas.append(schemas[-1])
+
+    return all_schemas
+
+
+def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str,
+                                 dace_schema: ONNXSchema):
+
+    @dace_op_repo.replaces("daceml.onnx.{}".format(cls_name))
+    def op_repo_replacement(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState,
+                            **kwargs):
+        attrs = {
+            name: value
+            for name, value in kwargs.items() if name in dace_schema.attributes
+        }
+        # remove used attrs
+        kwargs = {k: v for k, v in kwargs.items() if k not in attrs}
+
+        onnx_node = cls(name=cls_name, **attrs)
+        state.add_node(onnx_node)
+
+        input_names = dace_schema.non_variadic_inputs()
+        variadic_inputs = dace_schema.variadic_inputs()
+
+        output_names = dace_schema.non_variadic_outputs()
+        variadic_outputs = dace_schema.variadic_outputs()
+
+        inputs = {
+            name: arr_name
+            for name, arr_name in kwargs.items()
+            if (name in input_names or
+                # variadic params
+                ("__" in name
+                 and parse_variadic_param(name)[0] in variadic_inputs))
+        }
+
+        kwargs = {k: v for k, v in kwargs.items() if k not in inputs}
+
+        outputs = {
+            name: arr_name
+            for name, arr_name in kwargs.items()
+            if (name in output_names or
+                # variadic params
+                ("__" in name
+                 and parse_variadic_param(name)[0] in variadic_outputs))
+        }
+
+        kwargs = {k: v for k, v in kwargs.items() if k not in outputs}
+
+        if len(kwargs) > 0:
+            raise TypeError(f"Unknown arguments {', '.join(kwargs)}")
+
+        for inp, arr_name in inputs.items():
+            read = state.add_read(arr_name)
+            state.add_edge(read, None, onnx_node, inp,
+                           sdfg.make_array_memlet(arr_name))
+            onnx_node.add_in_connector(inp)
+
+        for outp, arr_name in outputs.items():
+            write = state.add_read(arr_name)
+            state.add_edge(onnx_node, outp, write, None,
+                           sdfg.make_array_memlet(arr_name))
+            onnx_node.add_out_connector(outp)
+        return []
+
+
+_ONNX_OPS_BY_NAME = {}
+
+# Generate all of the Op Nodes
+for schema in _get_latest_schemas():
+    try:
+        dace_schema = ONNXSchema.from_onnx_proto(schema)
+        # if the schema has a parameter name that exists as both an input and an output, prepend "in_" and "out_"
+        intersecting_names = set(i.name
+                                 for i in dace_schema.inputs).intersection(
+                                     o.name for o in dace_schema.outputs)
+        for name in intersecting_names:
+            in_cands = [i for i in dace_schema.inputs if i.name == name]
+            out_cands = [i for i in dace_schema.outputs if i.name == name]
+            assert len(in_cands) == len(out_cands) == 1
+            in_cands[0].name = "in_" + name
+            out_cands[0].name = "out_" + name
+
+    except Exception as e:
+        log.debug("Import of {} failed: {}".format(schema.name, e))
+        continue
+
+    attrs = {}
+    # add properties for each op attribute
+    for name, attr in dace_schema.attributes.items():
+        if attr.attribute_type in [
+                ONNXAttributeType.Int, ONNXAttributeType.String,
+                ONNXAttributeType.Float, ONNXAttributeType.Tensor
+        ]:
+            attrs[name] = Property(
+                dtype=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
+                desc=attr.description,
+                allow_none=True,
+                default=None
+                if attr.default_value is None else attr.default_value)
+        elif attr.attribute_type in [
+                ONNXAttributeType.Ints, ONNXAttributeType.Strings,
+                ONNXAttributeType.Floats
+        ]:
+            attrs[name] = ListProperty(
+                element_type=_ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type],
+                desc=attr.description,
+                allow_none=True,
+                default=None
+                if attr.default_value is None else attr.default_value)
+        elif attr.required:
+            raise NotImplementedError(
+                "Required attribute '{}' has an unsupported type".format(
+                    attr.name))
+
+    required_attrs = {
+        name
+        for name, attr in dace_schema.attributes.items() if attr.required
+    }
+
+    def __init__(self,
+                 name,
+                 *args,
+                 location=None,
+                 optional=set(),
+                 **op_attributes):
+        super(onnx_op.ONNXOp, self).__init__(
+            name,
+            location=location,
+            # add required parameters as in/out connectors, without types for now
+            inputs={
+                inp.name
+                for inp in self.schema.inputs
+                if inp.param_type == ONNXParameterType.Single or (
+                    inp.name in optional
+                    and inp.param_type == ONNXParameterType.Optional)
+            },
+            outputs={
+                out.name
+                for out in self.schema.outputs
+                if out.param_type == ONNXParameterType.Single or (
+                    out.name in optional
+                    and out.param_type == ONNXParameterType.Optional)
+            })
+        self.backward_implementation = None
+
+        if len(args) > 0:
+            raise TypeError(
+                "__init__() takes 1 positional arguments but {} were given".
+                format(1 + len(args)))
+
+        missing_arguments = required_attrs.difference(op_attributes)
+        if len(missing_arguments) > 0:
+
+            raise TypeError(
+                onnx_op.get_missing_arguments_message("__init__()",
+                                                      missing_arguments,
+                                                      "keyword-only argument"))
+
+        unknown_attrs = set(op_attributes).difference(self.schema.attributes)
+        if len(unknown_attrs) > 0:
+            raise TypeError(
+                "{}.__init__() got an unexpected keyword argument '{}'".format(
+                    self.schema.name,
+                    list(unknown_attrs)[0]))
+
+        for name, attr in op_attributes.items():
+            setattr(self, name, attr)
+
+    input_connector_docstrings = "\n".join(
+        _get_connector_docstring(param) for param in dace_schema.inputs)
+    output_connector_docstrings = "\n".join(
+        _get_connector_docstring(param) for param in dace_schema.outputs)
+
+    cls_name = "ONNX" + dace_schema.name
+
+    # the first line of the init docstring contains the signature of the method. This will be picked up by sphinx and
+    # means that the generated sphinx docs have a proper signature, and not just *args, **kwargs.
+    init_docstring = "__init__(name, *, {})\n".format(
+        ", ".join(attr.name if attr.required else attr.name + "=" +
+                  repr(attr.default_value)
+                  for _, attr in dace_schema.attributes.items()))
+    init_docstring += ":param name: the name of the node.\n" + "\n".join(
+        _get_attr_docstring(attr)
+        for _, attr in dace_schema.attributes.items())
+
+    docstring = "\n" + dace_schema.doc
+    type_docstrings = "\n".join(
+        _get_typecons_docstring(cons)
+        for _, cons in dace_schema.type_constraints.items())
+    docstring += "\n\n"
+    docstring += ":Node Inputs:" + input_connector_docstrings
+    docstring += "\n\n"
+    docstring += ":Node Outputs:" + output_connector_docstrings
+    docstring += "\n\n"
+    docstring += ":Type Constraints:" + type_docstrings
+
+    attrs['__doc__'] = docstring + "\n"
+    attrs['schema'] = dace_schema
+
+    attrs['__init__'] = __init__
+
+    cls = type(cls_name, (onnx_op.ONNXOp, ), attrs)
+    cls = dace.library.node(cls)
+    cls.__init__.__doc__ = "\n" + init_docstring
+
+    # Register ORT implementation
+    ##########################################
+
+    @dace.library.expansion
+    class Expansion(ExpandTransformation):
+        environments = []
+
+        @classmethod
+        def expansion(cls, node, state: SDFGState, sdfg: SDFG):
+            result = expand_node(node, state, sdfg)
+
+            if not isinstance(result, SDFG):
+                # when we return an SDFG the the environments will be determined recursively by codegen.
+                cls.environments = map(dace.library.get_environment,
+                                       result.environments)
+            return result
+
+    cls.register_implementation('onnxruntime', Expansion)
+
+    # Register pure implementations
+    ##########################################
+
+    registered = False
+    for impl, args in ONNXForward.extensions().items():
+        if "op" in args and args["op"] == schema.name:
+
+            class Expansion(ExpandTransformation):
+                environments = []
+                forward_impl: ONNXForward = impl
+
+                @classmethod
+                def expansion(cls, node, state, sdfg, **kwargs):
+                    # validate
+                    node.validate(sdfg, state)
+
+                    if cls.forward_impl.forward_can_be_applied(
+                            node, state, sdfg):
+                        result = cls.forward_impl.forward(
+                            node, state, sdfg, **kwargs)
+                        if hasattr(cls.forward_impl, "environments"):
+                            cls.environments.extend(
+                                cls.forward_impl.environments)
+                        return result
+                    else:
+                        # fall back to ORT
+                        log.info(
+                            'Falling back to onnxruntime expansion for library node "{}". '
+                            'Reason: forward_can_be_applied returned False'.
+                            format(node.label))
+                        result = expand_node(node, state, sdfg)
+                        if not isinstance(result, SDFG):
+                            # when we return an SDFG the the environments will be determined recursively by codegen.
+                            cls.environments = map(
+                                dace.library.get_environment,
+                                result.environments)
+                        return result
+
+            implementation_name = args["name"]
+            cls.register_implementation(implementation_name, Expansion)
+            registered = True
+
+    if not registered:
+        cls.default_implementation = "onnxruntime"
+
+    # register python frontend replacement
+    #######################################
+    register_op_repo_replacement(cls, cls_name, dace_schema)
+
+    globals()[cls_name] = cls
+    _ONNX_OPS_BY_NAME[cls_name] = cls
+
+    del cls
+
+
+def has_onnx_node(name: str) -> bool:
+    """ Check if an ONNX operator is supported.
+
+        :param name: the operator name.
+    """
+    return ("ONNX" + name) in _ONNX_OPS_BY_NAME
+
+
+def get_onnx_node(name: str) -> onnx_op.ONNXOp:
+    """ Get the ONNX Operator node for an operator by name.
+
+        :param name: the operator name
+    """
+    return _ONNX_OPS_BY_NAME["ONNX" + name]

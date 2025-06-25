@@ -200,32 +200,133 @@ __data_grad = __output_grad * __mask * scale
 
 @autoregister_params(op="Softmax", name="default")
 class DefaultSoftmaxBackward(BackwardImplementation):
-
     @staticmethod
-    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
-                 required_gradients: List[Optional[str]]) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
+    def backward(
+        forward_node: nd.Node, context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]]
+    ) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
 
         dim = forward_node.axis
 
-        output_shape = butils.forward_out_desc_with_name(forward_node, context, "output").shape
-        output_dtype = butils.forward_out_desc_with_name(forward_node, context, "output").dtype
+        output_desc = copy.deepcopy(butils.forward_out_desc_with_name(forward_node, context, "output"))
+        output_desc.transient = False
 
-        sums_shape = list(copy.deepcopy(output_shape))
+        sums_shape = list(copy.deepcopy(output_desc.shape))
         sums_shape[dim] = 1
 
-        def softmax_backward(output, output_grad, input_grad):
-            prod = dace.define_local(output_shape, output_dtype)
-            sums = dace.define_local(sums_shape, output_dtype)
-            donnx.ONNXMul(A=output, B=output_grad, C=prod)
-            donnx.ONNXReduceSum(data=prod, reduced=sums, keepdims=1, axes=[dim])
+        # Create new SDFG
+        nsdfg = dace.SDFG(forward_node.label + "_backward")
+        nstate = nsdfg.add_state()
 
-            donnx.ONNXMul(A=output, B=sums, C=input_grad)
-            # let's not use ONNXSub here; not sure how this inplace op is handled by ORT...
-            input_grad[:] = prod - input_grad
+        result = BackwardResult.empty()
 
-        result_node, result = butils.backward_program_for_node(softmax_backward, context, forward_node)
+        # Given gradients (from output of forward pass)
+        result.given_grad_names["output"] = "output_grad"
+        output_grad_desc = copy.deepcopy(output_desc)
+        nsdfg.add_datadesc("output_grad", output_grad_desc)
 
-        butils.connect_output_from_forward(forward_node, result_node, context, "output")
+        # Required gradient to be computed
+        input_name = "input"
+        if "input" not in required_gradients:
+            # this can happen for example in bert, where the input to softmax is masked
+            input_name = next(iter(required_gradients))
+
+        input_grad_desc = copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, input_name))
+        input_grad_desc.transient = False
+        result.required_grad_names[input_name] = "input_grad"
+        nsdfg.add_datadesc("input_grad", input_grad_desc)
+
+        # We need the output of the forward op
+        nsdfg.add_datadesc("output", output_desc)
+
+        # Intermediate arrays
+        prod_desc = copy.deepcopy(output_desc)
+        prod_desc.transient = True
+        nsdfg.add_datadesc("prod", prod_desc)
+
+        sums_desc = dace.data.Array(dace.float32, sums_shape, transient=True)
+        nsdfg.add_datadesc("sums", sums_desc)
+
+        sub_term_desc = copy.deepcopy(output_desc)
+        sub_term_desc.transient = True
+        nsdfg.add_datadesc("sub_term", sub_term_desc)
+
+        # Add nodes
+        output_grad_read = nstate.add_read("output_grad")
+        forward_output_read = nstate.add_read("output")
+        input_grad_write = nstate.add_write("input_grad")
+        prod_access = nstate.add_access("prod")
+        sums_access = nstate.add_access("sums")
+        sub_term_access = nstate.add_access("sub_term")
+
+        # prod = forward_output * output_grad
+        mul_node1 = donnx.ONNXMul("mul_prod")
+        nstate.add_node(mul_node1)
+        nstate.add_edge(forward_output_read, None, mul_node1, "A",
+                        nsdfg.make_array_memlet("output"))
+        nstate.add_edge(output_grad_read, None, mul_node1, "B",
+                        nsdfg.make_array_memlet("output_grad"))
+        nstate.add_edge(mul_node1, "C", prod_access, None,
+                        nsdfg.make_array_memlet("prod"))
+
+        # sums = ReduceSum(prod, axes=[dim], keepdims=1)
+        reduce_sum_node = donnx.ONNXReduceSum("reduce_sum",
+                                              keepdims=1, optional={"axes"})
+        nstate.add_node(reduce_sum_node)
+
+        # Setup the axes input for the ReduceSum node
+        axes_name, _ = nsdfg.add_array(
+            name="reduce_sum_axes",
+            shape=[1],
+            dtype=dace.int64,
+            transient=True)
+        axes_access = nstate.add_access(axes_name)
+        axes_tasklet = nstate.add_tasklet("init_axes", {}, {"out"},
+                                          f"out = {dim};", language=dace.Language.CPP)
+        nstate.add_edge(axes_tasklet, "out", axes_access, None,
+                        dace.Memlet(f"{axes_name}"))
+
+        nstate.add_edge(prod_access, None, reduce_sum_node, "data",
+                        nsdfg.make_array_memlet("prod"))
+        nstate.add_edge(axes_access, None, reduce_sum_node, "axes",
+                        nsdfg.make_array_memlet(axes_name))
+        nstate.add_edge(reduce_sum_node, "reduced", sums_access, None,
+                        nsdfg.make_array_memlet("sums"))
+
+        # sub_term = forward_output * sums
+        mul_node2 = donnx.ONNXMul("mul_sub_term")
+        nstate.add_node(mul_node2)
+        nstate.add_edge(forward_output_read, None, mul_node2, "A",
+                        nsdfg.make_array_memlet("output"))
+        nstate.add_edge(sums_access, None, mul_node2, "B",
+                        nsdfg.make_array_memlet("sums"))
+        nstate.add_edge(mul_node2, "C", sub_term_access, None,
+                        nsdfg.make_array_memlet("sub_term"))
+
+        # input_grad = prod - sub_term
+        sub_node = donnx.ONNXSub("sub_input_grad")
+        nstate.add_node(sub_node)
+        nstate.add_edge(prod_access, None, sub_node, "A",
+                        nsdfg.make_array_memlet("prod"))
+        nstate.add_edge(sub_term_access, None, sub_node, "B",
+                        nsdfg.make_array_memlet("sub_term"))
+        nstate.add_edge(sub_node, "C", input_grad_write, None,
+                        nsdfg.make_array_memlet("input_grad"))
+
+        # Create nested SDFG
+        result_node = context.backward_state.add_nested_sdfg(
+            nsdfg,
+            None,
+            # Inputs to nested SDFG
+            {"output", "output_grad"},
+            # Outputs from nested SDFG
+            {"input_grad"})
+
+        butils.connect_output_from_forward(forward_node,
+                                           result_node,
+                                           context,
+                                           "output")
 
         return result_node, result
 
@@ -466,7 +567,7 @@ class CuDNNConvBackward(BackwardImplementation):
             free_fake_data_code, fake_data_init_code = setup_fake_data(forward_node, context.forward_sdfg,
                                                                        context.forward_state, True)
 
-            # setup algo
+            # setup workspace
             init_code += f"""
             // setup fake data
             {fake_data_init_code}
@@ -821,7 +922,7 @@ class CuDNNConvTransposeBackward(BackwardImplementation):
             free_fake_data_code, fake_data_init_code = setup_fake_data(forward_node, context.forward_sdfg,
                                                                        context.forward_state, True)
 
-            # setup algo
+            # setup workspace
             init_code += f"""
             // setup fake data
             {fake_data_init_code}
@@ -1478,5 +1579,538 @@ class WhereBackward(BackwardImplementation):
                 Y_grad[:] = ~condition * output_grad
 
         result_node, result = butils.backward_program_for_node(where_backward, context, forward_node)
+
+        return result_node, result
+
+@autoregister_params(op="LayerNormalization", name="default")
+class DefaultLayerNormalizationBackward(BackwardImplementation):
+    @staticmethod
+    def backward(
+        forward_node: nd.Node, context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]]
+    ) -> Tuple[nd.Node, BackwardResult]:
+        # Create new SDFG
+        nsdfg = dace.SDFG(forward_node.label + "_backward")
+        nstate = nsdfg.add_state()
+
+        # Get input/output descriptors
+        X_desc = copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, "X"))
+        Scale_desc = copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, "Scale"))
+        Y_grad_desc = copy.deepcopy(butils.forward_out_desc_with_name(forward_node, context, "Y"))
+        X_desc.transient = False
+        Y_grad_desc.transient = False
+        Scale_desc.transient = False
+
+        result = BackwardResult.empty()
+        # setup gradient arrays
+        result.given_grad_names["Y"] = "Y_grad"
+        if "X" in required_gradients:
+            result.required_grad_names["X"] = "X_grad"
+        if "Scale" in required_gradients:
+            result.required_grad_names["Scale"] = "Scale_grad"
+        if "B" in required_gradients:
+            result.required_grad_names["B"] = "B_grad"
+
+        # Add data descriptors to SDFG
+        nsdfg.add_datadesc("X", X_desc)
+        nsdfg.add_datadesc("Scale", Scale_desc)
+        nsdfg.add_datadesc("Y_grad", Y_grad_desc)
+
+        if "X" in required_gradients:
+            X_grad_desc = copy.deepcopy(X_desc)
+            nsdfg.add_datadesc("X_grad", X_grad_desc)
+        if "Scale" in required_gradients:
+            Scale_grad_desc = copy.deepcopy(Scale_desc)
+            nsdfg.add_datadesc("Scale_grad", Scale_grad_desc)
+        if "B" in required_gradients:
+            B_desc = copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, "B"))
+            B_desc.transient = False
+            B_grad_desc = copy.deepcopy(B_desc)
+            nsdfg.add_datadesc("B_grad", B_grad_desc)
+            # Add B to SDFG inputs when needed
+            nsdfg.add_datadesc("B", B_desc)
+
+        # Get axis and epsilon
+        axis = forward_node.axis if hasattr(forward_node, 'axis') else -1
+        epsilon = forward_node.epsilon if hasattr(
+            forward_node, 'epsilon') else 1e-5
+
+        rank = len(X_desc.shape)
+        if axis < 0:
+            axis = rank + axis
+        reduction_axes = list(range(axis, rank))
+        norm_size = float(
+            np.prod([X_desc.shape[i] for i in range(axis, rank)]))
+
+        # Create axes tensor for reduction
+        axes_name = "reduction_axes"
+        axes_desc = dace.data.Array(dace.int64, [len(reduction_axes)])
+        axes_desc.transient = True  # Make it transient since it's internal
+        nsdfg.add_datadesc(axes_name, axes_desc)
+        axes_access = nstate.add_access(axes_name)
+
+        # Initialize reduction axes as a constant array
+        axes_tasklet = nstate.add_tasklet(
+            name="init_axes",
+            inputs={},
+            outputs={"out": dace.pointer(dace.int64)},
+            code=f"\n".join([f"out[{i}] = {val};" for i, val in enumerate(reduction_axes)]),
+            language=dace.Language.CPP
+        )
+        nstate.add_edge(axes_tasklet, "out", axes_access, None,
+                       dace.Memlet(f"{axes_name}[0:{len(reduction_axes)}]"))
+
+        # Create mean descriptor with reduced shape
+        mean_shape = list(X_desc.shape)
+        for i in reduction_axes:
+            mean_shape[i] = 1
+        mean_desc = dace.data.Array(X_desc.dtype, mean_shape)
+        mean_desc.transient = True
+        mean_name = "mean"
+        nsdfg.add_datadesc(mean_name, mean_desc)
+
+        mean_op = donnx.ONNXReduceMean("mean_op",
+                                     keepdims=1, optional={"axes"})
+        nstate.add_node(mean_op)
+        nstate.add_edge(nstate.add_read("X"), None, mean_op, "data",
+                       nsdfg.make_array_memlet("X"))
+        nstate.add_edge(axes_access, None, mean_op, "axes",
+                       nsdfg.make_array_memlet(axes_name))
+        mean_access = nstate.add_access("mean")
+        nstate.add_edge(mean_op, "reduced", mean_access, None,
+                       nsdfg.make_array_memlet("mean"))
+
+        # Recompute variance
+        diff_shape = list(X_desc.shape)
+        diff_desc = dace.data.Array(X_desc.dtype, diff_shape)
+        diff_desc.transient = True
+        diff_name = "diff"
+        nsdfg.add_datadesc(diff_name, diff_desc)
+
+        diff_op = donnx.ONNXSub("diff_op")
+        nstate.add_node(diff_op)
+        nstate.add_edge(nstate.add_read("X"), None, diff_op, "A",
+                       nsdfg.make_array_memlet("X"))
+        nstate.add_edge(mean_access, None, diff_op, "B",
+                       nsdfg.make_array_memlet("mean"))
+        diff_access = nstate.add_access("diff")
+        nstate.add_edge(diff_op, "C", diff_access, None,
+                       nsdfg.make_array_memlet("diff"))
+
+        # Create squared difference descriptor
+        sq_diff_shape = list(X_desc.shape)
+        sq_diff_desc = dace.data.Array(X_desc.dtype, sq_diff_shape)
+        sq_diff_desc.transient = True
+        sq_diff_name = "sq_diff"
+        nsdfg.add_datadesc(sq_diff_name, sq_diff_desc)
+
+        sq_diff_op = donnx.ONNXMul("sq_diff_op")
+        nstate.add_node(sq_diff_op)
+        nstate.add_edge(diff_access, None, sq_diff_op, "A",
+                       nsdfg.make_array_memlet("diff"))
+        nstate.add_edge(diff_access, None, sq_diff_op, "B",
+                       nsdfg.make_array_memlet("diff"))
+        sq_diff_access = nstate.add_access("sq_diff")
+        nstate.add_edge(sq_diff_op, "C", sq_diff_access, None,
+                       nsdfg.make_array_memlet("sq_diff"))
+
+        # Create variance descriptor with reduced shape
+        variance_shape = list(X_desc.shape)
+        for i in reduction_axes:
+            variance_shape[i] = 1
+        variance_desc = dace.data.Array(X_desc.dtype, variance_shape)
+        variance_desc.transient = True
+        variance_name = "variance"
+        nsdfg.add_datadesc(variance_name, variance_desc)
+
+        variance_op = donnx.ONNXReduceMean("variance_op",
+                                         keepdims=1, optional={"axes"})
+        nstate.add_node(variance_op)
+        nstate.add_edge(sq_diff_access, None, variance_op, "data",
+                       nsdfg.make_array_memlet("sq_diff"))
+        nstate.add_edge(axes_access, None, variance_op, "axes",
+                       nsdfg.make_array_memlet(axes_name))
+        variance_access = nstate.add_access("variance")
+        nstate.add_edge(variance_op, "reduced", variance_access, None,
+                       nsdfg.make_array_memlet("variance"))
+
+        # Add epsilon to variance
+        epsilon_name, epsilon_desc = nsdfg.add_scalar("epsilon",
+                                                     X_desc.dtype,
+                                                     transient=True)
+        epsilon_tasklet = nstate.add_tasklet(
+            "make_epsilon", {}, {"out"},
+            f"out = {epsilon};",
+            language=dace.Language.CPP,
+        )
+        epsilon_write = nstate.add_write(epsilon_name)
+        nstate.add_edge(epsilon_tasklet, "out", epsilon_write, None,
+                        dace.Memlet(f"{epsilon_name}[0]"))
+
+        # Create variance_eps descriptor
+        variance_eps_desc = dace.data.Array(X_desc.dtype, variance_shape)
+        variance_eps_desc.transient = True
+        variance_eps_name = "variance_eps"
+        nsdfg.add_datadesc(variance_eps_name, variance_eps_desc)
+
+        variance_eps_op = donnx.ONNXAdd("variance_eps_op")
+        nstate.add_node(variance_eps_op)
+        nstate.add_edge(variance_access, None, variance_eps_op, "A",
+                        nsdfg.make_array_memlet("variance"))
+        nstate.add_edge(epsilon_write, None, variance_eps_op, "B",
+                        nsdfg.make_array_memlet(epsilon_name))
+        variance_eps_access = nstate.add_access("variance_eps")
+        nstate.add_edge(variance_eps_op, "C", variance_eps_access, None,
+                        nsdfg.make_array_memlet("variance_eps"))
+
+        # Create std_dev descriptor
+        std_dev_desc = dace.data.Array(X_desc.dtype, variance_shape)
+        std_dev_desc.transient = True
+        std_dev_name = "std_dev"
+        nsdfg.add_datadesc(std_dev_name, std_dev_desc)
+
+        std_dev_op = donnx.ONNXSqrt("std_dev_op")
+        nstate.add_node(std_dev_op)
+        nstate.add_edge(variance_eps_access, None, std_dev_op, "X",
+                        nsdfg.make_array_memlet("variance_eps"))
+        std_dev_access = nstate.add_access("std_dev")
+        nstate.add_edge(std_dev_op, "Y", std_dev_access, None,
+                        nsdfg.make_array_memlet("std_dev"))
+
+        # Create inv_std_dev descriptor
+        one_name, one_desc = nsdfg.add_scalar("one", X_desc.dtype, transient=True)
+        one_tasklet = nstate.add_tasklet("make_one", {}, {"out"}, "out = 1.0;", language=dace.Language.CPP)
+        one_write = nstate.add_write(one_name)
+        nstate.add_edge(one_tasklet, "out", one_write, None,
+                        dace.Memlet(f"{one_name}[0]"))
+
+        inv_std_dev_desc = dace.data.Array(X_desc.dtype, variance_shape)
+        inv_std_dev_desc.transient = True
+        inv_std_dev_name = "inv_std_dev"
+        nsdfg.add_datadesc(inv_std_dev_name, inv_std_dev_desc)
+
+        inv_std_dev_op = donnx.ONNXDiv("inv_std_dev_op")
+        nstate.add_node(inv_std_dev_op)
+        nstate.add_edge(one_write, None, inv_std_dev_op, "A",
+                        nsdfg.make_array_memlet(one_name))
+        nstate.add_edge(std_dev_access, None, inv_std_dev_op, "B",
+                        nsdfg.make_array_memlet("std_dev"))
+        inv_std_dev_access = nstate.add_access("inv_std_dev")
+        nstate.add_edge(inv_std_dev_op, "C", inv_std_dev_access, None,
+                        nsdfg.make_array_memlet("inv_std_dev"))
+
+        # Create x_hat descriptor (normalized input)
+        x_hat_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+        x_hat_desc.transient = True
+        x_hat_name = "x_hat"
+        nsdfg.add_datadesc(x_hat_name, x_hat_desc)
+
+        x_hat_op = donnx.ONNXMul("x_hat_op")
+        nstate.add_node(x_hat_op)
+        nstate.add_edge(diff_access, None, x_hat_op, "A",
+                        nsdfg.make_array_memlet("diff"))
+        nstate.add_edge(inv_std_dev_access, None, x_hat_op, "B",
+                        nsdfg.make_array_memlet("inv_std_dev"))
+        x_hat_access = nstate.add_access("x_hat")
+        nstate.add_edge(x_hat_op, "C", x_hat_access, None,
+                        nsdfg.make_array_memlet("x_hat"))
+
+        # Compute bias gradient if needed
+        if "B" in required_gradients:
+            b_grad_op = donnx.ONNXReduceSum("b_grad_op", keepdims=0, optional={"axes"})
+            nstate.add_node(b_grad_op)
+            nstate.add_edge(nstate.add_read("Y_grad"), None, b_grad_op, "data",
+                           nsdfg.make_array_memlet("Y_grad"))
+            nstate.add_edge(axes_access, None, b_grad_op, "axes",
+                           nsdfg.make_array_memlet(axes_name))
+            nstate.add_edge(b_grad_op, "reduced", nstate.add_write("B_grad"), None,
+                           nsdfg.make_array_memlet("B_grad"))
+
+        # Compute scale gradient if needed
+        if "Scale" in required_gradients:
+            dY_x_hat_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            dY_x_hat_desc.transient = True
+            dY_x_hat_name = "dY_x_hat"
+            nsdfg.add_datadesc(dY_x_hat_name, dY_x_hat_desc)
+
+            dY_x_hat_op = donnx.ONNXMul("dY_x_hat_op")
+            nstate.add_node(dY_x_hat_op)
+            nstate.add_edge(nstate.add_read("Y_grad"), None, dY_x_hat_op, "A",
+                            nsdfg.make_array_memlet("Y_grad"))
+            nstate.add_edge(x_hat_access, None, dY_x_hat_op, "B",
+                            nsdfg.make_array_memlet("x_hat"))
+            dY_x_hat_access = nstate.add_access("dY_x_hat")
+            nstate.add_edge(dY_x_hat_op, "C", dY_x_hat_access, None,
+                            nsdfg.make_array_memlet("dY_x_hat"))
+
+            scale_grad_op = donnx.ONNXReduceSum("scale_grad_op", keepdims=0, optional={"axes"})
+            nstate.add_node(scale_grad_op)
+            nstate.add_edge(dY_x_hat_access, None, scale_grad_op, "data",
+                           nsdfg.make_array_memlet("dY_x_hat"))
+            nstate.add_edge(axes_access, None, scale_grad_op, "axes",
+                           nsdfg.make_array_memlet(axes_name))
+            nstate.add_edge(scale_grad_op, "reduced", nstate.add_write("Scale_grad"), None,
+                           nsdfg.make_array_memlet("Scale_grad"))
+
+        # Compute X gradient if needed
+        if "X" in required_gradients:
+            # Create dX_hat descriptor (gradient with respect to normalized input)
+            dX_hat_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            dX_hat_desc.transient = True
+            dX_hat_name = "dX_hat"
+            nsdfg.add_datadesc(dX_hat_name, dX_hat_desc)
+
+            dX_hat_op = donnx.ONNXMul("dX_hat_op")
+            nstate.add_node(dX_hat_op)
+            nstate.add_edge(nstate.add_read("Y_grad"), None, dX_hat_op, "A",
+                            nsdfg.make_array_memlet("Y_grad"))
+            nstate.add_edge(nstate.add_read("Scale"), None, dX_hat_op, "B",
+                            nsdfg.make_array_memlet("Scale"))
+            dX_hat_access = nstate.add_access("dX_hat")
+            nstate.add_edge(dX_hat_op, "C", dX_hat_access, None,
+                            nsdfg.make_array_memlet("dX_hat"))
+
+            # Compute mean of dX_hat over reduction axes
+            dX_hat_mean_desc = dace.data.Array(X_desc.dtype, variance_shape)
+            dX_hat_mean_desc.transient = True
+            dX_hat_mean_name = "dX_hat_mean"
+            nsdfg.add_datadesc(dX_hat_mean_name, dX_hat_mean_desc)
+
+            dX_hat_mean_op = donnx.ONNXReduceMean("dX_hat_mean_op",
+                                                 keepdims=1, optional={"axes"})
+            nstate.add_node(dX_hat_mean_op)
+            nstate.add_edge(dX_hat_access, None, dX_hat_mean_op, "data",
+                            nsdfg.make_array_memlet("dX_hat"))
+            nstate.add_edge(axes_access, None, dX_hat_mean_op, "axes",
+                           nsdfg.make_array_memlet(axes_name))
+            dX_hat_mean_access = nstate.add_access("dX_hat_mean")
+            nstate.add_edge(dX_hat_mean_op, "reduced", dX_hat_mean_access, None,
+                           nsdfg.make_array_memlet("dX_hat_mean"))
+
+            # Compute dX_hat * x_hat
+            dX_hat_x_hat_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            dX_hat_x_hat_desc.transient = True
+            dX_hat_x_hat_name = "dX_hat_x_hat"
+            nsdfg.add_datadesc(dX_hat_x_hat_name, dX_hat_x_hat_desc)
+
+            dX_hat_x_hat_op = donnx.ONNXMul("dX_hat_x_hat_op")
+            nstate.add_node(dX_hat_x_hat_op)
+            nstate.add_edge(dX_hat_access, None, dX_hat_x_hat_op, "A",
+                            nsdfg.make_array_memlet("dX_hat"))
+            nstate.add_edge(x_hat_access, None, dX_hat_x_hat_op, "B",
+                            nsdfg.make_array_memlet("x_hat"))
+            dX_hat_x_hat_access = nstate.add_access("dX_hat_x_hat")
+            nstate.add_edge(dX_hat_x_hat_op, "C", dX_hat_x_hat_access, None,
+                            nsdfg.make_array_memlet("dX_hat_x_hat"))
+
+            # Compute mean of dX_hat * x_hat over reduction axes
+            dX_hat_x_hat_mean_desc = dace.data.Array(X_desc.dtype, variance_shape)
+            dX_hat_x_hat_mean_desc.transient = True
+            dX_hat_x_hat_mean_name = "dX_hat_x_hat_mean"
+            nsdfg.add_datadesc(dX_hat_x_hat_mean_name, dX_hat_x_hat_mean_desc)
+
+            dX_hat_x_hat_mean_op = donnx.ONNXReduceMean("dX_hat_x_hat_mean_op",
+                                                       keepdims=1, optional={"axes"})
+            nstate.add_node(dX_hat_x_hat_mean_op)
+            nstate.add_edge(dX_hat_x_hat_access, None, dX_hat_x_hat_mean_op,
+                            "data", nsdfg.make_array_memlet("dX_hat_x_hat"))
+            nstate.add_edge(axes_access, None, dX_hat_x_hat_mean_op, "axes",
+                           nsdfg.make_array_memlet(axes_name))
+            dX_hat_x_hat_mean_access = nstate.add_access("dX_hat_x_hat_mean")
+            nstate.add_edge(dX_hat_x_hat_mean_op, "reduced", dX_hat_x_hat_mean_access,
+                           None, nsdfg.make_array_memlet("dX_hat_x_hat_mean"))
+
+            # Compute x_hat * mean(dX_hat * x_hat)
+            x_hat_dX_hat_x_hat_mean_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            x_hat_dX_hat_x_hat_mean_desc.transient = True
+            x_hat_dX_hat_x_hat_mean_name = "x_hat_dX_hat_x_hat_mean"
+            nsdfg.add_datadesc(x_hat_dX_hat_x_hat_mean_name, x_hat_dX_hat_x_hat_mean_desc)
+
+            x_hat_dX_hat_x_hat_mean_op = donnx.ONNXMul("x_hat_dX_hat_x_hat_mean_op")
+            nstate.add_node(x_hat_dX_hat_x_hat_mean_op)
+            nstate.add_edge(x_hat_access, None, x_hat_dX_hat_x_hat_mean_op, "A",
+                            nsdfg.make_array_memlet("x_hat"))
+            nstate.add_edge(dX_hat_x_hat_mean_access, None, x_hat_dX_hat_x_hat_mean_op, "B",
+                            nsdfg.make_array_memlet("dX_hat_x_hat_mean"))
+            x_hat_dX_hat_x_hat_mean_access = nstate.add_access("x_hat_dX_hat_x_hat_mean")
+            nstate.add_edge(x_hat_dX_hat_x_hat_mean_op, "C", x_hat_dX_hat_x_hat_mean_access, None,
+                            nsdfg.make_array_memlet("x_hat_dX_hat_x_hat_mean"))
+
+            # Compute dX_hat - mean(dX_hat) - x_hat * mean(dX_hat * x_hat)
+            dX_hat_minus_mean_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            dX_hat_minus_mean_desc.transient = True
+            dX_hat_minus_mean_name = "dX_hat_minus_mean"
+            nsdfg.add_datadesc(dX_hat_minus_mean_name, dX_hat_minus_mean_desc)
+
+            dX_hat_minus_mean_op = donnx.ONNXSub("dX_hat_minus_mean_op")
+            nstate.add_node(dX_hat_minus_mean_op)
+            nstate.add_edge(dX_hat_access, None, dX_hat_minus_mean_op, "A",
+                            nsdfg.make_array_memlet("dX_hat"))
+            nstate.add_edge(dX_hat_mean_access, None, dX_hat_minus_mean_op, "B",
+                            nsdfg.make_array_memlet("dX_hat_mean"))
+            dX_hat_minus_mean_access = nstate.add_access("dX_hat_minus_mean")
+            nstate.add_edge(dX_hat_minus_mean_op, "C", dX_hat_minus_mean_access, None,
+                            nsdfg.make_array_memlet("dX_hat_minus_mean"))
+
+            # Final subtraction
+            dX_hat_final_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            dX_hat_final_desc.transient = True
+            dX_hat_final_name = "dX_hat_final"
+            nsdfg.add_datadesc(dX_hat_final_name, dX_hat_final_desc)
+
+            dX_hat_final_op = donnx.ONNXSub("dX_hat_final_op")
+            nstate.add_node(dX_hat_final_op)
+            nstate.add_edge(dX_hat_minus_mean_access, None, dX_hat_final_op, "A",
+                            nsdfg.make_array_memlet("dX_hat_minus_mean"))
+            nstate.add_edge(x_hat_dX_hat_x_hat_mean_access, None, dX_hat_final_op, "B",
+                            nsdfg.make_array_memlet("x_hat_dX_hat_x_hat_mean"))
+            dX_hat_final_access = nstate.add_access("dX_hat_final")
+            nstate.add_edge(dX_hat_final_op, "C", dX_hat_final_access, None,
+                            nsdfg.make_array_memlet("dX_hat_final"))
+
+            # Multiply by inv_std_dev to get final X gradient
+            x_grad_op = donnx.ONNXMul("x_grad_op")
+            nstate.add_node(x_grad_op)
+            nstate.add_edge(inv_std_dev_access, None, x_grad_op, "A",
+                            nsdfg.make_array_memlet("inv_std_dev"))
+            nstate.add_edge(dX_hat_final_access, None, x_grad_op, "B",
+                            nsdfg.make_array_memlet("dX_hat_final"))
+            nstate.add_edge(x_grad_op, "C", nstate.add_write("X_grad"), None,
+                            nsdfg.make_array_memlet("X_grad"))
+
+        # Set up inputs for nested SDFG
+        inputs = {"X", "Scale", "Y_grad"}
+        if "B" in required_gradients:
+            inputs.add("B")
+        
+        outputs = set(result.required_grad_names.values())
+        bwd_node = context.backward_state.add_nested_sdfg(nsdfg, None, inputs,
+                                                          outputs)
+        return bwd_node, result
+
+
+@autoregister_params(op="ReduceSum", name="default")
+class DefaultReduceSumBackward(BackwardImplementation):
+    @staticmethod
+    def backward_can_be_applied(node: nd.Node, state: dace.SDFGState,
+                                sdfg: dace.SDFG) -> bool:
+        return True
+
+    @staticmethod
+    def backward(
+        forward_node: nd.Node, context: BackwardContext,
+        given_gradients: List[Optional[str]],
+        required_gradients: List[Optional[str]]
+    ) -> Tuple[nd.Node, BackwardResult]:
+
+        # The backward pass of a reduction is a broadcast.
+        # We use ONNXExpand to perform the broadcast.
+        # If keepdims=False, we first need to unsqueeze the gradient.
+
+        input_desc = butils.forward_in_desc_with_name(forward_node, context, "data")
+        output_desc = butils.forward_out_desc_with_name(forward_node, context, "reduced")
+
+        nsdfg = dace.SDFG(f"{forward_node.label}_backward")
+        nstate = nsdfg.add_state()
+
+        result = BackwardResult.empty()
+        result.given_grad_names["reduced"] = "reduced_grad"
+        result.required_grad_names["data"] = "data_grad"
+
+        reduced_grad_desc = copy.deepcopy(output_desc)
+        reduced_grad_desc.transient = False
+        nsdfg.add_datadesc("reduced_grad", reduced_grad_desc)
+
+        data_grad_desc = copy.deepcopy(input_desc)
+        nsdfg.add_datadesc("data_grad", data_grad_desc)
+
+        grad_to_expand = "reduced_grad"
+        read_grad_to_expand = nstate.add_read(grad_to_expand)
+        
+        keepdims = getattr(forward_node, 'keepdims', 1)
+
+        if not keepdims:
+            # When keepdims is False, the rank of the output is reduced. We need to
+            # unsqueeze the gradient to match the input rank before broadcasting.
+            
+            # Deduce reduced axes by comparing input and output shapes.
+            in_shape = input_desc.shape
+            out_shape = reduced_grad_desc.shape
+            unsqueezed_shape = []
+            axes = []
+            assert len(in_shape) >= len(out_shape)
+            if len(in_shape) > len(out_shape):
+                # This assumes that non-reduced dimensions are preserved in order.
+                out_shape_idx = 0
+                for i, dim in enumerate(in_shape):
+                    if out_shape_idx < len(out_shape) and dim == out_shape[out_shape_idx]:
+                        out_shape_idx += 1
+                        unsqueezed_shape.append(dim)
+                    else:
+                        axes.append(i)
+                        unsqueezed_shape.append(1)
+                        
+            # If shapes are equal, it's a no-op reduction and axes is empty.
+            assert (not axes) == (len(in_shape) == len(out_shape))
+            
+            if 'axes' in forward_node.in_connectors:
+                # The axes are a dynamic input to the forward node. Pass them to the backward node.
+                axes_desc = butils.forward_in_desc_with_name(forward_node, context, "axes")
+                axes_desc_copy = copy.deepcopy(axes_desc)
+                axes_desc_copy.transient = False
+                nsdfg.add_datadesc("axes", axes_desc_copy)
+                axes_access = nstate.add_read("axes")
+            elif axes:
+                # Create a constant array for the axes to be passed to Unsqueeze
+                axes_name_in_bwd, axes_desc_bwd = nsdfg.add_array(f"axes_for_unsqueeze_{forward_node.name}", [len(axes)],
+                                                                    dace.int64,
+                                                                    transient=True)
+                axes_tasklet = nstate.add_tasklet(
+                    'init_axes', {}, {'out'},
+                    '\n'.join([f'out[{i}] = {v};' for i, v in enumerate(axes)]),
+                    language=dace.Language.CPP,
+                )
+                axes_access = nstate.add_access(axes_name_in_bwd)
+                nstate.add_edge(axes_tasklet, 'out', axes_access, None, dace.Memlet.from_array(axes_name_in_bwd,
+                                                                                                   axes_desc_bwd))
+            
+            unsqueezed_desc = dace.data.Array(dtype=reduced_grad_desc.dtype, shape=unsqueezed_shape, transient=True)
+            nsdfg.add_datadesc("unsqueezed_grad", unsqueezed_desc)
+
+            unsqueeze_op = donnx.ONNXUnsqueeze("unsqueeze_grad")
+            nstate.add_node(unsqueeze_op)
+
+            nstate.add_edge(read_grad_to_expand, None, unsqueeze_op, "data", nsdfg.make_array_memlet("reduced_grad"))
+            nstate.add_edge(axes_access, None, unsqueeze_op, "axes", dace.Memlet(data=axes_access.data,
+                                                                                subset=f'0:{axes_access.desc(nsdfg).shape[0]}'))
+
+            grad_to_expand = "unsqueezed_grad"
+            read_grad_to_expand = nstate.add_access(grad_to_expand)
+            nstate.add_edge(unsqueeze_op, "expanded", read_grad_to_expand, None,
+                            nsdfg.make_array_memlet("unsqueezed_grad"))
+
+        # Create shape tensor for ONNXExpand
+        shape_name, shape_desc = nsdfg.add_array("shape_for_expand", [len(input_desc.shape)], dace.int64,
+                                                 transient=True)
+        shape_tasklet = nstate.add_tasklet("init_shape", {}, {"out"},
+                                           '\n'.join([f"out[{i}] = {s};" for i, s in enumerate(input_desc.shape)]))
+        shape_access = nstate.add_access(shape_name)
+        nstate.add_edge(shape_tasklet, "out", shape_access, None, dace.Memlet.from_array(shape_name, shape_desc))
+
+        expand_op = donnx.ONNXExpand("expand_grad")
+        nstate.add_node(expand_op)
+        write_data_grad = nstate.add_write("data_grad")
+        
+        nstate.add_edge(read_grad_to_expand, None, expand_op, "input", nsdfg.make_array_memlet(grad_to_expand))
+        nstate.add_edge(shape_access, None, expand_op, "shape", nsdfg.make_array_memlet(shape_name))
+        nstate.add_edge(expand_op, "output", write_data_grad, None, nsdfg.make_array_memlet("data_grad"))
+        
+        inputs = {"reduced_grad"}
+        if not keepdims and 'axes' in forward_node.in_connectors:
+            inputs.add("axes")
+
+        result_node = context.backward_state.add_nested_sdfg(
+            nsdfg, None, inputs, {"data_grad"})
 
         return result_node, result

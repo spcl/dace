@@ -1,7 +1,7 @@
 import pytest
 import torch
 from dace.library import change_default
-from dace.transformation.dataflow import TrivialMapRangeElimination
+from dace.transformation.dataflow import TrivialMapElimination
 from dace.transformation.interstate import HoistState
 from efficientnet_pytorch import get_model_params
 from efficientnet_pytorch.model import MBConvBlock
@@ -110,7 +110,7 @@ def test_fast_mb(use_cpp_dispatcher):
             sdfg = module.sdfg
 
             sdfg.apply_transformations_repeated(HoistState)
-            sdfg.apply_transformations_repeated(TrivialMapRangeElimination)
+            sdfg.apply_transformations_repeated(TrivialMapElimination)
             sdfg.simplify()
 
         dace_model.append_post_onnx_hook("fuse_sg", fuse_everything)
