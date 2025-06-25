@@ -374,6 +374,56 @@ def _make_state_fission_with_empty_memlet_sdfg() -> Tuple[dace.SDFG, dace.SDFGSt
     return sdfg, state, ar, tlet1, tlet2, b, aw
 
 
+def _make_state_fission_tower_of_viewes(
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.Tasklet, nodes.AccessNode, nodes.AccessNode, nodes.AccessNode,
+           nodes.AccessNode, nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("split_with_empty_memlet_sdfg"))
+    state = sdfg.add_state()
+
+    for name in "ab":
+        sdfg.add_array(
+            name,
+            shape=(4, 4, 4),
+            dtype=dace.float64,
+            transient=False,
+        )
+
+    sdfg.add_view(
+        "v1",
+        shape=(4, ),
+        dtype=dace.float64,
+    )
+    sdfg.add_view(
+        "v2",
+        shape=(4, 4),
+        dtype=dace.float64,
+    )
+    sdfg.add_view(
+        "v3",
+        shape=(4, 4, 4),
+        dtype=dace.float64,
+    )
+    a, b = (state.add_access(name) for name in "ab")
+    v1, v2, v3 = (state.add_access("v" + str(i)) for i in range(1, 4))
+
+    tlet = state.add_tasklet(
+        "computation",
+        inputs={},
+        outputs={"__out"},
+        code="__out = 1.34",
+    )
+
+    state.add_edge(tlet, "__out", v1, None, dace.Memlet("v1[2]"))
+    state.add_edge(v1, "views", v2, None, dace.Memlet("v1[0:4] -> [2, 0:4]"))
+    state.add_edge(v2, "views", v3, None, dace.Memlet("v2[0:4, 0:4] -> [3, 0:4, 0:4]"))
+    state.add_edge(v3, "views", a, None, dace.Memlet("v3[0:4, 0:4, 0:4] -> [0:4, 0:4, 0:4]"))
+    state.add_nedge(a, b, dace.Memlet("a[0:4, 0:4, 0:4] -> [0:4, 0:4, 0:4]"))
+
+    sdfg.validate()
+
+    return sdfg, state, tlet, v1, v2, v3, a, b
+
+
 def test_state_fission():
     """
     Tests state fission. The starting point is a stae SDFG with two
@@ -852,6 +902,31 @@ def test_state_fission_with_empty_memlet_2():
     assert {ar, tlet1, tlet2, b, aw} == set(new_state.nodes())
 
     assert state.number_of_nodes() == 0
+
+
+def test_state_fission_tower_of_views():
+    sdfg, state, tlet, v1, v2, v3, a, b = _make_state_fission_tower_of_viewes()
+    assert state.number_of_nodes() == 6
+    assert state.number_of_edges() == 5
+    assert sdfg.number_of_nodes() == 1
+
+    subgraph = graph.SubgraphView(state, [tlet])
+    new_state = helpers.state_fission(subgraph)
+    sdfg.validate()
+
+    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_edges() == 1
+    assert all(oedge.dst is state for oedge in sdfg.out_edges(new_state))
+
+    assert state.number_of_nodes() == 2
+    assert set(count_nodes(state, nodes.AccessNode, True)) == {a, b}
+
+    assert new_state.number_of_nodes() == 5
+    assert set(count_nodes(new_state, nodes.Tasklet, True)) == {tlet}
+    new_state_ac = count_nodes(new_state, nodes.AccessNode, True)
+    assert len(new_state_ac) == 4
+    assert {v1, v2, v3}.issubset(new_state_ac)
+    assert any(ac.data == "a" for ac in new_state_ac)
 
 
 if __name__ == "__main__":
