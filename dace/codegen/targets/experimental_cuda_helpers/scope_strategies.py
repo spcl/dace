@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Dict, Type
 import dace
 from dace import dtypes, subsets, symbolic
 
+from dace.config import Config
+
 # DaCe SDFG imports
 from dace.sdfg import SDFG, ScopeSubgraphView, nodes, SDFGState
 from dace.sdfg.state import ControlFlowRegion
@@ -203,8 +205,9 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                                         state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         
         """
+        NOTE: Under construction
         Tell yakup:
-        1. This is as far as I know really cuda specific- maybe I should raise an error if wrong backend is used
+        1. This is as far as I know really cuda specific- maybe I should raise an error if wrong backend (HIP) is used
         2. What about the shared state allocation? Is it correct to tell about this allocation? generally, did I
            tell the dispatcher everything correctly?
         """
@@ -218,7 +221,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
         callsite_stream.write(f"\n", cfg, state_id, node)
         # initialize block group using coopertive groups
-        tblock_obj_name = "block"
+        tblock_obj_name = Config.get('compiler', 'cuda', 'current_thread_block_name')
         tblock_obj_ctype = "auto"
         callsite_stream.write(f"{tblock_obj_ctype} {tblock_obj_name} = cg::this_thread_block();\n", cfg, state_id, node)
         self._dispatcher.defined_vars.add(tblock_obj_name, DefinedType.Object, tblock_obj_ctype)
@@ -252,6 +255,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             self._dispatcher.defined_vars.add(pipeline_name, DefinedType.Object, pipeline_ctype)
     
         callsite_stream.write(f"\n", cfg, state_id, node)
+
 
 class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
     

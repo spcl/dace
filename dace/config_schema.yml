@@ -501,6 +501,17 @@ required:
                             or use other mechanisms like async copies or pipelines.
                         default: True
 
+                    current_thread_block_name:
+                        type: str
+                        title: Variable name for the current thread block
+                        description: >
+                            Specifies the name of the variable that holds the current thread block group,
+                            initialized using `cooperative_groups::this_thread_block()`. This is useful in
+                            contexts like custom tasklets, where the variable is explicitly referenced 
+                            (e.g., `cooperative_groups::wait(block)`). Setting this allows users to customize the 
+                            variable name without modifying the source code or relying on a fixed name.
+                        default: block
+
             #############################################
             # General FPGA flags
             fpga:
