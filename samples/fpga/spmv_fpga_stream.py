@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -12,8 +12,8 @@ import sys
 
 from dace.sdfg import SDFG, InterstateEdge
 from dace.memlet import Memlet
-from dace.dtypes import AllocationLifetime, ScheduleType, StorageType, Language
-from dace.properties import CodeProperty
+from dace.dtypes import AllocationLifetime, StorageType
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 cols = dace.symbol("cols")
 rows = dace.symbol("rows")
@@ -22,9 +22,9 @@ itype = dace.uint32
 dtype = dace.float32
 
 
-def make_pre_state(sdfg):
+def make_pre_state(sdfg: SDFG):
 
-    state = sdfg.add_state("pre_state")
+    state = sdfg.add_state("pre_state", is_start_block=True)
 
     a_row_host = state.add_array("A_row", (rows + 1, ), itype)
     a_row_device = state.add_array("A_row_device", (rows + 1, ), itype, transient=True, storage=StorageType.FPGA_Global)
@@ -49,7 +49,7 @@ def make_pre_state(sdfg):
     return state
 
 
-def make_post_state(sdfg):
+def make_post_state(sdfg: SDFG):
 
     state = sdfg.add_state("post_state")
 
@@ -65,19 +65,9 @@ def make_write_sdfg():
 
     sdfg = SDFG("spmv_write")
 
-    begin = sdfg.add_state("begin")
-    entry = sdfg.add_state("entry")
-    state = sdfg.add_state("body")
-    end = sdfg.add_state("end")
-
-    sdfg.add_edge(begin, entry, InterstateEdge(assignments={"h": "0"}))
-
-    sdfg.add_edge(entry, state,
-                  InterstateEdge(condition=CodeProperty.from_string("h < rows", language=Language.Python)))
-
-    sdfg.add_edge(entry, end, InterstateEdge(condition=CodeProperty.from_string("h >= rows", language=Language.Python)))
-
-    sdfg.add_edge(state, entry, InterstateEdge(assignments={"h": "h + 1"}))
+    loop = LoopRegion('write_loop', 'h < rows', 'h', 'h = 0', 'h = h + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    state = loop.add_state('body', is_start_block=True)
 
     result_to_write_in = state.add_stream("b_pipe", dtype, storage=StorageType.FPGA_Local)
     b = state.add_array("b_mem", (rows, ), dtype, storage=StorageType.FPGA_Global)
@@ -87,47 +77,26 @@ def make_write_sdfg():
     return sdfg
 
 
-def make_iteration_space(sdfg):
+def make_iteration_space(sdfg: SDFG):
 
-    pre_state = sdfg.add_state("pre_state")
+    pre_state = sdfg.add_state("pre_state", is_start_block=True)
 
-    rows_begin = sdfg.add_state("rows_begin")
-    rows_entry = sdfg.add_state("rows_entry")
-    rows_end = sdfg.add_state("rows_end")
+    rows_loop = LoopRegion('rows_loop', 'h < rows', 'h', 'h = 0', 'h = h + 1')
+    sdfg.add_node(rows_loop)
+    sdfg.add_edge(pre_state, rows_loop, InterstateEdge())
 
-    shift_rowptr = sdfg.add_state("shift_rowptr")
-    read_rowptr = sdfg.add_state("read_rowptr")
+    shift_rowptr = rows_loop.add_state('shift_rowptr', is_start_block=True)
+    read_rowptr = rows_loop.add_state('read_rowptr')
+    rows_loop.add_edge(shift_rowptr, read_rowptr, InterstateEdge())
 
-    cols_begin = sdfg.add_state("cols_begin")
-    cols_entry = sdfg.add_state("cols_entry")
-    cols_end = sdfg.add_state("cols_end")
+    cols_loop = LoopRegion('cols_loop', 'c < row_end - row_begin', 'c', 'c = 0', 'c = c + 1')
+    rows_loop.add_node(cols_loop)
+    rows_loop.add_edge(read_rowptr, cols_loop, InterstateEdge())
 
-    body = sdfg.add_state("compute")
+    body = cols_loop.add_state('compute', is_start_block=True)
 
-    post_state = sdfg.add_state("post_state")
-
-    sdfg.add_edge(pre_state, rows_begin, InterstateEdge())
-
-    sdfg.add_edge(rows_begin, rows_entry, InterstateEdge(assignments={"h": "0"}))
-    sdfg.add_edge(rows_entry, shift_rowptr,
-                  InterstateEdge(condition=CodeProperty.from_string("h < rows", language=Language.Python)))
-    sdfg.add_edge(rows_entry, rows_end,
-                  InterstateEdge(condition=CodeProperty.from_string("h >= rows", language=Language.Python)))
-
-    sdfg.add_edge(shift_rowptr, read_rowptr, InterstateEdge())
-    sdfg.add_edge(read_rowptr, cols_begin, InterstateEdge())
-
-    sdfg.add_edge(cols_begin, cols_entry, InterstateEdge(assignments={"c": "0"}))
-    sdfg.add_edge(
-        cols_entry, body,
-        InterstateEdge(condition=CodeProperty.from_string("c < row_end - row_begin", language=Language.Python)))
-    sdfg.add_edge(
-        cols_entry, cols_end,
-        InterstateEdge(condition=CodeProperty.from_string("c >= row_end - row_begin", language=Language.Python)))
-
-    sdfg.add_edge(body, cols_entry, InterstateEdge(assignments={"c": "c + 1"}))
-    sdfg.add_edge(cols_end, post_state, InterstateEdge())
-    sdfg.add_edge(post_state, rows_entry, InterstateEdge(assignments={"h": "h + 1"}))
+    post_state = rows_loop.add_state('post_state')
+    rows_loop.add_edge(cols_loop, post_state, InterstateEdge())
 
     row_end_first = pre_state.add_scalar("row_end", itype, transient=True, storage=StorageType.FPGA_Registers)
     row_pipe_first = pre_state.add_stream("row_pipe", itype, storage=StorageType.FPGA_Local)
@@ -150,27 +119,29 @@ def make_iteration_space(sdfg):
 
 def make_compute_nested_sdfg():
 
-    sdfg = SDFG("spmv_compute_nested")
+    sdfg = SDFG('spmv_compute_nested')
 
-    if_state = sdfg.add_state("if")
-    then_state = sdfg.add_state("then")
-    else_state = sdfg.add_state("else")
-    end_state = sdfg.add_state("end")
+    init_state = sdfg.add_state("init", is_start_block=True)
 
-    sdfg.add_edge(if_state, then_state,
-                  InterstateEdge(condition=CodeProperty.from_string("c == 0", language=Language.Python)))
-    sdfg.add_edge(if_state, else_state,
-                  InterstateEdge(condition=CodeProperty.from_string("c != 0", language=Language.Python)))
-    sdfg.add_edge(then_state, end_state, InterstateEdge())
-    sdfg.add_edge(else_state, end_state, InterstateEdge())
+    conditional = ConditionalBlock('spmv_conditional')
+    sdfg.add_node(conditional)
+    sdfg.add_edge(init_state, conditional, InterstateEdge())
 
-    a_in = if_state.add_scalar("a_in", dtype, storage=StorageType.FPGA_Registers)
-    x_in = if_state.add_scalar("x_in", dtype, storage=StorageType.FPGA_Registers)
-    b_tmp_out = if_state.add_scalar("b_tmp", dtype, transient=True, storage=StorageType.FPGA_Registers)
-    tasklet = if_state.add_tasklet("compute", {"_a_in", "_x_in"}, {"_b_out"}, "_b_out = _a_in * _x_in")
-    if_state.add_memlet_path(a_in, tasklet, dst_conn="_a_in", memlet=Memlet.simple(a_in, "0"))
-    if_state.add_memlet_path(x_in, tasklet, dst_conn="_x_in", memlet=Memlet.simple(x_in, "0"))
-    if_state.add_memlet_path(tasklet, b_tmp_out, src_conn="_b_out", memlet=Memlet.simple(b_tmp_out, "0"))
+    then_branch = ControlFlowRegion('then_branch')
+    conditional.add_branch('c == 0', then_branch)
+    then_state = then_branch.add_state('then', is_start_block=True)
+
+    else_branch = ControlFlowRegion('then_branch')
+    conditional.add_branch('c != 0', else_branch)
+    else_state = else_branch.add_state('else', is_start_block=True)
+
+    a_in = init_state.add_scalar("a_in", dtype, storage=StorageType.FPGA_Registers)
+    x_in = init_state.add_scalar("x_in", dtype, storage=StorageType.FPGA_Registers)
+    b_tmp_out = init_state.add_scalar("b_tmp", dtype, transient=True, storage=StorageType.FPGA_Registers)
+    tasklet = init_state.add_tasklet("compute", {"_a_in", "_x_in"}, {"_b_out"}, "_b_out = _a_in * _x_in")
+    init_state.add_memlet_path(a_in, tasklet, dst_conn="_a_in", memlet=Memlet.simple(a_in, "0"))
+    init_state.add_memlet_path(x_in, tasklet, dst_conn="_x_in", memlet=Memlet.simple(x_in, "0"))
+    init_state.add_memlet_path(tasklet, b_tmp_out, src_conn="_b_out", memlet=Memlet.simple(b_tmp_out, "0"))
 
     b_tmp_then_in = then_state.add_scalar("b_tmp", dtype, transient=True, storage=StorageType.FPGA_Registers)
     b_then_out = then_state.add_scalar("b_out", dtype, storage=StorageType.FPGA_Registers)
@@ -268,17 +239,9 @@ def make_read_row():
 
     sdfg = SDFG("spmv_read_row")
 
-    begin = sdfg.add_state("begin")
-    entry = sdfg.add_state("entry")
-    end = sdfg.add_state("end")
-    body = sdfg.add_state("body")
-
-    sdfg.add_edge(begin, entry, InterstateEdge(assignments={"h": "0"}))
-    sdfg.add_edge(entry, body,
-                  InterstateEdge(condition=CodeProperty.from_string("h < rows + 1", language=Language.Python)))
-    sdfg.add_edge(entry, end,
-                  InterstateEdge(condition=CodeProperty.from_string("h >= rows + 1", language=Language.Python)))
-    sdfg.add_edge(body, entry, InterstateEdge(assignments={"h": "h + 1"}))
+    loop = LoopRegion('read_row_loop', 'h < (rows + 1)', 'h', 'h = 0', 'h = h + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state("body")
 
     a_row_mem = body.add_array("A_row_mem", (rows + 1, ), itype, storage=StorageType.FPGA_Global)
     to_val_pipe = body.add_stream("to_val_pipe", itype, storage=StorageType.FPGA_Local)
@@ -303,7 +266,7 @@ def make_read_row():
     return sdfg
 
 
-def make_main_state(sdfg):
+def make_main_state(sdfg: SDFG):
 
     state = sdfg.add_state("spmv")
 
