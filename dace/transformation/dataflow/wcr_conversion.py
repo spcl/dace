@@ -4,7 +4,7 @@ import ast
 import copy
 import re
 import copy
-from dace import nodes, dtypes, Memlet
+from dace import nodes, dtypes, Memlet, data
 from dace.frontend.python import astutils
 from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
@@ -286,6 +286,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
+            if isinstance(e.src.desc(sdfg), data.View):
+                assert state.in_degree(e.src) > 0
+                view_edges = sdutil.get_all_view_edges(state, e.src)
+                for edge in view_edges:
+                    nodes_to_move.add(edge.src)
+                    orig_edges.add(edge)
 
         # Find all consumer nodes of `tlet`.
         for edge in state.edge_bfs(tlet):
