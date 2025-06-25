@@ -868,7 +868,7 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     previous_node = view
     result = []
 
-    desc = sdfg.arrays[node.data]
+    desc = sdfg.arrays[previous_node.data]
     forward = None
     while isinstance(desc, dt.View):
         edge = get_view_edge(state, previous_node)
