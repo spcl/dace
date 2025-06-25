@@ -865,24 +865,32 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     if existent, else None
     """
     sdfg = state.parent
-    node = view
-    desc = sdfg.arrays[node.data]
+    previous_node = view
     result = []
+
+    desc = sdfg.arrays[node.data]
+    forward = None
     while isinstance(desc, dt.View):
-        edge = get_view_edge(state, node)
+        edge = get_view_edge(state, previous_node)
         if edge is None:
             break
-        old_node = node
-        if edge.dst is view:
-            node = edge.src
+
+        if forward is None:
+            forward = edge.src is previous_node
+
+        if forward:
+            next_node = edge.dst
         else:
-            node = edge.dst
-        if node is old_node:
+            next_node = edge.src
+
+        if previous_node is next_node:
             break
-        if not isinstance(node, nd.AccessNode):
+        if not isinstance(next_node, nd.AccessNode):
             break
-        desc = sdfg.arrays[node.data]
+        desc = sdfg.arrays[next_node.data]
         result.append(edge)
+        previous_node = next_node
+
     return result
 
 
