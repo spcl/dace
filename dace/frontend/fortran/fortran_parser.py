@@ -2327,6 +2327,51 @@ class AST_translator:
         for i in node.vardecl:
             self.translate(i, sdfg, cfg)
 
+    def map_nested_to_parent_names(self, ast_node, nested_sdfg):
+        """
+        Recursively visit an AST node and map array names from nested SDFG to parent SDFG names.
+
+        This is necessary when we move expressions from nested SDFG to parent SDFG, e.g.,
+        when initializing struct sizes on an interstate edge.
+        It's necessary for Fortran because we do a lot of variable renaming.
+        """
+        if ast_node is None:
+            return ast_node
+
+        mapped_node = copy.deepcopy(ast_node)
+
+        def _map_names_recursive(node):
+
+            if isinstance(node, ast_internal_classes.Name_Node):
+                # Check if this name refers to a data container and needs mapping
+                if (nested_sdfg in self.names_of_object_in_parent_sdfg and 
+                    node.name in self.names_of_object_in_parent_sdfg[nested_sdfg]):
+                    # Map from nested name to parent name
+                    parent_name = self.names_of_object_in_parent_sdfg[nested_sdfg][node.name]
+                    node.name = parent_name
+
+            elif isinstance(node, ast_internal_classes.Data_Ref_Node):
+                _map_names_recursive(node.parent_ref)
+                _map_names_recursive(node.part_ref)
+
+            elif isinstance(node, ast_internal_classes.Array_Subscript_Node):
+                _map_names_recursive(node.name)
+                for idx in node.indices:
+                    _map_names_recursive(idx)
+
+            elif hasattr(node, '_fields'):
+                for field_name in node._fields:
+                    field_value = getattr(node, field_name, None)
+                    if field_value is not None:
+                        if isinstance(field_value, list):
+                            for item in field_value:
+                                _map_names_recursive(item)
+                        else:
+                            _map_names_recursive(field_value)
+
+        _map_names_recursive(mapped_node)
+        return mapped_node
+
     def vardecl2sdfg(self, node: ast_internal_classes.Var_Decl_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function translates a variable declaration to an access node on the sdfg
@@ -2360,6 +2405,7 @@ class AST_translator:
         #    if node.alloc:
         #        self.unallocated_arrays.append([node.name, datatype, sdfg, transient])
         #        return
+
         # get the dimensions
         # print(node.name)
         if node.sizes is not None and len(node.sizes) > 0:
@@ -2379,12 +2425,23 @@ class AST_translator:
                             "tmp_struct_symbol_" + str(count)] = "tmp_struct_symbol_" + str(count)
                         parent_state = self.temporary_link_to_parent[sdfg.name]
                         for edge in parent_state.parent_graph.in_edges(parent_state):
+
+                            """
+                                When we have a nested SDFG, then the name of the container inside it
+                                can be different from the one used in the parent SDFG.
+                                Since we are moving symbol assignments from nested to SDFG to an edge
+                                in the parent, the expression might become invalid if it relies on containers
+                                renamed in the nested SDFG.
+
+                                To that end, we recursively visit the assignment and replace names.
+                            """
+                            cleaned_i = self.map_nested_to_parent_names(i, sdfg)
+
                             assign = ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping,
                                                                placeholders=self.placeholders,
                                                                placeholders_offsets=self.placeholders_offsets,
-                                                               rename_dict=self.replace_names).write_code(i)
+                                                               rename_dict=self.replace_names).write_code(cleaned_i)
                             edge.data.assignments["tmp_struct_symbol_" + str(count)] = assign
-                            # print(edge)
                     else:
                         assign = ast_utils.ProcessedWriter(sdfg, self.name_mapping, placeholders=self.placeholders,
                                                            placeholders_offsets=self.placeholders_offsets,
@@ -3419,7 +3476,7 @@ def create_sdfg_from_fortran_file_with_options(
 
         sdfg.validate()
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_v.sdfgz"), compress=True)
-        sdfg.simplify(verbose=True)
+        sdfg.simplify(verbose=True, validate_all=True)
         print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz")}')
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfgz"), compress=True)
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_s.sdfg"), compress=False)
