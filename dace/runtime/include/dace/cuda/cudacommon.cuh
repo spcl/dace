@@ -16,16 +16,6 @@ typedef cudaError_t gpuError_t;
 #define gpuGetErrorString cudaGetErrorString
 #endif
 
-#ifdef NDEBUG
-
-// In release mode: disable error checks
-#define DACE_GPU_CHECK(err) \
-  do { gpuError_t errr = (err); } while (0)
-
-#define DACE_KERNEL_LAUNCH_CHECK(err, kernel_name, gdimx, gdimy, gdimz, bdimx, bdimy, bdimz) \
-  {}
-
-#else
 
 // In debug mode: enable error checks
 #define DACE_GPU_CHECK(err)                                               \
@@ -52,8 +42,6 @@ typedef cudaError_t gpuError_t;
       __state->gpu_context->lasterror = err;                                   \
     }                                                                          \
   } while (0)
-
-#endif
 
 namespace dace {
 namespace cuda {

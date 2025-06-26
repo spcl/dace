@@ -1785,10 +1785,10 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
             self._localcode.write(
                 f'''
-                //if ({dimcheck}) {{
-                //    {emptygrid_warning}
-                //    return;
-                //}}''', cfg, state_id, scope_entry)
+                if ({dimcheck}) {{
+                    {emptygrid_warning}
+                    return;
+                }}''', cfg, state_id, scope_entry)
 
         self._localcode.write(
             '''
