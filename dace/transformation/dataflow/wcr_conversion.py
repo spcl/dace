@@ -286,7 +286,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
-            if isinstance(e.src.desc(sdfg), data.View):
+            if isinstance(e.src, nodes.AccessNode) and isinstance(e.src.desc(sdfg), data.View):
                 assert state.in_degree(e.src) > 0
                 view_edges = sdutil.get_all_view_edges(state, e.src)
                 for edge in view_edges:
