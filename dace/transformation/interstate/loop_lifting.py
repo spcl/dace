@@ -117,5 +117,4 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         for n in full_body:
             graph.remove_node(n)
 
-        sdfg.root_sdfg.using_explicit_control_flow = True
         sdfg.reset_cfg_list()

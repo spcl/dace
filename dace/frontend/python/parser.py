@@ -496,11 +496,6 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
-        if not self.use_explicit_cf:
-            for nsdfg in sdfg.all_sdfgs_recursive():
-                sdutils.inline_control_flow_regions(nsdfg)
-        sdfg.using_explicit_control_flow = self.use_explicit_cf
-
         sdfg.reset_cfg_list()
 
         # Apply simplification pass automatically
