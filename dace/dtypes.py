@@ -93,6 +93,13 @@ GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
     ScheduleType.GPU_Warp,
 ]
 
+# A subset of on-GPU storage types for ExperimentalCUDACodeGen
+GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN = [
+    StorageType.GPU_Global,
+    StorageType.GPU_Shared,
+]
+
+
 # A subset of CPU schedule types
 CPU_SCHEDULES = [
     ScheduleType.CPU_Multicore,
