@@ -169,7 +169,8 @@ def make_compute_sdfg():
     b_buffer_in = body.add_scalar("b_buffer", dtype, transient=True, storage=StorageType.FPGA_Registers)
     b_buffer_out = body.add_scalar("b_buffer", dtype, transient=True, storage=StorageType.FPGA_Registers)
     nested_sdfg = make_compute_nested_sdfg()
-    tasklet = body.add_nested_sdfg(nested_sdfg, sdfg, {"a_in", "x_in", "b_in"}, {"b_out"},
+    tasklet = body.add_nested_sdfg(nested_sdfg,
+                                   sdfg, {"a_in", "x_in", "b_in"}, {"b_out"},
                                    schedule=ScheduleType.FPGA_Device)
     body.add_memlet_path(a_pipe, tasklet, dst_conn="a_in", memlet=Memlet.simple(a_pipe, "0"))
     body.add_memlet_path(b_buffer_in, tasklet, dst_conn="b_in", memlet=Memlet.simple(b_buffer_in, "0"))
@@ -278,7 +279,8 @@ def make_main_state(sdfg: SDFG):
     row_to_x_out = state.add_stream("row_to_x", itype, transient=True, storage=StorageType.FPGA_Local)
     row_to_compute_out = state.add_stream("row_to_compute", itype, transient=True, storage=StorageType.FPGA_Local)
     read_row_sdfg = make_read_row()
-    read_row_tasklet = state.add_nested_sdfg(read_row_sdfg, sdfg, {"A_row_mem"},
+    read_row_tasklet = state.add_nested_sdfg(read_row_sdfg,
+                                             sdfg, {"A_row_mem"},
                                              {"to_val_pipe", "to_col_pipe", "to_x_pipe", "to_compute_pipe"},
                                              schedule=ScheduleType.FPGA_Device)
     state.add_memlet_path(a_row,
@@ -307,7 +309,8 @@ def make_main_state(sdfg: SDFG):
     row_to_col_in = state.add_stream("row_to_col", itype, transient=True, storage=StorageType.FPGA_Local)
     col_to_x_out = state.add_stream("col_to_x", itype, transient=True, storage=StorageType.FPGA_Local)
     read_col_sdfg = make_read_col()
-    read_col_tasklet = state.add_nested_sdfg(read_col_sdfg, sdfg, {"A_col_mem", "row_pipe"}, {"col_pipe"},
+    read_col_tasklet = state.add_nested_sdfg(read_col_sdfg,
+                                             sdfg, {"A_col_mem", "row_pipe"}, {"col_pipe"},
                                              schedule=ScheduleType.FPGA_Device)
     state.add_memlet_path(a_col,
                           read_col_tasklet,
@@ -327,7 +330,8 @@ def make_main_state(sdfg: SDFG):
     row_to_val_in = state.add_stream("row_to_val", itype, transient=True, storage=StorageType.FPGA_Local)
     val_to_compute_out = state.add_stream("val_to_compute", dtype, transient=True, storage=StorageType.FPGA_Local)
     read_val_sdfg = make_read_val()
-    read_val_tasklet = state.add_nested_sdfg(read_val_sdfg, sdfg, {"A_val_mem", "row_pipe"}, {"compute_pipe"},
+    read_val_tasklet = state.add_nested_sdfg(read_val_sdfg,
+                                             sdfg, {"A_val_mem", "row_pipe"}, {"compute_pipe"},
                                              schedule=ScheduleType.FPGA_Device)
     state.add_memlet_path(a_val,
                           read_val_tasklet,
@@ -348,7 +352,8 @@ def make_main_state(sdfg: SDFG):
     col_to_x_in = state.add_stream("col_to_x", itype, transient=True, storage=StorageType.FPGA_Local)
     x_to_compute_out = state.add_stream("x_to_compute", dtype, transient=True, storage=StorageType.FPGA_Local)
     read_x_sdfg = make_read_x()
-    read_x_tasklet = state.add_nested_sdfg(read_x_sdfg, sdfg, {"x_mem", "col_pipe", "row_pipe"}, {"compute_pipe"},
+    read_x_tasklet = state.add_nested_sdfg(read_x_sdfg,
+                                           sdfg, {"x_mem", "col_pipe", "row_pipe"}, {"compute_pipe"},
                                            schedule=ScheduleType.FPGA_Device)
     state.add_memlet_path(x, read_x_tasklet, dst_conn="x_mem", memlet=dace.memlet.Memlet.simple(x, "0:cols"))
     state.add_memlet_path(col_to_x_in,
@@ -370,7 +375,8 @@ def make_main_state(sdfg: SDFG):
     x_to_compute_in = state.add_stream("x_to_compute", dtype, transient=True, storage=StorageType.FPGA_Local)
     result_to_write_out = state.add_stream("result_to_write", dtype, transient=True, storage=StorageType.FPGA_Local)
     compute_sdfg = make_compute_sdfg()
-    compute_tasklet = state.add_nested_sdfg(compute_sdfg, sdfg, {"row_pipe", "a_pipe", "x_pipe"}, {"b_pipe"},
+    compute_tasklet = state.add_nested_sdfg(compute_sdfg,
+                                            sdfg, {"row_pipe", "a_pipe", "x_pipe"}, {"b_pipe"},
                                             schedule=ScheduleType.FPGA_Device)
     state.add_memlet_path(row_to_compute_in,
                           compute_tasklet,
@@ -393,8 +399,7 @@ def make_main_state(sdfg: SDFG):
     result_to_write_in = state.add_stream("result_to_write", dtype, transient=True, storage=StorageType.FPGA_Local)
     b = state.add_array("b_device", (rows, ), dtype, transient=True, storage=StorageType.FPGA_Global)
     write_sdfg = make_write_sdfg()
-    write_tasklet = state.add_nested_sdfg(write_sdfg, sdfg, {"b_pipe"}, {"b_mem"},
-                                          schedule=ScheduleType.FPGA_Device)
+    write_tasklet = state.add_nested_sdfg(write_sdfg, sdfg, {"b_pipe"}, {"b_mem"}, schedule=ScheduleType.FPGA_Device)
     state.add_memlet_path(result_to_write_in,
                           write_tasklet,
                           dst_conn="b_pipe",
