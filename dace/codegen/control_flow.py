@@ -257,8 +257,7 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
                     if unconditional_edge is not None:
                         warnings.warn(
                             f'Unstructured control flow region {region.label} has multiple unconditional edges '
-                            f'leading out of block {node.label}.'
-                        )
+                            f'leading out of block {node.label}.')
                     else:
                         unconditional_edge = e
                         continue
