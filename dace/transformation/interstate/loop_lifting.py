@@ -1,5 +1,6 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+from copy import deepcopy
 from dace import properties
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
@@ -77,11 +78,6 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                           sdfg=sdfg,
                           update_before_condition=update_before_condition)
 
-        graph.add_node(loop)
-        graph.add_edge(init_edge.src, loop,
-                       InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments))
-        graph.add_edge(loop, after, InterstateEdge(assignments=exit_edge.data.assignments))
-
         loop.add_node(first_state, is_start_block=True)
         added = set()
         for e in graph.all_edges(*full_body):
@@ -116,6 +112,20 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         # Remove old loop.
         for n in full_body:
             graph.remove_node(n)
+
+        graph.add_node(loop)
+        graph.add_edge(init_edge.src, loop,
+                       InterstateEdge(condition=init_edge.data.condition, assignments=left_over_assignments))
+        # If any of the meta states (guard, latch, break states) are not empty, they need to be added right after the
+        # loop to ensure they are executed once after the loop condition no longer holds. This is necessary to be
+        # consistent with the semantics of the original state machine loop.
+        prev = loop
+        for m in meta:
+            if len(m.nodes()) > 0:
+                copy_meta = deepcopy(m)
+                graph.add_edge(prev, copy_meta, InterstateEdge())
+                prev = copy_meta
+        graph.add_edge(prev, after, InterstateEdge(assignments=exit_edge.data.assignments))
 
         sdfg.root_sdfg.using_explicit_control_flow = True
         sdfg.reset_cfg_list()

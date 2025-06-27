@@ -3,7 +3,7 @@
 
 import sympy as sp
 import networkx as nx
-from typing import AnyStr, Generator, Iterable, Optional, Tuple, List, Set
+from typing import AnyStr, Iterable, Optional, Tuple, List, Set
 
 from dace import sdfg as sd, symbolic
 from dace.sdfg import graph as gr, utils as sdutil, InterstateEdge
@@ -199,6 +199,9 @@ class DetectLoop(transformation.PatternTransformation):
             return None
         elif any(self.exit_state not in postdominators[1][n] for n in loop_nodes):
             # The loop exit must post-dominate all loop nodes
+            return None
+        elif nx.has_path(graph.nx, self.exit_state, guard):
+            # If there is a path from the exit state to the guard, this is not a valid loop
             return None
         backedge = None
         for node in loop_nodes:
