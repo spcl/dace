@@ -195,13 +195,12 @@ def test_2d_out_of_kernel_memcpy_one_strided():
     cp.testing.assert_array_equal(dst, expected)
 
 @pytest.mark.gpu
-def test_2d_oofkmemcpy_two_strided_fail():
+def test_2d_oofkmemcpy_strided():
     """
     Test strided 2D out-of-kernel memcpy.
-    This test should fail (notImplementedError).
     """
 
-    sdfg = dace.SDFG("failing_2D_memory_copy")
+    sdfg = dace.SDFG("strided_2D_memory_copy")
     state = sdfg.add_state("main")
 
     # Access nodes
@@ -220,9 +219,13 @@ def test_2d_oofkmemcpy_two_strided_fail():
     src = cp.ones((2,20), dtype=cp.uint32)
     dst = cp.zeros((2,10), dtype=cp.uint32)
 
-    # notImplementedError should be raised
-    with pytest.raises(NotImplementedError):
-        sdfg(src=src, dst=dst)
+    # Execute program
+    sdfg(src=src, dst=dst)
+
+    # Compute expected result & verify
+    expected = cp.zeros((2,10), dtype=cp.uint32)
+    expected[0:2, 0:10:5] = src[0:2, 0:20:10]
+    cp.testing.assert_array_equal(dst, expected)
 
 # ---------- Higher-Dimensional (>2D) Memory Copy Tests --------
 @pytest.mark.gpu

@@ -312,7 +312,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {cudastream}));\n'
             
-        elif src_strides[-1] == 1 or dst_strides[-1] == 1: 
+        elif src_strides[-1] != 1 or dst_strides[-1] != 1: 
             # TODO: Checks this, I am not sure but the old code and its description
             # seems to be more complicated here than necessary.. 
             # But worth to mention: we essentiall flatten 
@@ -330,7 +330,10 @@ class OutOfKernelCopyStrategy(CopyStrategy):
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {cudastream}));\n'
         
         else:
-            raise NotImplementedError('2D copy only supported with one stride')
+            raise NotImplementedError(
+                f"Unsupported 2D memory copy: shape={copy_shape}, src_strides={src_strides}, dst_strides={dst_strides}."
+                " Please implement this case if it is valid, or raise a more descriptive error if this path should not be taken."
+            )
         
 
         # ----------------- Write copy call to code stream --------------------
