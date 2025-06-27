@@ -685,6 +685,10 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
         return _state_schedule_tree(block)
     elif isinstance(block, ReturnBlock):
         # For return blocks, add a goto node to the end of the schedule tree.
+        # NOTE: Return blocks currently always exit the entire SDFG context they are contained in, meaning that the exit
+        # goto has target=None. However, in the future we want to adapt Return blocks to be able to return only a
+        # function region, if contained inside of one - in which case the target will need to be changed to NOT exit the
+        # entire SDFG.
         goto_node = tn.GotoNode(target=None)
         return [goto_node]
     else:
