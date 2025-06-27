@@ -3624,7 +3624,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
 
-    def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
+    def add_branch(self, condition: Optional[Union[CodeBlock, str]], branch: ControlFlowRegion):
+        if condition is not None and not isinstance(condition, CodeBlock):
+            condition = CodeBlock(condition)
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
@@ -3810,6 +3812,14 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def all_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
+
+
+@make_properties
+class UnstructuredControlFlow(ControlFlowRegion):
+    """ Special control flow region to represent a region of unstructured control flow. """
+
+    def __repr__(self):
+        return f'UnstructuredCF ({self.label})'
 
 
 @make_properties

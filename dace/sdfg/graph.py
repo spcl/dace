@@ -728,7 +728,11 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def has_cycles(self) -> bool:
         try:
-            nx.find_cycle(self._nx, self.source_nodes())
+            sources = self.source_nodes()
+            if len(sources) == 0:
+                nx.find_cycle(self._nx)
+            else:
+                nx.find_cycle(self._nx, sources)
             return True
         except nx.NetworkXNoCycle:
             return False
