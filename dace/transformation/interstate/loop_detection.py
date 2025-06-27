@@ -1,9 +1,9 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop detection transformation """
 
 import sympy as sp
 import networkx as nx
-from typing import AnyStr, Iterable, Optional, Tuple, List, Set
+from typing import AnyStr, Generator, Iterable, Optional, Tuple, List, Set
 
 from dace import sdfg as sd, symbolic
 from dace.sdfg import graph as gr, utils as sdutil, InterstateEdge
@@ -31,6 +31,9 @@ class DetectLoop(transformation.PatternTransformation):
 
     # Available for explicit-latch rotated loops
     loop_break = transformation.PatternNode(ControlFlowBlock)
+
+    break_edges: Set[gr.Edge[InterstateEdge]] = set()
+    continue_edges: Set[gr.Edge[InterstateEdge]] = set()
 
     @classmethod
     def expressions(cls):
@@ -189,12 +192,13 @@ class DetectLoop(transformation.PatternTransformation):
 
         # All nodes inside loop must be dominated by loop guard
         dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
-        loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard))
+        postdominators = sdutil.postdominators(graph, True)
+        loop_nodes = self.loop_body()
         # If the exit state is in the loop nodes, this is not a valid loop
         if self.exit_state in loop_nodes:
             return None
-        elif nx.has_path(graph.nx, self.exit_state, guard):
-            # Simliarly, if there is a path from the exit state to the guard, this is not a valid loop.
+        elif any(self.exit_state not in postdominators[1][n] for n in loop_nodes):
+            # The loop exit must post-dominate all loop nodes
             return None
         backedge = None
         for node in loop_nodes:
@@ -284,10 +288,14 @@ class DetectLoop(transformation.PatternTransformation):
         if begin is ltest:
             loop_nodes = [begin]
         else:
-            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != ltest))
+            loop_nodes = self.loop_body()
         loop_nodes.append(latch)
         if ltest is not latch and ltest is not begin:
             loop_nodes.append(ltest)
+        postdominators = sdutil.postdominators(graph, True)
+        if any(self.exit_state not in postdominators[1][n] for n in loop_nodes):
+            # The loop exit must post-dominate all loop nodes
+            return None
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):
@@ -398,30 +406,62 @@ class DetectLoop(transformation.PatternTransformation):
 
         raise ValueError(f'Invalid expression index {self.expr_index}')
 
+    def _loop_body_dfs(self, terminator: ControlFlowBlock) -> Iterable[ControlFlowBlock]:
+        self.break_edges.clear()
+        visited = set()
+        start = self.loop_begin
+        graph = start.parent_graph
+        exit_state = self.exit_state
+        yield start
+        visited.add(start)
+        stack = [(start, iter(graph.successors(start)))]
+        while stack:
+            parent, children = stack[-1]
+            try:
+                child = next(children)
+                if child not in visited:
+                    visited.add(child)
+                    if child == exit_state:
+                        # If the exit state is reachable from the loop body, that counts as a break edge.
+                        for e in graph.edges_between(parent, child):
+                            self.break_edges.add(e)
+                    elif child != terminator:
+                        try:
+                            yield child
+                            stack.append((child, iter(graph.successors(child))))
+                        except sdutil.StopTraversal:
+                            pass
+                    else:
+                        # If we reached the terminator, we do not traverse further. All edges reaching the terminator
+                        # are marked as continue edges. If there is only one continue edge int the end, it can be
+                        # discarded (not actually a continue, simply the edge closing the loop).
+                        for e in graph.edges_between(parent, child):
+                            self.continue_edges.add(e)
+            except StopIteration:
+                stack.pop()
+
     def loop_body(self) -> List[ControlFlowBlock]:
         """
         Returns a list of all control flow blocks (or states) contained in the loop.
         """
-        begin = self.loop_begin
-        graph = begin.parent_graph
         if self.expr_index in (0, 1):
             guard = self.loop_guard
-            return list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard))
+            return list(self._loop_body_dfs(guard))
         elif self.expr_index in (2, 3):
             latch = self.loop_latch
-            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != latch))
+            loop_nodes = list(self._loop_body_dfs(latch))
             loop_nodes += [latch]
             return loop_nodes
         elif self.expr_index == 4:
-            return [begin]
+            return [self.loop_begin]
         elif self.expr_index in (5, 7):
             ltest = self.loop_break
             latch = self.loop_latch
-            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != ltest))
+            loop_nodes = list(self._loop_body_dfs(ltest))
             loop_nodes += [ltest, latch]
             return loop_nodes
         elif self.expr_index == 6:
-            return [begin, self.loop_latch]
+            return [self.loop_begin, self.loop_latch]
 
         return []
 

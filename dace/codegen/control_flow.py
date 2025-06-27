@@ -5,6 +5,7 @@ Functions for generating C++ code for control flow in SDFGs using control flow r
 
 import re
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Set
+import warnings
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
@@ -247,15 +248,28 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
         else:
             # If multiple outgoing edges, generate a conditional goto for each edge. This is the case for
             # unstructured / irreducible control flow.
-            has_unconditional = False
+            unconditional_edge = None
             for e in out_edges:
                 if e.data.is_unconditional():
-                    has_unconditional = True
+                    # Defer generating the unconditional edge until the end so any conditional edges are checked first
+                    # before the "else" edge is taken. If there are multiple unconditional edges, i.e., there already
+                    # is a deferred unconditional edge, raise a warning and generate the remaining ones as they appear.
+                    if unconditional_edge is not None:
+                        warnings.warn(
+                            f'Unstructured control flow region {region.label} has multiple unconditional edges '
+                            f'leading out of block {node.label}.'
+                        )
+                    else:
+                        unconditional_edge = e
+                        continue
                 expr += _generate_interstate_edge_code(e, region.sdfg, region, codegen)
                 stack.append(e.dst)
-            if not has_unconditional:
+            if unconditional_edge is None:
                 # If no unconditional edge, we need to exit the region if none of the conditions are met.
                 expr += f'goto __state_exit_{region.cfg_id};\n'
+            else:
+                expr += _generate_interstate_edge_code(unconditional_edge, region.sdfg, region, codegen)
+                stack.append(unconditional_edge.dst)
 
     expr += f'__state_exit_{region.cfg_id}:;\n'
 

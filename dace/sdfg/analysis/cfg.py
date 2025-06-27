@@ -149,13 +149,11 @@ def find_sese_region(
         for target in target_nodes:
             if target in dominators and dom in dominators[target]:
                 # Count nodes between dom and target
-                path_exists = nx.has_path(graph.nx, dom, target)
-                if path_exists:
-                    try:
-                        dist = nx.shortest_path_length(graph.nx, dom, target)
-                        max_dist_to_targets = max(max_dist_to_targets, dist)
-                    except nx.NetworkXNoPath:
-                        max_dist_to_targets = float('inf')
+                try:
+                    dist = nx.shortest_path_length(graph.nx, dom, target)
+                    max_dist_to_targets = max(max_dist_to_targets, dist)
+                except nx.NetworkXNoPath:
+                    max_dist_to_targets = float('inf')
 
         if max_dist_to_targets < min_distance:
             min_distance = max_dist_to_targets

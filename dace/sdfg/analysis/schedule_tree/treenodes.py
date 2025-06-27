@@ -22,7 +22,6 @@ class UnsupportedScopeException(Exception):
 @dataclass
 class ScheduleTreeNode:
     parent: Optional['ScheduleTreeScope'] = field(default=None, init=False, repr=False)
-    sdfg: Optional['SDFG'] = field(default=None, init=False, repr=False)
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'

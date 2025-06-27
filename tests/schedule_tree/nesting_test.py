@@ -200,20 +200,20 @@ def test_dealias_interstate_edge():
     sdfg.add_array('B', [20], dace.float64)
 
     nsdfg = dace.SDFG('nester')
-    nsdfg.add_array('C', [19], dace.float64)
-    nsdfg.add_array('D', [15], dace.float64)
+    nsdfg.add_array('A', [19], dace.float64)
+    nsdfg.add_array('B', [15], dace.float64)
     nsdfg.add_symbol('m', dace.float64)
     nstate1 = nsdfg.add_state()
     nstate2 = nsdfg.add_state()
-    nsdfg.add_edge(nstate1, nstate2, dace.InterstateEdge(condition='D[1] > 0', assignments=dict(m='C[2]')))
+    nsdfg.add_edge(nstate1, nstate2, dace.InterstateEdge(condition='B[1] > 0', assignments=dict(m='A[2]')))
 
     # Connect to nested SDFG both with renaming and offset memlets
     state = sdfg.add_state()
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'C', 'D'}, {})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A', 'B'}, {})
     ra = state.add_read('A')
     rb = state.add_read('B')
-    state.add_edge(ra, None, nsdfg_node, 'D', dace.Memlet('A[1:20]'))
-    state.add_edge(rb, None, nsdfg_node, 'C', dace.Memlet('B[2:17]'))
+    state.add_edge(ra, None, nsdfg_node, 'B', dace.Memlet('A[1:20]'))
+    state.add_edge(rb, None, nsdfg_node, 'A', dace.Memlet('B[2:17]'))
 
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
