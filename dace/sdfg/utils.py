@@ -1582,7 +1582,7 @@ def _tswds_cf_region(
             if edge.src not in visited:
                 visited.add(edge.src)
                 if isinstance(edge.src, SDFGState):
-                    yield from _tswds_state(sdfg, edge.src, {}, recursive)
+                    yield from _tswds_state(sdfg, edge.src, symbols, recursive)
                 elif isinstance(edge.src, AbstractControlFlowRegion):
                     yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
