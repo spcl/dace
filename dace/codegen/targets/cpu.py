@@ -179,7 +179,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def allocate_view(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
                       global_stream: CodeIOStream, declaration_stream: CodeIOStream,
-                      allocation_stream: CodeIOStream) -> None:
+                      allocation_stream: CodeIOStream, decouple_array_interfaces: bool = False) -> None:
         """
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
@@ -221,7 +221,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         name,
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=is_write,
+                                                        decouple_array_interfaces=decouple_array_interfaces)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -1678,6 +1679,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = cfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
@@ -1831,6 +1833,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(nested_global_stream.getvalue())
             function_stream.write(nested_stream.getvalue())
 
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _generate_MapEntry(
