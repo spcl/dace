@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -1648,7 +1648,7 @@ def _tswds_cf_region(
             if edge.src not in visited:
                 visited.add(edge.src)
                 if isinstance(edge.src, SDFGState):
-                    yield from _tswds_state(sdfg, edge.src, {}, recursive)
+                    yield from _tswds_state(sdfg, edge.src, symbols, recursive)
                 elif isinstance(edge.src, AbstractControlFlowRegion):
                     yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
@@ -2073,13 +2073,15 @@ def get_control_flow_block_dominators(sdfg: SDFG,
             idom = {}
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
             if isinstance(cfg, ConditionalBlock):
-                continue
-            sinks = cfg.sink_nodes()
-            if len(sinks) > 1:
-                added_sinks[cfg] = cfg.add_state()
-                for s in sinks:
-                    cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
-            idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
+                for _, b in cfg.branches:
+                    idom[b] = cfg
+            else:
+                sinks = cfg.sink_nodes()
+                if len(sinks) > 1:
+                    added_sinks[cfg] = cfg.add_state()
+                    for s in sinks:
+                        cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
+                idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
         # Compute the transitive relationship of immediate dominators:
         # - For every start state in a control flow region, the immediate dominator is the immediate dominator of the
         #   parent control flow region.
@@ -2122,28 +2124,33 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
             if isinstance(cfg, ConditionalBlock):
-                continue
-            # Get immediate post-dominators
-            sink_nodes = cfg.sink_nodes()
-            if len(sink_nodes) > 1:
-                sink = cfg.add_state()
-                added_sinks[cfg] = sink
-                sinks_per_cfg[cfg] = sink
-                for snode in sink_nodes:
-                    cfg.add_edge(snode, sink, dace.InterstateEdge())
-            elif len(sink_nodes) == 0:
-                return None
+                sinks_per_cfg[cfg] = cfg
+                for _, b in cfg.branches:
+                    ipostdom[b] = cfg
             else:
-                sink = sink_nodes[0]
-                sinks_per_cfg[cfg] = sink
-            ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
+                # Get immediate post-dominators
+                sink_nodes = cfg.sink_nodes()
+                if len(sink_nodes) > 1:
+                    sink = cfg.add_state()
+                    added_sinks[cfg] = sink
+                    sinks_per_cfg[cfg] = sink
+                    for snode in sink_nodes:
+                        cfg.add_edge(snode, sink, dace.InterstateEdge())
+                elif len(sink_nodes) == 0:
+                    return None
+                else:
+                    sink = sink_nodes[0]
+                    sinks_per_cfg[cfg] = sink
+                ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
         for k, _ in ipostdom.items():
-            if k.parent_graph is not sdfg and k is sinks_per_cfg[k.parent_graph]:
+            if k.parent_graph is not sdfg and (k is sinks_per_cfg[k.parent_graph]
+                                               or isinstance(k.parent_graph, ConditionalBlock)):
                 next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and next_pdom is sinks_per_cfg[next_pdom.parent_graph]:
+                while next_pdom.parent_graph is not sdfg and (next_pdom is sinks_per_cfg[next_pdom.parent_graph]
+                                                              or isinstance(next_pdom.parent_graph, ConditionalBlock)):
                     next_pdom = ipostdom[next_pdom.parent_graph]
                 ipostdom[k] = next_pdom
         changed = True

@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
@@ -428,9 +428,19 @@ def and_expr(node_a, node_b):
     if isinstance(expr_b, ast.Expr):
         expr_b = expr_b.value
 
-    newexpr = ast.Expr(value=ast.BinOp(left=copy_tree(expr_a), op=ast.And, right=copy_tree(expr_b)))
-    newexpr = ast.copy_location(newexpr, expr_a)
-    return ast.fix_missing_locations(newexpr)
+    if isinstance(expr_a, ast.BoolOp) and expr_a.op == ast.And:
+        # If the first expression is already a BoolOp, append the second expression
+        expr_a.values.append(copy_tree(expr_b))
+        return ast.fix_missing_locations(expr_a)
+    elif isinstance(expr_b, ast.BoolOp) and expr_b.op == ast.And:
+        # If the second expression is already a BoolOp, append the first expression
+        expr_b.values.insert(0, copy_tree(expr_a))
+        return ast.fix_missing_locations(expr_b)
+    else:
+        # Otherwise, create a new BoolOp with both expressions
+        newexpr = ast.Expr(value=ast.BoolOp(op=ast.And(), values=[copy_tree(expr_a), copy_tree(expr_b)]))
+        newexpr = ast.copy_location(newexpr, expr_a)
+        return ast.fix_missing_locations(newexpr)
 
 
 def copy_tree(node: ast.AST) -> ast.AST:
