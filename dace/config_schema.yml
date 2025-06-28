@@ -452,7 +452,7 @@ required:
                         title: Allow the implicit conversion of Memlets to Maps during code generation.
                         default: true
                         description: >
-                            If ``true`` the code generator will implicitly convert Memlets that can not be
+                            If ``true`` the code generator will implicitly convert Memlets that cannot be
                             represented by a native library call, such as ``cudaMemcpy()`` into Maps that
                             explicitly copy the data around. If this value is ``false`` the code generator
                             will raise an exception if such a Memlet is encountered. This allows the user
