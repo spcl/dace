@@ -91,5 +91,6 @@ setup(name='dace',
               'sdfg-diff = dace.cli.sdfg_diff:main',
               'fcfd = dace.cli.fcdc:main',
               'daceprof = dace.cli.daceprof:main',
+              'dace-external-transformation-registry = dace.cli.external_transformation_registry:main',
           ],
       })

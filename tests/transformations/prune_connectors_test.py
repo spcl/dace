@@ -114,8 +114,12 @@ def make_sdfg():
     isolated_nsdfg = state_outer.add_nested_sdfg(isolated_sdfg,
                                                  sdfg_outer, {"read_unused_isolated"}, {"write_unused_isolated"},
                                                  name="isolated")
+    isolated_sdfg.add_array("read_unused_isolated", shape=(n, n), dtype=dace.uint16, transient=False)
+    isolated_sdfg.add_array("write_unused_isolated", shape=(n, n), dtype=dace.uint16, transient=False)
+
     isolated_sdfg.add_symbol("i", dace.int32)
     isolated_nsdfg.symbol_mapping["i"] = "i"
+    isolated_nsdfg.symbol_mapping["N"] = "N"
     isolated_entry, isolated_exit = state_outer.add_map("isolated", {"i": "0:N"})
     state_outer.add_memlet_path(isolated_read,
                                 isolated_entry,
@@ -135,6 +139,8 @@ std::unique_lock<std::mutex> lock(mutex);
 std::ofstream of("prune_connectors_test.txt", std::ofstream::app);
 of << i << "\\n";""",
                                language=dace.Language.CPP)
+
+    sdfg_outer.validate()
 
     return sdfg_outer
 
@@ -244,8 +250,7 @@ def test_prune_connectors(n=None):
 
     sdfg = make_sdfg()
 
-    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
-        raise RuntimeError("PruneConnectors was not applied.")
+    assert sdfg.apply_transformations_repeated(PruneConnectors) == 3
 
     arr_in = np.zeros((n, n), dtype=np.uint16)
     arr_out = np.empty((n, n), dtype=np.uint16)
@@ -402,7 +407,7 @@ def test_prune_connectors_with_dependencies():
 
     applied = sdfg.apply_transformations_repeated(PruneConnectors)
     assert applied == 1
-    assert len(sdfg.states()) == 2
+    assert len(sdfg.states()) == 3
     assert "B1" not in nsdfg_node.in_connectors
     assert "B2" not in nsdfg_node.out_connectors
 

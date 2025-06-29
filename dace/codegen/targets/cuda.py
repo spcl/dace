@@ -24,7 +24,7 @@ from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_a
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, has_dynamic_map_inputs, is_array_stream_view,
-                       is_devicelevel_gpu, nodes, scope_contains_scope)
+                       is_devicelevel_gpu, nodes, scope_contains_scope, memlet_utils)
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
@@ -154,7 +154,6 @@ class CUDACodeGen(TargetCodeGenerator):
                                       target_type=target_type)
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
-        from dace.transformation.dataflow import CopyToMap
         for e, state in list(sdfg.all_edges_recursive()):
             if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode) and (not e.data.is_empty()):
                 nsdfg = state.parent
@@ -200,14 +199,17 @@ class CUDACodeGen(TargetCodeGenerator):
                         if src_strides[-1] == 1 and dst_strides[-1] == 1:
                             continue
 
-                    # Turn unsupported copy to a map
+                    if not Config.get('compiler', 'cuda', 'allow_implicit_memlet_to_map'):
+                        raise RuntimeError(
+                            f'Tried to implicitly convert edge "{e}" into a Map, but this is not allowed.')
+
                     try:
-                        CopyToMap.apply_to(nsdfg,
-                                           save=False,
-                                           annotate=False,
-                                           a=e.src,
-                                           b=e.dst,
-                                           options={"ignore_strides": True})
+                        memlet_utils.memlet_to_map(
+                            edge=e,
+                            state=state,
+                            sdfg=nsdfg,
+                            ignore_strides=True,
+                        )
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 

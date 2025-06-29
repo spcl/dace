@@ -624,16 +624,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             # Sanity checks
             if validate and len(eq) != 0:
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             entry_nodes = set(n for n in self.nodes() if isinstance(n, nd.EntryNode)) | {None}
             if (validate and len(result) != len(entry_nodes)):
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Some nodes were not processed: {}".format(entry_nodes - result.keys()))
 
             # Cache result
@@ -3624,7 +3624,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
 
-    def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
+    def add_branch(self, condition: Optional[Union[CodeBlock, str]], branch: ControlFlowRegion):
+        if condition is not None and not isinstance(condition, CodeBlock):
+            condition = CodeBlock(condition)
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
@@ -3810,6 +3812,14 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def all_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
+
+
+@make_properties
+class UnstructuredControlFlow(ControlFlowRegion):
+    """ Special control flow region to represent a region of unstructured control flow. """
+
+    def __repr__(self):
+        return f'UnstructuredCF ({self.label})'
 
 
 @make_properties

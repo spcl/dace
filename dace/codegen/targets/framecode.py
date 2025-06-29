@@ -1,16 +1,14 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import copy
 import pathlib
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
-import networkx as nx
 import numpy as np
 
 import dace
 from dace import config, data, dtypes
-from dace import symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -22,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -235,7 +233,6 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
-        import dace.library
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
@@ -485,34 +482,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        if sdfg.root_sdfg.recheck_using_explicit_control_flow():
-            # Use control flow blocks embedded in the SDFG to generate control flow.
-            cft = cflow.structured_control_flow_tree_with_regions(sdfg, dispatch_state)
-        elif config.Config.get_bool('optimizer', 'detect_control_flow'):
-            # Handle specialized control flow
-            # Avoid import loop
-            from dace.transformation import helpers as xfh
-
-            # Clean up the state machine by separating combined condition and assignment
-            # edges.
-            xfh.split_interstate_edges(sdfg)
-
-            cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
-        else:
-            # If disabled, generate entire graph as general control flow block
-            states_topological = list(sdfg.bfs_nodes(sdfg.start_state))
-            last = states_topological[-1]
-            cft = cflow.GeneralBlock(
-                dispatch_state, None, True, None,
-                [cflow.BasicCFBlock(dispatch_state, None, s is last, s)
-                 for s in states_topological], [], [], [], [], False)
-
-        callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
+        callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
 
         opbar.done()
-
-        # Write exit label
-        callsite_stream.write(f'__state_exit_{sdfg.cfg_id}:;', sdfg)
 
         return states_generated
 
@@ -914,16 +886,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():
-            for e in cfr.dfs_edges(cfr.start_block):
-                symbols = e.data.new_symbols(sdfg, global_symbols)
-                # Inferred symbols only take precedence if global symbol not defined or None
-                symbols = {
-                    k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
-                    for k, v in symbols.items()
-                }
-                interstate_symbols.update(symbols)
-                global_symbols.update(symbols)
-
             if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
                 if not cfr.loop_variable in interstate_symbols:
                     if cfr.loop_variable in global_symbols:
@@ -938,6 +900,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
+
+            for e in cfr.dfs_edges(cfr.start_block):
+                symbols = e.data.new_symbols(sdfg, global_symbols)
+                # Inferred symbols only take precedence if global symbol not defined or None
+                symbols = {
+                    k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                    for k, v in symbols.items()
+                }
+                interstate_symbols.update(symbols)
+                global_symbols.update(symbols)
 
         for isvarName, isvarType in interstate_symbols.items():
             if isvarType is None:
@@ -990,7 +962,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             # Get all environments used in the generated code, including
             # dependent environments
-            import dace.library  # Avoid import loops
             from dace.codegen.targets.cpp import mangle_dace_state_struct_name
             self.environments = dace.library.get_environments_and_dependencies(self._dispatcher.used_environments)
 
