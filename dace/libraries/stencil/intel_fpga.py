@@ -198,7 +198,52 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             connector = field_to_edge[field_name].dst_conn
             data_name_outer = connector
             data_name_inner = field_name + "_in"
-            desc_outer = parent_sdfg.arrays[data_name].clone()
+            parent_desc = parent_sdfg.arrays[data_name]
+            if isinstance(parent_desc, dt.View):
+                if isinstance(parent_desc, dt.ArrayView):
+                    desc_outer = dt.Array(parent_desc.dtype,
+                                          parent_desc.shape,
+                                          transient=False,
+                                          allow_conflicts=parent_desc.allow_conflicts,
+                                          storage=parent_desc.storage,
+                                          location=parent_desc.location,
+                                          strides=parent_desc.strides,
+                                          offset=parent_desc.offset,
+                                          may_alias=parent_desc.may_alias,
+                                          lifetime=parent_desc.lifetime,
+                                          alignment=parent_desc.alignment,
+                                          debuginfo=parent_desc.debuginfo,
+                                          total_size=parent_desc.total_size,
+                                          start_offset=parent_desc.start_offset,
+                                          optional= parent_desc.optional,
+                                          pool=parent_desc.pool)
+                elif isinstance(parent_desc, dt.StructureView):
+                    desc_outer = dt.Structure(members=parent_desc.members,
+                                              name=parent_desc.name,
+                                              transient=False,
+                                              storage=parent_desc.storage,
+                                              location=parent_desc.location,
+                                              lifetime=parent_desc.lifetime,
+                                              debuginfo=parent_desc.debuginfo)
+                elif isinstance(parent_desc, dt.ContainerView):
+                    desc_outer = dt.ContainerArray(parent_desc.dtype,
+                                                   parent_desc.shape,
+                                                   transient=False,
+                                                   allow_conflicts=parent_desc.allow_conflicts,
+                                                   storage=parent_desc.storage,
+                                                   location=parent_desc.location,
+                                                   strides=parent_desc.strides,
+                                                   offset=parent_desc.offset,
+                                                   may_alias=parent_desc.may_alias,
+                                                   lifetime=parent_desc.lifetime,
+                                                   alignment=parent_desc.alignment,
+                                                   debuginfo=parent_desc.debuginfo,
+                                                   total_size=parent_desc.total_size,
+                                                   start_offset=parent_desc.start_offset,
+                                                   optional= parent_desc.optional,
+                                                   pool=parent_desc.pool)
+            else:
+                desc_outer = parent_sdfg.arrays[data_name].clone()
             desc_outer.transient = False
             sdfg.add_datadesc(data_name_outer, desc_outer)
 
@@ -391,7 +436,52 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             # Outer write
             data_name_outer = field_name
             data_name_inner = field_name + "_out"
-            desc_outer = parent_sdfg.arrays[data_name].clone()
+            parent_desc = parent_sdfg.arrays[data_name]
+            if isinstance(parent_desc, dt.View):
+                if isinstance(parent_desc, dt.ArrayView):
+                    desc_outer = dt.Array(parent_desc.dtype,
+                                          parent_desc.shape,
+                                          transient=False,
+                                          allow_conflicts=parent_desc.allow_conflicts,
+                                          storage=parent_desc.storage,
+                                          location=parent_desc.location,
+                                          strides=parent_desc.strides,
+                                          offset=parent_desc.offset,
+                                          may_alias=parent_desc.may_alias,
+                                          lifetime=parent_desc.lifetime,
+                                          alignment=parent_desc.alignment,
+                                          debuginfo=parent_desc.debuginfo,
+                                          total_size=parent_desc.total_size,
+                                          start_offset=parent_desc.start_offset,
+                                          optional= parent_desc.optional,
+                                          pool=parent_desc.pool)
+                elif isinstance(parent_desc, dt.StructureView):
+                    desc_outer = dt.Structure(members=parent_desc.members,
+                                              name=parent_desc.name,
+                                              transient=False,
+                                              storage=parent_desc.storage,
+                                              location=parent_desc.location,
+                                              lifetime=parent_desc.lifetime,
+                                              debuginfo=parent_desc.debuginfo)
+                elif isinstance(parent_desc, dt.ContainerView):
+                    desc_outer = dt.ContainerArray(parent_desc.dtype,
+                                                   parent_desc.shape,
+                                                   transient=False,
+                                                   allow_conflicts=parent_desc.allow_conflicts,
+                                                   storage=parent_desc.storage,
+                                                   location=parent_desc.location,
+                                                   strides=parent_desc.strides,
+                                                   offset=parent_desc.offset,
+                                                   may_alias=parent_desc.may_alias,
+                                                   lifetime=parent_desc.lifetime,
+                                                   alignment=parent_desc.alignment,
+                                                   debuginfo=parent_desc.debuginfo,
+                                                   total_size=parent_desc.total_size,
+                                                   start_offset=parent_desc.start_offset,
+                                                   optional= parent_desc.optional,
+                                                   pool=parent_desc.pool)
+            else:
+                desc_outer = parent_sdfg.arrays[data_name].clone()
             desc_outer.transient = False
             array_index = ", ".join(map(str, parameters))
             try:

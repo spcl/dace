@@ -342,16 +342,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if isinstance(node, nodes.LibraryNode):
                 for ie in nstate.in_edges(node):
                     if isinstance(ie.src, nodes.AccessNode) and ie.src.data in inputs:
-                        outer_cont = sdfg.arrays[inputs[ie.src.data].data.data]
-                        inner_cont = nsdfg.arrays[ie.src.data]
-                        if inner_cont.shape != outer_cont.shape or inner_cont.strides != outer_cont.strides:
-                            reshapes.add(ie.src.data)
+                        reshapes.add(ie.src.data)
                 for oe in nstate.out_edges(node):
                     if isinstance(oe.dst, nodes.AccessNode) and oe.dst.data in outputs:
-                        outer_cont = sdfg.arrays[outputs[oe.dst.data].data.data]
-                        inner_cont = nsdfg.arrays[oe.dst.data]
-                        if inner_cont.shape != outer_cont.shape or inner_cont.strides != outer_cont.strides:
-                            reshapes.add(oe.dst.data)
+                        reshapes.add(oe.dst.data)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
