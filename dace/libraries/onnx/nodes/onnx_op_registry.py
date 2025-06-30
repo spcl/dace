@@ -86,7 +86,7 @@ def _get_latest_schemas():
 def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str,
                                  dace_schema: ONNXSchema):
 
-    @dace_op_repo.replaces("daceml.onnx.{}".format(cls_name))
+    @dace_op_repo.replaces("dace.libraries.onnx.{}".format(cls_name))
     def op_repo_replacement(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState,
                             **kwargs):
         attrs = {

@@ -378,7 +378,7 @@ class ONNXOp(nd.LibraryNode):
         ##########################################
         required_attrs = {
             name
-            for name, attr in self.attributes.items() if attr.required
+            for name, attr in self.schema.attributes.items() if attr.required
         }
         for attr in required_attrs:
             if getattr(self, attr) is None:
