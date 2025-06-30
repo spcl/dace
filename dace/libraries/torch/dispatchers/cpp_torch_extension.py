@@ -557,7 +557,7 @@ def register_and_compile_torch_extension(
     )
 
     torch_function = operator.attrgetter(
-        f"daceml_{compiled.sdfg.name}.{compiled.sdfg.name}")(torch.ops)
+        f"dace_{compiled.sdfg.name}.{compiled.sdfg.name}")(torch.ops)
 
     result = DaCeMLTorchFunction(function=torch_function,
                                  compiled_sdfgs=compiled_sdfgs,
