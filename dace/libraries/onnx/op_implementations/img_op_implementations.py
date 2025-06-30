@@ -213,8 +213,8 @@ class PureConv2D(ONNXForward):
 
         input_size_x, input_size_y = X.shape[2:]
         output_size_y, output_size_x = Y.shape[2:]
-        stride_y, stride_x = node.strides
-        pad_x, pad_y, _, _ = node.pads
+        stride_y, stride_x = node.strides or [1, 1]
+        pad_x, pad_y, _, _ = node.pads or [0, 0, 0, 0]
 
         dtype = X.dtype
 
