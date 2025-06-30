@@ -353,7 +353,7 @@ class ONNXModel:
                              storage: dtypes.StorageType):
         if isinstance(tensor, tuple):
             unclean_name, value = tensor
-            dtype = dtypes.DTYPE_TO_TYPECLASS[value.dtype.type]
+            dtype = dtypes.dtype_to_typeclass(value.dtype.type)
             shape = value.shape
             np_array = value
         else:

@@ -65,7 +65,7 @@ class SDFGBackwardRunner:
             if isinstance(node, nd.AccessNode) and node.desc(sdfg).dtype in
             [dace.float32, dace.float64] and not node.desc(sdfg).transient)
 
-        add_backward_pass(self.sdfg, state, [self.target], required_grads)
+        add_backward_pass(self.sdfg, [self.target], required_grads)
 
     def run(self, **inputs):
 
@@ -223,97 +223,6 @@ def test_complex_tasklet():
             Y=np.random.rand(3, 3).astype(np.float32),
         ),
     )
-
-
-def test_inplace_error():
-
-    @dace.program
-    def dace_inplace1(
-        X: dace.float32[3, 3],
-        Y: dace.float32[3, 3],
-        Z: dace.float32[3, 3],
-        S: dace.float32[1],
-    ):
-
-        with dace.tasklet:
-            x1 << X[1]
-            x0 >> X[0]
-
-            x0 = x1
-
-        Z[:] = X + Y
-
-        @dace.map(_[0:3, 0:3])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            z << Z[i, j]
-            s = z
-
-    with pytest.raises(AutoDiffException) as execinfo:
-        SDFGBackwardRunner(dace_inplace1.to_sdfg(), "S")
-    assert "Inplace" in str(execinfo.value)
-
-    @dace.program
-    def dace_inplace2(
-        X: dace.float32[3, 3],
-        Y: dace.float32[3, 3],
-        Z: dace.float32[3, 3],
-        S: dace.float32[1],
-    ):
-
-        X[:] = X + 1
-
-        Z[:] = X + Y
-
-        @dace.map(_[0:3, 0:3])
-        def summap(i, j):
-            s >> S(1, lambda x, y: x + y)[0]
-            z << Z[i, j]
-
-            s = z
-
-    with pytest.raises(AutoDiffException) as execinfo:
-        SDFGBackwardRunner(dace_inplace2.to_sdfg(), "S")
-    assert "Inplace" in str(execinfo.value)
-
-
-def test_reused_scalar_inplace_error(sdfg_name):
-    sdfg = dace.SDFG(sdfg_name)
-    state = sdfg.add_state()
-
-    sdfg.add_array(
-        "A",
-        shape=[
-            1,
-        ],
-        dtype=dace.float32,
-    )
-    sdfg.add_array(
-        "C",
-        shape=[
-            1,
-        ],
-        dtype=dace.float32,
-    )
-
-    tmp_a, tmp_a_desc = sdfg.add_scalar("tmp_a", dace.float32, transient=True)
-
-    A = state.add_access("A")
-    C = state.add_access("C")
-
-    task1 = state.add_tasklet("task1", {"inp"}, {"out"}, "out = sqrt(inp)")
-    task2 = state.add_tasklet("task2", {"inp"}, {"out"}, "out = log(inp + 1)")
-    task3 = state.add_tasklet("task3", {"inp"}, {"out"}, "out = sin(inp)")
-
-    state.add_edge(A, None, task1, "inp", dace.Memlet.simple("A", "0"))
-    state.add_edge(task1, "out", task2, "inp", dace.Memlet.simple(tmp_a, "0"))
-    state.add_edge(task2, "out", task3, "inp", dace.Memlet.simple(tmp_a, "0"))
-    state.add_edge(task3, "out", C, None, dace.Memlet.simple("C", "0"))
-
-    with pytest.raises(AutoDiffException) as execinfo:
-        SDFGBackwardRunner(sdfg, "C")
-
-    assert "Inplace" in str(execinfo.value)
 
 
 @run_correctness

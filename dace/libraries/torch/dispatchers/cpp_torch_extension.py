@@ -120,6 +120,9 @@ def argument_codegen(
 
     guard_contiguous = set(guard_contiguous or input_names)
 
+    assert set(input_names).issubset(arglist.keys()), \
+        f"Input names {set(input_names).difference(arglist.keys())} are not SDFG arguments {arglist.keys()}"
+
     # initialize the inputs and outputs
     ptr_init_code = "\n// setup input and output pointers\n"
     for name in sorted(input_names):

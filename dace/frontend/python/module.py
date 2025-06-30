@@ -88,7 +88,7 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
                  training: bool = False,
                  backward=False,
                  inputs_to_skip: Optional[List[str]] = None,
-                 onnx_simplify: bool = True,
+                 onnx_simplify: bool = False,
                  simplify: bool = True,
                  auto_optimize: bool = False,
                  debug_transients: bool = False,
