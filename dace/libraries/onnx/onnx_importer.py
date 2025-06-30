@@ -29,7 +29,6 @@ from dace.util import expand_onnx_nodes as onnx_node_expander, is_cuda, auto_opt
 log = logging.getLogger(__name__)
 
 numpy_to_torch_dtype_dict = {
-    np.bool: torch.bool,
     np.bool_: torch.bool,
     np.uint8: torch.uint8,
     np.int8: torch.int8,
