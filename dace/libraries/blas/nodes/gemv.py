@@ -24,7 +24,12 @@ class ExpandGemvPure(ExpandTransformation):
         node.validate(parent_sdfg, parent_state)
         sdfg = dace.SDFG(node.label + "_sdfg")
         ((edge_a, outer_array_a, _, _, shape_a, strides_a), (edge_x, outer_array_x, _, _, shape_x, strides_x),
-         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node, parent_state, parent_sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                                   parent_state,
+                                                                                   parent_sdfg,
+                                                                                   name_lhs="_A",
+                                                                                   name_rhs="_x",
+                                                                                   name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype_x = outer_array_x.dtype.type
         dtype_y = outer_array_y.dtype.type
@@ -152,7 +157,12 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
 
         # Get input/output data (the method considers also the presence of view nodes)
         ((edge_a, desc_a, _, _, shape_a, strides_a), (edge_x, desc_x, _, _, shape_x, strides_x),
-         (edge_y, desc_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node, parent_state, parent_sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+         (edge_y, desc_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                            parent_state,
+                                                                            parent_sdfg,
+                                                                            name_lhs="_A",
+                                                                            name_rhs="_x",
+                                                                            name_out="_y")
 
         # Create local versions of input/output data nodes
         _, desc_a = sdfg.add_array("_A",
@@ -611,7 +621,12 @@ class ExpandGemvCuBLAS(ExpandTransformation):
         node.validate(sdfg, state)
 
         ((edge_a, outer_array_a, _, _, shape_a, strides_a), (edge_x, outer_array_x, _, _, shape_x, strides_x),
-         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node, state, sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                                   state,
+                                                                                   sdfg,
+                                                                                   name_lhs="_A",
+                                                                                   name_rhs="_x",
+                                                                                   name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -708,7 +723,12 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         node.validate(sdfg, state)
 
         ((edge_a, outer_array_a, _, _, shape_a, strides_a), (edge_x, outer_array_x, _, _, shape_x, strides_x),
-         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node, state, sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                                   state,
+                                                                                   sdfg,
+                                                                                   name_lhs="_A",
+                                                                                   name_rhs="_x",
+                                                                                   name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -789,7 +809,12 @@ class ExpandGemvPBLAS(ExpandTransformation):
     def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
         node.validate(sdfg, state)
         ((edge_a, outer_array_a, _, _, shape_a, strides_a), (edge_x, outer_array_x, _, _, shape_x, strides_x),
-         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node, state, sdfg, name_lhs="_A", name_rhs="_x", name_out="_y")
+         (edge_y, outer_array_y, _, _, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                                   state,
+                                                                                   sdfg,
+                                                                                   name_lhs="_A",
+                                                                                   name_rhs="_x",
+                                                                                   name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen

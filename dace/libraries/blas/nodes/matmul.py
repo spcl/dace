@@ -91,7 +91,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     from dace.codegen.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _, _) = _get_matmul_operands(node, state, sdfg)
+    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _,
+                                                                   _) = _get_matmul_operands(node, state, sdfg)
 
     if getattr(node, 'transA', False):
         ashape = list(reversed(ashape))
