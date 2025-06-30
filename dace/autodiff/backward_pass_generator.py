@@ -2521,7 +2521,7 @@ class BackwardPassGenerator:
     def _reverse_subgraph(self, forward_state: SDFGState, backward_state: SDFGState,
                           subgraph: dstate.StateSubgraphView):
         """ Reverse a given subgraph. All nodes in the subgraph will be reversed. """
-        from dace.libraries.onnx.nodes.onnx_op import ONNXSum  # avoid import loop
+        from dace.libraries.onnx.nodes import ONNXSum  # avoid import loop
 
         # Condiitonal assignement nodes
         conditional_assignement_nodes: List[nodes.Node] = []
