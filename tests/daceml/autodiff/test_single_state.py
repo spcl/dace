@@ -65,7 +65,7 @@ class SDFGBackwardRunner:
             if isinstance(node, nd.AccessNode) and node.desc(sdfg).dtype in
             [dace.float32, dace.float64] and not node.desc(sdfg).transient)
 
-        add_backward_pass(self.sdfg, [self.target], required_grads)
+        add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads)
 
     def run(self, **inputs):
 
