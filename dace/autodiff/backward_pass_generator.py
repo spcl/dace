@@ -284,9 +284,6 @@ class BackwardPassGenerator:
         ]
         required_gradients = [n for n in required_gradients if n is not None]
 
-        self.given_gradients = given_gradients
-        self.required_gradients = required_gradients
-
         self.given_gradients_data = {n.data for n in given_gradients}
         self.required_gradients_data = {n.data for n in required_gradients}
 
@@ -371,26 +368,20 @@ class BackwardPassGenerator:
                                        dstate.MultiConnectorEdge]] = []
 
         # Sanity-check: the outputs need to be present in at least one of the states of the sdfg
-        for outp in self.given_gradients:
-            found = False
-            for state in self.state_order:
-                if outp in state:
-                    found = True
-                    break
+        for outp in self.given_gradients_data:
+            found = self.sdfg.arrays.get(outp) is not None
             if not found:
                 raise AutoDiffException(
-                    f"Could not find output {outp} in any of the SDFG states")
+                    f"Could not find output {outp} in the SDFG array descriptors dictionary"
+                )
 
         # Sanity-check: the inputs need to be present in at least one of the states of the sdfg
-        for inp in self.required_gradients:
-            found = False
-            for state in self.state_order:
-                if inp in state:
-                    found = True
-                    break
+        for inp in self.required_gradients_data:
+            found = self.sdfg.arrays.get(inp) is not None
             if not found:
                 raise AutoDiffException(
-                    f"Could not find input {inp} in any of the SDFG states")
+                    f"Could not find input {inp} in the SDFG array descriptors dictionary"
+                )
 
         if sdfg is backward_sdfg:
             # We only do reverse mode AD, which requires a single scalar output for now
@@ -457,10 +448,10 @@ class BackwardPassGenerator:
 
         # In some cases (accessnode -> accessnode), the descriptors for the gradients of the function outputs are not
         # added yet. Add them now.
-        for given_grad in sorted(self.given_gradients, key=lambda k: k.data):
+        for given_grad in sorted(self.given_gradients_data):
             if self.array_grad_name(
-                    given_grad.data) not in self.backward_sdfg.arrays:
-                self._add_gradient_data_descriptor(given_grad.data)
+                    given_grad) not in self.backward_sdfg.arrays:
+                self._add_gradient_data_descriptor(given_grad)
 
         # Execute completion hooks
         for hook in self.completion_hooks:
@@ -468,12 +459,12 @@ class BackwardPassGenerator:
 
         # Prepare the output
         required_grad_names = {
-            name.data: self.array_grad_name(name.data)
-            for name in self.required_gradients
+            name: self.array_grad_name(name)
+            for name in self.required_gradients_data
         }
         given_grad_names = {
-            name.data: self.array_grad_name(name.data)
-            for name in self.given_gradients
+            name: self.array_grad_name(name)
+            for name in self.given_gradients_data
         }
 
         # Set mapping from gradient name to whether it should be zeroed out on initialization
@@ -1294,15 +1285,15 @@ class BackwardPassGenerator:
         forward_nodes: set[nodes.Node] = set()
         backward_nodes: set[nodes.Node] = set()
         required_gradients_all_states = {
-            n.data
-            for n in self.required_gradients
+            n
+            for n in self.required_gradients_data
         }
-        given_gradients_all_states = {n.data for n in self.given_gradients}
+        given_gradients_all_states = set(self.given_gradients_data)
 
         #  TODO: this is experimental:
         required_gradients_all_states = {
-            n.data
-            for n in self.required_gradients
+            n
+            for n in self.required_gradients_data
         }
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
@@ -1416,12 +1407,12 @@ class BackwardPassGenerator:
         contributions from every node y where x is used as an input.
         """
         backward_nodes: set[nodes.Node] = set()
-        given_gradients_all_states = {n.data for n in self.given_gradients}
+        given_gradients_all_states = set(self.given_gradients_data)
 
         # TODO: this is experimental:
         required_gradients_all_states = {
-            n.data
-            for n in self.required_gradients
+            n
+            for n in self.required_gradients_data
         }
         given_gradients_all_states = given_gradients_all_states | required_gradients_all_states
 
@@ -2675,8 +2666,8 @@ class BackwardPassGenerator:
         nodes_to_track: List[nodes.AccessNode] = []
         # TODO: get all the nodes used below the target accessnode, this would have to extend to multiple states too
         # at the moment we know that the target access node itself should be tracked
-        gradinet_nodes = [n.data for n in self.required_gradients]
-        gradinet_nodes += [n.data for n in self.given_gradients]
+        gradinet_nodes = [n for n in self.required_gradients_data]
+        gradinet_nodes += [n for n in self.given_gradients_data]
 
         # get the subgraph difference
         difference = set(subgraph.nodes()).difference(set(block_nodes))
@@ -2711,7 +2702,7 @@ class BackwardPassGenerator:
         """
         Given
         """
-        given_gradients_all_states = {n.data for n in self.given_gradients}
+        given_gradients_all_states = set(self.given_gradients_data)
         # go through the states in reverse topologicla order
         for state in reversed(self.state_order):
             if state == forward_state:
@@ -2747,8 +2738,8 @@ class BackwardPassGenerator:
         Given
         """
         required_gradients_all_states = {
-            n.data
-            for n in self.required_gradients
+            n
+            for n in self.required_gradients_data
         }
         # do the forward bfs iterativly
         for state in self.state_order:
