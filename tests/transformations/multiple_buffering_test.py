@@ -168,6 +168,8 @@ def test_standalone_execution():
                     options=options_dict,
                 )
 
+
+
     # Validate SDFGs
     original_sdfg_w_shr_mem.validate()
     transformed_sdfg.validate()
