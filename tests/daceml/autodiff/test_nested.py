@@ -142,7 +142,9 @@ def test_view_forwarding():
         sdfg(inp1=inp1, bias=bias, result=result)
         return result + 1
 
-    outer_sdfg = inner_view_forwarding.to_sdfg(simplify=False)
+    # This generates a FunctionCallRegion in the current frontned
+    # We need to simplify.
+    outer_sdfg = inner_view_forwarding.to_sdfg(simplify=True)
     outer_sdfg.apply_transformations_repeated([StateFusion])
 
     def torch_func(*, inp1, bias):
