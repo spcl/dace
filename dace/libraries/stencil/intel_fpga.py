@@ -215,7 +215,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                                           debuginfo=parent_desc.debuginfo,
                                           total_size=parent_desc.total_size,
                                           start_offset=parent_desc.start_offset,
-                                          optional= parent_desc.optional,
+                                          optional=parent_desc.optional,
                                           pool=parent_desc.pool)
                 elif isinstance(parent_desc, dt.StructureView):
                     desc_outer = dt.Structure(members=parent_desc.members,
@@ -240,7 +240,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                                                    debuginfo=parent_desc.debuginfo,
                                                    total_size=parent_desc.total_size,
                                                    start_offset=parent_desc.start_offset,
-                                                   optional= parent_desc.optional,
+                                                   optional=parent_desc.optional,
                                                    pool=parent_desc.pool)
             else:
                 desc_outer = parent_sdfg.arrays[data_name].clone()
@@ -453,7 +453,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                                           debuginfo=parent_desc.debuginfo,
                                           total_size=parent_desc.total_size,
                                           start_offset=parent_desc.start_offset,
-                                          optional= parent_desc.optional,
+                                          optional=parent_desc.optional,
                                           pool=parent_desc.pool)
                 elif isinstance(parent_desc, dt.StructureView):
                     desc_outer = dt.Structure(members=parent_desc.members,
@@ -478,7 +478,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                                                    debuginfo=parent_desc.debuginfo,
                                                    total_size=parent_desc.total_size,
                                                    start_offset=parent_desc.start_offset,
-                                                   optional= parent_desc.optional,
+                                                   optional=parent_desc.optional,
                                                    pool=parent_desc.pool)
             else:
                 desc_outer = parent_sdfg.arrays[data_name].clone()
