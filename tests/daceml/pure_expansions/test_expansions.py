@@ -53,9 +53,9 @@ def test_matmul_expansion(a_shape, b_shape, sdfg_name):
 
     with dace.library.change_default(blas, "pure"):
         sdfg.expand_library_nodes()
-    # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
+    # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code")
         for n, _ in sdfg.all_nodes_recursive())
 
     result = sdfg(X=X, Z=Z)
@@ -105,9 +105,9 @@ def test_cast_int_to_float(sdfg_name):
     X = np.random.randint(0, 10, size=(2, 4), dtype=np.int32)
 
     sdfg.expand_library_nodes()
-    # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
+    # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code")
         for n, _ in sdfg.all_nodes_recursive())
 
     result = sdfg(X=X)
@@ -139,9 +139,9 @@ def test_cast_float_to_int(sdfg_name):
     X = np.random.normal(scale=10, size=(2, 4)).astype(np.float32)
 
     sdfg.expand_library_nodes()
-    # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
+    # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code")
         for n, _ in sdfg.all_nodes_recursive())
 
     result = sdfg(X=X)
@@ -173,9 +173,9 @@ def test_cast_float_to_long(sdfg_name):
     X = np.random.normal(scale=10, size=(2, 4)).astype(np.float32)
 
     sdfg.expand_library_nodes()
-    # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
+    # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code")
         for n, _ in sdfg.all_nodes_recursive())
 
     result = sdfg(X=X)
@@ -227,11 +227,10 @@ def test_reduce(keepdims, reduce_type, axes, sdfg_name):
                    sdfg.make_array_memlet("__return"))
 
     sdfg.expand_library_nodes()
-    # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
+    # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code")
         for n, _ in sdfg.all_nodes_recursive())
-
     result = sdfg(X=X)
 
     assert_allclose(numpy_result, result, rtol=1e-5, atol=1e-5)
@@ -268,9 +267,9 @@ def test_reduce_scalar(sdfg_name):
                    sdfg.make_array_memlet("__return"))
 
     sdfg.expand_library_nodes()
-    # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
+    # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code")
         for n, _ in sdfg.all_nodes_recursive())
 
     result = sdfg(X=X)
@@ -374,9 +373,9 @@ def test_reciprocal(sdfg_name):
 
     sdfg.expand_library_nodes()
 
-    # check that the expansion worked. The default ORT expansion wouldn't produce a map
-    assert any(
-        isinstance(n, dace.nodes.MapEntry)
+    # check that the expansion worked. The default ORT expansion contains a Tasklet with suffix _onnx_code
+    assert not any(
+        isinstance(n, dace.nodes.Tasklet) and n.name.endswith("_onnx_code")
         for n, _ in sdfg.all_nodes_recursive())
 
     result = sdfg(X=X)
@@ -567,7 +566,10 @@ def test_unsqueeze(gpu):
     @dace.program
     def unsqueeze(inp: dace.float64[3, 3]):
         output = dace.define_local([3, 1, 3, 1], dace.float64)
-        donnx.ONNXUnsqueeze(data=inp, expanded=output, axes=[1, 3])
+        axes = dace.define_local([2], dace.int64)
+        axes[0] = 1
+        axes[1] = 3
+        donnx.ONNXUnsqueeze(data=inp, expanded=output, axes=axes)
         return output
 
     sdfg: dace.SDFG = unsqueeze.to_sdfg()

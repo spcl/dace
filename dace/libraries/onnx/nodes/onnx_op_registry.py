@@ -20,6 +20,7 @@ from dace.libraries.onnx.nodes.node_codegen import expand_node
 from dace.libraries.onnx.forward_implementation_abc import ONNXForward
 
 import dace.libraries.onnx.nodes.onnx_op as onnx_op
+from dace.frontend.python.common import StringLiteral
 
 import onnx
 
@@ -245,6 +246,8 @@ for schema in _get_latest_schemas():
                     list(unknown_attrs)[0]))
 
         for name, attr in op_attributes.items():
+            if isinstance(attr, StringLiteral):
+                attr = attr.value
             setattr(self, name, attr)
 
     input_connector_docstrings = "\n".join(

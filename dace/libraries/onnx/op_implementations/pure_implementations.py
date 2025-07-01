@@ -17,7 +17,7 @@ from dace.libraries.onnx.op_implementations.utils import op_implementation, prog
 from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 from dace.util import iterables_equal, in_desc_with_name, out_desc_with_name, in_edge_with_name
-
+from math import prod
 log = logging.getLogger(__name__)
 
 
@@ -834,7 +834,7 @@ class PureReduceMean(ONNXForward):
             # Create axes_arr as an array with just axes_values
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype)
+            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
             axes_node = nstate.add_access(axes_name)
 
             # Add a tasklet to initialize the axes array in the SDFG
@@ -847,19 +847,23 @@ class PureReduceMean(ONNXForward):
             )
             nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
-        is_axes_scalar = len(axes_desc.shape) == 1 and axes_desc.shape[0] == 1
+        assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
+        [num_reduce_axes] = axes_desc.shape
 
         # Create the reduction tasklet with embedded constants
-        shape_str = ', '.join(map(str, data_desc.shape))
         tasklet_code = (f"""
             constexpr long long input_dims = {len(data_desc.shape)};
             constexpr long long output_dims = {len(reduced_desc.shape)};
-            constexpr long long num_reduce_dims = {len(axes_desc.shape)};
-            constexpr long long num_non_reduce_dims = {len(data_desc.shape) - len(axes_desc.shape)};
+            constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
             long long reduce_dims [num_reduce_dims] = """ +
-            ("{axes_arr};" if is_axes_scalar else f'{{{", ".join([f"axes_arr[{i}]" for i in range(len(axes_desc.shape))])}}};') +
+            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
             f""" 
+            for (long long i = 0; i < num_reduce_dims; i++) {{
+                if (reduce_dims[i] < 0) {{
+                    reduce_dims[i] = input_dims + reduce_dims[i];
+                }}
+            }}
 
             long long input_shape [input_dims] = {{{", ".join([str(data_desc.shape[i]) for i in range(len(data_desc.shape))])}}};
             long long output_shape [output_dims] = {{{", ".join([str(reduced_desc.shape[i]) for i in range(len(reduced_desc.shape))])}}};
@@ -918,7 +922,7 @@ class PureReduceMean(ONNXForward):
         """)
         tasklet = nstate.add_tasklet(
             f'reduce_mean_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': axes_desc.dtype},
+            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
             {'out': dace.pointer(reduced_desc.dtype)},
             tasklet_code,
             language=dace.Language.CPP)
@@ -2081,8 +2085,7 @@ class PureGather(ONNXForward):
         # even if the data contains just a single element
         tasklet.in_connectors["__data"] = dace.pointer(out_desc.dtype)
 
-        return nsdfg
-    
+        return nsdfg    
 @op_implementation(op="ReduceSum", name="pure")
 class PureReduceSum(ONNXForward):
     @staticmethod
@@ -2125,7 +2128,7 @@ class PureReduceSum(ONNXForward):
                 axes_values = list(axes)
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype)
+            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
             axes_node = nstate.add_access(axes_name)
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
@@ -2136,18 +2139,23 @@ class PureReduceSum(ONNXForward):
             )
             nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
-        is_axes_scalar = len(axes_desc.shape) == 1 and axes_desc.shape[0] == 1
+        assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
+        [num_reduce_axes] = axes_desc.shape
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
             constexpr long long input_dims = {len(data_desc.shape)};
             constexpr long long output_dims = {len(reduced_desc.shape)};
-            constexpr long long num_reduce_dims = {len(axes_desc.shape)};
-            constexpr long long num_non_reduce_dims = {len(data_desc.shape) - len(axes_desc.shape)};
+            constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
             long long reduce_dims [num_reduce_dims] = """ +
-            ("{axes_arr};" if is_axes_scalar else f'{{{", ".join([f"axes_arr[{i}]" for i in range(len(axes_desc.shape))])}}};') +
+            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
             f""" 
+            for (long long i = 0; i < num_reduce_dims; i++) {{
+                if (reduce_dims[i] < 0) {{
+                    reduce_dims[i] = input_dims + reduce_dims[i];
+                }}
+            }}
 
             long long input_shape [input_dims] = {{{", ".join([str(data_desc.shape[i]) for i in range(len(data_desc.shape))])}}};
             long long output_shape [output_dims] = {{{", ".join([str(reduced_desc.shape[i]) for i in range(len(reduced_desc.shape))])}}};
@@ -2191,7 +2199,7 @@ class PureReduceSum(ONNXForward):
         """)
         tasklet = nstate.add_tasklet(
             f'reduce_sum_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': axes_desc.dtype},
+            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
             {'out': dace.pointer(reduced_desc.dtype)},
             tasklet_code,
             language=dace.Language.CPP)
@@ -2241,7 +2249,7 @@ class PureReduceMax(ONNXForward):
                 axes_values = list(axes)
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype)
+            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
             axes_node = nstate.add_access(axes_name)
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
@@ -2252,18 +2260,23 @@ class PureReduceMax(ONNXForward):
             )
             nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
-        is_axes_scalar = len(axes_desc.shape) == 1 and axes_desc.shape[0] == 1
+        assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
+        [num_reduce_axes] = axes_desc.shape
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
             constexpr long long input_dims = {len(data_desc.shape)};
             constexpr long long output_dims = {len(reduced_desc.shape)};
-            constexpr long long num_reduce_dims = {len(axes_desc.shape)};
-            constexpr long long num_non_reduce_dims = {len(data_desc.shape) - len(axes_desc.shape)};
+            constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
             long long reduce_dims[num_reduce_dims] = """ +
-            ("{axes_arr};" if is_axes_scalar else f'{{{", ".join([f"axes_arr[{i}]" for i in range(len(axes_desc.shape))])}}};') +
+            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
             f""" 
+            for (long long i = 0; i < num_reduce_dims; i++) {{
+                if (reduce_dims[i] < 0) {{
+                    reduce_dims[i] = input_dims + reduce_dims[i];
+                }}
+            }}
 
             long long input_shape [input_dims] = {{{", ".join([str(data_desc.shape[i]) for i in range(len(data_desc.shape))])}}};
             long long output_shape [output_dims] = {{{", ".join([str(reduced_desc.shape[i]) for i in range(len(reduced_desc.shape))])}}};
@@ -2308,7 +2321,7 @@ class PureReduceMax(ONNXForward):
         """)
         tasklet = nstate.add_tasklet(
             f'reduce_max_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': axes_desc.dtype},
+            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
             {'out': dace.pointer(reduced_desc.dtype)},
             tasklet_code,
             language=dace.Language.CPP)
@@ -2358,7 +2371,7 @@ class PureReduceMin(ONNXForward):
                 axes_values = list(axes)
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype)
+            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
             axes_node = nstate.add_access(axes_name)
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
@@ -2369,18 +2382,23 @@ class PureReduceMin(ONNXForward):
             )
             nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
-        is_axes_scalar = len(axes_desc.shape) == 1 and axes_desc.shape[0] == 1
+        assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
+        [num_reduce_axes] = axes_desc.shape
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
             constexpr long long input_dims = {len(data_desc.shape)};
             constexpr long long output_dims = {len(reduced_desc.shape)};
-            constexpr long long num_reduce_dims = {len(axes_desc.shape)};
-            constexpr long long num_non_reduce_dims = {len(data_desc.shape) - len(axes_desc.shape)};
+            constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
             long long reduce_dims[num_reduce_dims] = """ +
-            ("{axes_arr};" if is_axes_scalar else f'{{{", ".join([f"axes_arr[{i}]" for i in range(len(axes_desc.shape))])}}};') +
+            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
             f""" 
+            for (long long i = 0; i < num_reduce_dims; i++) {{
+                if (reduce_dims[i] < 0) {{
+                    reduce_dims[i] = input_dims + reduce_dims[i];
+                }}
+            }}
 
             long long input_shape [input_dims] = {{{", ".join([str(data_desc.shape[i]) for i in range(len(data_desc.shape))])}}};
             long long output_shape [output_dims] = {{{", ".join([str(reduced_desc.shape[i]) for i in range(len(reduced_desc.shape))])}}};
@@ -2425,7 +2443,7 @@ class PureReduceMin(ONNXForward):
         """)
         tasklet = nstate.add_tasklet(
             f'reduce_min_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': axes_desc.dtype},
+            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
             {'out': dace.pointer(reduced_desc.dtype)},
             tasklet_code,
             language=dace.Language.CPP)
