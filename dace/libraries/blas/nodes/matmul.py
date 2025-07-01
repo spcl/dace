@@ -150,7 +150,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         a, b, c = _get_matmul_operands(node, state, sdfg)
         size_a = a[4]
         size_b = b[4]
-        if len(size_a) == 2 and len(size_b) == 2:
+        size_c = c[4]
+        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
             beta = node.beta
