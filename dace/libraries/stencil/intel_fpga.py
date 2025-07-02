@@ -200,48 +200,10 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             data_name_inner = field_name + "_in"
             parent_desc = parent_sdfg.arrays[data_name]
             if isinstance(parent_desc, dt.View):
-                if isinstance(parent_desc, dt.ArrayView):
-                    desc_outer = dt.Array(parent_desc.dtype,
-                                          parent_desc.shape,
-                                          transient=False,
-                                          allow_conflicts=parent_desc.allow_conflicts,
-                                          storage=parent_desc.storage,
-                                          location=parent_desc.location,
-                                          strides=parent_desc.strides,
-                                          offset=parent_desc.offset,
-                                          may_alias=parent_desc.may_alias,
-                                          lifetime=parent_desc.lifetime,
-                                          alignment=parent_desc.alignment,
-                                          debuginfo=parent_desc.debuginfo,
-                                          total_size=parent_desc.total_size,
-                                          start_offset=parent_desc.start_offset,
-                                          optional=parent_desc.optional,
-                                          pool=parent_desc.pool)
+                if isinstance(parent_desc, (dt.ArrayView, dt.ContainerArray)):
+                    desc_outer = parent_desc.as_array()
                 elif isinstance(parent_desc, dt.StructureView):
-                    desc_outer = dt.Structure(members=parent_desc.members,
-                                              name=parent_desc.name,
-                                              transient=False,
-                                              storage=parent_desc.storage,
-                                              location=parent_desc.location,
-                                              lifetime=parent_desc.lifetime,
-                                              debuginfo=parent_desc.debuginfo)
-                elif isinstance(parent_desc, dt.ContainerView):
-                    desc_outer = dt.ContainerArray(parent_desc.dtype,
-                                                   parent_desc.shape,
-                                                   transient=False,
-                                                   allow_conflicts=parent_desc.allow_conflicts,
-                                                   storage=parent_desc.storage,
-                                                   location=parent_desc.location,
-                                                   strides=parent_desc.strides,
-                                                   offset=parent_desc.offset,
-                                                   may_alias=parent_desc.may_alias,
-                                                   lifetime=parent_desc.lifetime,
-                                                   alignment=parent_desc.alignment,
-                                                   debuginfo=parent_desc.debuginfo,
-                                                   total_size=parent_desc.total_size,
-                                                   start_offset=parent_desc.start_offset,
-                                                   optional=parent_desc.optional,
-                                                   pool=parent_desc.pool)
+                    desc_outer = parent_desc.as_structure()
             else:
                 desc_outer = parent_sdfg.arrays[data_name].clone()
             desc_outer.transient = False
