@@ -5167,11 +5167,19 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 for i in range(len(other_subset.ranges)):
                     rb, re, rs = other_subset.ranges[i]
+                    if (rs < 0) == True:
+                        raise DaceSyntaxError(
+                            self, node, 'Negative strides are not supported in subscripts. '
+                            'Please use a Map scope to express this operation.')
                     re = re - rb
                     rb = 0
                     if rs != 1:
+                        # NOTE: We use the identity floor(A/B) = ceiling((A + 1) / B) - 1
+                        # because Range.size() uses the ceiling method and that way we avoid
+                        # false negatives when testing the equality of data shapes.
+                        # re = re // rs
+                        re = sympy.ceiling((re + 1) / rs) - 1
                         strides[i] *= rs
-                        re = re // rs
                         rs = 1
                     other_subset.ranges[i] = (rb, re, rs)
 
