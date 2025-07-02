@@ -336,6 +336,24 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge is not None and not InlineSDFG._check_strides(array.strides, sdfg.arrays[edge.data.data].strides,
                                                                   edge.data, nsdfg_node):
                 reshapes.add(aname)
+        # Among the nodes needing reshapes are any input/output nodes directly being used by library nodes. The shape
+        # influences the behavior of the access nodes and thus the reshapes through views are necessary.
+        for node in nstate.nodes():
+            if isinstance(node, nodes.LibraryNode):
+                for ie in nstate.in_edges(node):
+                    root = nstate.memlet_tree(ie).root().edge
+                    if isinstance(root.src, nodes.AccessNode) and root.src.data in inputs:
+                        ndesc = nsdfg.arrays[root.src.data]
+                        outer_desc = sdfg.arrays[inputs[root.src.data].data.data]
+                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                            reshapes.add(root.src.data)
+                for oe in nstate.out_edges(node):
+                    root = nstate.memlet_tree(oe).root().edge
+                    if isinstance(root.dst, nodes.AccessNode) and root.dst.data in outputs:
+                        ndesc = nsdfg.arrays[root.dst.data]
+                        outer_desc = sdfg.arrays[outputs[root.dst.data].data.data]
+                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                            reshapes.add(root.dst.data)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
