@@ -5165,6 +5165,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 tmp = self.sdfg.temp_data_name()
                 tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
             else:
+                for i in range(len(other_subset.ranges)):
+                    rb, re, rs = other_subset.ranges[i]
+                    re = re - rb
+                    rb = 0
+                    if rs != 1:
+                        strides[i] *= rs
+                        re = re // rs
+                        rs = 1
+                    other_subset.ranges[i] = (rb, re, rs)
+
                 tmp, tmparr = self.sdfg.add_view(array,
                                                  other_subset.size(),
                                                  arrobj.dtype,
