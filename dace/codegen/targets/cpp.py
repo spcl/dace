@@ -137,7 +137,7 @@ def copy_expr(
 
     elif def_type in [DefinedType.Scalar, DefinedType.Stream, DefinedType.Object]:
 
-        if add_offset:
+        if add_offset and not memlet.dynamic:
             raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
 
         if def_type == DefinedType.Scalar:
