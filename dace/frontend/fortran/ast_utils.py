@@ -135,7 +135,7 @@ class TaskletWriter:
     """
 
     # store all tasklets generated for quick retrieval of assignments
-    TASKLETS_CREATED = defaultdict(lambda: defaultdict(Tuple[str, ast_internal_classes.FNode]))
+    TASKLETS_CREATED: Dict[SDFG, Dict[str, Tuple[str, ast_internal_classes.FNode]]] = defaultdict(lambda: defaultdict())
 
     def __init__(self,
                  outputs: List[str],
