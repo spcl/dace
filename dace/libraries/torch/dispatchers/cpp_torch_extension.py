@@ -328,7 +328,7 @@ class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function
             AutogradContext *ctx,
             int64_t fwd_handle_ptr, int64_t bwd_handle_ptr, {", ".join(f"const Tensor& {name}_" for name in inputs)}) {{
 
-            at::AutoNonVariableTypeMode g;
+            at::AutoDispatchBelowADInplaceOrView g;
 
             // initialize outputs
             {initialize_outputs_code(module, outputs_with_forwarded_outputs)}

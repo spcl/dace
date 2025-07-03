@@ -18,6 +18,7 @@ from dace.transformation.onnx import constant_folding
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 from dace.util import iterables_equal, in_desc_with_name, out_desc_with_name, in_edge_with_name
 from math import prod
+
 log = logging.getLogger(__name__)
 
 
@@ -40,154 +41,164 @@ def Sqrt(X, Y):
 def Pow(X, Y, Z):
     Z[:] = X**Y
 
+
 @op_implementation(op="Concat", name="pure")
 class PureConcat(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
         return True
-    
+
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState,
                 sdfg: SDFG) -> typing.Union[Node, SDFG]:
         axis = node.axis
-        
+
         num_inputs = len(state.in_edges(node))
-        
+
         def inp_name(i):
             return f"inputs__{i}"
+
         out_name = "concat_result"
-        
-        inp_data = [in_desc_with_name(node, state, sdfg, inp_name(i)) for i in range(num_inputs)]
+
+        inp_data = [
+            in_desc_with_name(node, state, sdfg, inp_name(i))
+            for i in range(num_inputs)
+        ]
         out_data = out_desc_with_name(node, state, sdfg, out_name)
-                
+
         nsdfg = dace.SDFG(node.label)
-        
-        inp_data_descs = [copy.deepcopy(desc) for desc in inp_data]        
+
+        inp_data_descs = [copy.deepcopy(desc) for desc in inp_data]
         for i, desc in enumerate(inp_data_descs):
             desc.transient = False
             nsdfg.add_datadesc(inp_name(i), desc)
         out_data_desc = copy.deepcopy(out_data)
         out_data_desc.transient = False
         nsdfg.add_datadesc(out_name, out_data_desc)
-        
+
         inp_shapes = [d.shape for d in inp_data]
         out_shape = out_data_desc.shape
-        
+
         nstate = nsdfg.add_state()
         out_write = nstate.add_write(out_name)
-        
+
         for inp_idx in range(num_inputs):
             inp_read = nstate.add_read(inp_name(inp_idx))
-        
+
             tasklet = nstate.add_tasklet(
-                f'concat_{inp_idx}', 
+                f'concat_{inp_idx}',
                 {'inp': inp_data_descs[inp_idx].dtype},
                 {'out': out_data_desc.dtype},
                 "out = inp",
             )
-            
-            map_entry, map_exit = nstate.add_map(
-                f"concat_map_{inp_idx}",
-                {f"i{i}": f"0:{s}" for i, s in enumerate(inp_shapes[inp_idx])}
-            )
-        
+
+            map_entry, map_exit = nstate.add_map(f"concat_map_{inp_idx}", {
+                f"i{i}": f"0:{s}"
+                for i, s in enumerate(inp_shapes[inp_idx])
+            })
+
             inp_access = [f'i{i}' for i, _ in enumerate(inp_shapes[inp_idx])]
             inp_access_str = ", ".join(inp_access)
             inp_memlet = dace.Memlet(f"{inp_name(inp_idx)}[{inp_access_str}]")
-            
+
             stack_idx_offset = ""
             for i in range(inp_idx):
                 stack_idx_offset += f" + ({inp_shapes[i][axis]})"
-            
+
             out_access = [f'i{i}' for i, _ in enumerate(out_shape)]
             if stack_idx_offset:
                 out_access[axis] += stack_idx_offset
             out_access_str = ", ".join(out_access)
             out_memlet = dace.Memlet(f"{out_name}[{out_access_str}]")
-            
-            nstate.add_memlet_path(
-                inp_read, map_entry, tasklet,
-                memlet=inp_memlet,
-                dst_conn="inp"
-            )
-            nstate.add_memlet_path(
-                tasklet, map_exit, out_write,
-                memlet=out_memlet,
-                src_conn="out"
-            )
-        
+
+            nstate.add_memlet_path(inp_read,
+                                   map_entry,
+                                   tasklet,
+                                   memlet=inp_memlet,
+                                   dst_conn="inp")
+            nstate.add_memlet_path(tasklet,
+                                   map_exit,
+                                   out_write,
+                                   memlet=out_memlet,
+                                   src_conn="out")
+
         return nsdfg
 
 
 @op_implementation(op="Resize", name="pure")
-class PureResize(ONNXForward):    
+class PureResize(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
         # Check if we have either scales or sizes (but not both)
         has_scales = len(list(state.in_edges_by_connector(node, 'scales'))) > 0
         has_sizes = len(list(state.in_edges_by_connector(node, 'sizes'))) > 0
-        
+
         if has_scales == has_sizes:
             return False
-            
+
         # Check interpolation mode
         mode = getattr(node, 'mode', 'nearest')
         if mode is not None and mode not in ['nearest', 'linear', 'cubic']:
             return False
-            
+
         # Check nearest mode if using nearest interpolation
         if mode == 'nearest':
             nearest_mode = getattr(node, 'nearest_mode', 'round_prefer_floor')
-            if nearest_mode is not None and nearest_mode not in ['round_prefer_floor', 'round_prefer_ceil', 'floor', 'ceil']:
+            if nearest_mode is not None and nearest_mode not in [
+                    'round_prefer_floor', 'round_prefer_ceil', 'floor', 'ceil'
+            ]:
                 return False
-                
+
         # Check coordinate transformation mode
-        coord_mode = getattr(node, 'coordinate_transformation_mode', 'half_pixel')
+        coord_mode = getattr(node, 'coordinate_transformation_mode',
+                             'half_pixel')
         if coord_mode is not None and coord_mode not in [
-            'half_pixel',
-            'half_pixel_symmetric',
-            'pytorch_half_pixel', 
-            'align_corners',
-            'asymmetric',
-            'tf_crop_and_resize'
+                'half_pixel', 'half_pixel_symmetric', 'pytorch_half_pixel',
+                'align_corners', 'asymmetric', 'tf_crop_and_resize'
         ]:
             return False
-            
+
         # For tf_crop_and_resize, roi must be present
         if coord_mode == 'tf_crop_and_resize':
             has_roi = len(list(state.in_edges_by_connector(node, 'roi'))) > 0
             if not has_roi:
                 return False
-                
+
         # Check keep_aspect_ratio_policy if using sizes
         if has_sizes:
             policy = getattr(node, 'keep_aspect_ratio_policy', 'stretch')
-            if policy is not None and policy not in ['stretch', 'not_larger', 'not_smaller']:
+            if policy is not None and policy not in [
+                    'stretch', 'not_larger', 'not_smaller'
+            ]:
                 return False
-                
+
         # Check antialias
         antialias = getattr(node, 'antialias', 0)
         if antialias is not None and antialias not in [0, 1]:
             return False
-            
+
         # Check exclude_outside
         exclude_outside = getattr(node, 'exclude_outside', 0)
         if exclude_outside is not None and exclude_outside not in [0, 1]:
             return False
-            
+
         # Check extrapolation_value
         extrapolation_value = getattr(node, 'extrapolation_value', 0.0)
-        if extrapolation_value is not None and not isinstance(extrapolation_value, (int, float)):
+        if extrapolation_value is not None and not isinstance(
+                extrapolation_value, (int, float)):
             return False
-            
+
         # Check cubic coefficient
         if mode == 'cubic':
             cubic_coeff_a = getattr(node, 'cubic_coeff_a', -0.75)
-            if cubic_coeff_a is not None and not isinstance(cubic_coeff_a, (int, float)):
+            if cubic_coeff_a is not None and not isinstance(
+                    cubic_coeff_a, (int, float)):
                 return False
-            
+
         # Check axes if provided
         axes = getattr(node, 'axes', None)
         if axes is not None:
@@ -201,7 +212,7 @@ class PureResize(ONNXForward):
             for axis in axes:
                 if not isinstance(axis, int) or axis < -rank or axis >= rank:
                     return False
-                    
+
         # Check input shapes
         x_desc = in_desc_with_name(node, state, sdfg, 'X')
         rank = len(x_desc.shape)
@@ -217,70 +228,77 @@ class PureResize(ONNXForward):
                 return False
             if len(axes) if axes is not None else rank != sizes_desc.shape[0]:
                 return False
-                
+
         # Check output shape
         y_desc = out_desc_with_name(node, state, sdfg, 'Y')
         if len(x_desc.shape) != len(y_desc.shape):
             return False
-            
+
         return True
-    
+
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState,
                 sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        
+
         inp_name = 'X'
         out_name = 'Y'
-        
+
         nsdfg = dace.SDFG(node.label)
-        
+
         # Add required input and output descriptors
-        inp_data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, inp_name))
+        inp_data_desc = copy.deepcopy(
+            in_desc_with_name(node, state, sdfg, inp_name))
         inp_data_desc.transient = False
         nsdfg.add_datadesc(inp_name, inp_data_desc)
-        
-        out_data_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, out_name))
+
+        out_data_desc = copy.deepcopy(
+            out_desc_with_name(node, state, sdfg, out_name))
         out_data_desc.transient = False
         nsdfg.add_datadesc(out_name, out_data_desc)
-        
+
         # Check for optional parameters
         has_scales = len(list(state.in_edges_by_connector(node, 'scales'))) > 0
         has_sizes = len(list(state.in_edges_by_connector(node, 'sizes'))) > 0
         has_roi = len(list(state.in_edges_by_connector(node, 'roi'))) > 0
-        
+
         # Get axes to resize
         axes = node.axes or list(range(len(inp_data_desc.shape)))
-            
+
         # Convert negative axes to positive
-        axes = [ax if ax >= 0 else len(inp_data_desc.shape) + ax for ax in axes]
-        
+        axes = [
+            ax if ax >= 0 else len(inp_data_desc.shape) + ax for ax in axes
+        ]
+
         # Add optional parameter descriptors if they exist
         if has_scales:
             scales_name = 'scales'
-            scales_data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, scales_name))
+            scales_data_desc = copy.deepcopy(
+                in_desc_with_name(node, state, sdfg, scales_name))
             scales_data_desc.transient = False
             nsdfg.add_datadesc(scales_name, scales_data_desc)
-            
+
         if has_sizes:
             sizes_name = 'sizes'
-            sizes_data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, sizes_name))
+            sizes_data_desc = copy.deepcopy(
+                in_desc_with_name(node, state, sdfg, sizes_name))
             sizes_data_desc.transient = False
             nsdfg.add_datadesc(sizes_name, sizes_data_desc)
-            
+
         if has_roi:
             roi_name = 'roi'
-            roi_data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, roi_name))
+            roi_data_desc = copy.deepcopy(
+                in_desc_with_name(node, state, sdfg, roi_name))
             roi_data_desc.transient = False
             nsdfg.add_datadesc(roi_name, roi_data_desc)
-        
+
         num_dims = len(inp_data_desc.shape)
-        
+
         # setup inner SDFG
         nstate = nsdfg.add_state()
-        
+
         inp_read = nstate.add_read(inp_name)
         out_write = nstate.add_write(out_name)
-        
+
         # Add reads for optional parameters
         tasklet_inputs = {'__inp': dace.pointer(inp_data_desc.dtype)}
         if has_scales:
@@ -292,17 +310,18 @@ class PureResize(ONNXForward):
         if has_roi:
             roi_read = nstate.add_read(roi_name)
             tasklet_inputs['__roi'] = dace.pointer(roi_data_desc.dtype)
-        
+
         # Generate tasklet code for interpolation
         tasklet_code = []
-        
+
         # Get interpolation parameters
-        coord_mode = getattr(node, 'coordinate_transformation_mode', 'half_pixel')
+        coord_mode = getattr(node, 'coordinate_transformation_mode',
+                             'half_pixel')
         mode = getattr(node, 'mode', 'nearest')
         antialias = getattr(node, 'antialias', 0)
         exclude_outside = getattr(node, 'exclude_outside', 0)
         extrapolation_value = getattr(node, 'extrapolation_value', 0.0)
-        
+
         # Add cubic interpolation helper functions if needed
         if mode == 'cubic':
             cubic_coeff_a = getattr(node, 'cubic_coeff_a', -0.75)
@@ -319,28 +338,30 @@ class PureResize(ONNXForward):
                 return 0.0;
             }}
             """)
-        
+
         # Loop over output dimensions
         tasklet_code.append("""
         // Loop over all output dimensions
         """)
-        
+
         # Create nested loops for each dimension
         for i in range(len(out_data_desc.shape)):
-            tasklet_code.append(f"for (int i{i} = 0; i{i} < {out_data_desc.shape[i]}; i{i}++) {{")
-        
+            tasklet_code.append(
+                f"for (int i{i} = 0; i{i} < {out_data_desc.shape[i]}; i{i}++) {{"
+            )
+
         # Calculate input indices
         tasklet_code.append("""
         // Calculate input indices for each dimension
         int inp_indices[{}];
         """.format(num_dims))
-        
+
         # Declare all size variables at the beginning
         for i in range(num_dims):
             if i in axes:
                 tasklet_code.append(f"float inp_size_{i};")
                 tasklet_code.append(f"float out_size_{i};")
-        
+
         for i in range(num_dims):
             tasklet_code.append(f"// Dimension {i}")
             if i in axes:
@@ -353,7 +374,7 @@ class PureResize(ONNXForward):
                     float x_resized_{i} = i{i};
                     float x_original_{i};
                     """)
-                    
+
                     # Add coordinate transformation based on mode
                     if coord_mode == 'half_pixel':
                         tasklet_code.append(f"""
@@ -388,16 +409,23 @@ class PureResize(ONNXForward):
                             x_original_{i} = 0.5 * (roi_start_{i} + roi_end_{i}) * (inp_size_{i} - 1);
                         }}
                         """)
-                    
+
                     # Add interpolation mode handling
                     if mode == 'nearest':
-                        nearest_mode = getattr(node, 'nearest_mode', 'round_prefer_floor')
+                        nearest_mode = getattr(node, 'nearest_mode',
+                                               'round_prefer_floor')
                         if nearest_mode == 'floor':
-                            tasklet_code.append(f"inp_indices[{i}] = int(floor(x_original_{i}));")
+                            tasklet_code.append(
+                                f"inp_indices[{i}] = int(floor(x_original_{i}));"
+                            )
                         elif nearest_mode == 'ceil':
-                            tasklet_code.append(f"inp_indices[{i}] = int(ceil(x_original_{i}));")
+                            tasklet_code.append(
+                                f"inp_indices[{i}] = int(ceil(x_original_{i}));"
+                            )
                         else:  # round_prefer_floor or round_prefer_ceil
-                            tasklet_code.append(f"inp_indices[{i}] = int(round(x_original_{i}));")
+                            tasklet_code.append(
+                                f"inp_indices[{i}] = int(round(x_original_{i}));"
+                            )
                     elif mode == 'linear':
                         tasklet_code.append(f"""
                         float x0_{i} = floor(x_original_{i});
@@ -430,23 +458,25 @@ class PureResize(ONNXForward):
                     """)
             else:
                 tasklet_code.append(f"inp_indices[{i}] = i{i};")
-        
+
         # Calculate input index
         tasklet_code.append("""
         // Calculate input index
         int inp_idx = 0;
         """)
         for i in range(num_dims):
-            tasklet_code.append(f"inp_idx += inp_indices[{i}] * {inp_data_desc.strides[i]};")
-        
+            tasklet_code.append(
+                f"inp_idx += inp_indices[{i}] * {inp_data_desc.strides[i]};")
+
         # Calculate output index
         tasklet_code.append("""
         // Calculate output index
         int out_idx = 0;
         """)
         for i in range(num_dims):
-            tasklet_code.append(f"out_idx += i{i} * {out_data_desc.strides[i]};")
-        
+            tasklet_code.append(
+                f"out_idx += i{i} * {out_data_desc.strides[i]};")
+
         # Perform interpolation based on mode
         if mode == 'linear':
             tasklet_code.append(f"""
@@ -469,7 +499,7 @@ class PureResize(ONNXForward):
             // Nearest neighbor interpolation
             float result = __inp [inp_idx];
             """)
-        
+
         # Handle antialiasing if enabled
         if antialias == 1 and mode in ['linear', 'cubic']:
             tasklet_code.append("""
@@ -480,7 +510,7 @@ class PureResize(ONNXForward):
                 result *= filter_scale;
             }
             """)
-        
+
         # Handle exclude_outside if enabled
         if exclude_outside == 1:
             tasklet_code.append(f"""
@@ -496,7 +526,7 @@ class PureResize(ONNXForward):
                 result = 0.0;
             }}
             """)
-        
+
         # Handle extrapolation_value for tf_crop_and_resize
         if coord_mode == 'tf_crop_and_resize':
             tasklet_code.append(f"""
@@ -512,56 +542,60 @@ class PureResize(ONNXForward):
                 result = {extrapolation_value};
             }}
             """)
-        
+
         # Write the result to output
         tasklet_code.append("""
         // Write output
         __out [out_idx] = result;
         """)
-        
+
         # Close dimension loops
         for i in range(len(out_data_desc.shape)):
             tasklet_code.append("}")
-        
+
         tasklet = nstate.add_tasklet(
-            f'tasklet_reshape', 
-            tasklet_inputs,
-            {'__out': dace.pointer(out_data_desc.dtype)},
+            f'tasklet_reshape',
+            tasklet_inputs, {'__out': dace.pointer(out_data_desc.dtype)},
             "\n".join(tasklet_code),
-            language=dace.Language.CPP
-        )
-        
+            language=dace.Language.CPP)
+
         # Connect tasklet inputs
-        nstate.add_edge(inp_read, None, tasklet, "__inp", 
-                       dace.Memlet.from_array(inp_name, inp_data_desc))
+        nstate.add_edge(inp_read, None, tasklet, "__inp",
+                        dace.Memlet.from_array(inp_name, inp_data_desc))
         if has_scales:
-            nstate.add_edge(scales_read, None, tasklet, "__scales",
-                           dace.Memlet.from_array(scales_name, scales_data_desc))
+            nstate.add_edge(
+                scales_read, None, tasklet, "__scales",
+                dace.Memlet.from_array(scales_name, scales_data_desc))
         if has_sizes:
-            nstate.add_edge(sizes_read, None, tasklet, "__sizes",
-                           dace.Memlet.from_array(sizes_name, sizes_data_desc))
+            nstate.add_edge(
+                sizes_read, None, tasklet, "__sizes",
+                dace.Memlet.from_array(sizes_name, sizes_data_desc))
         if has_roi:
             nstate.add_edge(roi_read, None, tasklet, "__roi",
-                           dace.Memlet.from_array(roi_name, roi_data_desc))
-        
+                            dace.Memlet.from_array(roi_name, roi_data_desc))
+
         # Connect tasklet output
         nstate.add_edge(tasklet, "__out", out_write, None,
-                       dace.Memlet.from_array(out_name, out_data_desc))
-        
+                        dace.Memlet.from_array(out_name, out_data_desc))
+
         return nsdfg
-    
+
+
 @op_implementation(op="Clip", name="pure")
 class PureClip(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
         min_node = next(state.in_edges_by_connector(node, 'min')).src
         max_node = next(state.in_edges_by_connector(node, 'max')).src
         # TODO other cases
-        return (onnx_constant_or_none(sdfg, min_node) is not None and onnx_constant_or_none(sdfg, max_node) is not None)
+        return (onnx_constant_or_none(sdfg, min_node) is not None
+                and onnx_constant_or_none(sdfg, max_node) is not None)
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
 
         min_node = next(state.in_edges_by_connector(node, 'min')).src
         max_node = next(state.in_edges_by_connector(node, 'max')).src
@@ -608,33 +642,36 @@ def Where(condition, X, Y, output):
 @python_pure_op_implementation
 def Erf(input, output):
     output[:] = dace.elementwise(lambda x: erf(x), input)
-    
+
+
 @op_implementation(op="CumSum", name="pure")
 class PureCumSum(ONNXForward):
+
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState,
                 sdfg: SDFG) -> typing.Union[Node, SDFG]:
 
         if node.exclusive or node.reverse:
-            raise NotImplementedError("CumSum with exclusive or reverse attributes is not implemented")
+            raise NotImplementedError(
+                "CumSum with exclusive or reverse attributes is not implemented"
+            )
 
-        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(sdfg,
-                                                  state,
-                                                  node,
-                                                  add_access_nodes=True)
+        nsdfg, nstate, input_nodes, output_nodes = empty_sdfg_for_node(
+            sdfg, state, node, add_access_nodes=True)
 
         x_desc = in_desc_with_name(node, state, sdfg, "x")
         axis_desc = in_desc_with_name(node, state, sdfg, "axis")
         y_desc = out_desc_with_name(node, state, sdfg, "y")
 
-        x_idx_expr = " + ".join([f"i{i} * {s}" for i, s in enumerate(x_desc.strides)])
-        y_idx_expr = " + ".join([f"i{i} * {s}" for i, s in enumerate(y_desc.strides)])
+        x_idx_expr = " + ".join(
+            [f"i{i} * {s}" for i, s in enumerate(x_desc.strides)])
+        y_idx_expr = " + ".join(
+            [f"i{i} * {s}" for i, s in enumerate(y_desc.strides)])
 
         num_dims = len(x_desc.shape)
 
         y_prev_idx_expr = " + ".join([
-            f"(i{i} - is_axis{i}) * {s}"
-            for i, s in enumerate(y_desc.strides)
+            f"(i{i} - is_axis{i}) * {s}" for i, s in enumerate(y_desc.strides)
         ])
 
         code = ""
@@ -642,7 +679,8 @@ class PureCumSum(ONNXForward):
             code += f"for (int i{i} = 0; i{i} < {val}; i{i}++) {{\n"
             code += f"int is_axis{i} = ({i} == ({num_dims} + __axis) % {num_dims});\n"
         code += f"__y[{y_idx_expr}] = __x[{x_idx_expr}];\n"
-        code += f"if (" + ' || '.join([f"(i{i} > 0 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
+        code += f"if (" + ' || '.join(
+            [f"(i{i} > 0 && is_axis{i})" for i in range(num_dims)]) + ") {\n"
         code += f"__y[{y_idx_expr}] += __y[{y_prev_idx_expr}];\n"
         code += "}\n"
         for _ in y_desc.shape:
@@ -659,14 +697,19 @@ class PureCumSum(ONNXForward):
             code=code,
         )
 
-        nstate.add_edge(input_nodes["x"], None, tasklet, "__x", dace.Memlet.from_array("x", x_desc))
-        nstate.add_edge(input_nodes["axis"], None, tasklet, "__axis", dace.Memlet.from_array("axis", axis_desc))
-        nstate.add_edge(tasklet, "__y", output_nodes["y"], None, dace.Memlet.from_array("y", y_desc))
+        nstate.add_edge(input_nodes["x"], None, tasklet, "__x",
+                        dace.Memlet.from_array("x", x_desc))
+        nstate.add_edge(input_nodes["axis"], None, tasklet, "__axis",
+                        dace.Memlet.from_array("axis", axis_desc))
+        nstate.add_edge(tasklet, "__y", output_nodes["y"], None,
+                        dace.Memlet.from_array("y", y_desc))
 
         return nsdfg
-    
+
+
 @op_implementation(op="Unsqueeze", name="pure")
 class PureUnsqueeze(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
@@ -682,7 +725,8 @@ class PureUnsqueeze(ONNXForward):
         # Get input/output descriptors
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
         axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
-        expanded_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "expanded"))
+        expanded_desc = copy.deepcopy(
+            out_desc_with_name(node, state, sdfg, "expanded"))
 
         # Add data descriptors to SDFG
         nsdfg.add_datadesc("data", data_desc)
@@ -711,21 +755,22 @@ class PureUnsqueeze(ONNXForward):
                 __unsqueezed[i] = __data[i];
             }}
             """,
-            language=dace.Language.CPP
-        )
+            language=dace.Language.CPP)
 
         # Connect the tasklet with memlets
-        nstate.add_edge(data_read, None, tasklet, "__data", 
-                       dace.Memlet.from_array("data", data_desc))
+        nstate.add_edge(data_read, None, tasklet, "__data",
+                        dace.Memlet.from_array("data", data_desc))
         nstate.add_edge(axes_read, None, tasklet, "__axes",
-                       dace.Memlet.from_array("axes", axes_desc))
+                        dace.Memlet.from_array("axes", axes_desc))
         nstate.add_edge(tasklet, "__unsqueezed", expanded_write, None,
-                       dace.Memlet.from_array("expanded", expanded_desc))
+                        dace.Memlet.from_array("expanded", expanded_desc))
 
         return nsdfg
-    
+
+
 @op_implementation(op="Squeeze", name="pure")
 class PureSqueeze(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
@@ -741,7 +786,8 @@ class PureSqueeze(ONNXForward):
         # Get input/output descriptors
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
         axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
-        squeezed_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "squeezed"))
+        squeezed_desc = copy.deepcopy(
+            out_desc_with_name(node, state, sdfg, "squeezed"))
 
         # Add data descriptors to SDFG
         nsdfg.add_datadesc("data", data_desc)
@@ -770,26 +816,28 @@ class PureSqueeze(ONNXForward):
                 __squeezed[i] = __data[i];
             }}
             """,
-            language=dace.Language.CPP
-        )
+            language=dace.Language.CPP)
 
         # Connect the tasklet with memlets
-        nstate.add_edge(data_read, None, tasklet, "__data", 
-                       dace.Memlet.from_array("data", data_desc))
+        nstate.add_edge(data_read, None, tasklet, "__data",
+                        dace.Memlet.from_array("data", data_desc))
         nstate.add_edge(axes_read, None, tasklet, "__axes",
-                       dace.Memlet.from_array("axes", axes_desc))
+                        dace.Memlet.from_array("axes", axes_desc))
         nstate.add_edge(tasklet, "__squeezed", squeezed_write, None,
-                       dace.Memlet.from_array("squeezed", squeezed_desc))
+                        dace.Memlet.from_array("squeezed", squeezed_desc))
 
         return nsdfg
-    
+
+
 @op_implementation(op="ReduceMean", name="pure")
 class PureReduceMean(ONNXForward):
+
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: 'ONNXOp', state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
         # Get keepdims attribute (default 1)
         keepdims = getattr(node, 'keepdims', 1)
-        
+
         # Get noop_with_empty_axes attribute (default 0)
         noop_with_empty_axes = getattr(node, 'noop_with_empty_axes', 0)
 
@@ -800,8 +848,9 @@ class PureReduceMean(ONNXForward):
 
         # Get input and output arrays with deep copies and unique names
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        reduced_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "reduced"))
-        
+        reduced_desc = copy.deepcopy(
+            out_desc_with_name(node, state, sdfg, "reduced"))
+
         # Add arrays to the SDFG with unique names
         data_name = f"data"
         reduced_name = f"reduced"
@@ -834,31 +883,39 @@ class PureReduceMean(ONNXForward):
             # Create axes_arr as an array with just axes_values
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
+            _, axes_desc = nsdfg.add_array(axes_name,
+                                           axes_arr_shape,
+                                           axes_arr_dtype,
+                                           transient=True)
             axes_node = nstate.add_access(axes_name)
 
             # Add a tasklet to initialize the axes array in the SDFG
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
-                set(),
-                {"out": dace.pointer(axes_arr_dtype)},
-                "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
-                language=dace.Language.CPP
-            )
-            nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
+                set(), {"out": dace.pointer(axes_arr_dtype)},
+                "\n".join([
+                    f"out [{idx}] = {val};"
+                    for idx, val in enumerate(axes_values)
+                ]),
+                language=dace.Language.CPP)
+            nstate.add_edge(axes_init_tasklet, "out", axes_node, None,
+                            dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
 
-        # Create the reduction tasklet with embedded constants
+        if axes_desc.shape == (1, ):
+            # axes_arr will be a scalar in this case
+            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
+        else:
+            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
+
         tasklet_code = (f"""
             constexpr long long input_dims = {len(data_desc.shape)};
             constexpr long long output_dims = {len(reduced_desc.shape)};
             constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
-            long long reduce_dims [num_reduce_dims] = """ +
-            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
-            f""" 
+            {axes_arr_code} 
             for (long long i = 0; i < num_reduce_dims; i++) {{
                 if (reduce_dims[i] < 0) {{
                     reduce_dims[i] = input_dims + reduce_dims[i];
@@ -891,11 +948,14 @@ class PureReduceMean(ONNXForward):
             }}
             
             // initialize output to zero
-            """ +
-            "\n".join([f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{" for i in range(len(reduced_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides [{i}] * i{i}" for i in range(len(reduced_desc.shape))]) + "] = 0.0;" + "\n" +
-            "\n".join(["}" for _ in reduced_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+            f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{"
+            for i in range(len(reduced_desc.shape))
+        ]) + "\n" + "out [" + " + ".join([
+            f"output_strides [{i}] * i{i}"
+            for i in range(len(reduced_desc.shape))
+        ]) + "] = 0.0;" + "\n" + "\n".join(
+            ["}" for _ in reduced_desc.shape]) + "\n" + """
             
             // Compute the number of elements to reduce over
             long long reduce_size = 1;
@@ -913,32 +973,42 @@ class PureReduceMean(ONNXForward):
             }}
 
             // Loop over all input elements
-            """ + 
-            "\n".join([f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{" for i in range(len(data_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides_input[{i}] * i{i}" for i in range(len(data_desc.shape))]) +"]" +
-            " += inp [" + " + ".join([f"input_strides[{i}] * i{i}" for i in range(len(data_desc.shape))]) + "] / reduce_size;" + "\n" +
-            "\n".join(["}" for _ in data_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+                f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{"
+                for i in range(len(data_desc.shape))
+            ]) + "\n" + "out [" + " + ".join([
+                f"output_strides_input[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "]" + " += inp [" + " + ".join([
+                f"input_strides[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "] / reduce_size;" + "\n" +
+                        "\n".join(["}" for _ in data_desc.shape]) + "\n" + """
         """)
-        tasklet = nstate.add_tasklet(
-            f'reduce_mean_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
-            {'out': dace.pointer(reduced_desc.dtype)},
-            tasklet_code,
-            language=dace.Language.CPP)
+        tasklet = nstate.add_tasklet(f'reduce_mean_{uid}', {
+            'inp': dace.pointer(data_desc.dtype),
+            'axes_arr': dace.pointer(axes_desc.dtype)
+        }, {'out': dace.pointer(reduced_desc.dtype)},
+                                     tasklet_code,
+                                     language=dace.Language.CPP)
 
         # Add edges for axes input, num_axes, data input and output
-        nstate.add_edge(data_read, None, tasklet, 'inp', nsdfg.make_array_memlet(data_name))
-        nstate.add_edge(axes_node, None, tasklet, 'axes_arr', nsdfg.make_array_memlet(axes_name))
-        nstate.add_edge(tasklet, 'out', reduced_write, None, nsdfg.make_array_memlet(reduced_name))
+        nstate.add_edge(data_read, None, tasklet, 'inp',
+                        nsdfg.make_array_memlet(data_name))
+        nstate.add_edge(axes_node, None, tasklet, 'axes_arr',
+                        nsdfg.make_array_memlet(axes_name))
+        nstate.add_edge(tasklet, 'out', reduced_write, None,
+                        nsdfg.make_array_memlet(reduced_name))
 
         return nsdfg
-    
+
+
 @op_implementation(op="MatMul", name="pure")
 class PureMatMul(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
         input0_dim = len(in_desc_with_name(node, state, sdfg, "A").shape)
         input1_dim = len(in_desc_with_name(node, state, sdfg, "B").shape)
 
@@ -947,7 +1017,10 @@ class PureMatMul(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
+
         A_desc = in_desc_with_name(node, state, sdfg, "A")
         B_desc = in_desc_with_name(node, state, sdfg, "B")
         Y_desc = out_desc_with_name(node, state, sdfg, "Y")
@@ -994,7 +1067,8 @@ class PureMatMul(ONNXForward):
                     B_desc.shape = new_shape
             input0_dim = input0_dim[:-2]
             input1_dim = input1_dim[:-2]
-            for dim0, dim1 in itertools.zip_longest(reversed(input0_dim), reversed(input1_dim)):
+            for dim0, dim1 in itertools.zip_longest(reversed(input0_dim),
+                                                    reversed(input1_dim)):
                 if dim0 is None:
                     # only dim0 exists
                     letter = letters.pop()
@@ -1017,8 +1091,9 @@ class PureMatMul(ONNXForward):
         # we lower to an ONNXEinsum node instead straight to the dace einsum to make the autodiff simpler
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
-        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum
-        einsum_node: onnx_op.ONNXOp = ONNXEinsum(node.label + "_einsum_expansion", equation=einsum_str)
+        einsum_node: onnx_op.ONNXOp = ONNXEinsum(node.label +
+                                                 "_einsum_expansion",
+                                                 equation=einsum_str)
 
         nstate.add_node(einsum_node)
         einsum_node.add_in_connector("Inputs__0")
@@ -1030,9 +1105,12 @@ class PureMatMul(ONNXForward):
         nsdfg.arrays["B"].transient = False
         nsdfg.arrays["Y"].transient = False
 
-        nstate.add_edge(nstate.add_read("A"), None, einsum_node, "Inputs__0", nsdfg.make_array_memlet("A"))
-        nstate.add_edge(nstate.add_read("B"), None, einsum_node, "Inputs__1", nsdfg.make_array_memlet("B"))
-        nstate.add_edge(einsum_node, "Output", nstate.add_write("Y"), None, nsdfg.make_array_memlet("Y"))
+        nstate.add_edge(nstate.add_read("A"), None, einsum_node, "Inputs__0",
+                        nsdfg.make_array_memlet("A"))
+        nstate.add_edge(nstate.add_read("B"), None, einsum_node, "Inputs__1",
+                        nsdfg.make_array_memlet("B"))
+        nstate.add_edge(einsum_node, "Output", nstate.add_write("Y"), None,
+                        nsdfg.make_array_memlet("Y"))
 
         return nsdfg
 
@@ -1041,22 +1119,26 @@ class PureMatMul(ONNXForward):
 class PureEinsum(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
         if "..." in node.equation:
             return False
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
 
         for e in node.iter_inputs_in_onnx_order(state):
-            desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, e.dst_conn))
+            desc = copy.deepcopy(
+                in_desc_with_name(node, state, sdfg, e.dst_conn))
             desc.transient = False
             nsdfg.add_datadesc(e.dst_conn, desc)
         for e in node.iter_outputs_in_onnx_order(state):
-            desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, e.src_conn))
+            desc = copy.deepcopy(
+                out_desc_with_name(node, state, sdfg, e.src_conn))
             desc.transient = False
             nsdfg.add_datadesc(e.src_conn, desc)
 
@@ -1064,7 +1146,8 @@ class PureEinsum(ONNXForward):
                            nsdfg,
                            nstate,
                            node.equation.replace(" ", ""),
-                           *(e.dst_conn for e in node.iter_inputs_in_onnx_order(state)),
+                           *(e.dst_conn
+                             for e in node.iter_inputs_in_onnx_order(state)),
                            output="Output")
         return nsdfg
 
@@ -1076,6 +1159,7 @@ def Identity(input, output):
 
 @op_implementation(op="Expand", name="pure")
 class PureExpand(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
@@ -1113,7 +1197,8 @@ class PureExpand(ONNXForward):
         code = []
         for i in range(num_out_dims):
             code.append(
-                f"for (int i{i} = 0; i{i} < {output_desc.shape[i]}; ++i{i}) {{")
+                f"for (int i{i} = 0; i{i} < {output_desc.shape[i]}; ++i{i}) {{"
+            )
         code.append("    int input_idx = 0;")
         for i in range(num_in_dims):
             j = i + num_out_dims - num_in_dims
@@ -1148,7 +1233,8 @@ class PureExpand(ONNXForward):
         return nsdfg
 
 
-@python_pure_op_implementation(string=lambda X: "lambda x: dace.{}(1) / x".format(X.dtype.to_string()))
+@python_pure_op_implementation(
+    string=lambda X: "lambda x: dace.{}(1) / x".format(X.dtype.to_string()))
 def Reciprocal(X, Y):
     Y[:] = dace.elementwise(string, X)
 
@@ -1158,7 +1244,8 @@ def Tanh(input, output):
     output[:] = dace.elementwise(lambda x: tanh(x), input)
 
 
-softmax_compute = dict(axis=lambda node, input: list(range(len(input.shape)))[node.axis:])
+softmax_compute = dict(
+    axis=lambda node, input: list(range(len(input.shape)))[node.axis:])
 
 
 @python_pure_op_implementation(**softmax_compute)
@@ -1170,7 +1257,8 @@ def Softmax(input, output):
 
 
 @python_pure_op_implementation(
-    perm=lambda node, data: node.perm if node.perm is not None else list(reversed(range(len(data.shape)))))
+    perm=lambda node, data: node.perm
+    if node.perm is not None else list(reversed(range(len(data.shape)))))
 def Transpose(data, transposed):
     transposed[:] = np.transpose(data, axes=perm)
 
@@ -1179,10 +1267,12 @@ def Transpose(data, transposed):
 class PureCast(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
 
-        if (in_desc_with_name(node, state, sdfg, "input").dtype == out_desc_with_name(node, state, sdfg,
-                                                                                      "output").dtype):
+        if (in_desc_with_name(node, state, sdfg,
+                              "input").dtype == out_desc_with_name(
+                                  node, state, sdfg, "output").dtype):
             return True
 
         target_type = node.to
@@ -1194,7 +1284,8 @@ class PureCast(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
         input_desc = in_desc_with_name(node, state, sdfg, "input")
         output_desc = out_desc_with_name(node, state, sdfg, "output")
         if (input_desc.dtype == output_desc.dtype):
@@ -1205,17 +1296,21 @@ class PureCast(ONNXForward):
             return program_for_node(prog, sdfg, state, node)
         else:
 
-            nsdfg, nstate, _, _ = empty_sdfg_for_node(sdfg, state, node, add_access_nodes=False)
+            nsdfg, nstate, _, _ = empty_sdfg_for_node(sdfg,
+                                                      state,
+                                                      node,
+                                                      add_access_nodes=False)
 
             shape = out_desc_with_name(node, state, sdfg, "output").shape
             map_ranges = {f"i{i}": f"0:{s}" for i, s in enumerate(shape)}
             index_str = f"{', '.join(map_ranges.keys())}"
-            tasklet, _, _ = nstate.add_mapped_tasklet(node.label + "_tasklet",
-                                                      map_ranges=map_ranges,
-                                                      inputs={f"__input": dace.Memlet(f"input[{index_str}]")},
-                                                      code=f"__output = __input",
-                                                      outputs={"__output": dace.Memlet(f"output[{index_str}]")},
-                                                      external_edges=True)
+            tasklet, _, _ = nstate.add_mapped_tasklet(
+                node.label + "_tasklet",
+                map_ranges=map_ranges,
+                inputs={f"__input": dace.Memlet(f"input[{index_str}]")},
+                code=f"__output = __input",
+                outputs={"__output": dace.Memlet(f"output[{index_str}]")},
+                external_edges=True)
 
             return nsdfg
 
@@ -1224,11 +1319,14 @@ class PureCast(ONNXForward):
 class PureGemm(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
         A_desc = in_desc_with_name(node, state, sdfg, "A")
         B_desc = in_desc_with_name(node, state, sdfg, "B")
         Y_desc = out_desc_with_name(node, state, sdfg, "Y")
@@ -1275,7 +1373,8 @@ class PureGemm(ONNXForward):
                     B_desc.shape = new_shape
             input0_dim = input0_dim[:-2]
             input1_dim = input1_dim[:-2]
-            for dim0, dim1 in itertools.zip_longest(reversed(input0_dim), reversed(input1_dim)):
+            for dim0, dim1 in itertools.zip_longest(reversed(input0_dim),
+                                                    reversed(input1_dim)):
                 if dim0 is None:
                     # only dim0 exists
                     letter = letters.pop()
@@ -1306,7 +1405,9 @@ class PureGemm(ONNXForward):
         nstate = nsdfg.add_state()
 
         # Einsum: "A", "B" -> mm_result
-        einsum_node: nodes.LibraryNode = onnx_op.ONNXEinsum(node.label + "_einsum_expansion", equation=einsum_str)
+        einsum_node: nodes.LibraryNode = ONNXEinsum(node.label +
+                                                    "_einsum_expansion",
+                                                    equation=einsum_str)
 
         nstate.add_node(einsum_node)
         einsum_node.add_in_connector("Inputs__0")
@@ -1337,10 +1438,13 @@ class PureGemm(ONNXForward):
             nsdfg.add_datadesc(f"scaled_{uid}", copy.deepcopy(beta_desc))
             nsdfg.arrays[f"scaled_{uid}"].transient = True
 
-        nstate.add_edge(nstate.add_read("A"), None, einsum_node, "Inputs__0", nsdfg.make_array_memlet("A"))
-        nstate.add_edge(nstate.add_read("B"), None, einsum_node, "Inputs__1", nsdfg.make_array_memlet("B"))
+        nstate.add_edge(nstate.add_read("A"), None, einsum_node, "Inputs__0",
+                        nsdfg.make_array_memlet("A"))
+        nstate.add_edge(nstate.add_read("B"), None, einsum_node, "Inputs__1",
+                        nsdfg.make_array_memlet("B"))
         mm_result_node = nstate.add_write(mm_result)
-        nstate.add_edge(einsum_node, "Output", mm_result_node, None, nsdfg.make_array_memlet(mm_result))
+        nstate.add_edge(einsum_node, "Output", mm_result_node, None,
+                        nsdfg.make_array_memlet(mm_result))
 
         # Multiply by alpha: mm_result -> scal_result
         if node.alpha != 1:
@@ -1363,14 +1467,16 @@ class PureGemm(ONNXForward):
             nsdfg.add_datadesc("C", copy.deepcopy(C_desc))
             nsdfg.arrays["C"].transient = False
             scal_result_node = next(n for n in nstate.sink_nodes()
-                                    if isinstance(n, dace.nodes.AccessNode) and n.data == scal_result)
+                                    if isinstance(n, dace.nodes.AccessNode)
+                                    and n.data == scal_result)
             beta_scale_code = f'o = s + c * dace.{C_desc.dtype}({node.beta})'
             if node.beta == 1:
                 beta_scale_code = f'o = s + c'
 
             # Support broadcasting in C -> Y
             c_index = result[-len(C_desc.shape):]
-            for c_shp, y_shp in zip(reversed(C_desc.shape), reversed(Y_desc.shape)):
+            for c_shp, y_shp in zip(reversed(C_desc.shape),
+                                    reversed(Y_desc.shape)):
                 if c_shp != y_shp:
                     raise ValueError('Could not broadcast dimensions from C '
                                      'to Y in ONNXGemm')
@@ -1392,14 +1498,17 @@ class PureGemm(ONNXForward):
         return nsdfg
 
 
-@python_pure_op_implementation(cast_lambda=lambda X: "lambda x: max(x, dace.{}(0))".format(X.dtype.to_string()))
+@python_pure_op_implementation(
+    cast_lambda=lambda X: "lambda x: max(x, dace.{}(0))".format(X.dtype.
+                                                                to_string()))
 def Relu(X, Y):
     Y[:] = dace.elementwise(cast_lambda, X)
 
 
 @python_pure_op_implementation(
-    cast_lambda=lambda node, X: "lambda x: (max(x, dace.{dtype}(0)) + {alpha} * min(x, dace.{dtype}(0)))".format(
-        dtype=X.dtype.to_string(), alpha=node.alpha))
+    cast_lambda=lambda node, X:
+    "lambda x: (max(x, dace.{dtype}(0)) + {alpha} * min(x, dace.{dtype}(0)))".
+    format(dtype=X.dtype.to_string(), alpha=node.alpha))
 def LeakyRelu(X, Y):
     Y[:] = dace.elementwise(cast_lambda, X)
 
@@ -1422,7 +1531,10 @@ def Reshape(data, reshaped):
         reshaped[:] = np.reshape(data, new_shape)
 
 
-@python_pure_op_implementation(shape=lambda input, node: [prod(input.shape[:node.axis]), prod(input.shape[node.axis:])])
+@python_pure_op_implementation(
+    shape=lambda input, node:
+    [prod(input.shape[:node.axis]),
+     prod(input.shape[node.axis:])])
 def Flatten(input, output):
     output[:] = input.reshape(shape)
 
@@ -1431,7 +1543,8 @@ def Flatten(input, output):
 class PureSum(ONNXForward):
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
         # check that all shapes are arrays, and that the shapes are all equal
         shape = None
         for edge in node.iter_inputs_in_onnx_order(state):
@@ -1442,18 +1555,22 @@ class PureSum(ONNXForward):
             if not iterables_equal(shape, desc.shape):
                 return False
 
-        if not iterables_equal(shape, out_desc_with_name(node, state, sdfg, "sum").shape):
+        if not iterables_equal(
+                shape,
+                out_desc_with_name(node, state, sdfg, "sum").shape):
             return False
 
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
 
         nsdfg = dace.SDFG(node.name)
         input_names = []
         for e in node.iter_inputs_in_onnx_order(state):
-            new_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, e.dst_conn))
+            new_desc = copy.deepcopy(
+                in_desc_with_name(node, state, sdfg, e.dst_conn))
             new_desc.transient = False
             nsdfg.add_datadesc(e.dst_conn, new_desc)
             input_names.append(e.dst_conn)
@@ -1470,14 +1587,21 @@ class PureSum(ONNXForward):
         tasklet, _, _ = nstate.add_mapped_tasklet(
             node.name + "_tasklet",
             map_ranges=map_ranges,
-            inputs={f"__{inp}": dace.Memlet(f"{inp}[{index_str}]")
-                    for inp in input_names},
+            inputs={
+                f"__{inp}": dace.Memlet(f"{inp}[{index_str}]")
+                for inp in input_names
+            },
             code=f"__sum = {' + '.join(f'__{inp}' for inp in input_names)}",
             outputs={"__sum": dace.Memlet(f"sum[{index_str}]")},
             external_edges=True)
 
-        tasklet.in_connectors = {f"__{inp}": in_desc_with_name(node, state, sdfg, inp).dtype for inp in input_names}
-        tasklet.out_connectors = {"__sum": out_desc_with_name(node, state, sdfg, "sum").dtype}
+        tasklet.in_connectors = {
+            f"__{inp}": in_desc_with_name(node, state, sdfg, inp).dtype
+            for inp in input_names
+        }
+        tasklet.out_connectors = {
+            "__sum": out_desc_with_name(node, state, sdfg, "sum").dtype
+        }
         return nsdfg
 
 
@@ -1498,28 +1622,37 @@ class PureSlice(ONNXForward):
     '''
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
         # check that all the inputs (even the optional ones) are present and constant
 
         if not hasattr(sdfg, "_parent_onnx_model"):
             return False
 
-        if in_edge_with_name(node, state, "starts").src.data not in sdfg._parent_onnx_model.clean_weights:
+        if in_edge_with_name(
+                node, state, "starts"
+        ).src.data not in sdfg._parent_onnx_model.clean_weights:
             return False
-        if in_edge_with_name(node, state, "ends").src.data not in sdfg._parent_onnx_model.clean_weights:
+        if in_edge_with_name(
+                node, state,
+                "ends").src.data not in sdfg._parent_onnx_model.clean_weights:
             return False
 
         # optional inputs
         is_axes_present = True
         try:
-            if in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+            if in_edge_with_name(
+                    node, state, "axes"
+            ).src.data not in sdfg._parent_onnx_model.clean_weights:
                 return False
         except ValueError:
             is_axes_present = False
 
         is_steps_present = True
         try:
-            if in_edge_with_name(node, state, "steps").src.data not in sdfg._parent_onnx_model.clean_weights:
+            if in_edge_with_name(
+                    node, state, "steps"
+            ).src.data not in sdfg._parent_onnx_model.clean_weights:
                 return False
         except ValueError:
             is_steps_present = False
@@ -1528,8 +1661,10 @@ class PureSlice(ONNXForward):
         if not is_axes_present or not is_steps_present:
             return False
 
-        step = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "steps").src.data].numpy()[0]
-        axis = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()[0]
+        step = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(
+            node, state, "steps").src.data].numpy()[0]
+        axis = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(
+            node, state, "axes").src.data].numpy()[0]
 
         if step != 1 or axis != 0:
             return False
@@ -1537,10 +1672,13 @@ class PureSlice(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
 
-        start = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "starts").src.data].numpy()[0]
-        end = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "ends").src.data].numpy()[0]
+        start = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(
+            node, state, "starts").src.data].numpy()[0]
+        end = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(
+            node, state, "ends").src.data].numpy()[0]
 
         output_shape = out_desc_with_name(node, state, sdfg, "output").shape
         if end == np.iinfo(np.int64).max:
@@ -1562,6 +1700,7 @@ def Softplus(X, Y):
 
 @op_implementation(op="Sigmoid", name="pure")
 class PureSigmoid(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
@@ -1604,19 +1743,20 @@ class PureSigmoid(ONNXForward):
                 __Y[y_idx] = 1.0 / (1.0 + exp(-__X[x_idx]));
             {chr(10).join(['}' for _ in range(len(X_desc.shape))])}
             """,
-            language=dace.Language.CPP
-        )
+            language=dace.Language.CPP)
 
         # Connect the tasklet with memlets
-        nstate.add_edge(X_read, None, tasklet, "__X", 
-                       dace.Memlet.from_array("X", X_desc))
+        nstate.add_edge(X_read, None, tasklet, "__X",
+                        dace.Memlet.from_array("X", X_desc))
         nstate.add_edge(tasklet, "__Y", Y_write, None,
-                       dace.Memlet.from_array("Y", Y_desc))
+                        dace.Memlet.from_array("Y", Y_desc))
 
         return nsdfg
 
+
 @op_implementation(op="LayerNormalization", name="pure")
 class PureLayerNormalization(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
@@ -1631,7 +1771,8 @@ class PureLayerNormalization(ONNXForward):
 
         # Get input/output descriptors
         X_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "X"))
-        scale_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "Scale"))
+        scale_desc = copy.deepcopy(
+            in_desc_with_name(node, state, sdfg, "Scale"))
         B_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "B"))
         Y_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "Y"))
 
@@ -1653,18 +1794,21 @@ class PureLayerNormalization(ONNXForward):
 
         # Check if optional outputs exist
         has_mean = len(list(state.out_edges_by_connector(node, "Mean"))) > 0
-        has_inv_std_dev = len(list(state.out_edges_by_connector(node, "InvStdDev"))) > 0
+        has_inv_std_dev = len(
+            list(state.out_edges_by_connector(node, "InvStdDev"))) > 0
         mean_write = None
         inv_std_dev_write = None
 
         if has_mean:
-            mean_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "Mean"))
+            mean_desc = copy.deepcopy(
+                out_desc_with_name(node, state, sdfg, "Mean"))
             nsdfg.add_datadesc("Mean", mean_desc)
             nsdfg.arrays["Mean"].transient = False
             mean_write = nstate.add_write("Mean")
 
         if has_inv_std_dev:
-            inv_std_dev_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "InvStdDev"))
+            inv_std_dev_desc = copy.deepcopy(
+                out_desc_with_name(node, state, sdfg, "InvStdDev"))
             nsdfg.add_datadesc("InvStdDev", inv_std_dev_desc)
             nsdfg.arrays["InvStdDev"].transient = False
             inv_std_dev_write = nstate.add_write("InvStdDev")
@@ -1686,7 +1830,8 @@ class PureLayerNormalization(ONNXForward):
         if has_mean:
             tasklet_outputs["__Mean"] = dace.pointer(mean_desc.dtype)
         if has_inv_std_dev:
-            tasklet_outputs["__InvStdDev"] = dace.pointer(inv_std_dev_desc.dtype)
+            tasklet_outputs["__InvStdDev"] = dace.pointer(
+                inv_std_dev_desc.dtype)
 
         # Generate code for multi-dimensional normalization
         rank = len(X_desc.shape)
@@ -1694,17 +1839,24 @@ class PureLayerNormalization(ONNXForward):
             axis = rank + axis
 
         # Generate map ranges for the outer dimensions (before axis)
-        outer_map_ranges = {f"i{i}": f"0:{X_desc.shape[i]}" for i in range(axis)}
-        
+        outer_map_ranges = {
+            f"i{i}": f"0:{X_desc.shape[i]}"
+            for i in range(axis)
+        }
+
         # Generate map ranges for the inner dimensions (axis and after)
-        inner_map_ranges = {f"i{i}": f"0:{X_desc.shape[i]}" for i in range(axis, rank)}
-        
+        inner_map_ranges = {
+            f"i{i}": f"0:{X_desc.shape[i]}"
+            for i in range(axis, rank)
+        }
+
         # Calculate size of normalization dimensions
         norm_size = int(np.prod([X_desc.shape[i] for i in range(axis, rank)]))
-        
+
         # Determine computation type based on stash_type
-        compute_type = "dace::" + ("float32" if stash_type == 1 else X_desc.dtype.to_string())
-        
+        compute_type = "dace::" + ("float32" if stash_type == 1 else
+                                   X_desc.dtype.to_string())
+
         # Generate code for the tasklet
         code = f"""
         // Outer loop over dimensions before axis
@@ -1717,13 +1869,13 @@ class PureLayerNormalization(ONNXForward):
         {chr(10).join(['}' for _ in range(axis, rank)])}
         {compute_type} mean = sum / {norm_size};
         """
-        
+
         if has_mean:
             code += f"""
             // Store mean
             __Mean[{'+'.join([f'i{i} * {mean_desc.strides[i]}' for i in range(axis)])}] = mean;
             """
-            
+
         code += f"""
         // Calculate variance
         {compute_type} sq_sum = 0.0;
@@ -1734,13 +1886,13 @@ class PureLayerNormalization(ONNXForward):
         {compute_type} variance = sq_sum / {norm_size};
         {compute_type} inv_std_dev = 1.0 / sqrt(variance + {epsilon});
         """
-        
+
         if has_inv_std_dev:
             code += f"""
             // Store inverse standard deviation
             __InvStdDev[{'+'.join([f'i{i} * {inv_std_dev_desc.strides[i]}' for i in range(axis)])}] = inv_std_dev;
             """
-            
+
         code += f"""
         // Normalize and apply scale and bias
         {chr(10).join([f'for (int i{i} = 0; i{i} < {X_desc.shape[i]}; i{i}++) {{' for i in range(axis, rank)])}
@@ -1757,50 +1909,54 @@ class PureLayerNormalization(ONNXForward):
         {chr(10).join(['}' for _ in range(axis)])}
         """
 
-        tasklet = nstate.add_tasklet(
-            name=node.label + "_tasklet",
-            inputs=tasklet_inputs,
-            outputs=tasklet_outputs,
-            code=code,
-            language=dace.Language.CPP
-        )
+        tasklet = nstate.add_tasklet(name=node.label + "_tasklet",
+                                     inputs=tasklet_inputs,
+                                     outputs=tasklet_outputs,
+                                     code=code,
+                                     language=dace.Language.CPP)
 
         # Connect the tasklet with memlets
-        nstate.add_edge(X_read, None, tasklet, "__X", 
-                       dace.Memlet.from_array("X", X_desc))
+        nstate.add_edge(X_read, None, tasklet, "__X",
+                        dace.Memlet.from_array("X", X_desc))
         nstate.add_edge(scale_read, None, tasklet, "__Scale",
-                       dace.Memlet.from_array("Scale", scale_desc))
+                        dace.Memlet.from_array("Scale", scale_desc))
         nstate.add_edge(B_read, None, tasklet, "__B",
-                       dace.Memlet.from_array("B", B_desc))
+                        dace.Memlet.from_array("B", B_desc))
         nstate.add_edge(tasklet, "__Y", Y_write, None,
-                       dace.Memlet.from_array("Y", Y_desc))
+                        dace.Memlet.from_array("Y", Y_desc))
         if has_mean:
             nstate.add_edge(tasklet, "__Mean", mean_write, None,
-                           dace.Memlet.from_array("Mean", mean_desc))
+                            dace.Memlet.from_array("Mean", mean_desc))
         if has_inv_std_dev:
-            nstate.add_edge(tasklet, "__InvStdDev", inv_std_dev_write, None,
-                           dace.Memlet.from_array("InvStdDev", inv_std_dev_desc))
+            nstate.add_edge(
+                tasklet, "__InvStdDev", inv_std_dev_write, None,
+                dace.Memlet.from_array("InvStdDev", inv_std_dev_desc))
 
         return nsdfg
-    
+
+
 @op_implementation(op="Transpose", name="einsum")
 class EinsumTranspose(ONNXForward):
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum  # avoid import loop
         perm = node.perm
         input_desc = in_desc_with_name(node, state, sdfg, "data")
         output_desc = out_desc_with_name(node, state, sdfg, "transposed")
 
         letters = [chr(ord('z') - i) for i in range(26)]
-        input_letters = "".join(letters[i] for i, _ in enumerate(input_desc.shape))
+        input_letters = "".join(letters[i]
+                                for i, _ in enumerate(input_desc.shape))
         output_letters = "".join(letters[i] for i in perm)
         equation_str = f"{input_letters}->{output_letters}"
 
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
-        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXEinsum
-        einsum_node: onnx_op.ONNXOp = ONNXEinsum(node.label + "_einsum_expansion", equation=equation_str)
+        einsum_node: onnx_op.ONNXOp = ONNXEinsum(node.label +
+                                                 "_einsum_expansion",
+                                                 equation=equation_str)
 
         nstate.add_node(einsum_node)
         einsum_node.add_in_connector("Inputs__0")
@@ -1809,33 +1965,36 @@ class EinsumTranspose(ONNXForward):
         nsdfg.arrays["data"].transient = False
         nsdfg.arrays["transposed"].transient = False
 
-        nstate.add_edge(nstate.add_read("data"), None, einsum_node, "Inputs__0", nsdfg.make_array_memlet("data"))
-        nstate.add_edge(einsum_node, "Output", nstate.add_write("transposed"), None,
-                        nsdfg.make_array_memlet("transposed"))
+        nstate.add_edge(nstate.add_read("data"), None, einsum_node,
+                        "Inputs__0", nsdfg.make_array_memlet("data"))
+        nstate.add_edge(einsum_node, "Output", nstate.add_write("transposed"),
+                        None, nsdfg.make_array_memlet("transposed"))
 
         return nsdfg
 
 
 @op_implementation(op="Split", name="pure")
 class SplitPure(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
         from daceml.transformation.replacement import onnx_constant_or_none
-        
+
         # Check if we have either split input or num_outputs attribute
-        has_split_input = len(list(state.in_edges_by_connector(node, "split"))) > 0
+        has_split_input = len(list(state.in_edges_by_connector(node,
+                                                               "split"))) > 0
         has_num_outputs = hasattr(node, 'num_outputs')
-        
+
         if not (has_split_input or has_num_outputs):
             return False
-        
+
         # If split input is provided, it must be a constant
         if has_split_input:
             split_node = next(state.in_edges_by_connector(node, "split")).src
             if not onnx_constant_or_none(sdfg, split_node):
                 return False
-                
+
         return True
 
     @staticmethod
@@ -1860,9 +2019,10 @@ class SplitPure(ONNXForward):
             split_sizes = onnx_constant_or_none(sdfg, split_node)
             if split_sizes is None:
                 raise ValueError("Split sizes must be constant")
-                
+
             # Add split input as a data descriptor
-            split_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "split"))
+            split_desc = copy.deepcopy(
+                in_desc_with_name(node, state, sdfg, "split"))
             split_desc.transient = False
             nsdfg.add_datadesc("split", split_desc)
             split_read = nstate.add_read("split")
@@ -1872,11 +2032,16 @@ class SplitPure(ONNXForward):
             total_size = idesc.shape[split_dim]
             base_size = total_size // num_outputs
             remainder = total_size % num_outputs
-            split_sizes = [base_size + (1 if i < remainder else 0) for i in range(num_outputs)]
+            split_sizes = [
+                base_size + (1 if i < remainder else 0)
+                for i in range(num_outputs)
+            ]
 
         # Verify split sizes
         if sum(split_sizes) != idesc.shape[split_dim]:
-            raise ValueError(f"Sum of split sizes ({sum(split_sizes)}) must equal dimension size ({idesc.shape[split_dim]})")
+            raise ValueError(
+                f"Sum of split sizes ({sum(split_sizes)}) must equal dimension size ({idesc.shape[split_dim]})"
+            )
 
         offset = 0
         for i, odim in enumerate(split_sizes):
@@ -1909,7 +2074,8 @@ class SplitPure(ONNXForward):
 class PureSliceAllConstant(ONNXForward):
 
     @staticmethod
-    def _get_constant(conn: str, node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG):
+    def _get_constant(conn: str, node: onnx_op.ONNXOp, state: SDFGState,
+                      sdfg: SDFG):
         try:
             srcnode = next(state.in_edges_by_connector(node, conn)).src
         except StopIteration:
@@ -1920,23 +2086,29 @@ class PureSliceAllConstant(ONNXForward):
         return onnx_constant_or_none(sdfg, srcnode)
 
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
+                               sdfg: SDFG) -> bool:
         for inconn in ("axes", "ends", "starts", "steps"):
-            if PureSliceAllConstant._get_constant(inconn, node, state, sdfg) is None:
+            if PureSliceAllConstant._get_constant(inconn, node, state,
+                                                  sdfg) is None:
                 return False
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
         axes = PureSliceAllConstant._get_constant('axes', node, state, sdfg)
         ends = PureSliceAllConstant._get_constant('ends', node, state, sdfg)
-        starts = PureSliceAllConstant._get_constant('starts', node, state, sdfg)
+        starts = PureSliceAllConstant._get_constant('starts', node, state,
+                                                    sdfg)
         steps = PureSliceAllConstant._get_constant('steps', node, state, sdfg)
 
         constant_folding.remove_node_and_computation(sdfg, state, node, "axes")
         constant_folding.remove_node_and_computation(sdfg, state, node, "ends")
-        constant_folding.remove_node_and_computation(sdfg, state, node, "starts")
-        constant_folding.remove_node_and_computation(sdfg, state, node, "steps")
+        constant_folding.remove_node_and_computation(sdfg, state, node,
+                                                     "starts")
+        constant_folding.remove_node_and_computation(sdfg, state, node,
+                                                     "steps")
 
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
@@ -1969,13 +2141,16 @@ class PureSliceAllConstant(ONNXForward):
         rnode = nstate.add_read("data")
         wnode = nstate.add_write("output")
 
-        nstate.add_nedge(rnode, wnode, dace.Memlet(data="data", subset=sbs, other_subset=osbs))
+        nstate.add_nedge(
+            rnode, wnode,
+            dace.Memlet(data="data", subset=sbs, other_subset=osbs))
 
         return nsdfg
 
 
 @op_implementation(op="Shape", name="pure")
 class PureShape(ONNXForward):
+
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
@@ -2018,6 +2193,7 @@ class PureShape(ONNXForward):
 
 @op_implementation(op="Gather", name="pure")
 class PureGather(ONNXForward):
+
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState,
                 sdfg: SDFG) -> typing.Union[Node, SDFG]:
@@ -2085,23 +2261,29 @@ class PureGather(ONNXForward):
         # even if the data contains just a single element
         tasklet.in_connectors["__data"] = dace.pointer(out_desc.dtype)
 
-        return nsdfg    
+        return nsdfg
+
+
 @op_implementation(op="ReduceSum", name="pure")
 class PureReduceSum(ONNXForward):
+
     @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
+                               sdfg: SDFG) -> bool:
         # Allow any axes input
         return True
 
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: 'ONNXOp', state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
         keepdims = getattr(node, 'keepdims', 1)
         noop_with_empty_axes = getattr(node, 'noop_with_empty_axes', 0)
         uid = state.node_id(node)
         nsdfg = SDFG(f'reduce_sum_{uid}')
         nstate = nsdfg.add_state(f'reduce_sum_{uid}')
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        reduced_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "reduced"))
+        reduced_desc = copy.deepcopy(
+            out_desc_with_name(node, state, sdfg, "reduced"))
         data_name = f"data"
         reduced_name = f"reduced"
         nsdfg.add_datadesc(data_name, data_desc)
@@ -2128,19 +2310,30 @@ class PureReduceSum(ONNXForward):
                 axes_values = list(axes)
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
+            _, axes_desc = nsdfg.add_array(axes_name,
+                                           axes_arr_shape,
+                                           axes_arr_dtype,
+                                           transient=True)
             axes_node = nstate.add_access(axes_name)
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
-                set(),
-                {"out": dace.pointer(axes_arr_dtype)},
-                "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
-                language=dace.Language.CPP
-            )
-            nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
+                set(), {"out": dace.pointer(axes_arr_dtype)},
+                "\n".join([
+                    f"out [{idx}] = {val};"
+                    for idx, val in enumerate(axes_values)
+                ]),
+                language=dace.Language.CPP)
+            nstate.add_edge(axes_init_tasklet, "out", axes_node, None,
+                            dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
+
+        if axes_desc.shape == (1, ):
+            # axes_arr will be a scalar in this case
+            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
+        else:
+            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
@@ -2148,9 +2341,7 @@ class PureReduceSum(ONNXForward):
             constexpr long long output_dims = {len(reduced_desc.shape)};
             constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
-            long long reduce_dims [num_reduce_dims] = """ +
-            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
-            f""" 
+            {axes_arr_code}
             for (long long i = 0; i < num_reduce_dims; i++) {{
                 if (reduce_dims[i] < 0) {{
                     reduce_dims[i] = input_dims + reduce_dims[i];
@@ -2183,46 +2374,62 @@ class PureReduceSum(ONNXForward):
             }}
             
             // initialize output to zero
-            """ +
-            "\n".join([f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{" for i in range(len(reduced_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides [{i}] * i{i}" for i in range(len(reduced_desc.shape))]) + "] = 0.0;" + "\n" +
-            "\n".join(["}" for _ in reduced_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+            f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{"
+            for i in range(len(reduced_desc.shape))
+        ]) + "\n" + "out [" + " + ".join([
+            f"output_strides [{i}] * i{i}"
+            for i in range(len(reduced_desc.shape))
+        ]) + "] = 0.0;" + "\n" + "\n".join(
+            ["}" for _ in reduced_desc.shape]) + "\n" + """
             
             // Loop over all input elements
-            """ + 
-            "\n".join([f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{" for i in range(len(data_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides_input[{i}] * i{i}" for i in range(len(data_desc.shape))]) +"]" +
-            " += inp [" + " + ".join([f"input_strides[{i}] * i{i}" for i in range(len(data_desc.shape))]) + "];" + "\n" +
-            "\n".join(["}" for _ in data_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+                f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{"
+                for i in range(len(data_desc.shape))
+            ]) + "\n" + "out [" + " + ".join([
+                f"output_strides_input[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "]" + " += inp [" + " + ".join([
+                f"input_strides[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "];" + "\n" + "\n".join(["}" for _ in data_desc.shape]) +
+                        "\n" + """
         """)
-        tasklet = nstate.add_tasklet(
-            f'reduce_sum_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
-            {'out': dace.pointer(reduced_desc.dtype)},
-            tasklet_code,
-            language=dace.Language.CPP)
-        nstate.add_edge(data_read, None, tasklet, 'inp', nsdfg.make_array_memlet(data_name))
-        nstate.add_edge(axes_node, None, tasklet, 'axes_arr', nsdfg.make_array_memlet(axes_name))
-        nstate.add_edge(tasklet, 'out', reduced_write, None, nsdfg.make_array_memlet(reduced_name))
+        tasklet = nstate.add_tasklet(f'reduce_sum_{uid}', {
+            'inp': dace.pointer(data_desc.dtype),
+            'axes_arr': dace.pointer(axes_desc.dtype)
+        }, {'out': dace.pointer(reduced_desc.dtype)},
+                                     tasklet_code,
+                                     language=dace.Language.CPP)
+        nstate.add_edge(data_read, None, tasklet, 'inp',
+                        nsdfg.make_array_memlet(data_name))
+        nstate.add_edge(axes_node, None, tasklet, 'axes_arr',
+                        nsdfg.make_array_memlet(axes_name))
+        nstate.add_edge(tasklet, 'out', reduced_write, None,
+                        nsdfg.make_array_memlet(reduced_name))
         return nsdfg
-    
+
+
 @op_implementation(op="ReduceMax", name="pure")
 class PureReduceMax(ONNXForward):
+
     @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
+                               sdfg: SDFG) -> bool:
         return True
 
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: 'ONNXOp', state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
         keepdims = getattr(node, 'keepdims', 1)
         noop_with_empty_axes = getattr(node, 'noop_with_empty_axes', 0)
         uid = state.node_id(node)
         nsdfg = SDFG(f'reduce_max_{uid}')
         nstate = nsdfg.add_state(f'reduce_max_{uid}')
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        reduced_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "reduced"))
+        reduced_desc = copy.deepcopy(
+            out_desc_with_name(node, state, sdfg, "reduced"))
         data_name = f"data"
         reduced_name = f"reduced"
         nsdfg.add_datadesc(data_name, data_desc)
@@ -2249,19 +2456,30 @@ class PureReduceMax(ONNXForward):
                 axes_values = list(axes)
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
+            _, axes_desc = nsdfg.add_array(axes_name,
+                                           axes_arr_shape,
+                                           axes_arr_dtype,
+                                           transient=True)
             axes_node = nstate.add_access(axes_name)
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
-                set(),
-                {"out": dace.pointer(axes_arr_dtype)},
-                "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
-                language=dace.Language.CPP
-            )
-            nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
+                set(), {"out": dace.pointer(axes_arr_dtype)},
+                "\n".join([
+                    f"out [{idx}] = {val};"
+                    for idx, val in enumerate(axes_values)
+                ]),
+                language=dace.Language.CPP)
+            nstate.add_edge(axes_init_tasklet, "out", axes_node, None,
+                            dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
+
+        if axes_desc.shape == (1, ):
+            # axes_arr will be a scalar in this case
+            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
+        else:
+            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
@@ -2269,9 +2487,7 @@ class PureReduceMax(ONNXForward):
             constexpr long long output_dims = {len(reduced_desc.shape)};
             constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
-            long long reduce_dims[num_reduce_dims] = """ +
-            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
-            f""" 
+            {axes_arr_code}
             for (long long i = 0; i < num_reduce_dims; i++) {{
                 if (reduce_dims[i] < 0) {{
                     reduce_dims[i] = input_dims + reduce_dims[i];
@@ -2304,47 +2520,65 @@ class PureReduceMax(ONNXForward):
             }}
             
             // initialize output to negative infinity
-            """ +
-            "\n".join([f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{" for i in range(len(reduced_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides [{i}] * i{i}" for i in range(len(reduced_desc.shape))]) + "] = -INFINITY;" + "\n" +
-            "\n".join(["}" for _ in reduced_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+            f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{"
+            for i in range(len(reduced_desc.shape))
+        ]) + "\n" + "out [" + " + ".join([
+            f"output_strides [{i}] * i{i}"
+            for i in range(len(reduced_desc.shape))
+        ]) + "] = -INFINITY;" + "\n" + "\n".join(
+            ["}" for _ in reduced_desc.shape]) + "\n" + """
             
             // Loop over all input elements
-            """ + 
-            "\n".join([f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{" for i in range(len(data_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides_input[{i}] * i{i}" for i in range(len(data_desc.shape))]) +"]" +
-            " = std::max(out [" + " + ".join([f"output_strides_input[{i}] * i{i}" for i in range(len(data_desc.shape))]) + "], " +
-            "inp [" + " + ".join([f"input_strides[{i}] * i{i}" for i in range(len(data_desc.shape))]) + "]);" + "\n" +
-            "\n".join(["}" for _ in data_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+                f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{"
+                for i in range(len(data_desc.shape))
+            ]) + "\n" + "out [" + " + ".join([
+                f"output_strides_input[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "]" + " = std::max(out [" + " + ".join([
+                f"output_strides_input[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "], " + "inp [" + " + ".join([
+                f"input_strides[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "]);" + "\n" + "\n".join(["}" for _ in data_desc.shape]) +
+                        "\n" + """
         """)
-        tasklet = nstate.add_tasklet(
-            f'reduce_max_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
-            {'out': dace.pointer(reduced_desc.dtype)},
-            tasklet_code,
-            language=dace.Language.CPP)
-        nstate.add_edge(data_read, None, tasklet, 'inp', nsdfg.make_array_memlet(data_name))
-        nstate.add_edge(axes_node, None, tasklet, 'axes_arr', nsdfg.make_array_memlet(axes_name))
-        nstate.add_edge(tasklet, 'out', reduced_write, None, nsdfg.make_array_memlet(reduced_name))
+        tasklet = nstate.add_tasklet(f'reduce_max_{uid}', {
+            'inp': dace.pointer(data_desc.dtype),
+            'axes_arr': dace.pointer(axes_desc.dtype)
+        }, {'out': dace.pointer(reduced_desc.dtype)},
+                                     tasklet_code,
+                                     language=dace.Language.CPP)
+        nstate.add_edge(data_read, None, tasklet, 'inp',
+                        nsdfg.make_array_memlet(data_name))
+        nstate.add_edge(axes_node, None, tasklet, 'axes_arr',
+                        nsdfg.make_array_memlet(axes_name))
+        nstate.add_edge(tasklet, 'out', reduced_write, None,
+                        nsdfg.make_array_memlet(reduced_name))
         return nsdfg
-    
+
+
 @op_implementation(op="ReduceMin", name="pure")
 class PureReduceMin(ONNXForward):
+
     @staticmethod
-    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
+                               sdfg: SDFG) -> bool:
         return True
 
     @staticmethod
-    def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+    def forward(node: 'ONNXOp', state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
         keepdims = getattr(node, 'keepdims', 1)
         noop_with_empty_axes = getattr(node, 'noop_with_empty_axes', 0)
         uid = state.node_id(node)
         nsdfg = SDFG(f'reduce_min_{uid}')
         nstate = nsdfg.add_state(f'reduce_min_{uid}')
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        reduced_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "reduced"))
+        reduced_desc = copy.deepcopy(
+            out_desc_with_name(node, state, sdfg, "reduced"))
         data_name = f"data"
         reduced_name = f"reduced"
         nsdfg.add_datadesc(data_name, data_desc)
@@ -2371,19 +2605,30 @@ class PureReduceMin(ONNXForward):
                 axes_values = list(axes)
             axes_arr_shape = [len(axes_values)]
             axes_arr_dtype = dace.int64
-            _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
+            _, axes_desc = nsdfg.add_array(axes_name,
+                                           axes_arr_shape,
+                                           axes_arr_dtype,
+                                           transient=True)
             axes_node = nstate.add_access(axes_name)
             axes_init_tasklet = nstate.add_tasklet(
                 f"init_axes",
-                set(),
-                {"out": dace.pointer(axes_arr_dtype)},
-                "\n".join([f"out [{idx}] = {val};" for idx, val in enumerate(axes_values)]),
-                language=dace.Language.CPP
-            )
-            nstate.add_edge(axes_init_tasklet, "out", axes_node, None, dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
+                set(), {"out": dace.pointer(axes_arr_dtype)},
+                "\n".join([
+                    f"out [{idx}] = {val};"
+                    for idx, val in enumerate(axes_values)
+                ]),
+                language=dace.Language.CPP)
+            nstate.add_edge(axes_init_tasklet, "out", axes_node, None,
+                            dace.Memlet(f"{axes_name}[0:{len(axes_values)}]"))
 
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
+
+        if axes_desc.shape == (1, ):
+            # axes_arr will be a scalar in this case
+            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
+        else:
+            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
@@ -2391,9 +2636,7 @@ class PureReduceMin(ONNXForward):
             constexpr long long output_dims = {len(reduced_desc.shape)};
             constexpr long long num_reduce_dims = {num_reduce_axes};
             constexpr long long keepdims = {keepdims};
-            long long reduce_dims[num_reduce_dims] = """ +
-            f'{{{", ".join([f"axes_arr[{i}]" for i in range(num_reduce_axes)])}}};' +
-            f""" 
+            {axes_arr_code}
             for (long long i = 0; i < num_reduce_dims; i++) {{
                 if (reduce_dims[i] < 0) {{
                     reduce_dims[i] = input_dims + reduce_dims[i];
@@ -2426,28 +2669,41 @@ class PureReduceMin(ONNXForward):
             }}
             
             // initialize output to positive infinity
-            """ +
-            "\n".join([f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{" for i in range(len(reduced_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides [{i}] * i{i}" for i in range(len(reduced_desc.shape))]) + "] = INFINITY;" + "\n" +
-            "\n".join(["}" for _ in reduced_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+            f"for (long long i{i} = 0; i{i} < output_shape[{i}]; i{i}++) {{"
+            for i in range(len(reduced_desc.shape))
+        ]) + "\n" + "out [" + " + ".join([
+            f"output_strides [{i}] * i{i}"
+            for i in range(len(reduced_desc.shape))
+        ]) + "] = INFINITY;" + "\n" + "\n".join(
+            ["}" for _ in reduced_desc.shape]) + "\n" + """
             
             // Loop over all input elements
-            """ + 
-            "\n".join([f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{" for i in range(len(data_desc.shape))]) + "\n" +
-            "out [" + " + ".join([f"output_strides_input[{i}] * i{i}" for i in range(len(data_desc.shape))]) +"]" +
-            " = std::min(out [" + " + ".join([f"output_strides_input[{i}] * i{i}" for i in range(len(data_desc.shape))]) + "], " +
-            "inp [" + " + ".join([f"input_strides[{i}] * i{i}" for i in range(len(data_desc.shape))]) + "]);" + "\n" +
-            "\n".join(["}" for _ in data_desc.shape]) + "\n" +
-            """
+            """ + "\n".join([
+                f"for (long long i{i} = 0; i{i} < input_shape[{i}]; i{i}++) {{"
+                for i in range(len(data_desc.shape))
+            ]) + "\n" + "out [" + " + ".join([
+                f"output_strides_input[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "]" + " = std::min(out [" + " + ".join([
+                f"output_strides_input[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "], " + "inp [" + " + ".join([
+                f"input_strides[{i}] * i{i}"
+                for i in range(len(data_desc.shape))
+            ]) + "]);" + "\n" + "\n".join(["}" for _ in data_desc.shape]) +
+                        "\n" + """
         """)
-        tasklet = nstate.add_tasklet(
-            f'reduce_min_{uid}',
-            {'inp': dace.pointer(data_desc.dtype), 'axes_arr': dace.pointer(axes_desc.dtype)},
-            {'out': dace.pointer(reduced_desc.dtype)},
-            tasklet_code,
-            language=dace.Language.CPP)
-        nstate.add_edge(data_read, None, tasklet, 'inp', nsdfg.make_array_memlet(data_name))
-        nstate.add_edge(axes_node, None, tasklet, 'axes_arr', nsdfg.make_array_memlet(axes_name))
-        nstate.add_edge(tasklet, 'out', reduced_write, None, nsdfg.make_array_memlet(reduced_name))
+        tasklet = nstate.add_tasklet(f'reduce_min_{uid}', {
+            'inp': dace.pointer(data_desc.dtype),
+            'axes_arr': dace.pointer(axes_desc.dtype)
+        }, {'out': dace.pointer(reduced_desc.dtype)},
+                                     tasklet_code,
+                                     language=dace.Language.CPP)
+        nstate.add_edge(data_read, None, tasklet, 'inp',
+                        nsdfg.make_array_memlet(data_name))
+        nstate.add_edge(axes_node, None, tasklet, 'axes_arr',
+                        nsdfg.make_array_memlet(axes_name))
+        nstate.add_edge(tasklet, 'out', reduced_write, None,
+                        nsdfg.make_array_memlet(reduced_name))
         return nsdfg
