@@ -2118,77 +2118,132 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
                 set_nested_sdfg_parent_references(node.sdfg)
 
 
-def get_used_data(cfg: ControlFlowRegion | SDFGState) -> Set[str]:
+def get_used_data(scope: ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG) -> Set[str]:
     """
-    Returns a set of all data names that are used in the given control flow region or state.
+    Returns a set of all data names that are used in the given control flow region, state, map entry or nested SDFG node.
     Data is considered used if there is an access node
 
-    :param cfg: The control flow region or state to check.
+    :param cfg: The control flow region, state, or map entry node to check.
     :return: A set of used data names.
     """
-    used_data = set()
-    for state in cfg.all_states() if not isinstance(cfg, SDFGState) else [cfg]:
-        for node in state.nodes():
+    if isinstance(scope, SDFGState) or isinstance(scope, ControlFlowRegion):
+        read_data, write_data = scope.read_and_write_sets()
+        return read_data.union(write_data)
+    elif isinstance(scope, nd.NestedSDFG):
+        read_data, write_data = scope.sdfg.read_and_write_sets()
+        return read_data.union(write_data)
+    elif isinstance(scope, nd.MapEntry):
+        state: SDFGState = scope.parent_graph
+
+        # How can data be accessed in an SDFG?:
+        # Read interstate edges or access nodes using memlets
+        # Written to access nodes using memlets
+        # For map inputs the data might be not directly coming through an access node,
+        # need to check the edges too
+        #
+        # To get all used data, within a state iterate access nodes
+        # If data is passed to a nested SDFG (even if it is only used on an interstate edge),
+        # the access node must be present in the parent graph.
+        used_data = set()
+
+        # All data used in the NestedSDFGs need to be connected through access nodes
+        for node in state.all_nodes_between(scope, state.exit_node(scope)):
             if isinstance(node, nd.AccessNode):
                 used_data.add(node.data)
+        # Need to consider map inputs and outputs too
+        for ie in state.in_edges(scope):
+            if ie.data is not None and ie.data.data is not None:
+                used_data.add(ie.data.data)
+        for oe in state.out_edges(scope):
+            if oe.data is not None and oe.data.data is not None:
+                used_data.add(oe.data.data)
 
-    cfgs_to_check = {cfg.nodes()}  if not isinstance(cfg, SDFGState) else {}
+        return used_data
+    else:
+        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
 
-    while cfgs_to_check:
-        node = cfgs_to_check.pop()
-        if not isinstance(node, SDFGState):
-            cfgs_to_check.add(node.nodes())
-
-        for out_edge in cfg.out_edges(node):
-            assert isinstance(out_edge, InterstateEdge)
-            edge = out_edge.data
-            interstate_used_data = edge.used_arrays(arrays=cfg.sdfg.arrays, union_lhs_symbols=True)
-            used_data.update(interstate_used_data)
-
-        if isinstance(node, ConditionalBlock):
-            for branch_code in node.branches:
-                pass
-
-        if isinstance(node, LoopRegion):
-            pass
-
-    return used_data
-
-def get_constant_data(cfg: ControlFlowRegion | SDFGState) -> Set[str]:
+def get_constant_data(scope: ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG) -> Set[str]:
     """
-    Returns a set of all constant data names in the given control flow region or state.
+    Returns a set of all constant data in the given control flow region, state, or with the map scope.
     Data is considered constant if there is any incoming edge to an access node of the data.
     Due to the semantics of SDFG, if a nested SDFG writes to the data container it needs to be
     visible in the parent graph as well, so the function does not need to be recursive.
 
-    :param cfg: The control flow region or state to check.
+    :param cfg: The control flow region, state or a map entry node to check.
     :return: A set of constant data names.
     """
+    def _no_incoming_memlet(state: SDFGState, node: nd.AccessNode) -> bool:
+        return (state.in_degree(node) == 0 or state.in_degree(node) > 0 and all([e.data is None for e in state.in_edges(node)]))
 
-    data_written_to = set()
-    sdfg = cfg.sdfg
-    # Write accesses to scalars can happen through access nodes and interstate edges (assignments)
-    # Write accesses to arrays can only happen through access nodes
-    for state in cfg.all_states() if not isinstance(cfg, SDFGState) else [cfg]:
-        for node in state.nodes():
+    def _incoming_memlet(state: SDFGState, node: nd.AccessNode) -> bool:
+        return (state.in_degree(node) > 0 and any([e.data is not None for e in state.in_edges(node)]))
+
+    if isinstance(scope, SDFGState) or isinstance(scope, ControlFlowRegion):
+        read_data, write_data = scope.read_and_write_sets()
+        return read_data - write_data
+    elif isinstance(scope, nd.NestedSDFG):
+        read_data, write_data = scope.sdfg.read_and_write_sets()
+        return read_data - write_data
+    elif isinstance(scope, nd.MapEntry):
+        state: SDFGState = scope.parent_graph
+
+        # Which data are const:
+        # All access nodes that have no incoming edges
+        used_data = set()
+        written_data = set()
+
+        # All data used in the NestedSDFGs need to be connected through access nodes
+        for node in state.all_nodes_between(scope, state.exit_node(scope)):
             if isinstance(node, nd.AccessNode):
-                if state.in_degree(node) > 0:
-                    data_written_to.add(node.data)
+                # Either no incoming edge, or no incoming edge has a Memlet (dependency edge only)
+                if _incoming_memlet(state, node):
+                    written_data.add(node.data)
 
-    cfgs_to_check = {cfg.nodes()}  if not isinstance(cfg, SDFGState) else {}
+        # Need to consider map outputs and outputs too
+        for ie in state.in_edges(scope):
+            if ie.data is not None and ie.data.data is not None:
+                used_data.add(ie.data.data)
+        for oe in state.out_edges(scope):
+            if oe.data is not None and oe.data.data is not None:
+                written_data.add(oe.data.data)
+            used_data.add(oe.data.data)
 
-    while cfgs_to_check:
-        node = cfgs_to_check.pop()
-        if not isinstance(node, SDFGState):
-            cfgs_to_check.add(node.nodes())
+        return used_data - written_data
+    else:
+        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
 
-        for out_edge in cfg.out_edges(node):
-            assert isinstance(out_edge, InterstateEdge)
-            edge = out_edge.data
-            written_scalars = [arr_name for arr_name in edge.assignments if arr_name in sdfg.arrays]
-            if written_scalars:
-                data_written_to.update(written_scalars)
+def get_constant_symbols(scope: SDFG | ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG) -> Set[str]:
+    """
+    Returns a set of all constant symbols in the given control flow region, state, or with the map scope.
+    A symbol is considered constant if no interstate edge writes to it.
 
-    all_accessed_data = set()
-    constants = all_accessed_data - data_written_to
-    return constants
+    :param cfg: The control flow region, state or a map entry node to check.
+    :return: A set of constant symbol names.
+    """
+    def _get_assignments(cfg: ControlFlowRegion | SDFG) -> Set[str]:
+        written_symbols = set()
+        for edge in cfg.all_edges(*list(cfg.all_control_flow_blocks())):
+            if edge.data is not None and isinstance(edge.data, dace.InterstateEdge):
+                written_symbols = written_symbols.union(edge.data.keys())
+        return written_symbols
+
+    if isinstance(scope, SDFGState):
+        symbols = scope.used_symbols()
+        # Since no symbol can change within a state we are good to go
+        return symbols
+    elif isinstance(scope, SDFG | ControlFlowRegion):
+        # Need to get all used symbols within the SDFG | CFG
+        used_symbols = scope.used_symbols()
+        # Get all symbols that are written to
+        written_symbols = _get_assignments(scope)
+        return used_symbols - written_symbols
+    elif isinstance(scope, nd.NestedSDFG):
+        used_symbols = scope.sdfg.used_symbols()
+        # Can't pass them as const if they are written to in the nested SDFG
+        written_symbols = _get_assignments(scope.sdfg)
+        return used_symbols - written_symbols
+    elif isinstance(scope, nd.MapEntry):
+        used_symbols = scope.used_symbols()
+        return used_symbols
+    else:
+        raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))

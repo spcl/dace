@@ -877,7 +877,55 @@ class MapEntry(EntryNode):
 
         return result
 
+    def used_symbols(self):
+        parent_state : dace.SDFGState = self.parent_graph
+        parent_sdfg : dace.SDFG = parent_state.sdfg
 
+        all_symbols = set()
+        new_symbols = set()
+        free_symbols = set()
+
+        # Free symbols from nodes
+        for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
+            if isinstance(n, EntryNode):
+                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+            elif isinstance(n, AccessNode):
+                # Add data descriptor symbols
+                freesyms |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
+            elif isinstance(n, Tasklet):
+                if n.language == dtypes.Language.Python:
+                    # Consider callbacks defined as symbols as free
+                    for stmt in n.code.code:
+                        for astnode in ast.walk(stmt):
+                            if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
+                                    and astnode.func.id in parent_sdfg.symbols):
+                                freesyms.add(astnode.func.id)
+                else:
+                    # Find all string tokens and filter them to sdfg.symbols, while ignoring connectors
+                    code_symbols = dace.symbolic.symbols_in_code(
+                        n.code.as_string,
+                        potential_symbols=parent_sdfg.symbols.keys(),
+                        symbols_to_ignore=(n.in_connectors.keys() | n.out_connectors.keys() | n.ignored_symbols),
+                    )
+                    free_symbols |= code_symbols
+                    continue
+
+            if hasattr(n, 'used_symbols'):
+                freesyms |= n.used_symbols(all_symbols)
+            else:
+                freesyms |= n.free_symbols
+
+        # Free symbols from memlets
+        for e in parent_state.all_edges(parent_state.all_nodes_between(self, parent_state.exit_node(self))):
+            # If used for code generation, only consider memlet tree leaves
+            if not all_symbols and not self.is_leaf_memlet(e):
+                continue
+
+            freesyms |= e.data.used_symbols(all_symbols, e)
+
+        # Do not consider SDFG constants as symbols
+        new_symbols.update(set(parent_sdfg.constants.keys()))
+        return freesyms - new_symbols
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
