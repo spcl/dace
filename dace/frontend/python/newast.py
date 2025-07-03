@@ -3086,10 +3086,10 @@ class ProgramVisitor(ExtNodeVisitor):
         parent_array = self.scope_arrays[parent_name]
 
         has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
+        strides = list(parent_array.strides)
         if has_indirection:
             # squeezed_rng = list(range(len(rng)))
             shape = parent_array.shape
-            # strides = [parent_array.strides[d] for d in squeezed_rng]
             # # TODO: Why is squeezed_rng an index in the first place?
             # squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
             squeezed_rng = subsets.Range.from_array(parent_array)
@@ -3148,6 +3148,11 @@ class ProgramVisitor(ExtNodeVisitor):
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
+            for i, r in enumerate(rng.ranges):
+                _, _, step = r
+                if (step < 0) == True:
+                    step = -step
+                strides[i] *= step
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
                 if (step < 0) == True:
@@ -3168,7 +3173,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_scalar(var_name, dtype)
         elif issubclass(arr_type, data.Array):
             if non_squeezed:
-                strides = [parent_array.strides[d] for d in non_squeezed]
+                strides = [strides[d] for d in non_squeezed]
             else:
                 strides = [1]
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
@@ -3179,7 +3184,8 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
-        self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+        inner_rng = subsets.Range.from_array(self.sdfg.arrays[var_name])
+        self.accesses[(name, rng, access_type)] = (var_name, inner_rng)
 
         inner_indices = set(non_squeezed)
 
@@ -3205,7 +3211,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[var_name] = (state, new_memlet, inner_indices)
 
         self.variables[var_name] = var_name
-        return (var_name, squeezed_rng)
+        return (var_name, inner_rng)
 
     def _add_read_access(self,
                          name: str,
