@@ -2163,7 +2163,7 @@ def get_used_data(scope: ControlFlowRegion | SDFGState | nd.MapEntry | nd.Nested
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
 
 
-def get_constant_data(scope: ControlFlowRegion | SDFGState | nd.NestedSDFG | nd.MapEntry,
+def get_constant_data(scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, nd.MapEntry],
                       parent_state: SDFGState = None) -> Set[str]:
     """
     Returns a set of all constant data in the given control flow region, state, or with the map scope.
@@ -2214,7 +2214,7 @@ def get_constant_data(scope: ControlFlowRegion | SDFGState | nd.NestedSDFG | nd.
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
 
 
-def get_constant_symbols(scope: SDFG | ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG,
+def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG],
                          parent_state: SDFGState = None) -> Set[str]:
     """
     Returns a set of all constant symbols in the given control flow region, state, or with the map scope.

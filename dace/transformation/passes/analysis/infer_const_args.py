@@ -4,6 +4,7 @@ from typing import Dict, Set, Tuple
 from dace import properties
 import dace.sdfg.utils as sdutils
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class StateReachability(ppl.Pass):
