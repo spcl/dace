@@ -125,6 +125,7 @@ def calc_set_union(set_a, set_b):
 class StripMining(transformation.SingleStateTransformation):
     """ Implements the strip-mining transformation.
 
+        TODO: Update doc
         Strip-mining takes as input a map dimension and splits it into
         two dimensions. The new dimension iterates over the range of
         the original one with a parameterizable step, called the tile
@@ -206,17 +207,18 @@ class StripMining(transformation.SingleStateTransformation):
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
         new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix, target_dim)
-        new_dim_range = (td_from, td_to, tile_size)
+        new_dim_range = (td_from, td_to, tile_size * td_step)
         new_map = nodes.Map(map_entry.map.label, [new_dim], subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
         td_from_new = dimsym
         if divides_evenly:
-            td_to_new = dimsym + tile_size - 1
+            td_to_new = dimsym + tile_size * td_step - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
-            td_to_new = dace.symbolic.SymExpr(sympy.Min(dimsym + tile_size - 1, td_to), dimsym + tile_size - 1)
+            td_to_new = dace.symbolic.SymExpr(sympy.Min(dimsym + tile_size * td_step - 1, td_to),
+                                              dimsym + tile_size - 1)
         td_step_new = td_step
 
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
