@@ -1294,7 +1294,15 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
     :param state: The state that contains the root of the scope tree.
     :param entry: A scope entry node to set as root, otherwise the state is
                   the root if None is given.
+
+    :note: This function adds a `state` attribute to the `ScopeTree` objects, it refers to
+        the state to which the scope was found.
     """
+    # The first clear is to make sure that the data structure we get is not referred to by any
+    #  other reference. The second clear is needed to ensure that nobody gets the object we
+    #  operate on. This is because we actually modifying them and they are cached by the state.
+    #  The real error happens if this function is called multiple times, without a refresh.
+    # NOTE: `scope_tree()` only performs a shallow copy, but only of the `dict` that we do not use.
     state._clear_scopedict_cache()
     stree = state.scope_tree()[entry]
     state._clear_scopedict_cache()
@@ -1303,6 +1311,7 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
 
     # Add nested SDFGs as children
     def traverse(state: SDFGState, treenode: ScopeTree):
+        # See above why.
         state._clear_scopedict_cache()
         snodes = state.scope_children()[treenode.entry]
         state._clear_scopedict_cache()
