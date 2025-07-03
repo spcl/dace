@@ -20,7 +20,7 @@ class GPUStreamManager:
         # Determine the number of streams used (stream IDs start from 0)
         # Only count integer stream IDs (ignore string values like "nullptr")
         int_stream_ids = [v for v in assigned_streams.values() if isinstance(v, int)]
-        self.num_gpu_streams = max(int_stream_ids, default=0)
+        self.num_gpu_streams = max(int_stream_ids, default=0) + 1
 
     def get_stream_node(self, node: nodes.Node) -> str:
         """

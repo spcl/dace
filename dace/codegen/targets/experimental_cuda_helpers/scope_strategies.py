@@ -139,7 +139,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                         index_expr = f'(blockIdx.z * {symbolic_to_cpp(kernel_block_dims[2])} + threadIdx.z)'
 
                     tail_prod = product(kernel_dim_sizes[dim + 1:])
-                    index_expr = (f"({index_expr} / ({symbolic_to_cpp(tail_prod)})) % ({symbolic_to_cpp(kernel_dim_sizes[dim])})")
+                    index_expr = (f"(({index_expr} / ({symbolic_to_cpp(tail_prod)})) % ({symbolic_to_cpp(kernel_dim_sizes[dim])}))")
 
 
                 # Define thread/Block index
@@ -317,7 +317,7 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 else:
                     # Dimensions beyond the third: full delinearization
                     tail_prod = product(map_dim_sizes[dim + 1:])
-                    base_expr = (f"(threadIdx.z / ({symbolic_to_cpp(tail_prod)})) % "f"({symbolic_to_cpp(map_dim_sizes[dim])})")
+                    base_expr = (f"((threadIdx.z / ({symbolic_to_cpp(tail_prod)})) % ({symbolic_to_cpp(map_dim_sizes[dim])}))")
 
 
                 var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', base_expr)
@@ -448,9 +448,9 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
                 if len(previous_sizes) > 0:
                     divisor = product(previous_sizes)
-                    expr = f"({threadID_name} / {divisor}) % {warp_dim_bounds[i]}"
+                    expr = f"(({threadID_name} / {divisor}) % ({warp_dim_bounds[i]}))"
                 else:
-                    expr = f"{threadID_name} % {warp_dim_bounds[i]}"
+                    expr = f"({threadID_name} % ({warp_dim_bounds[i]}))"
 
                 callsite_stream.write(f"{ids_ctype} {var_name} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ids_ctype)
