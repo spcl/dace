@@ -1295,22 +1295,27 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
     :param entry: A scope entry node to set as root, otherwise the state is
                   the root if None is given.
     """
+    state._clear_scopedict_cache()
     stree = state.scope_tree()[entry]
+    state._clear_scopedict_cache()
+
     stree.state = state  # Annotate state in tree
 
     # Add nested SDFGs as children
     def traverse(state: SDFGState, treenode: ScopeTree):
+        state._clear_scopedict_cache()
         snodes = state.scope_children()[treenode.entry]
-        children_to_inspect = treenode.children.copy()  # Avoid modifying a cached structure.
+        state._clear_scopedict_cache()
+
         for node in snodes:
             if isinstance(node, nodes.NestedSDFG):
                 for nstate in node.sdfg.states():
                     ntree = nstate.scope_tree()[None]
                     ntree.state = nstate
-                    assert ntree not in children_to_inspect
-                    children_to_inspect.append(ntree)
+                    assert ntree not in treenode.children
+                    treenode.children.append(ntree)
 
-        for child in children_to_inspect:
+        for child in treenode.children:
             if hasattr(child, 'state') and child.state != state:
                 traverse(child.state, child)
 
