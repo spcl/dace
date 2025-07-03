@@ -378,6 +378,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         ex.path = fpath
         raise
 
+
 def _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg: 'dace.sdfg.SDFG'):
     from dace.sdfg import InterstateEdge
     for edge, graph in sdfg.all_edges_recursive():
@@ -385,8 +386,9 @@ def _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg: 'dace.sdfg.SDFG'):
             # sdfg.arrays return arrays and scalars, it is invalid to write to them
             if any([key in graph.sdfg.arrays for key in edge.data.assignments]):
                 raise InvalidSDFGInterstateEdgeError(
-                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
-                      graph.sdfg, graph.edge_id(edge))
+                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', graph.sdfg,
+                    graph.edge_id(edge))
+
 
 def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]):
     """

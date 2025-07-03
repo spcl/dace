@@ -692,7 +692,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     continue
 
             if hasattr(n, 'used_symbols'):
-                freesyms |= n.used_symbols(all_symbols)
+                if not isinstance(n, nd.MapEntry):
+                    freesyms |= n.used_symbols(all_symbols=all_symbols)
             else:
                 freesyms |= n.free_symbols
 
