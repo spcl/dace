@@ -1320,8 +1320,9 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
             if isinstance(node, nodes.NestedSDFG):
                 for nstate in node.sdfg.states():
                     ntree = nstate.scope_tree()[None]
-                    ntree.state = nstate
                     assert ntree not in treenode.children
+                    assert not hasattr(ntree, "state")  # Non standard field.
+                    ntree.state = nstate
                     treenode.children.append(ntree)
 
         for child in treenode.children:
