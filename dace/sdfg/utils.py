@@ -2248,7 +2248,7 @@ def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.Map
         written_symbols = _get_assignments(scope.sdfg)
         return used_symbols - written_symbols
     elif isinstance(scope, nd.MapEntry):
-        used_symbols = scope.used_symbols(parent_state=parent_state)
+        used_symbols = scope.used_symbols_within_scope(parent_state=parent_state)
         return used_symbols
     else:
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))

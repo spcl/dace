@@ -877,7 +877,7 @@ class MapEntry(EntryNode):
 
         return result
 
-    def used_symbols(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
+    def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
         Returns a set of symbol names that are used withn the Map scope created by this MapEntry
 
@@ -885,7 +885,6 @@ class MapEntry(EntryNode):
         """
         parent_sdfg: dace.SDFG = parent_state.sdfg
 
-        all_symbols = set()
         new_symbols = set()
         free_symbols = set()
 
