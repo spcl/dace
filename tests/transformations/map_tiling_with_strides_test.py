@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+from typing import List
 import dace
 import numpy as np
 from dace.transformation.dataflow import MapTiling
@@ -17,10 +18,14 @@ def test_map_tiling_with_strides():
             A[i] = B[i]
 
     sdfg = vector_copy_strides.to_sdfg()
+    sdfg.simplify()
+    assert len(list(sdfg.all_states())) == 1
 
-    state = sdfg.states()[0]
-    sdfg_nodes = state.nodes()
-    map_entry: dace.nodes.MapEntry = [n for n in sdfg_nodes if isinstance(n, dace.nodes.MapEntry)][0]
+    state = next(iter(sdfg.all_states()))
+    state_nodes = state.nodes()
+    map_entries: List[dace.nodes.MapEntry] = [n for n in state_nodes if isinstance(n, dace.nodes.MapEntry)]
+    assert len(map_entries) == 1
+    map_entry = map_entries[0]
 
     tile_sizes = [32]
     MapTiling.apply_to(sdfg=sdfg,
