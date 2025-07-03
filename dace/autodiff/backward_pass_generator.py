@@ -3328,10 +3328,12 @@ class BackwardPassGenerator:
         if replicated_node is None:
             replicated_node = copy.deepcopy(forward_node)
             backward_state.add_node(replicated_node)
+            # TODO: shouldn't this check be applied even if the node is already replicated?
             if self.separate_sdfgs:
                 # Need to copy over the descriptor from the forward pass
                 data_name = replicated_node.data
                 data_desc = copy.deepcopy(forward_node.desc(self.sdfg))
+                data_desc.transient = False
                 if data_name not in self.backward_sdfg.arrays:
                     self.backward_sdfg.add_datadesc(data_name, data_desc)
 
