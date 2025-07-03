@@ -319,7 +319,7 @@ required:
                             Additional CUDA architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '60'
+                        default: '86'
 
                     hip_arch:
                         type: str
@@ -457,7 +457,7 @@ required:
                             Yakup Koray Budanaz for Berkays master-thesis.
                         enum: [legacy, experimental]
                         default: experimental
-
+                        
                     gpu_index_type:
                         type: str
                         title: Thread/block/warp index data type
