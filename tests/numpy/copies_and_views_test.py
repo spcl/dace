@@ -225,25 +225,46 @@ def test_strided_copy_symbolic_3():
     _test_strided_copy_program(strided_copy_symbolic_3, symbols={'M': 20, 'N': 2})
 
 
-def test_strided_copy_map():
+def test_strided_copy_map_0():
 
     @dace.program
-    def strided_copy_map(dst: dace.uint32[20], src: dace.uint32[40]):
+    def strided_copy_map_0(dst: dace.uint32[20], src: dace.uint32[40]):
         for i in dace.map[0:20:2]:
             dst[i] = src[i * 2]
 
-    _test_strided_copy_program(strided_copy_map)
+    _test_strided_copy_program(strided_copy_map_0)
 
 
-def test_strided_copy_map_symbolic():
+def test_strided_copy_map_1():
+
+    @dace.program
+    def strided_copy_map_1(dst: dace.uint32[20], src: dace.uint32[40]):
+        for i in dace.map[0:2]:
+            dst[i * 10:(i + 1) * 10:2] = src[i * 20:(i + 1) * 20:4]
+
+    _test_strided_copy_program(strided_copy_map_1)
+
+
+def test_strided_copy_map_symbolic_0():
     M, N = (dace.symbol(s) for s in ('M', 'N'))
 
     @dace.program
-    def strided_copy_map(dst: dace.uint32[M], src: dace.uint32[2 * M]):
+    def strided_copy_map_symbolic_0(dst: dace.uint32[M], src: dace.uint32[2 * M]):
         for i in dace.map[0:M:N]:
             dst[i] = src[i * 2]
 
-    _test_strided_copy_program(strided_copy_map, symbols={'M': 20, 'N': 2})
+    _test_strided_copy_program(strided_copy_map_symbolic_0, symbols={'M': 20, 'N': 2})
+
+
+def test_strided_copy_map_symbolic_1():
+    M, N = (dace.symbol(s) for s in ('M', 'N'))
+
+    @dace.program
+    def strided_copy_map_symbolic_1(dst: dace.uint32[2 * M], src: dace.uint32[4 * M]):
+        for i in dace.map[0:2]:
+            dst[i * M:(i + 1) * M:N] = src[i * 2 * M:(i + 1) * 2 * M:2 * N]
+
+    _test_strided_copy_program(strided_copy_map_symbolic_1, symbols={'M': 10, 'N': 2})
 
 
 if __name__ == '__main__':
@@ -262,5 +283,7 @@ if __name__ == '__main__':
     test_strided_copy_symbolic_1()
     test_strided_copy_symbolic_2()
     test_strided_copy_symbolic_3()
-    test_strided_copy_map()
-    test_strided_copy_map_symbolic()
+    test_strided_copy_map_0()
+    test_strided_copy_map_1()
+    test_strided_copy_map_symbolic_0()
+    test_strided_copy_map_symbolic_1()
