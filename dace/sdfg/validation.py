@@ -350,6 +350,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             "Arrays that use a multibank access pattern must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}", sdfg, None)
 
+        # Check for interstate edges that write to scalars or arrays
+        _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
@@ -372,6 +375,14 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         ex.path = fpath
         raise
 
+def _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg: 'dace.sdfg.SDFG'):
+    for edge, graph in sdfg.all_edges_recursive():
+        if edge.data is not None and isinstance(edge.data, dace.sdfg.InterstateEdge):
+            # sdfg.arrays return arrays and scalars, it is invalid to write to them
+            if any([key in graph.sdfg.arrays for key in edge.data.assignments]):
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
+                      graph.sdfg, graph.edge_id(edge))
 
 def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]):
     """
