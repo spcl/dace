@@ -10,6 +10,7 @@ import dace.libraries.onnx as donnx
 
 
 class Model(nn.Module):
+
     def __init__(self):
         super(Model, self).__init__()
         self.conv = nn.Conv2d(6, 16, 5)
@@ -45,3 +46,9 @@ def test_reshape_elimination(gpu, sdfg_name):
     dace_output = dace_model(x)
 
     assert np.allclose(torch_output.detach().numpy(), dace_output, atol=1e-06)
+
+
+if __name__ == "__main__":
+    gpu = False
+    sdfg_name = "test_reshape_elimination"
+    test_reshape_elimination(gpu, sdfg_name)

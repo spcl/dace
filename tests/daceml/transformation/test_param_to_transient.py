@@ -8,7 +8,9 @@ from dace.transformation.onnx import parameter_to_transient
 
 @pytest.mark.gpu
 def test_torch_from_dlpack(sdfg_name):
+
     class Module(nn.Module):
+
         def __init__(self):
             super().__init__()
             self.fc1 = nn.Linear(10, 3)
@@ -35,3 +37,7 @@ def test_torch_from_dlpack(sdfg_name):
                                               param_to_trans)
 
     assert torch.allclose(dace_module_wrapped(input), pt_module(input))
+
+
+if __name__ == "__main__":
+    test_torch_from_dlpack("test_sdfg")

@@ -4,7 +4,7 @@ Test our pytest fixtures using pytester
 
 
 def test_gpu(pytester):
-    pytester.copy_example("daceml_tests/conftest.py")
+    pytester.copy_example("tests/daceml/conftest.py")
     pytester.makepyfile("""
     def test_gpu(gpu):
         pass
@@ -16,7 +16,7 @@ def test_gpu(pytester):
 
 
 def test_gpu_only_skips(pytester):
-    pytester.copy_example("daceml_tests/conftest.py")
+    pytester.copy_example("tests/daceml/conftest.py")
     pytester.makepyfile("""
     def test_gpu(gpu):
         assert gpu
@@ -26,7 +26,7 @@ def test_gpu_only_skips(pytester):
 
 
 def test_gpu_marker(pytester):
-    pytester.copy_example("daceml_tests/conftest.py")
+    pytester.copy_example("tests/daceml/conftest.py")
     pytester.makepyfile("""
     import pytest
     @pytest.mark.gpu
@@ -40,7 +40,7 @@ def test_gpu_marker(pytester):
 
 
 def test_cpublas_marker(pytester):
-    pytester.copy_example("daceml_tests/conftest.py")
+    pytester.copy_example("tests/daceml/conftest.py")
     pytester.makepyfile("""
     import pytest
     @pytest.mark.cpublas
@@ -54,7 +54,7 @@ def test_cpublas_marker(pytester):
 
 
 def test_cpublas_marker_with_gpu_fixture(pytester):
-    pytester.copy_example("daceml_tests/conftest.py")
+    pytester.copy_example("tests/daceml/conftest.py")
     pytester.makepyfile("""
     import pytest
     @pytest.mark.cpublas

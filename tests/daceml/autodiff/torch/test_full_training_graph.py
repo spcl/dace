@@ -129,6 +129,7 @@ def test_parse_backward_with_forwarding():
 
 @pytest.mark.pure
 def test_two_backward_passes():
+
     @dace.program
     def train_step(x1: dace.float32[10, 5], x2: dace.float32[5],
                    dy: dace.float32[10]):
@@ -160,6 +161,7 @@ def test_two_backward_passes():
         return x1.grad, x2.grad
 
     sdfg = train_step.to_sdfg()
+    sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
 
@@ -175,6 +177,7 @@ def test_two_backward_passes():
 
 @pytest.mark.pure
 def test_two_backward_passes_accumulate():
+
     @dace.program
     def train_step(x: dace.float32[10, 5], dy: dace.float32[10]):
         x.requires_grad_()
@@ -203,6 +206,7 @@ def test_two_backward_passes_accumulate():
         return x.grad
 
     sdfg = train_step.to_sdfg()
+    sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
 
@@ -213,3 +217,12 @@ def test_two_backward_passes_accumulate():
     expected = torch_fn(x1.clone(), dy.clone())
 
     tensors_close('x.grad', expected, result)
+
+
+if __name__ == "__main__":
+    test_two_backward_passes_accumulate()
+    test_two_backward_passes()
+    test_parse_backward_with_forwarding()
+    test_parse_backward_scalar()
+    test_parse_backward_simple()
+    test_module()

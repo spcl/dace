@@ -6,7 +6,9 @@ from dace.testing import torch_tensors_close
 
 
 def test_skip_input_grads(sdfg_name, use_cpp_dispatcher):
+
     class Module(torch.nn.Module):
+
         def __init__(self):
             super(Module, self).__init__()
             self.fc1 = nn.Parameter(torch.rand(10, 10))
@@ -30,9 +32,10 @@ def test_skip_input_grads(sdfg_name, use_cpp_dispatcher):
     dace_input = torch.empty(*shape, dtype=torch.float32, requires_grad=False)
     dace_input.copy_(input_value)
 
+    # TODO: provide a better API for input names
     dace_module = DaceModule(dace_module,
                              backward=True,
-                             inputs_to_skip=["0"],
+                             inputs_to_skip=["onnx::MatMul_0"],
                              compile_torch_extension=use_cpp_dispatcher,
                              sdfg_name=sdfg_name)
 
@@ -51,3 +54,8 @@ def test_skip_input_grads(sdfg_name, use_cpp_dispatcher):
 
     # make sure that input grad is not being computed
     assert len(dace_module.backward_sdfg.node(0).sink_nodes()) == 1
+
+
+if __name__ == "__main__":
+    test_skip_input_grads("test_skip_input_grads", use_cpp_dispatcher=False)
+    test_skip_input_grads("test_skip_input_grads_cpp", use_cpp_dispatcher=True)

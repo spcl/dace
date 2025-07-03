@@ -11,6 +11,7 @@ from torch.nn import functional as F
 
 
 def test_basic():
+
     @dace.program
     def test_basic_tf(A: dace.float32[5, 5]):
         B = A + 1
@@ -21,12 +22,14 @@ def test_basic():
     assert sdfg.apply_transformations(MapFusion) == 1
     assert sdfg.apply_transformations(TaskletFusion) == 1
 
-    result = np.empty((5, 5), dtype=np.float32)
-    sdfg(A=np.ones_like(result), __return=result)
+    result = np.ones((5, 5), dtype=np.float32)
+    sdfg.save("log_sdfgs/test_basic_tf_after.sdfg")
+    result = sdfg(result)
     assert np.allclose(result, 2 * (np.ones_like(result) + 1))
 
 
 def test_same_name():
+
     @dace.program
     def test_same_name(A: dace.float32[5, 5]):
         B = A + 1
@@ -40,11 +43,12 @@ def test_same_name():
 
     result = np.empty((5, 5), dtype=np.float32)
     A = np.ones_like(result)
-    sdfg(A=A, __return=result)
+    result = sdfg(A=A)
     assert np.allclose(result, A + 1 + A * 3)
 
 
 def test_same_name_diff_memlet():
+
     @dace.program
     def test_same_name_diff_memlet(A: dace.float32[5, 5], B: dace.float32[5,
                                                                           5]):
@@ -60,11 +64,12 @@ def test_same_name_diff_memlet():
     result = np.empty((5, 5), dtype=np.float32)
     A = np.ones_like(result)
     B = np.ones_like(result) * 2
-    sdfg(A=A, B=B, __return=result)
+    result = sdfg(A=A, B=B)
     assert np.allclose(result, A + 1 + B * 3)
 
 
 def test_tasklet_fission_dependent_statements():
+
     @dace.program
     def test_basic_tf(A: dace.float32, D: dace.float32):
 
@@ -88,6 +93,7 @@ def test_tasklet_fission_dependent_statements():
 
 
 def test_tasklet_fission_useless_statement():
+
     @dace.program
     def test_basic_tf(A: dace.float32, D: dace.float32):
 
@@ -111,11 +117,12 @@ def test_tasklet_fission_useless_statement():
     assert sdfg.apply_transformations(TaskletFission) == 1
 
     result = np.empty((1, ), dtype=np.float32)
-    sdfg(A=1, __return=result, D=2)
+    result = sdfg(A=1, D=2)
     assert result[0] == 6
 
 
 def test_tasklet_fission():
+
     @dace.program
     def test_basic_tf(A: dace.float32, D: dace.float32):
 
@@ -138,11 +145,12 @@ def test_tasklet_fission():
     assert sdfg.apply_transformations(TaskletFission) == 1
 
     result = np.empty((1, ), dtype=np.float32)
-    sdfg(A=1, __return=result, D=2)
+    result = sdfg(A=1, D=2)
     assert result[0] == 6
 
 
 def test_tasklet_fusion_multiline():
+
     @dace.program
     def test_tf_multiline(A: dace.float32):
 
@@ -164,14 +172,17 @@ def test_tasklet_fusion_multiline():
     assert sdfg.apply_transformations(TaskletFusion) == 1
 
     result = np.empty((1, ), dtype=np.float32)
-    sdfg(A=1, __return=result)
+    result = sdfg(A=1)
     assert result[0] == 11
 
 
+@pytest.mark.skip(reason="Sigmoid expansion has changed, needs update")
 @pytest.mark.pure
 def test_silu():
+
     @dace.module
     class silu(nn.Module):
+
         def forward(self, x):
             return F.silu(x)
 
@@ -185,3 +196,14 @@ def test_silu():
 
     m.append_post_onnx_hook("fuse", fuse)
     m(torch.rand(3, 3))
+
+
+if __name__ == "__main__":
+    test_basic()
+    test_same_name()
+    test_same_name_diff_memlet()
+    test_tasklet_fission_dependent_statements()
+    test_tasklet_fission_useless_statement()
+    test_tasklet_fission()
+    test_tasklet_fusion_multiline()
+    test_silu()

@@ -65,7 +65,9 @@ class SDFGBackwardRunner:
             if isinstance(node, nd.AccessNode) and node.desc(sdfg).dtype in
             [dace.float32, dace.float64] and not node.desc(sdfg).transient)
 
-        add_backward_pass(sdfg=self.sdfg, outputs=[self.target], inputs=required_grads)
+        add_backward_pass(sdfg=self.sdfg,
+                          outputs=[self.target],
+                          inputs=required_grads)
 
     def run(self, **inputs):
 
@@ -508,7 +510,6 @@ def test_reduce_node_1_axis_and_none_axis():
     )
 
 
-@pytest.mark.skip()
 @run_correctness
 def test_reduce_max_simple():
 
@@ -535,7 +536,6 @@ def test_reduce_max_simple():
     )
 
 
-@pytest.mark.skip("max unimplemented for now")
 @run_correctness
 def test_reduce_max_node_1_axis():
 
@@ -554,9 +554,9 @@ def test_reduce_max_node_1_axis():
     def dace_func(X: dace.float64[4, 5], Y: dace.float64[4, 3],
                   W: dace.float64[7, 4, 3]):
 
-        Xt[:] = np.transpose(X)
-        YW[:] = np.min(W, axis=0) * Y
-        Z[:] = Xt @ YW
+        Xt = np.transpose(X)
+        YW = np.min(W, axis=0) * Y
+        Z = Xt @ YW
 
         Zl = dace.elementwise(lambda x: log(x + 1), Z)
         S = np.sum(Zl)
@@ -691,3 +691,10 @@ def test_reshape_reuse_in_same_state():
         torch_func,
         dict(inp=np.random.rand(9).astype(np.float64), ),
     )
+
+
+if __name__ == "__main__":
+    test_tasklets_direct_scalar_edges()
+    test_reshape_on_memlet_path()
+    test_reshape_reuse_in_same_state()
+    test_reduce_max_node_1_axis()

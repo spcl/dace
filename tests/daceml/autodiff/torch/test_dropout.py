@@ -1,3 +1,4 @@
+from typing import Literal, Union
 import pytest
 import torch
 from torch import nn
@@ -26,7 +27,7 @@ def test_dropout_fwd_training():
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("p", [0, 0.99, 0.6, 0.5])
-def test_dropout_bwd(p):
+def test_dropout_bwd(p: Union[float, Literal[0]]):
     module = nn.Dropout(p=p).cuda().train()
     dace_module = DaceModule(module,
                              dummy_inputs=(torch.ones(10, 10).cuda(), ),
@@ -54,3 +55,8 @@ def test_dropout_bwd(p):
     # check that non-zeroed values are correct
     torch_tensors_close("grad_zeroed", dy[~zeroed] * scale,
                         test_data.grad[~zeroed])
+
+
+if __name__ == "__main__":
+    test_dropout_bwd(0.5)
+    test_dropout_fwd_training()

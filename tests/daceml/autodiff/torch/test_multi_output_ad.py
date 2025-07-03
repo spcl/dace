@@ -8,7 +8,9 @@ from dace.testing import torch_tensors_close, copy_to_gpu
 
 @pytest.mark.pure
 def test_multi_output(sdfg_name, gpu, use_cpp_dispatcher):
+
     class Module(torch.nn.Module):
+
         def forward(self, x):
             return x + 1, x * 2
 
@@ -55,3 +57,9 @@ def test_multi_output(sdfg_name, gpu, use_cpp_dispatcher):
     dace_y2.backward(dace_dy)
 
     torch_tensors_close("grad", pytorch_input.grad, dace_input.grad)
+
+
+if __name__ == "__main__":
+    test_multi_output(sdfg_name="multi_output",
+                      gpu=False,
+                      use_cpp_dispatcher=True)

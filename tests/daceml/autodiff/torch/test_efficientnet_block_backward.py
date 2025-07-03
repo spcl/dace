@@ -125,3 +125,8 @@ def test_mbconv(sdfg_name):
                                 dace_param.grad,
                                 atol=1e-3,
                                 rtol=1e-3)
+
+
+if __name__ == "__main__":
+    test_bn_cudnn("test_bn_cudnn")
+    test_mbconv("test_mbconv")

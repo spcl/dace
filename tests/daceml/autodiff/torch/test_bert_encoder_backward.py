@@ -38,4 +38,4 @@ def test_bert_encoder_backward(gpu, sdfg_name):
 
 
 if __name__ == "__main__":
-    test_bert_encoder_backward(gpu=False, sdfg_name="bert_encoder_backward")
+    test_bert_encoder_backward(gpu=False, sdfg_name="bert_encoder")
