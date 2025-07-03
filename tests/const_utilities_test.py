@@ -3,13 +3,15 @@ import dace
 import dace.sdfg.utils as sdutils
 import pytest
 
+
 def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
     for state in sdfg.all_states():
         for node in state.nodes():
             if isinstance(node, dace.sdfg.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                 next_map = None
                 for n in state.bfs_nodes(node):
-                    if isinstance(n, dace.sdfg.nodes.MapEntry) and n != node and n.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock:
+                    if isinstance(n, dace.sdfg.nodes.MapEntry
+                                  ) and n != node and n.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock:
                         next_map = n
                         break
                     elif isinstance(n, dace.nodes.MapExit):
@@ -22,41 +24,46 @@ def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
                 for in_edge in state.in_edges(next_map):
                     if in_edge.data is not None:
                         in_arr_name = in_edge.data.data
-                        copy_shape = [(0, (((e) - b)//s), 1) for b, e, s in in_edge.data.subset]
-                        copied_shape = [(((e + 1) - b)//s) for b, e, s in in_edge.data.subset]
+                        copy_shape = [(0, (((e) - b) // s), 1) for b, e, s in in_edge.data.subset]
+                        copied_shape = [(((e + 1) - b) // s) for b, e, s in in_edge.data.subset]
                         copy_offset = [b for b, _, _ in in_edge.data.subset]
                         shared_mem_name = "shr_" + in_arr_name
                         in_arr = sdfg.arrays[in_arr_name]
                         if shared_mem_name not in sdfg.arrays:
-                            sdfg.add_array(shared_mem_name, copied_shape, in_arr.dtype, storage=dace.dtypes.StorageType.GPU_Shared, transient=True)
+                            sdfg.add_array(shared_mem_name,
+                                           copied_shape,
+                                           in_arr.dtype,
+                                           storage=dace.dtypes.StorageType.GPU_Shared,
+                                           transient=True)
 
                         if add_src_access_node is True:
                             a1 = state.add_access(in_arr_name)
                             a2 = state.add_access(shared_mem_name)
-                            e1 = state.add_edge(a1, None, a2, None, dace.Memlet(
-                                data=in_arr_name,
-                                subset=in_edge.data.subset,
-                                other_subset=dace.subsets.Range(copy_shape),
-                                wcr=None,
-                            ))
+                            e1 = state.add_edge(
+                                a1, None, a2, None,
+                                dace.Memlet(
+                                    data=in_arr_name,
+                                    subset=in_edge.data.subset,
+                                    other_subset=dace.subsets.Range(copy_shape),
+                                    wcr=None,
+                                ))
                             e2 = state.add_edge(a2, None, next_map, in_edge.dst_conn,
-                                                dace.Memlet.from_array(shared_mem_name,
-                                                                    sdfg.arrays[shared_mem_name]))
-                            e3 = state.add_edge(in_edge.src, in_edge.src_conn, a1, None,
-                                                copy.deepcopy(in_edge.data))
+                                                dace.Memlet.from_array(shared_mem_name, sdfg.arrays[shared_mem_name]))
+                            e3 = state.add_edge(in_edge.src, in_edge.src_conn, a1, None, copy.deepcopy(in_edge.data))
                             edges_to_rm.add(in_edge)
                             src_name_dst_name_offset[in_arr_name] = (shared_mem_name, copy_offset)
                         else:
                             a2 = state.add_access(shared_mem_name)
-                            e1 = state.add_edge(in_edge.src, in_edge.src_conn, a2, None, dace.Memlet(
-                                data=in_arr_name,
-                                subset=in_edge.data.subset,
-                                other_subset=dace.subsets.Range(copy_shape),
-                                wcr=None,
-                            ))
+                            e1 = state.add_edge(
+                                in_edge.src, in_edge.src_conn, a2, None,
+                                dace.Memlet(
+                                    data=in_arr_name,
+                                    subset=in_edge.data.subset,
+                                    other_subset=dace.subsets.Range(copy_shape),
+                                    wcr=None,
+                                ))
                             e2 = state.add_edge(a2, None, next_map, in_edge.dst_conn,
-                                                dace.Memlet.from_array(shared_mem_name,
-                                                                    sdfg.arrays[shared_mem_name]))
+                                                dace.Memlet.from_array(shared_mem_name, sdfg.arrays[shared_mem_name]))
                             edges_to_rm.add(in_edge)
                             src_name_dst_name_offset[in_arr_name] = (shared_mem_name, copy_offset)
 
@@ -65,12 +72,13 @@ def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
                     if edge.data is not None and edge.data.data in src_name_dst_name_offset:
                         dst_name, offset = src_name_dst_name_offset[edge.data.data]
                         edge.data.data = dst_name
-                        old_subset = [(b,e,s) for b, e, s in edge.data.subset]
+                        old_subset = [(b, e, s) for b, e, s in edge.data.subset]
                         new_subset = [(b - offset[i], e - offset[i], s) for i, (b, e, s) in enumerate(old_subset)]
                         edge.data.subset = dace.subsets.Range(new_subset)
 
                 for edge in edges_to_rm:
                     state.remove_edge(edge)
+
 
 def _check_map_entries(state, schedule, expected_data, expected_symbols):
     map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.schedule == schedule]
@@ -80,9 +88,10 @@ def _check_map_entries(state, schedule, expected_data, expected_symbols):
         assert expected_data == const_data
         assert expected_symbols == const_symbols
 
-def _gen_sdfg_with_symbol_use_in_nsdfg(write_only:bool=True) -> dace.SDFG:
+
+def _gen_sdfg_with_symbol_use_in_nsdfg(write_only: bool = True) -> dace.SDFG:
     sdfg = dace.SDFG(name="reassign_syms_in_nested_sdfg")
-    sdfg.add_array(name="A", shape=(1,), dtype=dace.int64, transient=False)
+    sdfg.add_array(name="A", shape=(1, ), dtype=dace.int64, transient=False)
     sdfg.add_symbol(name="A_sym", stype=dace.int64)
 
     s0 = sdfg.add_state(label="state0", is_start_block=True)
@@ -128,11 +137,10 @@ def _gen_sdfg_with_symbol_use_in_nsdfg(write_only:bool=True) -> dace.SDFG:
         code_global="#include <stdio.h>\n",
     )
     an0 = s2.add_access(array_or_stream_name="A")
-    s2.add_edge(
-        an0, None, t0, "_in_A", dace.Memlet(expr="A[0]")
-    )
+    s2.add_edge(an0, None, t0, "_in_A", dace.Memlet(expr="A[0]"))
     sdfg.save(f"test_const_{write_only}.sdfg")
     return sdfg, s1, nsdfg
+
 
 def test_const_utilities_case_non_const_input_not_present_in_output():
     """Standalone test function that can be run without pytest."""
@@ -147,7 +155,7 @@ def test_const_utilities_case_non_const_input_not_present_in_output():
         B: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global,
         C: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global,
     ):
-        for i in dace.map[0:N:256*K] @ dace.dtypes.ScheduleType.GPU_Device:
+        for i in dace.map[0:N:256 * K] @ dace.dtypes.ScheduleType.GPU_Device:
             for k in dace.map[0:K] @ dace.dtypes.ScheduleType.Sequential:
                 for j in dace.map[0:256] @ dace.dtypes.ScheduleType.GPU_ThreadBlock:
                     C[i + j + k * 256] = A[i + j + k * 256] + B[i + j + k * 256]
