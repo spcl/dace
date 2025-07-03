@@ -24,7 +24,7 @@ def dependency_analysis(sdfg: SDFG) -> Dict[str, Set[str]]:
     dependencies = nx.DiGraph()
     for state in sdfg.nodes():
         for node in state.data_nodes():
-            for edge in state.bfs_edges(node, reverse=True):
+            for edge in state.edge_bfs(node, reverse=True):
                 dependencies.add_edge(node.data, edge.data.data)
 
     dependencies = nx.transitive_closure(dependencies)
@@ -71,7 +71,7 @@ def is_previously_written(sdfg: SDFG,
     for subgraph in sdfg_utils.concurrent_subgraphs(state):
         if node in subgraph.nodes():
             # this is our current subgraph, check if it was written before in this subgraph
-            for edge in state.bfs_edges(node, reverse=True):
+            for edge in state.edge_bfs(node, reverse=True):
                 if edge.data.data == array_name:
                     return True
         else:
