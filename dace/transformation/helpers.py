@@ -1335,17 +1335,21 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
 
 def get_internal_scopes(state: SDFGState,
                         entry: nodes.EntryNode,
-                        immediate: bool = False) -> List[Tuple[SDFGState, nodes.EntryNode]]:
+                        immediate: bool = False,
+                        recursive_scope_tree: Optional[ScopeTree] = None) -> List[Tuple[SDFGState, nodes.EntryNode]]:
     """
     Returns all internal scopes within a given scope, including if they
     reside in nested SDFGs.
 
     :param state: State in which entry node resides.
     :param entry: The entry node to start from.
-    :param immediate: If True, only returns the scopes that are immediately
-                      nested in the map.
+    :param immediate: If True, only returns the scopes that are immediately nested in the map.
+    :param recursive_scope_tree: The recursive scope tree, see `scope_tree_recursive()` for more.
     """
-    stree = scope_tree_recursive(state, entry)
+
+    if recursive_scope_tree is None:
+        recursive_scope_tree = scope_tree_recursive(state, entry)
+
     result = []
 
     def traverse(state: SDFGState, treenode: ScopeTree):
@@ -1357,7 +1361,7 @@ def get_internal_scopes(state: SDFGState,
             else:  # Nested SDFG
                 traverse(child.state, child)
 
-    traverse(state, stree)
+    traverse(state, recursive_scope_tree)
     return result
 
 
@@ -1365,11 +1369,13 @@ def gpu_map_has_explicit_threadblocks(state: SDFGState, entry: nodes.EntryNode) 
     """
     Returns True if GPU_Device map has explicit thread-block maps nested within.
     """
-    internal_maps = get_internal_scopes(state, entry)
+    rstree = scope_tree_recursive(state, entry)
+    internal_maps = get_internal_scopes(state, entry, recursive_scope_tree=rstree)
     if any(m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
            for _, m in internal_maps):
         return True
-    imm_maps = get_internal_scopes(state, entry, immediate=True)
+
+    imm_maps = get_internal_scopes(state, entry, immediate=True, recursive_scope_tree=rstree)
     if any(m.schedule == dtypes.ScheduleType.Default for _, m in imm_maps):
         return True
 
