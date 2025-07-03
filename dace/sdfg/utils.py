@@ -2118,7 +2118,7 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
                 set_nested_sdfg_parent_references(node.sdfg)
 
 
-def get_used_data(scope: ControlFlowRegion | SDFGState | nd.MapEntry | nd.NestedSDFG) -> Set[str]:
+def get_used_data(scope: Union[ControlFlowRegion, SDFGState, nd.MapEntry, nd.NestedSDFG]) -> Set[str]:
     """
     Returns a set of all data names that are used in the given control flow region, state, map entry or nested SDFG node.
     Data is considered used if there is an access node
@@ -2225,7 +2225,7 @@ def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.Map
     :return: A set of constant symbol names.
     """
 
-    def _get_assignments(cfg: ControlFlowRegion | SDFG) -> Set[str]:
+    def _get_assignments(cfg: Union[ControlFlowRegion, SDFG]) -> Set[str]:
         written_symbols = set()
         for edge in cfg.all_edges(*list(cfg.all_control_flow_blocks())):
             if edge.data is not None and isinstance(edge.data, dace.InterstateEdge):
@@ -2236,8 +2236,8 @@ def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.Map
         symbols = scope.used_symbols(all_symbols=False)
         # Since no symbol can change within a state we are good to go
         return symbols
-    elif isinstance(scope, SDFG | ControlFlowRegion):
-        # Need to get all used symbols within the SDFG | CFG
+    elif isinstance(scope, Union[SDFG, ControlFlowRegion]):
+        # Need to get all used symbols within the SDFG or CFG
         used_symbols = scope.used_symbols(all_symbols=False)
         # Get all symbols that are written to
         written_symbols = _get_assignments(scope)
