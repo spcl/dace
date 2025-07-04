@@ -78,7 +78,7 @@ def test_all_used_arrays():
     assert e.data.used_arrays(arrays=sdfg.arrays, union_lhs_symbols=True) == {"scalar2", "scalar1", "array1"}
 
 
-def test_validity():
+def test_writing_to_scalar_on_iedge_is_invalid():
     # SDFG can't write to scalars on interstate edges catch for validity
     with pytest.raises(dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
                        match="Assignment to a scalar or an array detected in an interstate edge"):
@@ -94,4 +94,4 @@ if __name__ == "__main__":
     test_all_read_sdfg_symbols()
     test_all_read_arrays()
     test_all_used_arrays()
-    print("All tests passed!")
+    test_writing_to_scalar_on_iedge_is_invalid()

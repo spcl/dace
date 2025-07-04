@@ -7,9 +7,9 @@ import dace.sdfg.utils as sdutils
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class StateReachability(ppl.Pass):
+class InfetConstantArguments(ppl.Pass):
     """
-    Evaluates state reachability (which other states can be executed after each state).
+    Evaluates which symbols and data are const within a scope.
     """
 
     CATEGORY: str = 'Analysis'
