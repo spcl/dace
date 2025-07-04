@@ -2179,7 +2179,7 @@ def get_constant_data(scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, 
     def _incoming_memlet(state: SDFGState, node: nd.AccessNode) -> bool:
         return (state.in_degree(node) > 0 and any([e.data is not None for e in state.in_edges(node)]))
 
-    if isinstance(scope, SDFGState) or isinstance(scope, ControlFlowRegion):
+    if isinstance(scope, (SDFGState, ControlFlowRegion)):
         read_data, write_data = scope.read_and_write_sets()
         return read_data - write_data
     elif isinstance(scope, nd.NestedSDFG):
@@ -2236,7 +2236,7 @@ def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.Map
         symbols = scope.used_symbols(all_symbols=False)
         # Since no symbol can change within a state we are good to go
         return symbols
-    elif isinstance(scope, Union[SDFG, ControlFlowRegion]):
+    elif isinstance(scope, (SDFG, ControlFlowRegion)):
         # Need to get all used symbols within the SDFG or CFG
         used_symbols = scope.used_symbols(all_symbols=False)
         # Get all symbols that are written to
