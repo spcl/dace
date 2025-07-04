@@ -590,6 +590,21 @@ def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> Serde
         v.stype.name: v.stype for k, v in g.arrays.items()
         if isinstance(v, dace.data.ContainerArray) and isinstance(v.stype, dace.data.Structure)}
     sdfg_structs.update(sdfg_structs_from_arrays)
+
+    while True:
+        new_sdfg_structs: Dict[str, dace.data.Structure] = {
+            m.name: m for _, v in sdfg_structs.items() for _, m in v.members.items()
+            if isinstance(m, dace.data.Structure) and m.name not in sdfg_structs}
+        new_sdfg_structs_from_arrays: Dict[str, dace.data.Structure] = {
+            m.stype.name: m.stype for _, v in sdfg_structs.items() for _, m in v.members.items()
+            if isinstance(m, dace.data.ContainerArray) and
+               isinstance(m.stype, dace.data.Structure) and
+               m.stype.name not in sdfg_structs}
+        new_sdfg_structs.update(new_sdfg_structs_from_arrays)
+        if not new_sdfg_structs:
+            break
+        sdfg_structs.update(new_sdfg_structs)
+
     sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
                                                                  for k, v in sdfg_structs.items()}
 
