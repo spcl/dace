@@ -540,7 +540,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_tree_cached = None
         self._scope_leaves_cached = None
 
-    def scope_tree(self) -> 'dace.sdfg.scope.ScopeTree':
+    def scope_tree(self) -> Dict[Union[None, nd.Node], 'dace.sdfg.scope.ScopeTree']:
         from dace.sdfg.scope import ScopeTree
 
         if (hasattr(self, '_scope_tree_cached') and self._scope_tree_cached is not None):

@@ -21,6 +21,22 @@ class ScopeTree(object):
         self.entry: nd.EntryNode = entrynode
         self.exit: nd.ExitNode = exitnode
 
+    def copy(self) -> 'ScopeTree':
+        """Performs a "recursive shallow copy" of `self`."""
+        dolly = ScopeTree(entrynode=self.entry, exitnode=self.exit)
+
+        # `scope_tree_recirsive()` adds this dynamic attribute, for consistency it has
+        #  to be copied too.
+        if hasattr(self, "state"):
+            dolly.state = self.state
+
+        for ochild in self.children:
+            dolly_child = ochild.copy()
+            dolly_child.parent = dolly
+            dolly.children.append(dolly_child)
+
+        return dolly
+
 
 class ScopeSubgraphView(StateSubgraphView):
     """ An extension to SubgraphView that enables the creation of scope
