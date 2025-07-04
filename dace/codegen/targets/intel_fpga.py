@@ -291,7 +291,7 @@ DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
         else:
             attributes = ""
         kernel_stream.write("{}{} {}[{}];\n".format(vec_type, attributes, var_name, cpp.sym2cpp(array_size)))
-        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer, vec_type)
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer, dtypes.opaque(vec_type))
 
     def define_shift_register(self, *args, **kwargs):
         # Shift registers are just arrays on Intel
@@ -804,7 +804,10 @@ __kernel void \\
                 memlet_references.append((typedef, vconn, ref + expr))
                 # get the defined type (as defined in the parent)
                 # Register defined variable
-                self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                self._dispatcher.defined_vars.add(vconn,
+                                                  DefinedType.Pointer,
+                                                  dtypes.opaque(typedef),
+                                                  allow_shadowing=True)
             elif isinstance(desc, dace.data.Stream):
                 # streams are defined as global variables
                 continue
@@ -814,11 +817,11 @@ __kernel void \\
                     # if this is a scalar and the argument passed is also a scalar
                     # then we have to pass it by value
                     ref = (typedef, vconn, ptrname)
-                    self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(vconn, defined_type, dtypes.opaque(typedef), allow_shadowing=True)
                 else:
                     # otherwise, pass it as a pointer (references do not exist in C99)
                     ref = (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame))
-                self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
+                self._dispatcher.defined_vars.add(vconn, defined_type, dtypes.opaque(typedef), allow_shadowing=True)
                 memlet_references.append(ref)
             else:
                 # all the other cases
@@ -855,7 +858,10 @@ __kernel void \\
                                                      False, defined_type)
                     memlet_references.append((typedef, uconn, ref + expr))
                     # Register defined variable
-                    self._dispatcher.defined_vars.add(uconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(uconn,
+                                                      DefinedType.Pointer,
+                                                      dtypes.opaque(typedef),
+                                                      allow_shadowing=True)
                 elif isinstance(desc, dace.data.Stream):
                     # streams are defined as global variables
                     continue
@@ -868,7 +874,10 @@ __kernel void \\
                         typedef = typedef + "*"
                     memlet_references.append(
                         (typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type, codegen=self._frame)))
-                    self._dispatcher.defined_vars.add(uconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(uconn,
+                                                      DefinedType.Pointer,
+                                                      dtypes.opaque(typedef),
+                                                      allow_shadowing=True)
                 else:
                     memlet_references.append(
                         cpp.emit_memlet_reference(self._dispatcher,
@@ -927,7 +936,7 @@ __kernel void \\
             eptr = cpp.ptr(edge.data.data, viewed_desc, sdfg, self._frame)
             defined_type, _ = self._dispatcher.defined_vars.get(eptr, 0)
             # Register defined variable
-            self._dispatcher.defined_vars.add(aname, defined_type, atype, allow_shadowing=True)
+            self._dispatcher.defined_vars.add(aname, defined_type, dtypes.opaque(atype), allow_shadowing=True)
             _, _, value = cpp.emit_memlet_reference(self._dispatcher,
                                                     sdfg,
                                                     edge.data,
@@ -1012,11 +1021,11 @@ __kernel void \\
                     init = ""
 
                     result += "{} {}{};".format(memlet_type, connector, init)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, memlet_type)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, dtypes.opaque(memlet_type))
             else:
                 # Variable number of reads or writes
                 result += "{} *{} = &{};".format(memlet_type, connector, rhs)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Pointer, '%s *' % memlet_type)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Pointer, dtypes.opaque('%s *' % memlet_type))
         elif def_type == DefinedType.Pointer:
             if cast:
                 rhs = f"(({memlet_type} const *){data_name})"
@@ -1027,7 +1036,7 @@ __kernel void \\
                     result += "{} {};".format(memlet_type, connector)
                 else:
                     result += "{} {} = {}[{}];".format(memlet_type, connector, rhs, offset)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, memlet_type)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, dtypes.opaque(memlet_type))
             else:
                 if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
                     qualifiers = "__global "
@@ -1035,7 +1044,7 @@ __kernel void \\
                     qualifiers = ""
                 ctype = '{}{} *'.format(qualifiers, memlet_type)
                 result += "{}{} = &{}[{}];".format(ctype, connector, rhs, offset)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Pointer, ctype)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Pointer, dtypes.opaque(ctype))
         elif def_type == DefinedType.Stream:
             if cast:
                 raise TypeError("Cannot cast stream from {} to {}.".format(data_dtype, dtype))
@@ -1047,12 +1056,12 @@ __kernel void \\
                 else:
                     result += "{} {} = read_channel_intel({});".format(
                         memlet_type, connector, self.get_mangled_channel_name(data_name, self._kernel_count))
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, memlet_type)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, dtypes.opaque(memlet_type))
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
                     connector, self.get_mangled_channel_name(data_name, self._kernel_count))
-                self._dispatcher.defined_vars.add(connector, DefinedType.Stream, ctypedef)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Stream, dtypes.opaque(ctypedef))
         elif def_type == DefinedType.StreamArray:
             if cast:
                 raise TypeError("Cannot cast stream array from {} to {}.".format(data_dtype, dtype))
@@ -1077,7 +1086,7 @@ __kernel void \\
 
                     result += "{} {} = read_channel_intel({}[{}]);".format(
                         memlet_type, connector, self.get_mangled_channel_name(data_name, self._kernel_count), offset)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, memlet_type)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar, dtypes.opaque(memlet_type))
             else:
                 # Must happen directly in the code
                 # Here we create a macro which take the proper channel
@@ -1087,7 +1096,7 @@ __kernel void \\
                     channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name], memlet.subset)
                 result += "#define {} {}[{}] // God save us".format(
                     connector, self.get_mangled_channel_name(data_name, self._kernel_count), channel_idx)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Stream, ctypedef)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Stream, dtypes.opaque(ctypedef))
         else:
             raise TypeError("Unknown variable type: {}".format(def_type))
 
