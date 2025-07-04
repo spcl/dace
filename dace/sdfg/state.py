@@ -1059,7 +1059,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def entry_node(self, node: nd.Node) -> Optional[nd.EntryNode]:
         for block in self.nodes():
             if node in block.nodes():
-                return block.exit_node(node)
+                return block.entry_node(node)
         return None
 
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
