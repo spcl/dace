@@ -16,10 +16,12 @@ def inline_symbol(D: dace.float32[E, F]):
 
 def test_inline_symbol():
     sdfg = inline_symbol.to_sdfg(simplify=False)
-    oldval = dace.Config.get_bool('experimental', 'validate_undefs')
-    dace.Config.set('experimental', 'validate_undefs', value=True)
-    sdfg.validate()
-    dace.Config.set('experimental', 'validate_undefs', value=oldval)
+
+    with dace.config.set_temporary('experimental', 'validate_undefs', value=True):
+        assert sdfg.is_valid()
+
+    with dace.config.set_temporary('experimental', 'validate_undefs', value=False):
+        assert not sdfg.is_valid()
 
 
 if __name__ == '__main__':
