@@ -1034,7 +1034,7 @@ namespace serde {{
     }}
 
     struct array_meta;
-    std::map<void*, array_meta>* ARRAY_META_DICT();
+    std::pair<std::map<void *, array_meta>*, std::unique_lock<std::mutex>> ARRAY_META_DICT();
 
     struct array_meta {{
         int rank = 0;
@@ -1044,16 +1044,19 @@ namespace serde {{
 
         template<typename T> T* read(std::istream& s) const;
     }};
-    std::map<void*, array_meta>* ARRAY_META_DICT() {{
-        static auto* M = new std::map<void*, array_meta>();
-        return M;
+    std::pair<std::map<void *, array_meta>*, std::unique_lock<std::mutex>> ARRAY_META_DICT() {{
+      static auto *M = new std::map<void *, array_meta>();
+      static std::mutex mu;
+      std::unique_lock<std::mutex> lock(mu);
+      return std::make_pair(M, std::move(lock));
     }}
     template <typename T>
     const array_meta& ARRAY_META_DICT_AT(T* a) {{
         if constexpr (std::is_pointer_v<T>) {{
             return ARRAY_META_DICT_AT(*a);
         }} else {{
-            return ARRAY_META_DICT()->at(a);
+            auto [M, lock] = ARRAY_META_DICT();
+            return M->at(a);
         }}
     }}
 
@@ -1138,8 +1141,9 @@ namespace serde {{
             for (int i = 0; i < volume(); ++i) {{
                 deserialize(&buf[i], s);
             }}
-            (*ARRAY_META_DICT())[buf] = *this;
         }}
+        auto [M, lock] = ARRAY_META_DICT();
+        (*M)[buf] = *this;
         return buf;
     }}
 
