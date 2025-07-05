@@ -990,6 +990,7 @@ struct {name} {{
 #include <set>
 #include <ranges>
 #include <string_view>
+#include <numeric>
 
 #include "{g.name}.h"
 
@@ -1105,7 +1106,7 @@ namespace serde {{
 
     template<typename T>
     std::pair<array_meta, T*> read_array(std::istream& s) {{
-        auto m = serde::read_array_meta(s);
+        auto m = read_array_meta(s);
         auto* y = m.read<T>(s);
         return {{m, y}};
     }}
