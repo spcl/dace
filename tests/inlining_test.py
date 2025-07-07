@@ -2,16 +2,42 @@
 import dace
 from dace import nodes as dace_nodes
 from dace.sdfg.state import FunctionCallRegion, NamedRegion
-from dace.transformation.interstate import InlineSDFG, StateFusion
+from dace.transformation.interstate import InlineSDFG, StateFusion, InlineMultistateSDFG
 from dace.libraries import blas
 from dace.library import change_default
-from typing import Tuple
+from typing import Tuple, Type, Union, List
 import numpy as np
+import uuid
 import os
 import pytest
 
 W = dace.symbol('W')
 H = dace.symbol('H')
+
+
+def count_nodes(
+    graph: Union[dace.SDFG, dace.SDFGState],
+    node_type: Union[Tuple[Type, ...], Type],
+    return_nodes: bool = False,
+) -> Union[int, List[dace_nodes.Node]]:
+    states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
+    found_nodes: List[dace_nodes.Node] = []
+    for state_nodes in states:
+        for node in state_nodes.nodes():
+            if isinstance(node, node_type):
+                found_nodes.append(node)
+    if return_nodes:
+        return found_nodes
+    return len(found_nodes)
+
+
+def unique_name(name: str) -> str:
+    """Adds a unique string to `name`."""
+    maximal_length = 200
+    unique_sufix = str(uuid.uuid1()).replace("-", "_")
+    if len(name) > (maximal_length - len(unique_sufix)):
+        name = name[:(maximal_length - len(unique_sufix) - 1)]
+    return f"{name}_{unique_sufix}"
 
 
 @dace.program
@@ -623,6 +649,229 @@ def test_inlining_view_input():
     expected = np.concatenate([A @ B.T, A @ B.T], axis=0)
     actual = sdfg(A=A, B=B)
     np.testing.assert_allclose(expected, actual)
+
+
+def _make_inilining_symbol_usage_1_sdfg(
+    outside_uses_symbol: bool, ) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+    """
+    Generate SDFGs for the tests.
+
+    Args:
+        outside_uses_symbol: The outer SDFG also uses the symbol `inner_a_shape_sym` as shape for `A`.
+    """
+
+    # Create the inner SDFG.
+    inner_sdfg = dace.SDFG(unique_name("inner_sdfg"))
+    inner_istate = inner_sdfg.add_state(is_start_block=True)
+    inner_state = inner_sdfg.add_state_after(inner_istate, assignments={"inner_a_shape_sym": "inner_a_shape_scalar"})
+    inner_astate = inner_sdfg.add_state_after(inner_state)
+
+    inner_sdfg.add_symbol("inner_a_shape_sym", dace.int32)
+    inner_sdfg.add_scalar(
+        "inner_a_shape_scalar",
+        dtype=dace.int32,
+        transient=False,
+    )
+
+    inner_shapes = {"t": ("inner_a_shape_sym", )}
+
+    if outside_uses_symbol:
+        # We only do this to enable the inlining.
+        inner_shapes["a"] = ("inner_a_shape_sym", )
+
+    for name in "abt":
+        inner_sdfg.add_array(
+            name,
+            shape=inner_shapes.get(name, (20, )),
+            dtype=dace.float64,
+            transient=(name == "t"),
+        )
+
+    a, t = (inner_state.add_access(name) for name in "at")
+
+    inner_state.add_mapped_tasklet(
+        "computation",
+        map_ranges={"__i": "0:inner_a_shape_sym"},
+        inputs={"__in": dace.Memlet("a[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("t[__i]")},
+        input_nodes={a},
+        output_nodes={t},
+        external_edges=True,
+    )
+
+    inner_astate.add_nedge(inner_astate.add_access("t"), inner_astate.add_access("b"),
+                           dace.Memlet("t[0:inner_a_shape_sym - 1] -> [1:inner_a_shape_sym]"))
+
+    # Creating the outer SDFG.
+    outer_sdfg = dace.SDFG(unique_name("outer_sdfg"))
+    outer_state = outer_sdfg.add_state(is_start_block=True)
+
+    outer_sdfg.add_scalar(
+        "outer_a_shape_scalar",
+        dace.int32,
+        transient=True,
+    )
+
+    if outside_uses_symbol:
+        outer_sdfg.add_symbol("inner_a_shape_sym", dace.int32)
+    outer_sdfg.add_array(
+        "A",
+        shape=(("inner_a_shape_sym", ) if outside_uses_symbol else (20, )),
+        dtype=dace.float64,
+        transient=False,
+    )
+
+    outer_sdfg.add_array(
+        "B",
+        shape=(20, ),
+        dtype=dace.float64,
+        transient=False,
+    )
+
+    A, B = (outer_state.add_access(name) for name in "AB")
+    outer_a_shape_scalar = outer_state.add_access("outer_a_shape_scalar")
+
+    nsdfg_node = outer_state.add_nested_sdfg(
+        sdfg=inner_sdfg,
+        parent=outer_sdfg,
+        inputs={"inner_a_shape_scalar", "a"},
+        outputs={"b"},
+        symbol_mapping={},
+    )
+
+    outer_tasklet_for_setting_size = outer_state.add_tasklet(
+        "outer_tasklet_for_setting_size",
+        inputs={},
+        outputs={"__out"},
+        code="__out = 20",
+    )
+    outer_state.add_edge(outer_tasklet_for_setting_size, "__out", outer_a_shape_scalar, None,
+                         dace.Memlet("outer_a_shape_scalar[0]"))
+    outer_state.add_edge(outer_a_shape_scalar, None, nsdfg_node, "inner_a_shape_scalar",
+                         dace.Memlet("outer_a_shape_scalar[0]"))
+
+    outer_state.add_edge(A, None, nsdfg_node, "a",
+                         dace.Memlet("A[0:inner_a_shape_sym]" if outside_uses_symbol else "A[0:20]"))
+
+    outer_state.add_edge(nsdfg_node, "b", B, None, dace.Memlet("B[0:20]"))
+
+    outer_sdfg.validate()
+
+    return outer_sdfg, inner_sdfg, inner_state, nsdfg_node
+
+
+def test_multistate_inline_no_symbol_clash():
+    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_inilining_symbol_usage_1_sdfg(outside_uses_symbol=False, )
+
+    assert inner_sdfg.number_of_nodes() == 3
+    assert outer_sdfg.number_of_nodes() == 1
+    assert inner_sdfg.free_symbols == set()
+    assert outer_sdfg.free_symbols == set()
+    assert map_state not in outer_sdfg.nodes()
+    assert map_state in inner_sdfg.nodes()
+
+    inner_assigning_edge = next(iter(inner_sdfg.in_edges(map_state)))
+    assert len(inner_assigning_edge.data.assignments) == 1
+    assert "inner_a_shape_sym" in inner_assigning_edge.data.assignments
+    assert inner_assigning_edge.data.assignments["inner_a_shape_sym"] == "inner_a_shape_scalar"
+
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B"}
+    assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_a_shape_scalar"}
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "outer_a_shape_scalar"}
+    assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_a_shape_scalar"}
+    assert outer_sdfg.symbols.keys() == set()
+    assert inner_sdfg.symbols.keys() == {"inner_a_shape_sym"}
+
+    count = outer_sdfg.apply_transformations_repeated(InlineMultistateSDFG())
+    assert count == 1
+    outer_sdfg.validate()
+
+    assert outer_sdfg.number_of_nodes() == 5
+    assert count_nodes(outer_sdfg, dace_nodes.NestedSDFG) == 0
+    assert count_nodes(outer_sdfg, dace_nodes.Tasklet) == 2
+    assert count_nodes(outer_sdfg, dace_nodes.MapEntry) == 1
+
+    ac_nodes = count_nodes(outer_sdfg, dace_nodes.AccessNode, True)
+    assert len(ac_nodes) == 5
+    assert {ac.data for ac in ac_nodes} == {"A", "B", "t", "outer_a_shape_scalar"}
+
+    # `inner_a_shape_scalar` was not used so it is removed.
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "t", "outer_a_shape_scalar"}
+    assert outer_sdfg.symbols.keys() == {"inner_a_shape_sym"}
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B"}
+
+    assert map_state in outer_sdfg.nodes()
+    assert count_nodes(map_state, dace_nodes.MapEntry) == 1
+    assert outer_sdfg.in_degree(map_state) == 1
+    assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
+    assert len(assigning_edge.data.assignments) == 1
+    assert "inner_a_shape_sym" in assigning_edge.data.assignments
+    assert assigning_edge.data.assignments["inner_a_shape_sym"] == "outer_a_shape_scalar"
+
+    # Test if the compilation itself works.
+    csdfg = outer_sdfg.compile()
+
+
+def test_multistate_inline_with_symbol_clash():
+    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_inilining_symbol_usage_1_sdfg(outside_uses_symbol=True, )
+
+    assert inner_sdfg.number_of_nodes() == 3
+    assert outer_sdfg.number_of_nodes() == 1
+    assert inner_sdfg.free_symbols == set()
+    assert outer_sdfg.free_symbols == {"inner_a_shape_sym"}
+    assert map_state not in outer_sdfg.nodes()
+    assert map_state in inner_sdfg.nodes()
+
+    inner_assigning_edge = next(iter(inner_sdfg.in_edges(map_state)))
+    assert len(inner_assigning_edge.data.assignments) == 1
+    assert "inner_a_shape_sym" in inner_assigning_edge.data.assignments
+    assert inner_assigning_edge.data.assignments["inner_a_shape_sym"] == "inner_a_shape_scalar"
+
+    # The symbol is not used, thus it is not needed that it is passed.
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B"}
+    assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_a_shape_scalar"}
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "outer_a_shape_scalar"}
+    assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_a_shape_scalar"}
+    assert inner_sdfg.symbols.keys() == {"inner_a_shape_sym"}
+    assert outer_sdfg.symbols.keys() == {"inner_a_shape_sym"}
+
+    count = outer_sdfg.apply_transformations_repeated(InlineMultistateSDFG())
+    assert count == 1
+    outer_sdfg.validate()
+
+    assert outer_sdfg.number_of_nodes() == 5
+    assert count_nodes(outer_sdfg, dace_nodes.NestedSDFG) == 0
+    assert count_nodes(outer_sdfg, dace_nodes.Tasklet) == 2
+    assert count_nodes(outer_sdfg, dace_nodes.MapEntry) == 1
+
+    ac_nodes = count_nodes(outer_sdfg, dace_nodes.AccessNode, True)
+    assert len(ac_nodes) == 5
+    assert {ac.data for ac in ac_nodes} == {"A", "B", "t", "outer_a_shape_scalar"}
+
+    # `inner_a_shape_scalar` was not used so it is removed.
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "t", "outer_a_shape_scalar"}
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B"}
+
+    # The transformation was unable to figuring out that `inner_a_shape_sym` on the inside
+    #  and the outside are the same, thus both exists, but there is the interstate edge that
+    #  makes both the same. It is important that in the check here also depends on the renaming
+    #  convention used by the transformation.
+    assert outer_sdfg.symbols.keys() == {"inner_a_shape_sym", "inner_a_shape_sym_0"}
+
+    assert map_state in outer_sdfg.nodes()
+    assert count_nodes(map_state, dace_nodes.MapEntry) == 1
+    assert outer_sdfg.in_degree(map_state) == 1
+
+    # There the to to
+
+    assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
+    assert len(assigning_edge.data.assignments) == 1
+    assert "inner_a_shape_sym" in assigning_edge.data.assignments
+    assert assigning_edge.data.assignments["inner_a_shape_sym"] == "outer_a_shape_scalar"
+
+    # Test if the compilation itself works.
+    csdfg = outer_sdfg.compile()
 
 
 if __name__ == "__main__":
