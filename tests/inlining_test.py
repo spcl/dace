@@ -817,6 +817,168 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     return outer_sdfg, inner_sdfg, inner_state, nsdfg_node
 
 
+def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
+    outside_uses_different_symbol: bool,
+    separate_write_back_state: bool,
+) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
+    """
+    The SDFGs created by this function are rather similar to
+    `_make_sdfg_for_multistate_inlining_with_symbol_promotion()`. However, here a scalar is not
+    promoted to a symbol instead we start from a symbol to begin with and use the `symbol_mapping`.
+    Furthermore, the outside always uses a symbolic size for the transient.
+
+    Args:
+        outside_uses_different_symbol: Use a different symbol name on the outside
+        separate_write_back_state: There is an extra state to perform the `t -> b` copy in the inner SDFG.
+    """
+
+    inner_symbol_name = "inner_symbol"
+    outer_symbol_name = "outer_symbol" if outside_uses_different_symbol else inner_symbol_name
+
+    # Create the inner SDFG.
+    inner_sdfg = dace.SDFG(unique_name("inner_sdfg"))
+    inner_istate = inner_sdfg.add_state(is_start_block=True)
+    inner_state = inner_sdfg.add_state_after(inner_istate, assignments={inner_symbol_name: "inner_scalar"})
+
+    inner_sdfg.add_symbol(inner_symbol_name, dace.int32)
+    inner_sdfg.add_scalar(
+        "inner_scalar",
+        dtype=dace.int32,
+        transient=False,
+    )
+
+    inner_shapes = {
+        "t": (inner_symbol_name, ),
+        "b": (outer_symbol_name, ),  # We need that to ensure that we can inline the SDFG.
+    }
+
+    for name in "abt":
+        inner_sdfg.add_array(
+            name,
+            shape=inner_shapes.get(name, (20, )),
+            dtype=dace.float64,
+            transient=(name == "t"),
+        )
+
+    a, t = (inner_state.add_access(name) for name in "at")
+
+    inner_state.add_mapped_tasklet(
+        "computation",
+        map_ranges={"__i": f"0:{inner_symbol_name}"},
+        inputs={"__in": dace.Memlet("a[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("t[__i]")},
+        input_nodes={a},
+        output_nodes={t},
+        external_edges=True,
+    )
+
+    if separate_write_back_state:
+        inner_astate = inner_sdfg.add_state_after(inner_state)
+        inner_astate.add_nedge(inner_astate.add_access("t"), inner_astate.add_access("b"),
+                               dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+    else:
+        inner_state.add_nedge(t, inner_state.add_access("b"),
+                              dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+
+    # Creating the outer SDFG.
+    outer_sdfg = dace.SDFG(unique_name("outer_sdfg"))
+    outer_state = outer_sdfg.add_state(is_start_block=True)
+
+    outer_sdfg.add_scalar(
+        "outer_scalar",
+        dace.int32,
+        transient=True,
+    )
+
+    shape_of_T = (outer_symbol_name, )
+    outer_sdfg.add_symbol(shape_of_T[0], dace.int32)
+
+    outer_sdfg.add_array(
+        "A",
+        shape=(20, ),
+        dtype=dace.float64,
+        transient=False,
+    )
+
+    outer_sdfg.add_array(
+        "T",
+        shape=shape_of_T,
+        dtype=dace.float64,
+        transient=True,
+    )
+
+    outer_sdfg.add_array(
+        "B",
+        shape=(20, ),
+        dtype=dace.float64,
+        transient=False,
+    )
+
+    A, B, T = (outer_state.add_access(name) for name in "ABT")
+    outer_a_shape_scalar = outer_state.add_access("outer_scalar")
+
+    symbol_mapping = {}
+
+    if outside_uses_different_symbol:
+        # This is an artefact that is needed to allow inlining.
+        symbol_mapping[outer_symbol_name] = outer_symbol_name
+
+    nsdfg_node = outer_state.add_nested_sdfg(
+        sdfg=inner_sdfg,
+        parent=outer_sdfg,
+        inputs={"inner_scalar", "a"},
+        outputs={"b"},
+        symbol_mapping=symbol_mapping,
+    )
+
+    outer_tasklet_for_setting_size = outer_state.add_tasklet(
+        "outer_tasklet_for_setting_size",
+        inputs={},
+        outputs={"__out"},
+        code="__out = 20",
+    )
+    outer_state.add_edge(
+        outer_tasklet_for_setting_size,
+        "__out",
+        outer_a_shape_scalar,
+        None,
+        dace.Memlet("outer_scalar[0]"),
+    )
+    outer_state.add_edge(
+        outer_a_shape_scalar,
+        None,
+        nsdfg_node,
+        "inner_scalar",
+        dace.Memlet("outer_scalar[0]"),
+    )
+
+    outer_state.add_edge(
+        A,
+        None,
+        nsdfg_node,
+        "a",
+        dace.Memlet("A[0:20]"),
+    )
+
+    outer_state.add_edge(
+        nsdfg_node,
+        "b",
+        T,
+        None,
+        dace.Memlet(f"T[0:{shape_of_T[0]}]"),
+    )
+    outer_state.add_nedge(
+        T,
+        B,
+        dace.Memlet(f"T[0:{shape_of_T[0]}] -> [0:20]", allow_oob=True),
+    )
+
+    outer_sdfg.validate()
+
+    return outer_sdfg, inner_sdfg, inner_state, nsdfg_node
+
+
 @pytest.mark.parametrize("separate_write_back_state", [True, False])
 def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: bool):
     """
