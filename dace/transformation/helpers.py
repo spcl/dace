@@ -1302,19 +1302,17 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
     #  are cached. We can not use `deepcopy()` here because this would also copy scope nodes,
     #  which we do not want. Thus we call `ScopeTree.copy()` which only copies the `ScopeTree`s
     #  inside `children` but everything else is just assigned.
-    stree = state.scope_tree()[entry].copy()
+    stree = copy.copy(state.scope_tree()[entry])
     stree.state = state  # Annotate state in tree
 
     # Add nested SDFGs as children
     def traverse(state: SDFGState, treenode: ScopeTree):
-        snodes = state.scope_children()[treenode.entry].copy()  # See above why.
+        snodes = copy.copy(state.scope_children()[treenode.entry])  # See above why.
 
         for node in snodes:
             if isinstance(node, nodes.NestedSDFG):
                 for nstate in node.sdfg.states():
-                    ntree = nstate.scope_tree()[None].copy()  # See above why.
-                    assert ntree not in treenode.children
-                    assert not hasattr(ntree, "state")  # Non standard field.
+                    ntree = copy.copy(nstate.scope_tree()[None])  # See above why.
                     ntree.state = nstate
                     treenode.children.append(ntree)
 

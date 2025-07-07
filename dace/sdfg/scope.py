@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 from typing import Dict, List, Tuple
+import copy
 
 import dace
 from dace import dtypes, symbolic
@@ -21,21 +22,16 @@ class ScopeTree(object):
         self.entry: nd.EntryNode = entrynode
         self.exit: nd.ExitNode = exitnode
 
-    def copy(self) -> 'ScopeTree':
+    def __copy__(self):
         """Performs a "recursive shallow copy" of `self`."""
-        dolly = ScopeTree(entrynode=self.entry, exitnode=self.exit)
+        cls = self.__class__
+        result = cls.__new__(cls)
+        result.__dict__.update(self.__dict__)
 
-        # `scope_tree_recirsive()` adds this dynamic attribute, for consistency it has
-        #  to be copied too.
-        if hasattr(self, "state"):
-            dolly.state = self.state
+        # Recursively shallow copy the children.
+        result.children = [copy.copy(child) for child in self.children]
 
-        for ochild in self.children:
-            dolly_child = ochild.copy()
-            dolly_child.parent = dolly
-            dolly.children.append(dolly_child)
-
-        return dolly
+        return result
 
 
 class ScopeSubgraphView(StateSubgraphView):
