@@ -545,7 +545,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         """Get the scope trees.
 
         :note: That the result is cached inside the state, thus it is not allowed to modify the returned value.
-            However, you can call `copy()` on the `ScopeTree` to get a mutable version of it.
+            However, the `ScopeTree` can be safely shallow copied.
         """
         from dace.sdfg.scope import ScopeTree
 
@@ -580,7 +580,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         """Return the list of scope leaves.
 
         :note: That the result is cached inside the state, thus it is not allowed to modify the returned value.
-            However, you can call `copy()` on the `ScopeTree` to get a mutable version of it.
+            However, the `ScopeTree` can be safely shallow copied.
         """
         if self._scope_leaves_cached is not None:
             return copy.copy(self._scope_leaves_cached)
@@ -595,7 +595,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         """
         Return the scope dict, i.e. map every node inside the state to its enclosing scope or `None` if at global scope.
 
-        :note: The result is cached inside the state, but the returned `dict` is shallow copied.
+        :note: The result is cached inside the state, but the returned `dict` is only shallow copied.
         """
         from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
 
