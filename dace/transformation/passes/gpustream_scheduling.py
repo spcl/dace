@@ -7,7 +7,7 @@ from dace.codegen import common
 from dace.config import Config
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg import nodes
-from dace.sdfg.graph import Edge, Graph, NodeT
+from dace.sdfg.graph import Graph, NodeT
 
 
 @properties.make_properties
