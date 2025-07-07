@@ -1,6 +1,6 @@
 # Standard library imports
 import warnings
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 # Third-party imports
 import networkx as nx
@@ -32,9 +32,12 @@ from dace.codegen.targets.cpp import (
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
 
 # DaCe transformation imports
+from dace.transformation import helpers
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
+from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
+from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
 
 # Experimental CUDA helper imports
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
@@ -45,9 +48,6 @@ if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
     from dace.codegen.targets.cpu import CPUCodeGen
 
-
-# TODO's easy:
-# 3. Emit sync -> yea not easy
 
 # add symbolic_to_cpp !
 
@@ -138,15 +138,35 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._current_kernel_spec: Optional[KernelSpec] = None
         self._gpu_stream_manager: Optional[GPUStreamManager]  = None
+        self._kernel_dimensions_map: Set[nodes.MapEntry] = set()
 
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Preprocess the SDFG to prepare it for GPU code generation. This includes:
+        - Adding explicit ThreadBlock Maps where missing and infer Grid and Block dimensions for
+          every Kernel in the SDFG
         - Handling GPU<->GPU strided copies.
         - Assigning backend GPU streams (e.g., CUDA streams) and creating the GPUStreamManager.
         - Handling memory pool management 
         """
         
+        #----------------- Add ThreadBlock Maps & Infer Kernel Grid & Block Sizes --------------------
+
+        # new_nodes - old_nodes gives us all Kernel Entry nodes that were created during the insertion 
+        # of ThreadBlock maps. Note: the original Kernel Entry was transformed into a ThreadBlock map, 
+        # and a new GPU_Device (i.e., Kernel) map was inserted on top of it.
+        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+
+        # Insert default explicit GPU_ThreadBlock maps where they are missing
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
+
+        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+        kernels_with_added_tb_maps = {n for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device}
+
+        # Infer GPU Grid and Block dimensions
+        self._kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, kernels_with_added_tb_maps)
+
+
         #------------------------- Hanlde GPU<->GPU strided copies --------------------------
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
@@ -188,9 +208,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
-
         #------------------------- GPU Stream related Logic --------------------------
-
 
         # Register GPU context in state struct
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
@@ -411,7 +429,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             kernel_spec: KernelSpec = self._current_kernel_spec
             kernel_name = kernel_spec.kernel_name
-            kernel_wrapper_args = kernel_spec.kernel_wrapper_args
+            kernel_wrapper_args_as_input = kernel_spec.kernel_wrapper_args_as_input
             kernel_wrapper_args_typed = kernel_spec.kernel_wrapper_args_typed
 
             # Declaration of the function which launches the kernel (C++ code)
@@ -420,7 +438,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             # Calling the function which launches the kernel (C++ code)
             callsite_stream.write( '__dace_runkernel_%s(%s);\n' %
-                                (kernel_name, ', '.join(kernel_wrapper_args)), cfg, state_id, scope_entry)
+                                (kernel_name, ', '.join(kernel_wrapper_args_as_input)), cfg, state_id, scope_entry)
         
     def _generate_kernel_launch(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, 
                                     state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -450,12 +468,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 """
                 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
                 void __dace_runkernel_{fname}({fargs})
-                {{
                 """.format(fname=kernel_name, fargs=', '.join(kernel_launch_args_typed)), 
                 cfg, state_id, scope_entry
             )
 
-
+            # Open bracket
+            self._localcode.write('{', cfg, state_id, scope_entry)
             
             # ----------------- Guard Checks handling -----------------------
 
@@ -504,7 +522,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
             emit_sync_debug_checks(self.backend, self._localcode)
-            self._localcode.write('}')
+
+            # Close bracket
+            self._localcode.write('}', cfg, state_id, scope_entry)
 
     ###########################################################################
     # Generation of Memory Copy Logic
@@ -1140,51 +1160,8 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
 
-
-
-
 #########################################################################
-# helper classes and functions
-
-# NOTE: I had to redefine this function locally to not modify other files 
-# and ensure backwards compatibility with the old cudacodegen
-def ptr(name: str, desc: dace.data.Data, sdfg: SDFG = None, framecode=None) -> str:
-    """
-    Returns a string that points to the data based on its name and descriptor.
-
-    This function should be in cpp.py, but for ExperimentalCUDACodeGen I defined 
-    it here to not modify it there, s.t. we have backwards compatibility.
-
-    :param name: Data name.
-    :param desc: Data descriptor.
-    :return: C-compatible name that can be used to access the data.
-    """
-    from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
-    framecode: DaCeCodeGenerator = framecode
-
-    if '.' in name:
-        root = name.split('.')[0]
-        if root in sdfg.arrays and isinstance(sdfg.arrays[root], dace.data.Structure):
-            name = name.replace('.', '->')
-
-    # Special case: If memory is persistent and defined in this SDFG, add state
-    # struct to name
-    if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-
-        if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
-            return f'__{sdfg.cfg_id}_{name}'
-        elif not ExperimentalCUDACodeGen._in_kernel_code:  # GPU kernels cannot access state
-            return f'__state->__{sdfg.cfg_id}_{name}'
-        elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
-            return f'__{sdfg.cfg_id}_{name}'
-    elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
-          and framecode.where_allocated[(sdfg, name)] is not sdfg):
-        # Array allocated for another SDFG, use unambiguous name
-        return f'__{sdfg.cfg_id}_{name}'
-
-    return name
-
-
+# helper class
 # This one is closely linked to the ExperimentalCUDACodeGen. In fact,
 # it only exists to not have to much attributes and methods in the ExperimentalCUDACodeGen
 # and to group Kernel specific methods & information. Thus, KernelSpec should remain in this file
@@ -1197,65 +1174,50 @@ class KernelSpec:
     def __init__(self, cudaCodeGen: ExperimentalCUDACodeGen, sdfg: SDFG, cfg: ControlFlowRegion,
                  dfg_scope: ScopeSubgraphView, state_id: int):
         
-        
+        # Get kernel entry/exit nodes and current state
         kernel_entry_node = dfg_scope.source_nodes()[0]
         kernel_exit_node = dfg_scope.sink_nodes()[0]
         state: SDFGState = cfg.state(state_id)
 
-        self._kernel_entry_node: nodes.MapEntry  = kernel_entry_node
-        self._kernel_map: nodes.Map = kernel_entry_node.map
+        self._kernel_entry_node: nodes.MapEntry = kernel_entry_node
 
         # Kernel name
-        self._kernel_name: str = '%s_%d_%d_%d' % (kernel_entry_node.map.label, cfg.cfg_id, state.block_id, state.node_id(kernel_entry_node))
+        self._kernel_name: str = f'{kernel_entry_node.map.label}_{cfg.cfg_id}_{state.block_id}_{state.node_id(kernel_entry_node)}'
 
         # Kernel arguments
-        arglist = {}
-        for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
+        arglist: Dict[str, Any] = {}
+        for state_, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
             if node is kernel_entry_node:
-                shared_transients = state.parent.shared_transients()
-                arglist = state.scope_subgraph(node).arglist(defined_syms, shared_transients)
+                shared_transients = state_.parent.shared_transients()
+                arglist = state_.scope_subgraph(node).arglist(defined_syms, shared_transients)
                 break
-        self._args: Dict = arglist
 
-        """
-        # const args
-        input_params = set(e.data.data for e in state.in_edges(kernel_entry_node))
-        output_params = set(e.data.data for e in state.out_edges(kernel_exit_node))
-        toplevel_params = set(node.data for node in dfg_scope.nodes()
-                            if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].toplevel)
-        dynamic_inputs = set(e.data.data for e in dace.sdfg.dynamic_map_inputs(state, kernel_entry_node))
+        self._args: Dict[str, Any] = arglist
 
-        const_args = input_params - (output_params | toplevel_params | dynamic_inputs)
-        self._args_typed: list[str] = [('const ' if aname in const_args else '') + adata.as_arg(name=aname) for aname, adata in self._args.items()]
-        """
-
-        # args typed correctly and as input
+        # Typed arguments and argument access as input
         self._args_typed: list[str] = [adata.as_arg(name=aname) for aname, adata in self._args.items()]
         self._args_as_input: list[str] = [ptr(aname, adata, sdfg, cudaCodeGen._frame) for aname, adata in self._args.items()]
 
         # Used for the kernel wrapper function, be careful: a change in the name __state will probably lead to compilation errors
         state_param: list[str] = [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state']
-
-        self._kernel_wrapper_args: list[str] = ['__state'] + self._args_as_input
+        self._kernel_wrapper_args_as_input: list[str] = ['__state'] + self._args_as_input
         self._kernel_wrapper_args_typed: list[str] = state_param + self._args_typed
 
-        # Kernel dimensions
-        self._grid_dims, self._block_dims, self._has_tbmap = self._get_kernel_dimensions(dfg_scope)
+        # The kernel's grid and block dimensions
+        self._grid_dims, self._block_dims = cudaCodeGen._kernel_dimensions_map[kernel_entry_node]
 
-        # C type (as string) of thread, block and warp indices
+        # C type of block, thread, and warp indices (as a string)
         self._gpu_index_ctype: str = self.get_gpu_index_ctype()
 
-        # Set warp size of the kernel
+        # Warp size (backend-dependent)
         if cudaCodeGen.backend not in ['cuda', 'hip']:
-            raise ValueError(
-                f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "
-                "Only 'cuda' and 'hip' are supported."
-                )
+            raise ValueError(f"Unsupported backend '{cudaCodeGen.backend}' in ExperimentalCUDACodeGen. "
+                             "Only 'cuda' and 'hip' are supported.")
         
         warp_size_key = 'cuda_warp_size' if cudaCodeGen.backend == 'cuda' else 'hip_warp_size'
         self._warpSize = Config.get('compiler', 'cuda', warp_size_key)
 
-
+        
     def get_gpu_index_ctype(self, config_key='gpu_index_type') -> str:
         """
         Retrieves the GPU index data type as a C type string (for thread, block, warp indices)
@@ -1279,312 +1241,58 @@ class KernelSpec:
             )
         return dtype.ctype
 
-
-    def _get_kernel_dimensions(self, dfg_scope: ScopeSubgraphView):
-        """
-        Determines a GPU kernel's grid/block dimensions from map scopes.
-
-        Ruleset for kernel dimensions:
-
-            1. If only one map (device-level) exists, of an integer set ``S``,
-                the block size is ``32x1x1`` and grid size is ``ceil(|S|/32)`` in
-                1st dimension.
-            2. If nested thread-block maps exist ``(T_1,...,T_n)``, grid
-                size is ``|S|`` and block size is ``max(|T_1|,...,|T_n|)`` with
-                block specialization.
-            3. If block size can be overapproximated, it is (for
-                dynamically-sized blocks that are bounded by a
-                predefined size).
-            4. If nested device maps exist, behavior is an error is thrown 
-               in the generate_scope function. Nested device maps are not supported
-               anymore.
-
-        :note: Kernel dimensions are separate from the map
-               variables, and they should be treated as such.
-        :note: To make use of the grid/block 3D registers, we use multi-
-               dimensional kernels up to 3 dimensions, and flatten the
-               rest into the third dimension.
-        """
-
-
-        # Extract the subgraph of the kernel entry map
-        launch_scope = dfg_scope.scope_subgraph(self._kernel_entry_node)
-
-        # Collect all relevant maps affecting launch (i.e. grid and block) dimensions
-        affecting_maps = self._get_maps_affecting_launch_dims(launch_scope)
-
-        # Filter for ThreadBlock maps
-        threadblock_maps = [(tbmap, sym_map) for tbmap, sym_map in affecting_maps
-                                if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
-        
-        # Determine if we fall back to default block size (which also affects grid size)
-        no_block_info: bool = len(threadblock_maps) == 0 and self._kernel_map.gpu_block_size is None
-        
-        if no_block_info:
-            block_size, grid_size = self._compute_default_block_and_grid()
-        else:
-            block_size, grid_size = self._compute_block_and_grid_from_maps(threadblock_maps)
-
-
-        return grid_size, block_size, len(threadblock_maps) > 0
-
-
-    def _compute_default_block_and_grid(self):
-        """
-        Fallback when no gpu_block_size (i.e. self._kernel_map.gpu_block_size is None)
-        or GPU_ThreadBlock maps are defined:
-
-        Uses default_block_size (e.g. [32,1,1]) on the whole domain S (assuming 1 dimensional),
-        producing block=[32,1,1] and grid=[ceil(|S|/32),1,1].
-
-        Special case: if the block has more active (non-1) dimensions than S,
-        extra block dimensions are collapsed into the last active slot.
-        """
-
-        kernel_map_label = self._kernel_entry_node.map.label
-        default_block_size_config = Config.get('compiler', 'cuda', 'default_block_size')
-
-        # 1) Reject unsupported 'max' setting
-        if default_block_size_config == 'max':
-            # TODO: does this make sense? what is meant with dynamic here?
-            raise NotImplementedError('max dynamic block size unimplemented') 
-        
-        # 2) Warn that we're falling back to config
-        warnings.warn(
-            f'No `gpu_block_size` property specified on map "{kernel_map_label}". '
-            f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {default_block_size_config}. '
-            'You can either specify the block size to use with the gpu_block_size property, '
-            'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
-            'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
-        
-
-        # 3) Normalize the total iteration space size (len(X),len(Y),len(Z)…) to 3D
-        raw_domain = list(self._kernel_map.range.size(True))[::-1]
-        kernel_domain_size = self._to_3d_dims(raw_domain)
-
-        # 4) Parse & normalize the default block size to 3D
-        default_block_size = [int(x) for x in default_block_size_config.split(',')]
-        default_block_size = self._to_3d_dims(default_block_size)
-
-        # 5) If block has more "active" dims than the domain, collapse extras
-        active_block_dims = max(1, sum(1 for b in default_block_size if b != 1))
-        active_grid_dims  = max(1, sum(1 for g in kernel_domain_size  if g != 1))
-
-        if active_block_dims > active_grid_dims:
-            tail_product = product(default_block_size[active_grid_dims:])
-            block_size = default_block_size[:active_grid_dims] + [1] * (3 - active_grid_dims)
-            block_size[active_grid_dims - 1] *= tail_product
-            warnings.warn(f'Default block size has more dimensions ({active_block_dims}) than kernel dimensions '
-                            f'({active_grid_dims}) in map "{kernel_map_label}". Linearizing block '
-                            f'size to {block_size}. Consider setting the ``gpu_block_size`` property.')
-        else:
-            block_size = default_block_size
-
-        # 6) Compute the final grid size per axis: ceil(domain / block)
-        grid_size = [symbolic.int_ceil(gs, bs) for gs, bs in zip(kernel_domain_size, block_size)]
-
-
-        # 7) Check block size against configured CUDA hardware limits
-        self._validate_block_size_limits(block_size)
-
-        return block_size, grid_size
-
-
-    def _compute_block_and_grid_from_maps(self, tb_maps_sym_map):
-        # TODO: also provide a description here in docstring
-
-
-        kernel_entry_node = self._kernel_entry_node
-        
-        # Compute kernel grid size
-        raw_grid_size = self._kernel_map.range.size(True)[::-1]
-        grid_size = self._to_3d_dims(raw_grid_size)
-
-        # Determine block size, using gpu_block_size override if specified
-        # NOTE: this must be done on the original list! otherwise error
-        block_size = self._kernel_map.gpu_block_size
-        if block_size is not None:
-            block_size = self._to_3d_dims(block_size)
-
-
-        # Find all thread-block maps to determine overall block size
-        detected_block_sizes = [block_size] if block_size is not None else []
-        for tbmap, sym_map in tb_maps_sym_map:
-            tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
-
-            # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-            # The partial trailing thread-block is emitted as an if-condition
-            # that returns on some of the participating threads
-            tbsize = [symbolic.overapproximate(s) for s in tbsize]
-
-            # To Cuda compatible block dimension description
-            tbsize = self._to_3d_dims(tbsize)
- 
-            if len(detected_block_sizes) == 0:
-                block_size = tbsize
-            else:
-                block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
-
-            if block_size != tbsize or len(detected_block_sizes) == 0:
-                detected_block_sizes.append(tbsize)
-
-
-
-        #-------------- Error handling and warnings ------------------------
-
-        # TODO: If grid/block sizes contain elements only defined within the
-        #       kernel, raise an invalid SDFG exception and recommend
-        #       overapproximation.
-
-        kernel_map_label = kernel_entry_node.map.label
-        if len(detected_block_sizes) > 1:
-            # Error when both gpu_block_size and thread-block maps were defined and conflict
-            if kernel_entry_node.map.gpu_block_size is not None:
-                raise ValueError('Both the `gpu_block_size` property and internal thread-block '
-                                    'maps were defined with conflicting sizes for kernel '
-                                    f'"{kernel_map_label}" (sizes detected: {detected_block_sizes}). '
-                                    'Use `gpu_block_size` only if you do not need access to individual '
-                                    'thread-block threads, or explicit block-level synchronization (e.g., '
-                                    '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
-                                    '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
-                                    'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
-
-            warnings.warn('Multiple thread-block maps with different sizes detected for '
-                            f'kernel "{kernel_map_label}": {detected_block_sizes}. '
-                            f'Over-approximating to block size {block_size}.\n'
-                            'If this was not the intent, try tiling one of the thread-block maps to match.')
-        
-        # Check block size against configured CUDA hardware limits
-        self._validate_block_size_limits(block_size)
-        
-        return block_size, grid_size
-
-
-    def _validate_block_size_limits(self, block_size):
-        """
-        Check block size against configured maximum values, if those can be determined
-        """
-
-        kernel_map_label = self._kernel_map.label
-
-        total_block_size = product(block_size)
-        limit = Config.get('compiler', 'cuda', 'block_size_limit')
-        lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
-        
-        if (total_block_size > limit) == True:
-            raise ValueError(f'Block size for kernel "{kernel_map_label}" ({block_size}) '
-                             f'is larger than the possible number of threads per block ({limit}). '
-                             'The kernel will potentially not run, please reduce the thread-block size. '
-                             'To increase this limit, modify the `compiler.cuda.block_size_limit` '
-                             'configuration entry.')
-        if (block_size[-1] > lastdim_limit) == True:
-            raise ValueError(f'Last block size dimension for kernel "{kernel_map_label}" ({block_size}) '
-                             'is larger than the possible number of threads in the last block dimension '
-                             f'({lastdim_limit}). The kernel will potentially not run, please reduce the '
-                             'thread-block size. To increase this limit, modify the '
-                             '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
-
-
-    def _to_3d_dims(self, dim_sizes: List) -> List:
-        """
-        Given a list representing the size of each dimension, this function modifies
-        the list in-place by collapsing all dimensions beyond the second into the
-        third entry. If the list has fewer than three entries, it is padded with 1's
-        to ensure it always contains exactly three elements. This is used to format
-        grid and block size parameters for a kernel launch.
-
-        Examples:
-            [x]             → [x, 1, 1]
-            [x, y]          → [x, y, 1]
-            [x, y, z]       → [x, y, z]
-            [x, y, z, u, v] → [x, y, z * u * v]
-        """
-        
-        if len(dim_sizes) > 3:
-            # multiply everything from the 3rd onward into d[2]
-            dim_sizes[2] = product(dim_sizes[2:])
-            dim_sizes = dim_sizes[:3]
-
-        # pad with 1s if necessary
-        dim_sizes += [1] * (3 - len(dim_sizes))
-
-        return dim_sizes
-
-
-    def _get_maps_affecting_launch_dims(self, graph: ScopeSubgraphView) -> List[Tuple[nodes.MapEntry, Dict[dace.symbol, dace.symbol]]]:
-        """
-        Recursively collects all GPU_Device and GPU_ThreadBlock maps within the given graph,
-        including those inside nested SDFGs. For each relevant map, returns a tuple containing
-        the map object and an identity mapping of its free symbols.
-
-        Args:
-            graph (ScopeSubgraphView): The subgraph to search for relevant maps.
-
-        Returns:
-            List[Tuple[nodes.MapEntry, Dict[dace.symbol, dace.symbol]]]: 
-                A list of tuples, each consisting of a MapEntry object and a dictionary mapping 
-                each free symbol in the map's range to itself (identity mapping).
-        
-        NOTE:
-            Currently, dynamic parallelism (nested GPU_Device schedules) is not supported.
-            The GPU_Device is only used for the top level map, where it is allowed and required.
-        """
-
-        relevant_maps = []
-
-        for node in graph.nodes():
-
-            # Recurse into nested SDFGs
-            if isinstance(node, nodes.NestedSDFG):
-                for state in node.sdfg.states():
-                    relevant_maps.extend(self._get_maps_affecting_launch_dims(state))
-                continue
-
-            # MapEntry with schedule affecting launch dimensions
-            if (isinstance(node, nodes.MapEntry) and
-                node.schedule in {dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock}):
-                identity_map = { dace.symbol(sym): dace.symbol(sym) for sym in node.map.range.free_symbols}
-                relevant_maps.append((node.map, identity_map))
-
-        return relevant_maps
-    
-
-
     @property
     def kernel_name(self) -> list[str]:
-        """Returns the kernel name."""
+        """Returns the kernel (function's) name."""
         return self._kernel_name
 
     @property
     def kernel_entry_node(self) -> nodes.MapEntry:
-        """Returns the kernels entry node"""
+        """
+        Returns the entry node of the kernel, which is a MapEntry node
+        scheduled with dace.dtypes.ScheduleType.GPU_Device.
+        """
         return self._kernel_entry_node
     
     @property
     def kernel_map(self) -> nodes.Map:
-        """Returns the kernel map node"""
-        return self._kernel_map
+        """Returns the kernel's map node."""
+        return self._kernel_entry_node.map
     
     @property
     def args_as_input(self) -> list[str]:
-        """Returns the kernel function arguments
-        that can be used as an input for calling the function.
-        It is the __global__ kernel function, NOT the kernel launch function."""
+        """
+        Returns the kernel function arguments formatted for use as inputs 
+        when calling the kernel function.
+        """
         return self._args_as_input
 
     @property
     def args_typed(self) -> list[str]:
-        """Returns the typed kernel function arguments
-        that can be used for declaring the __global__ kernel function.
-        These arguments include their respective data types."""
+        """
+        Returns the typed kernel function arguments suitable for declaring 
+        the kernel function. Each argument includes its corresponding data type.
+        """
         return self._args_typed
     
     @property
-    def kernel_wrapper_args(self) -> list[str]:
-        return self._kernel_wrapper_args
+    def kernel_wrapper_args_as_input(self) -> list[str]:
+        """
+        Returns the argument names passed to the kernel wrapper function.
+
+        The kernel wrapper is a function defined in the CUDA/HIP code that is called
+        from the CPU code and is responsible for launching the kernel function.
+        """
+        return self._kernel_wrapper_args_as_input
 
     @property
     def kernel_wrapper_args_typed(self) -> list[str]:
+        """
+        Returns the typed arguments used to declare the kernel wrapper function.
+
+        The kernel wrapper is defined in the CUDA/HIP code, called from the CPU side,
+        and is responsible for launching the actual kernel function.
+        """
         return self._kernel_wrapper_args_typed
 
     @property
@@ -1596,11 +1304,6 @@ class KernelSpec:
     def block_dims(self) -> list:
         """Returns the block dimensions of the kernel."""
         return self._block_dims
-
-    @property
-    def has_tbmap(self) -> bool:
-        """Returns whether the kernel has a thread-block map."""
-        return self._has_tbmap
 
     @property
     def warpSize(self) -> int:
@@ -1619,4 +1322,3 @@ class KernelSpec:
         setting in the configuration and matches with a DaCe typeclass.
         """
         return self._gpu_index_ctype
-

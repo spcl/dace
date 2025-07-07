@@ -87,11 +87,8 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             # ----------------- Retrieve kernel configuration -----------------------
 
             kernel_spec = self._current_kernel_spec
-            kernel_entry_node = kernel_spec._kernel_entry_node # = dfg_scope.source_nodes()[0]
+            kernel_entry_node = kernel_spec._kernel_entry_node # == dfg_scope.source_nodes()[0]
             kernel_map = kernel_spec.kernel_map
-            has_tbmap = kernel_spec.has_tbmap
-            kernel_block_dims = self._current_kernel_spec.block_dims
-
 
             # ----------------- Kernel/Map Range Preprocessing -----------------------
 
@@ -100,19 +97,14 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             kernel_dimensions = len(kernel_range)
             kernel_dim_sizes = kernel_range.size()
 
-
             # ----------------- Set up symbolic index expressions -----------------------
 
             symbolic_indices = [ symbolic.symbol(f'__SYM_IDX{dim}', nonnegative=True, integer=True) for dim in range(kernel_dimensions)]
-            symbolic_index_bounds = [ idx + block_dim - 1 for idx, block_dim in zip(symbolic_indices, kernel_block_dims)]
             symbolic_coordinates = kernel_range.coord_at(symbolic_indices)
-
 
             # ----------------- Generate Thread or Block index Definitions -----------------------
 
-
             thread_id_ctype = kernel_spec.gpu_index_ctype # Data type of CUDA thread/block indices
-
 
             # In case there is no ThreadBlock map used in a submap, the map variables will
             # be mapped to thread IDs instead of block IDs
@@ -122,55 +114,21 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
 
                 # Compute index expressions for up to 3 dimensions (x, y, z)
                 if dim < 3:
-                    if has_tbmap:
-                        index_expr = f'blockIdx.{get_cuda_dim(dim)}'
-                    else:
-                        index_expr = f'(blockIdx.{get_cuda_dim(dim)} * {symbolic_to_cpp(kernel_block_dims[dim])} + threadIdx.{get_cuda_dim(dim)})'
-
+                    index_expr = f'blockIdx.{get_cuda_dim(dim)}'
                     # Delinearize third dimension if more than 3D (used in 3D+ mapping)
                     if dim == 2 and kernel_dimensions > 3:
                         tail_prod = product(kernel_dim_sizes[3:])
                         index_expr = f"({index_expr} / ({symbolic_to_cpp(tail_prod)}))"
 
                 else:  # Handle dimensions beyond the third (delinearize and modulo)
-                    if has_tbmap:
-                        index_expr = f'blockIdx.z'
-                    else:
-                        index_expr = f'(blockIdx.z * {symbolic_to_cpp(kernel_block_dims[2])} + threadIdx.z)'
-
+                    index_expr = f'blockIdx.z'
                     tail_prod = product(kernel_dim_sizes[dim + 1:])
                     index_expr = (f"(({index_expr} / ({symbolic_to_cpp(tail_prod)})) % ({symbolic_to_cpp(kernel_dim_sizes[dim])}))")
-
 
                 # Define thread/Block index
                 var_def = symbolic_to_cpp(symbolic_coordinates[dim]).replace(f'__SYM_IDX{dim}', index_expr)
                 callsite_stream.write(f'{thread_id_ctype} {var_name} = {var_def};', cfg, state_id, kernel_entry_node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, thread_id_ctype) 
-
-
-            # ----------------- Guard Conditions for Block Execution -----------------------
-
-            if not has_tbmap:
-                minels = kernel_range.min_element()
-                maxels = kernel_range.max_element()
-
-                for dim, (var_name, start, end) in enumerate(zip(kernel_map.params[::-1], minels, maxels)):
-                    condition = ''
-
-                    # Optimize conditions if they are always true
-                    if dim >= 3 or (symbolic_indices[dim] >= start) != True:
-                        condition += f'{var_name} >= {symbolic_to_cpp(start)}' 
-
-                    if (dim >= 3 or ((symbolic_index_bounds[dim] < end) != False 
-                            and ((symbolic_index_bounds[dim] % kernel_block_dims[dim]) != 0) == True) or (kernel_block_dims[dim] > end) == True):
-
-                        if len(condition) > 0:
-                            condition += ' && '
-                        condition += f'{var_name} < {symbolic_to_cpp(end + 1)}'
-
-                    if len(condition) > 0:
-                        scope_manager.open(condition=condition)
-
 
             # ----------------- Dispatch Subgraph code generation -----------------------
 
