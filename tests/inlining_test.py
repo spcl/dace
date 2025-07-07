@@ -664,6 +664,9 @@ def _make_sdfg_for_multistate_nested_inlining(
         separate_write_back_state: There is an extra state to perform the `t -> b` copy in the inner SDFG.
     """
 
+    if not outside_uses_symbol:
+        outside_uses_different_symbol = False
+
     inner_symbol_name = "inner_symbol"
     outer_symbol_name = "outer_symbol" if outside_uses_different_symbol else inner_symbol_name
 
@@ -753,12 +756,18 @@ def _make_sdfg_for_multistate_nested_inlining(
     A, B, T = (outer_state.add_access(name) for name in "ABT")
     outer_a_shape_scalar = outer_state.add_access("outer_scalar")
 
+    symbol_mapping = {}
+
+    if outside_uses_different_symbol:
+        # This is an artefact that is needed to allow inlining.
+        symbol_mapping[outer_symbol_name] = outer_symbol_name
+
     nsdfg_node = outer_state.add_nested_sdfg(
         sdfg=inner_sdfg,
         parent=outer_sdfg,
         inputs={"inner_scalar", "a"},
         outputs={"b"},
-        symbol_mapping={},
+        symbol_mapping=symbol_mapping,
     )
 
     outer_tasklet_for_setting_size = outer_state.add_tasklet(
@@ -820,8 +829,8 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
 
     assert inner_sdfg.number_of_nodes() == (3 if separate_write_back_state else 2)
     assert outer_sdfg.number_of_nodes() == 1
-    assert inner_sdfg.free_symbols == set()
     assert outer_sdfg.free_symbols == set()
+    assert inner_sdfg.free_symbols == set()
     assert map_state not in outer_sdfg.nodes()
     assert map_state in inner_sdfg.nodes()
 
@@ -868,6 +877,7 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
     assert map_state in outer_sdfg.nodes()
     assert count_nodes(map_state, dace_nodes.MapEntry) == 1
     assert outer_sdfg.in_degree(map_state) == 1
+
     assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
     assert len(assigning_edge.data.assignments) == 1
     assert "inner_symbol" in assigning_edge.data.assignments
@@ -879,38 +889,43 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
     csdfg = outer_sdfg.compile()
 
 
-def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state: bool):
+def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state: bool,
+                                                                                  outside_uses_different_symbol: bool):
     """Test the inlining of a nested SDFG with multiple state.
 
     The situation is very similar to `test_multistate_inline_no_symbols_on_the_outside()` but with
     the difference that `T`, the transient on the outer SDFG, has a symbolic size. This symbol has
     the same value name as the symbol on the inside.
     """
+    inner_symbol_name = "inner_symbol"
+    outer_symbol_name = "outer_symbol" if outside_uses_different_symbol else inner_symbol_name
+
     outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_nested_inlining(
         outside_uses_symbol=True,
-        outside_uses_different_symbol=False,
+        outside_uses_different_symbol=outside_uses_different_symbol,
         separate_write_back_state=separate_write_back_state)
 
     assert inner_sdfg.number_of_nodes() == (3 if separate_write_back_state else 2)
     assert outer_sdfg.number_of_nodes() == 1
-    assert inner_sdfg.free_symbols == set()
-    assert outer_sdfg.free_symbols == {"inner_symbol"}
+    assert inner_sdfg.free_symbols == ({outer_symbol_name} if outside_uses_different_symbol else set())
+    assert outer_sdfg.free_symbols == {outer_symbol_name}
     assert map_state not in outer_sdfg.nodes()
     assert map_state in inner_sdfg.nodes()
 
     inner_assigning_edge = next(iter(inner_sdfg.in_edges(map_state)))
     assert len(inner_assigning_edge.data.assignments) == 1
     assert "inner_symbol" in inner_assigning_edge.data.assignments
-    assert inner_assigning_edge.data.assignments["inner_symbol"] == "inner_scalar"
+    assert inner_assigning_edge.data.assignments[inner_symbol_name] == "inner_scalar"
 
     # The symbol `inner_symbol` of the outer SDFG is a free symbol, for that reason it has to
     #  be provided as argument. Contrary to that, the inner SDFG needs the scalar.
-    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", "inner_symbol"}
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", outer_symbol_name}
     assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_scalar"}
     assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "outer_scalar"}
     assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_scalar"}
-    assert inner_sdfg.symbols.keys() == {"inner_symbol"}
-    assert outer_sdfg.symbols.keys() == {"inner_symbol"}
+    assert inner_sdfg.symbols.keys() == ({inner_symbol_name, outer_symbol_name}
+                                         if outside_uses_different_symbol else {inner_symbol_name})
+    assert outer_sdfg.symbols.keys() == {outer_symbol_name}
 
     # Test if it is possible to compile the thing.
     initial_outer_csdfg = outer_sdfg.compile()
@@ -937,13 +952,17 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
 
     # `inner_a_shape_scalar` was not used so it is removed.
     assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "t", "outer_scalar"}
-    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", "inner_symbol"}
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", outer_symbol_name}
 
-    # The transformation was unable to figuring out that `inner_a_shape_sym` on the inside
-    #  and the outside are the same, thus both exists, but there is the interstate edge that
-    #  makes both the same. It is important that in the check here also depends on the renaming
-    #  convention used by the transformation.
-    assert outer_sdfg.symbols.keys() == {"inner_symbol", "inner_symbol_0"}
+    # If we use the same symbol name then the transformation simply renames it.
+    #  This is because we do not have a symbol mapping. The addition with the
+    #  `_0` is an implementation detail. There is no renaming when the outer
+    #  SDFG does not uses the same symbol name as on the inside.
+    renamed_inner_symbol_name = inner_symbol_name if outside_uses_different_symbol else f"{inner_symbol_name}_0"
+    assert outer_sdfg.symbols.keys() == {outer_symbol_name, renamed_inner_symbol_name}
+
+    assert str(outer_sdfg.arrays["t"].shape[0]) == renamed_inner_symbol_name
+    assert str(outer_sdfg.arrays["T"].shape[0]) == outer_symbol_name
 
     assert map_state in outer_sdfg.nodes()
     assert count_nodes(map_state, dace_nodes.MapEntry) == 1
@@ -952,8 +971,8 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     # See above why there is a `_0` at the end of the name.
     assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
     assert len(assigning_edge.data.assignments) == 1
-    assert "inner_symbol_0" in assigning_edge.data.assignments
-    assert assigning_edge.data.assignments["inner_symbol_0"] == "outer_scalar"
+    assert renamed_inner_symbol_name in assigning_edge.data.assignments
+    assert assigning_edge.data.assignments[renamed_inner_symbol_name] == "outer_scalar"
 
     # Test if the compilation itself works.
     outer_sdfg.regenerate_code = True
@@ -963,11 +982,24 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
 
 @pytest.mark.skip(reason="Because of issue#2072 this does not work.")
 def test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_writeback_state():
-    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=True)
+    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=True,
+                                                                                  outside_uses_different_symbol=False)
 
 
 def test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state():
-    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=False)
+    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=False,
+                                                                                  outside_uses_different_symbol=False)
+
+
+@pytest.mark.parametrize("separate_write_back_state", [True, False])
+def test_multistate_inlining_different_symbols_used(separate_write_back_state: bool):
+    """
+    Similar to `test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_writeback_state()` and
+    `test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state()` but the outer
+    and inner SDFG use different symbols.
+    """
+    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(
+        separate_write_back_state=separate_write_back_state, outside_uses_different_symbol=True)
 
 
 def test_multistate_inline_with_symbol_mapping():
@@ -994,3 +1026,4 @@ if __name__ == "__main__":
     test_chain_reduction_1()
     test_chain_reduction_2()
     test_chain_reduction_all()
+    test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state()
