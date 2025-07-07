@@ -80,15 +80,17 @@ class ONNXRuntime:
     cmake_link_flags = []
     cmake_files = []
     state_fields = [
-        "const OrtApi* ort_api;", "OrtEnv* ort_env;", "OrtKernelSession* ort_session;",
-        "OrtSessionOptions* ort_session_options;", "OrtMemoryInfo* ort_cpu_mem_info;"
+        "const OrtApi* ort_api;",
+        "OrtEnv* ort_env;",
+        # "OrtKernelSession* ort_session;",
+        "OrtSessionOptions* ort_session_options;",
+        "OrtMemoryInfo* ort_cpu_mem_info;"
     ]
     dependencies = []
     headers = [
         "../include/dace_onnx.h",
         "onnxruntime_c_api.h",
         "cpu_provider_factory.h",
-        "cuda_provider_factory.h",
     ]
     headers = {'frame': headers, 'cuda': headers}
     init_code = """
@@ -97,11 +99,11 @@ class ONNXRuntime:
     __ort_check_status(__state->ort_api, __state->ort_api->CreateEnv(/*default_logging_level=*/ORT_LOGGING_LEVEL_WARNING, /*logid=*/"dace_graph", &__state->ort_env));
     __ort_check_status(__state->ort_api, __state->ort_api->CreateSessionOptions(&__state->ort_session_options));
     __ort_check_status(__state->ort_api, OrtSessionOptionsAppendExecutionProvider_CPU(__state->ort_session_options, /*use_arena=*/0));
-    __ort_check_status(__state->ort_api, __state->ort_api->CreateKernelSession(__state->ort_session_options, &__state->ort_session, /*opset_version=*/12));
+    // __ort_check_status(__state->ort_api, __state->ort_api->CreateKernelSession(__state->ort_session_options, &__state->ort_session, /*opset_version=*/12));
     """
     finalize_code = """
     __state->ort_api->ReleaseMemoryInfo(__state->ort_cpu_mem_info);
-    __state->ort_api->ReleaseKernelSession(__state->ort_session);
+    //__state->ort_api->ReleaseKernelSession(__state->ort_session);
     __state->ort_api->ReleaseSessionOptions(__state->ort_session_options);
     __state->ort_api->ReleaseEnv(__state->ort_env);
     """
@@ -136,7 +138,10 @@ class ONNXRuntimeCUDA:
     cmake_libraries = []
     cmake_includes = []
 
-    headers = {}
+    headers = [
+        "cuda_provider_factory.h",
+    ]
+    headers = {'frame': headers, 'cuda': headers}
     max_concurrent_streams = None
     use_streams = False
 
@@ -186,8 +191,8 @@ class ONNXRuntimeCUDA:
 
         // overwrite the CPU ORT session with the CUDA session
         
-        __state->ort_api->ReleaseKernelSession(__state->ort_session);
-        __ort_check_status(__state->ort_api,
+        //__state->ort_api->ReleaseKernelSession(__state->ort_session);
+        //__ort_check_status(__state->ort_api,
 __state->ort_api->CreateKernelSession(__state->ort_session_options, &__state->ort_session, /*opset_version=*/12));
         """
         return init_code

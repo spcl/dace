@@ -22,7 +22,30 @@ from dace.libraries.ort_api import ORTAPIError
 
 from dace.util import prod
 
+import onnx
+from onnx import helper
+
 log = logging.getLogger(__name__)
+
+
+def _get_onnx_shape_from_desc(desc: dt.Data) -> Optional[List]:
+    """Get the appropriate ONNX shape from a DaCe data descriptor.
+    
+    Args:
+        desc: The DaCe data descriptor
+        
+    Returns:
+        The shape as a list, or None for scalars (0-dimensional tensors)
+    """
+    if isinstance(desc, dt.Scalar):
+        # Scalars have shape [1] but should be represented as 0-dimensional in ONNX
+        return None
+    elif isinstance(desc, dt.Array):
+        # Arrays have their actual shape
+        return list(desc.shape)
+    else:
+        # For other types (Stream, etc.), use the shape property
+        return list(desc.shape) if desc.shape else None
 
 
 def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
@@ -317,19 +340,83 @@ def expand_node(node, state, sdfg):
     input_copy_required, output_copy_required = check_required_copies(node, state, sdfg, outputs_on_host,
                                                                       inputs_on_host)
 
+    onnx_model = onnx.ModelProto()
+    
+    # ideally this should be fetched from the installed onnxruntime version
+    opset_version = 21
+    ir_version = 10
+    
+    onnx_model.ir_version = ir_version
+    onnx_model.producer_name = "dace"
+    onnx_model.opset_import.add(domain="", version=opset_version)
+    graph = onnx_model.graph
+    graph.name = unique_id
+    
+
     # begin codegen
     ##########################################
     tasklet_setup_code = ""
     tasklet_code = ""
     tasklet_cleanup_code = ""
     env_init_code = ("""
-    __ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernelContext("{name}", "{op_type}", &__state->ort_context_{name}));
+    //__ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernelContext("{name}", "{op_type}", &__state->ort_context_{name}));
     """.format(name=unique_id, op_type=node.schema.name))
+
+    # Collect input and output names for the node
+    input_names = []
+    output_names = []
+    
+    for edge, is_input in node.iter_edges(state):
+        parameter_name = edge.dst_conn if is_input else edge.src_conn
+        if is_input:
+            input_names.append(parameter_name)
+        else:
+            output_names.append(parameter_name)
+    
+    # Create the ONNX node using helper.make_node
+    node_proto = helper.make_node(node.schema.name, input_names, output_names, name=unique_id + "_node")
+    
+    # Add attributes to the node
+    for name, attr in node.schema.attributes.items():
+        if hasattr(node, name):
+            value = getattr(node, name)
+            if value is not None:
+                # Convert the value to the appropriate ONNX attribute format
+                if attr.attribute_type == ONNXAttributeType.Int:
+                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.INT, i=value)
+                elif attr.attribute_type == ONNXAttributeType.Float:
+                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.FLOAT, f=value)
+                elif attr.attribute_type == ONNXAttributeType.String:
+                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.STRING, s=value.encode())
+                elif attr.attribute_type == ONNXAttributeType.Ints:
+                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.INTS, ints=value)
+                elif attr.attribute_type == ONNXAttributeType.Floats:
+                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.FLOATS, floats=value)
+                elif attr.attribute_type == ONNXAttributeType.Strings:
+                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.STRINGS, strings=[s.encode() for s in value])
+                elif attr.attribute_type == ONNXAttributeType.Tensor:
+                    # Convert numpy array to ONNX tensor
+                    tensor = helper.make_tensor(name, value.dtype.type, value.shape, value.flatten().tolist())
+                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.TENSOR, t=tensor)
+    
+    graph.node.append(node_proto)
+
+    env_init_code += f"""
+    __state->ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+    //__ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernel(
+    //    __state->ort_session, __state->ort_context_{unique_id}, /*provider_index=*/{provider_index},
+    //    &__state->ort_kernel_{unique_id}));
+    """
 
     # emit code for inputs and outputs
     ##########################################
     in_connectors = {}
     out_connectors = {}
+
+    input_names = []
+    output_names = []
+    input_values = []
+    output_values = []
 
     for edge, is_input in node.iter_edges(state):
         parameter_name = edge.dst_conn if is_input else edge.src_conn
@@ -337,15 +424,46 @@ def expand_node(node, state, sdfg):
         input_output_string = "input" if is_input else "output"
         memlet = edge.data
         desc = sdfg.arrays[memlet.data]
+        
+        # Create value info for inputs/outputs
+        if is_input:
+            # Add to graph inputs if not already present
+            if not any(vi.name == parameter_name for vi in graph.input):
+                value_info = helper.make_tensor_value_info(
+                    parameter_name, 
+                    getattr(onnx.TensorProto, typeclass_to_onnx_str(desc.dtype).upper()),
+                    _get_onnx_shape_from_desc(desc)
+                )
+                graph.input.append(value_info)
+        else:
+            # Add to graph outputs if not already present
+            if not any(vi.name == parameter_name for vi in graph.output):
+                value_info = helper.make_tensor_value_info(
+                    parameter_name, 
+                    getattr(onnx.TensorProto, typeclass_to_onnx_str(desc.dtype).upper()),
+                    _get_onnx_shape_from_desc(desc)
+                )
+                graph.output.append(value_info)
+        
         env_init_code += """
-        __ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_Add{input_output_string}(__state->ort_context_{id}, ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_string}));
+        //__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_Add{input_output_string}(__state->ort_context_{id}, ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_string}));
         """.format(id=unique_id,
                    type_string=typeclass_to_onnx_str(desc.dtype).upper(),
                    parameter_name=parameter_name,
                    input_output_string=input_output_string.capitalize())
 
+        if is_input:
+            input_names.append(parameter_name)
+        else:
+            output_names.append(parameter_name)
+
         ort_value_name = "ort_value_{input_output_string}_{parameter_name}".format(
             input_output_string=input_output_string, parameter_name=parameter_name)
+
+        if is_input:
+            input_values.append(ort_value_name)
+        else:
+            output_values.append(ort_value_name)
 
         # We always emit a NestedSDFG, so the edge connector names must be prefixed (otherwise there would be a conflict
         # of names).
@@ -363,38 +481,61 @@ def expand_node(node, state, sdfg):
                                                            ort_value_name=ort_value_name,
                                                            connector_dict=in_connectors if is_input else out_connectors)
 
-        tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Set" \
-                        "{input_output_string_capital}(" \
-                        "__state->ort_kernel_{unique_id}, {position}, {ort_value_name}));\n".format(
-            input_output_string_capital=input_output_string.
-                capitalize(),
-            ort_value_name=ort_value_name,
-            unique_id=unique_id,
-            position=get_position(node.schema, is_input,
-                                  parameter_name))
+        # tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Set" \
+        #                 "{input_output_string_capital}(" \
+        #                 "__state->ort_kernel_{unique_id}, {position}, {ort_value_name}));\n".format(
+        #     input_output_string_capital=input_output_string.
+        #         capitalize(),
+        #     ort_value_name=ort_value_name,
+        #     unique_id=unique_id,
+        #     position=get_position(node.schema, is_input,
+        #                           parameter_name))
 
         tasklet_cleanup_code += "__state->ort_api->ReleaseValue(" \
                                 "ort_value_{input_output_string}_{parameter_name});\n".format(
             input_output_string=input_output_string,
             parameter_name=parameter_name)
 
+    # for name, attr in node.schema.attributes.items():
+    #     if hasattr(node, name):
+    #         env_init_code += _gen_attr_init_code("__state->ort_context_{}".format(unique_id),
+    #                                              node.schema.attributes[name], getattr(node, name))
+
+    # save constructed model
+    model_bytes = onnx_model.SerializeToString()
+    # save model to file
+    with open(f"{unique_id}.onnx", "wb") as f:
+        f.write(model_bytes)
+    # embed model as C byte string
+    model_int_values = [str(b) for b in model_bytes]
+    model_int_values_str = ", ".join(model_int_values)
+    env_init_code += f"""
+    const unsigned char kernel_data_{unique_id}[{len(model_int_values)}] = {{ {model_int_values_str} }};
+    """
+    
     env_init_code += "\n"
 
-    for name, attr in node.schema.attributes.items():
-        if hasattr(node, name):
-            env_init_code += _gen_attr_init_code("__state->ort_context_{}".format(unique_id),
-                                                 node.schema.attributes[name], getattr(node, name))
-
-    env_finalize_code = """
-        __state->ort_api->ReleaseExecutableKernel(__state->ort_kernel_{});\n
-        __state->ort_api->ReleaseExecutableKernelContext(__state->ort_context_{});\n
-    """.format(unique_id, unique_id)
+    env_finalize_code = f"""
+        __state->ort_api->ReleaseSession(__state->ort_session_{unique_id});\n
+        //__state->ort_api->ReleaseExecutableKernel(__state->ort_kernel_{unique_id});\n
+        // __state->ort_api->ReleaseExecutableKernelContext(__state->ort_context_{unique_id});\n
+    """
 
     if logging.root.level <= logging.DEBUG:
         tasklet_code += 'fprintf(stderr, "Launching {}\\n");\n'.format(unique_id)
 
-    tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Compute(__state->ort_kernel_{}));\n".format(
-        unique_id)
+    # tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Compute(__state->ort_kernel_{}));\n".format(unique_id)
+    tasklet_code += f"""
+    __ort_check_status(__state->ort_api, __state->ort_api->Run(
+        __state->ort_session_{unique_id}, NULL, input_names, input_values, {len(input_values)}, output_names, {len(output_values)}, output_values));
+    """
+    
+    tasklet_setup_code += f"""
+    const char* input_names[] = {{{", ".join(f'"{name}"' for name in input_names)}}};
+    const char* output_names[] = {{{", ".join(f'"{name}"' for name in output_names)}}};
+    OrtValue* input_values[] = {{{", ".join(input_values)}}};
+    OrtValue* output_values[] = {{{", ".join(output_values)}}};
+    """
 
     tasklet_code = tasklet_setup_code + tasklet_code + tasklet_cleanup_code
 
@@ -402,10 +543,11 @@ def expand_node(node, state, sdfg):
         raise ValueError("Currently not supported anymore.")
 
     env_init_code += f"""
-                    __ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernel(
-                    __state->ort_session, __state->ort_context_{unique_id}, /*provider_index=*/{provider_index},
-                     &__state->ort_kernel_{unique_id}));
-                    """
+    __ort_check_status(__state->ort_api, __state->ort_api->CreateSessionFromArray(
+        __state->ort_env, kernel_data_{unique_id}, {len(model_int_values)},
+        __state->ort_session_options, &__state->ort_session_{unique_id}
+    ));
+    """
 
     env_init_code = "{\n" + env_init_code + "\n}"
     env_finalize_code = "{\n" + env_finalize_code + "\n}"
@@ -415,8 +557,9 @@ def expand_node(node, state, sdfg):
                          out_connectors,
                          tasklet_code,
                          state_fields=[
-                             "OrtExecutableKernelContext *ort_context_{};\n".format(unique_id),
-                             "OrtExecutableKernel *ort_kernel_{};\n".format(unique_id),
+                            # "OrtKernelContext *ort_context_{};\n".format(unique_id),
+                            #  "OrtExecutableKernel *ort_kernel_{};\n".format(unique_id),
+                             "OrtSession *ort_session_{};\n".format(unique_id),
                          ],
                          code_init=env_init_code,
                          code_exit=env_finalize_code,
