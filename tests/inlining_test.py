@@ -651,35 +651,39 @@ def test_inlining_view_input():
     np.testing.assert_allclose(expected, actual)
 
 
-def _make_inilining_symbol_usage_1_sdfg(
+def _make_sdfg_for_multistate_nested_inlining(
     outside_uses_symbol: bool,
-    no_inner_wb_state: bool,
+    outside_uses_different_symbol: bool,
+    separate_write_back_state: bool,
 ) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
-    Generate SDFGs for the tests.
-
     Args:
-        outside_uses_symbol: The outer SDFG also uses the symbol `inner_a_shape_sym` as shape for `A`.
-        no_inner_wb_state: There is no extra state that performs the write back.
+        outside_uses_symbol: The outside SDFG also uses a symbol, if `outside_uses_different_symbol` is
+            not `True` then the same symbol name as on the inside is used.
+        outside_uses_different_symbol: Use a different symbol name on the outside, if requested.
+        separate_write_back_state: There is an extra state to perform the `t -> b` copy in the inner SDFG.
     """
+
+    inner_symbol_name = "inner_symbol"
+    outer_symbol_name = "outer_symbol" if outside_uses_different_symbol else inner_symbol_name
 
     # Create the inner SDFG.
     inner_sdfg = dace.SDFG(unique_name("inner_sdfg"))
     inner_istate = inner_sdfg.add_state(is_start_block=True)
-    inner_state = inner_sdfg.add_state_after(inner_istate, assignments={"inner_a_shape_sym": "inner_a_shape_scalar"})
+    inner_state = inner_sdfg.add_state_after(inner_istate, assignments={inner_symbol_name: "inner_scalar"})
 
-    inner_sdfg.add_symbol("inner_a_shape_sym", dace.int32)
+    inner_sdfg.add_symbol(inner_symbol_name, dace.int32)
     inner_sdfg.add_scalar(
-        "inner_a_shape_scalar",
+        "inner_scalar",
         dtype=dace.int32,
         transient=False,
     )
 
-    inner_shapes = {"t": ("inner_a_shape_sym", )}
+    inner_shapes = {"t": (inner_symbol_name, )}
 
     if outside_uses_symbol:
-        # We only do this to enable the inlining.
-        inner_shapes["b"] = ("inner_a_shape_sym", )
+        # We need to do that to perform the inlining.
+        inner_shapes["b"] = (outer_symbol_name, )
 
     for name in "abt":
         inner_sdfg.add_array(
@@ -693,7 +697,7 @@ def _make_inilining_symbol_usage_1_sdfg(
 
     inner_state.add_mapped_tasklet(
         "computation",
-        map_ranges={"__i": "0:inner_a_shape_sym"},
+        map_ranges={"__i": f"0:{inner_symbol_name}"},
         inputs={"__in": dace.Memlet("a[__i]")},
         code="__out = __in + 1.0",
         outputs={"__out": dace.Memlet("t[__i]")},
@@ -702,27 +706,27 @@ def _make_inilining_symbol_usage_1_sdfg(
         external_edges=True,
     )
 
-    if no_inner_wb_state:
-        inner_state.add_nedge(t, inner_state.add_access("b"),
-                              dace.Memlet("t[0:inner_a_shape_sym - 1] -> [1:inner_a_shape_sym]"))
-    else:
+    if separate_write_back_state:
         inner_astate = inner_sdfg.add_state_after(inner_state)
         inner_astate.add_nedge(inner_astate.add_access("t"), inner_astate.add_access("b"),
-                               dace.Memlet("t[0:inner_a_shape_sym - 1] -> [1:inner_a_shape_sym]"))
+                               dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+    else:
+        inner_state.add_nedge(t, inner_state.add_access("b"),
+                              dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
 
     # Creating the outer SDFG.
     outer_sdfg = dace.SDFG(unique_name("outer_sdfg"))
     outer_state = outer_sdfg.add_state(is_start_block=True)
 
     outer_sdfg.add_scalar(
-        "outer_a_shape_scalar",
+        "outer_scalar",
         dace.int32,
         transient=True,
     )
 
     shape_of_T = (20, )
     if outside_uses_symbol:
-        shape_of_T = ("inner_a_shape_sym", )
+        shape_of_T = (outer_symbol_name, )
         outer_sdfg.add_symbol(shape_of_T[0], dace.int32)
 
     outer_sdfg.add_array(
@@ -747,12 +751,12 @@ def _make_inilining_symbol_usage_1_sdfg(
     )
 
     A, B, T = (outer_state.add_access(name) for name in "ABT")
-    outer_a_shape_scalar = outer_state.add_access("outer_a_shape_scalar")
+    outer_a_shape_scalar = outer_state.add_access("outer_scalar")
 
     nsdfg_node = outer_state.add_nested_sdfg(
         sdfg=inner_sdfg,
         parent=outer_sdfg,
-        inputs={"inner_a_shape_scalar", "a"},
+        inputs={"inner_scalar", "a"},
         outputs={"b"},
         symbol_mapping={},
     )
@@ -768,14 +772,14 @@ def _make_inilining_symbol_usage_1_sdfg(
         "__out",
         outer_a_shape_scalar,
         None,
-        dace.Memlet("outer_a_shape_scalar[0]"),
+        dace.Memlet("outer_scalar[0]"),
     )
     outer_state.add_edge(
         outer_a_shape_scalar,
         None,
         nsdfg_node,
-        "inner_a_shape_scalar",
-        dace.Memlet("outer_a_shape_scalar[0]"),
+        "inner_scalar",
+        dace.Memlet("outer_scalar[0]"),
     )
 
     outer_state.add_edge(
@@ -804,19 +808,17 @@ def _make_inilining_symbol_usage_1_sdfg(
     return outer_sdfg, inner_sdfg, inner_state, nsdfg_node
 
 
-@pytest.mark.parametrize("no_inner_wb_state", [True, False])
-def test_multistate_inline_no_symbol_clash(no_inner_wb_state: bool):
-    """Test the inlining of a nested SDFG with multiple state.
-
-    It is important that here we also turn a value, which is a scalar in the outer
-    SDFG into a symbol inside the nested SDFG. The symbol is however, not used on
-    the outside.
+@pytest.mark.parametrize("separate_write_back_state", [True, False])
+def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: bool):
     """
-    no_inner_wb_state = False
-    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_inilining_symbol_usage_1_sdfg(
-        outside_uses_symbol=False, no_inner_wb_state=no_inner_wb_state)
+    The outside does not define any symbols.
+    """
+    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_nested_inlining(
+        outside_uses_symbol=False,
+        outside_uses_different_symbol=False,
+        separate_write_back_state=separate_write_back_state)
 
-    assert inner_sdfg.number_of_nodes() == (2 if no_inner_wb_state else 3)
+    assert inner_sdfg.number_of_nodes() == (3 if separate_write_back_state else 2)
     assert outer_sdfg.number_of_nodes() == 1
     assert inner_sdfg.free_symbols == set()
     assert outer_sdfg.free_symbols == set()
@@ -825,15 +827,15 @@ def test_multistate_inline_no_symbol_clash(no_inner_wb_state: bool):
 
     inner_assigning_edge = next(iter(inner_sdfg.in_edges(map_state)))
     assert len(inner_assigning_edge.data.assignments) == 1
-    assert "inner_a_shape_sym" in inner_assigning_edge.data.assignments
-    assert inner_assigning_edge.data.assignments["inner_a_shape_sym"] == "inner_a_shape_scalar"
+    assert "inner_symbol" in inner_assigning_edge.data.assignments
+    assert inner_assigning_edge.data.assignments["inner_symbol"] == "inner_scalar"
 
     assert set(outer_sdfg.signature_arglist(False)) == {"A", "B"}
-    assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_a_shape_scalar"}
-    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "outer_a_shape_scalar"}
-    assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_a_shape_scalar"}
+    assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_scalar"}
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "outer_scalar"}
+    assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_scalar"}
     assert outer_sdfg.symbols.keys() == set()
-    assert inner_sdfg.symbols.keys() == {"inner_a_shape_sym"}
+    assert inner_sdfg.symbols.keys() == {"inner_symbol"}
 
     # Test if it is possible to compile the thing.
     initial_outer_csdfg = outer_sdfg.compile()
@@ -842,25 +844,25 @@ def test_multistate_inline_no_symbol_clash(no_inner_wb_state: bool):
     assert count == 1
     outer_sdfg.validate()
 
-    assert outer_sdfg.number_of_nodes() == (4 if no_inner_wb_state else 5)
+    assert outer_sdfg.number_of_nodes() == (5 if separate_write_back_state else 4)
     assert count_nodes(outer_sdfg, dace_nodes.NestedSDFG) == 0
     assert count_nodes(outer_sdfg, dace_nodes.Tasklet) == 2
     assert count_nodes(outer_sdfg, dace_nodes.MapEntry) == 1
 
     ac_nodes = count_nodes(outer_sdfg, dace_nodes.AccessNode, True)
-    assert {ac.data for ac in ac_nodes} == {"A", "B", "T", "t", "outer_a_shape_scalar"}
+    assert {ac.data for ac in ac_nodes} == {"A", "B", "T", "t", "outer_scalar"}
 
-    if no_inner_wb_state:
-        assert len(ac_nodes) == 6
-        assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 1
-    else:
+    if separate_write_back_state:
         assert len(ac_nodes) == 7
         assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 2
+    else:
+        assert len(ac_nodes) == 6
+        assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 1
     assert len([ac.data for ac in ac_nodes if ac.data == "T"]) == 2
 
     # `inner_a_shape_scalar` was not used so it is removed.
-    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "t", "outer_a_shape_scalar"}
-    assert outer_sdfg.symbols.keys() == {"inner_a_shape_sym"}
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "t", "outer_scalar"}
+    assert outer_sdfg.symbols.keys() == {"inner_symbol"}
     assert set(outer_sdfg.signature_arglist(False)) == {"A", "B"}
 
     assert map_state in outer_sdfg.nodes()
@@ -868,8 +870,8 @@ def test_multistate_inline_no_symbol_clash(no_inner_wb_state: bool):
     assert outer_sdfg.in_degree(map_state) == 1
     assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
     assert len(assigning_edge.data.assignments) == 1
-    assert "inner_a_shape_sym" in assigning_edge.data.assignments
-    assert assigning_edge.data.assignments["inner_a_shape_sym"] == "outer_a_shape_scalar"
+    assert "inner_symbol" in assigning_edge.data.assignments
+    assert assigning_edge.data.assignments["inner_symbol"] == "outer_scalar"
 
     # Test if the compilation itself works.
     outer_sdfg.regenerate_code = True
@@ -877,39 +879,38 @@ def test_multistate_inline_no_symbol_clash(no_inner_wb_state: bool):
     csdfg = outer_sdfg.compile()
 
 
-def _test_multistate_inline_with_symbol_clash(no_inner_wb_state: bool):
+def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state: bool):
     """Test the inlining of a nested SDFG with multiple state.
 
-    The setting is very similar to `test_multistate_inline_no_symbol_clash()`.
-    The main difference is that the same symbol that is used on the inside is
-    also used on the outside. Note that the symbols not only have the same
-    name but also the same meaning. However, there is no entry in the symbol
-    mapping to indicate this, thus they are handled as symbols that have a
-    name clash.
+    The situation is very similar to `test_multistate_inline_no_symbols_on_the_outside()` but with
+    the difference that `T`, the transient on the outer SDFG, has a symbolic size. This symbol has
+    the same value name as the symbol on the inside.
     """
-    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_inilining_symbol_usage_1_sdfg(
-        outside_uses_symbol=True, no_inner_wb_state=no_inner_wb_state)
+    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_nested_inlining(
+        outside_uses_symbol=True,
+        outside_uses_different_symbol=False,
+        separate_write_back_state=separate_write_back_state)
 
-    assert inner_sdfg.number_of_nodes() == (2 if no_inner_wb_state else 3)
+    assert inner_sdfg.number_of_nodes() == (3 if separate_write_back_state else 2)
     assert outer_sdfg.number_of_nodes() == 1
     assert inner_sdfg.free_symbols == set()
-    assert outer_sdfg.free_symbols == {"inner_a_shape_sym"}
+    assert outer_sdfg.free_symbols == {"inner_symbol"}
     assert map_state not in outer_sdfg.nodes()
     assert map_state in inner_sdfg.nodes()
 
     inner_assigning_edge = next(iter(inner_sdfg.in_edges(map_state)))
     assert len(inner_assigning_edge.data.assignments) == 1
-    assert "inner_a_shape_sym" in inner_assigning_edge.data.assignments
-    assert inner_assigning_edge.data.assignments["inner_a_shape_sym"] == "inner_a_shape_scalar"
+    assert "inner_symbol" in inner_assigning_edge.data.assignments
+    assert inner_assigning_edge.data.assignments["inner_symbol"] == "inner_scalar"
 
-    # Despite its name the symbol `inner_a_shape_scalar` is also used on the outer SDFG, to
-    #  denote the size of an array.
-    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", "inner_a_shape_sym"}
-    assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_a_shape_scalar"}
-    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "outer_a_shape_scalar"}
-    assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_a_shape_scalar"}
-    assert inner_sdfg.symbols.keys() == {"inner_a_shape_sym"}
-    assert outer_sdfg.symbols.keys() == {"inner_a_shape_sym"}
+    # The symbol `inner_symbol` of the outer SDFG is a free symbol, for that reason it has to
+    #  be provided as argument. Contrary to that, the inner SDFG needs the scalar.
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", "inner_symbol"}
+    assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", "inner_scalar"}
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "outer_scalar"}
+    assert set(inner_sdfg.arrays.keys()) == {"a", "b", "t", "inner_scalar"}
+    assert inner_sdfg.symbols.keys() == {"inner_symbol"}
+    assert outer_sdfg.symbols.keys() == {"inner_symbol"}
 
     # Test if it is possible to compile the thing.
     initial_outer_csdfg = outer_sdfg.compile()
@@ -918,31 +919,31 @@ def _test_multistate_inline_with_symbol_clash(no_inner_wb_state: bool):
     assert count == 1
     outer_sdfg.validate()
 
-    assert outer_sdfg.number_of_nodes() == (4 if no_inner_wb_state else 5)
+    assert outer_sdfg.number_of_nodes() == (5 if separate_write_back_state else 4)
     assert count_nodes(outer_sdfg, dace_nodes.NestedSDFG) == 0
     assert count_nodes(outer_sdfg, dace_nodes.Tasklet) == 2
     assert count_nodes(outer_sdfg, dace_nodes.MapEntry) == 1
 
     ac_nodes = count_nodes(outer_sdfg, dace_nodes.AccessNode, True)
-    assert {ac.data for ac in ac_nodes} == {"A", "B", "T", "t", "outer_a_shape_scalar"}
+    assert {ac.data for ac in ac_nodes} == {"A", "B", "T", "t", "outer_scalar"}
 
-    if no_inner_wb_state:
-        assert len(ac_nodes) == 6
-        assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 1
-    else:
+    if separate_write_back_state:
         assert len(ac_nodes) == 7
         assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 2
+    else:
+        assert len(ac_nodes) == 6
+        assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 1
     assert len([ac.data for ac in ac_nodes if ac.data == "T"]) == 2
 
     # `inner_a_shape_scalar` was not used so it is removed.
-    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "t", "outer_a_shape_scalar"}
-    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", "inner_a_shape_sym"}
+    assert set(outer_sdfg.arrays.keys()) == {"A", "B", "T", "t", "outer_scalar"}
+    assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", "inner_symbol"}
 
     # The transformation was unable to figuring out that `inner_a_shape_sym` on the inside
     #  and the outside are the same, thus both exists, but there is the interstate edge that
     #  makes both the same. It is important that in the check here also depends on the renaming
     #  convention used by the transformation.
-    assert outer_sdfg.symbols.keys() == {"inner_a_shape_sym", "inner_a_shape_sym_0"}
+    assert outer_sdfg.symbols.keys() == {"inner_symbol", "inner_symbol_0"}
 
     assert map_state in outer_sdfg.nodes()
     assert count_nodes(map_state, dace_nodes.MapEntry) == 1
@@ -951,8 +952,8 @@ def _test_multistate_inline_with_symbol_clash(no_inner_wb_state: bool):
     # See above why there is a `_0` at the end of the name.
     assigning_edge = next(iter(outer_sdfg.in_edges(map_state)))
     assert len(assigning_edge.data.assignments) == 1
-    assert "inner_a_shape_sym_0" in assigning_edge.data.assignments
-    assert assigning_edge.data.assignments["inner_a_shape_sym_0"] == "outer_a_shape_scalar"
+    assert "inner_symbol_0" in assigning_edge.data.assignments
+    assert assigning_edge.data.assignments["inner_symbol_0"] == "outer_scalar"
 
     # Test if the compilation itself works.
     outer_sdfg.regenerate_code = True
@@ -960,22 +961,13 @@ def _test_multistate_inline_with_symbol_clash(no_inner_wb_state: bool):
     csdfg = outer_sdfg.compile()
 
 
-@pytest.mark.skip(reason="Allocation failure.")
-def test_multistate_inline_with_symbol_clash_extra_write_back_state():
-    # The reason why this does not work is, because `t` is needed in two state. Thus the allocation
-    #  is done at the beginning, however, the size of `t` is only known after the first inter state
-    #  edge, which is why we get a compilation error. If there is no write back state, i.e. `t` is
-    #  only used in one state, then allocation is performed within this state, when the size is
-    #  already available.
-    # The real question however is why does `test_multistate_inline_no_symbol_clash()` which also
-    #  has three inner state, compiles?
-    _test_multistate_inline_with_symbol_clash(no_inner_wb_state=False)
+@pytest.mark.skip(reason="Because of issue#2072 this does not work.")
+def test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_writeback_state():
+    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=True)
 
 
-def test_multistate_inline_with_symbol_clash_extra_single_process_state():
-    # Because `t` is only used within a single state, its allocation is postponed until there
-    #  this means its size is available when it is allocated.
-    _test_multistate_inline_with_symbol_clash(no_inner_wb_state=True)
+def test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state():
+    _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdfg(separate_write_back_state=False)
 
 
 def test_multistate_inline_with_symbol_mapping():
