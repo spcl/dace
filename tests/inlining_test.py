@@ -651,7 +651,7 @@ def test_inlining_view_input():
     np.testing.assert_allclose(expected, actual)
 
 
-def _make_sdfg_for_multistate_nested_inlining(
+def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
     outside_uses_symbol: bool,
     outside_uses_different_symbol: bool,
     separate_write_back_state: bool,
@@ -822,7 +822,7 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
     """
     The outside does not define any symbols.
     """
-    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_nested_inlining(
+    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         outside_uses_symbol=False,
         outside_uses_different_symbol=False,
         separate_write_back_state=separate_write_back_state)
@@ -900,7 +900,7 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     inner_symbol_name = "inner_symbol"
     outer_symbol_name = "outer_symbol" if outside_uses_different_symbol else inner_symbol_name
 
-    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_nested_inlining(
+    outer_sdfg, inner_sdfg, map_state, nsdfg_node = _make_sdfg_for_multistate_inlining_with_symbol_promotion(
         outside_uses_symbol=True,
         outside_uses_different_symbol=outside_uses_different_symbol,
         separate_write_back_state=separate_write_back_state)
