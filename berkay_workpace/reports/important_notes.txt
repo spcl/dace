@@ -4,3 +4,10 @@
    Generally: The CudaStreamManager assumes that the NaiveGPUScheduler pass was called before.
    Also, the CudaStreamManager should define the functions "get_stream_edge" (and maybe "get_stream_node"), since the the copystrategies might
    depend on it
+
+2. I think we should rename ExperimentalCUDACodegen to ExperimentalGPUCodegen (or similarly, rename CUDACodeGen to GPUCodeGen), since it
+   is also intended to handle HIP code. However, this should be verified for HIP first. Otherwise, it might be better to build two separate
+   codegens — this is confusing as it stands.
+
+3. "Struct" memory copies in old codegen are hacks. These are omitted in the new ExperimentalCUDACodegen, because they should be implemented
+   in a planned and structured way, which is out of scope for my Master's Thesis.
