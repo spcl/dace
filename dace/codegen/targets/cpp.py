@@ -253,11 +253,22 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+
+        # Avoid import loop
+        from dace.codegen.targets.cuda import CUDACodeGen
+        from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
+        
+        # Check whether we are in kernel/ device code of GPU backend
+        cuda_impl = Config.get('compiler', 'cuda', 'implementation')
+        if cuda_impl == "legacy":
+            in_device_code = CUDACodeGen._in_device_code
+        elif cuda_impl == "experimental":
+            in_device_code = ExperimentalCUDACodeGen._in_kernel_code
+
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
-        elif not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
+        elif not in_device_code:  # GPU kernels cannot access state
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'
