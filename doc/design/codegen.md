@@ -20,9 +20,9 @@ The current code generation system in DaCe follows this monolithic structure in 
 
 1. **Validation and Preprocessing**
    - SDFG validation (`sdfg.validate()`)
-   - Type inference (`infer_types.infer_connector_types()`)
-   - Default storage/schedule type setting (`infer_types.set_default_schedule_and_storage_types()`)
+   - Type inference for connectors and storage/schedule types (`infer_types.infer_connector_types()`, `infer_types.set_default_schedule_and_storage_types()`)
    - Library node expansion (`sdfg.expand_library_nodes()`)
+   - A second round of type inference following library node expansion
 
 2. **Frame Code Generator Setup**
    - Create `DaCeCodeGenerator` instance
@@ -90,108 +90,136 @@ The `DaCeCodeGenerator` class currently handles numerous responsibilities that s
    - Target-specific code routing
    - Memory allocation/deallocation code
 
+## Goals
+
+1. **Modularity and Verifiability**: Each pass is small enough to be tested separately
+2. **Target Disentanglement**: Clear separation between targets (CPU vs. OpenMP, CPP, CUDA from CPU)
+3. **Simple Support for Other Target Languages**: If, e.g., SYCL is required as a target, or LLVM IR instead of C++,
+   it should be easy to perform.
+
+
 ## Proposed Pass Decomposition
 
-### Phase 1: Analysis Passes
+### Phase 1: Scheduling and Analysis Passes
 
-#### 1. **TypeInferencePass**
+#### 1. **ValidationPass**
+- **Purpose**: Run SDFG validation prior to code generation
+- **Input**: Input SDFG
+- **Output**: None
+- **Current Location**: `validate.py`
+
+#### 2. **TypeInferencePass**
 - **Purpose**: Infer connector types and set default storage/schedule types
-- **Input**: Raw SDFG
+- **Input**: Input SDFG
 - **Output**: SDFG with inferred types, pipeline_results["type_info"]
 - **Current Location**: `infer_types.py` functions
 
-#### 2. **LibraryExpansionPass**
+#### 3. **LibraryExpansionPass**
 - **Purpose**: Expand all library nodes that haven't been expanded
 - **Input**: Type-inferred SDFG
 - **Output**: SDFG with expanded library nodes
 - **Current Location**: `sdfg.expand_library_nodes()`
 
-#### 3. **MetadataCollectionPass**
+#### 4. **TypeInferencePass**
+- **Purpose**: After expanding library nodes, run a second type inference pass if the SDFG changed
+- **Input**: Library-expanded SDFG
+- **Output**: SDFG with inferred types, updated pipeline_results["type_info"]
+- **Current Location**: `infer_types.py` functions
+
+#### 5. **MetadataCollectionPass**
 - **Purpose**: Collect free symbols, argument lists, constants, shared transients
 - **Input**: Expanded SDFG
 - **Output**: pipeline_results["metadata"] = {symbols, arglist, constants, shared_transients}
 - **Current Location**: `DaCeCodeGenerator.__init__()`
 
-#### 4. **AllocationAnalysisPass**
+#### 6. **ControlFlowRaising**
+- **Purpose**: Extract structured control flow from state machines, if Control Flow Regions were not already given
+- **Input**: SDFG
+- **Output**: SDFG with Control Flow Regions
+- **Current Location**: Already exists
+
+#### 7. **AllocationAnalysisPass**
 - **Purpose**: Determine allocation lifetimes and scopes for all data containers
 - **Input**: SDFG with metadata
-- **Output**: pipeline_results["allocation_info"] = {to_allocate, where_allocated}
+- **Output**: SDFG with allocation/deallocation points stored in node metadata
+- **Note**: Node metadata is used for allocation info in order to enable user-defined allocation scopes that supersede
+            these decisions.
 - **Current Location**: `DaCeCodeGenerator.determine_allocation_lifetime()`
 
-#### 5. **ControlFlowAnalysisPass**
-- **Purpose**: Extract structured control flow from state machines
+#### 8. **StreamAssignmentPass** (mostly GPU-specific)
+- **Purpose**: Assign streams for concurrent execution. Currently used for CUDA/HIP streams but can apply to other architectures
 - **Input**: SDFG
-- **Output**: pipeline_results["control_flow_tree"]
-- **Current Location**: `control_flow.py` functions
+- **Output**: SDFG with stream assignments stored in node metadata
+- **Note**: Stream assignments are stored directly in `Node.metadata` fields rather than replicated in pipeline_results dictionary for efficiency
+- **Current Location**: Embedded in CUDA code generation
 
-#### 6. **TargetAnalysisPass**
-- **Purpose**: Identify required code generation targets and dispatch routes
-- **Input**: SDFG with metadata
-- **Output**: pipeline_results["targets"] = {required_targets, dispatch_info}
-- **Current Location**: `_get_codegen_targets()`
+### Phase 2: Lowering Passes
 
-### Phase 2: Transformation Passes
+#### Target-Specific Preprocessing Passes
+- **Purpose**: Perform preprocessing modifications on the SDFG based on the code generators that will be used next
+- **Examples**: `FPGAPreprocessingPass` for FPGAs, `StreamAssignmentPass` for GPUs, `CopyToMap` for heterogeneous targets in general (see below)
 
-#### 7. **AllocationPass**
-- **Purpose**: Add allocation/deallocation tasklets to the SDFG for each scope
+#### 9. **LowerAllocations**
+- **Purpose**: Add allocation/deallocation annotations (e.g., as tasklets) to the SDFG for each scope
 - **Input**: SDFG with allocation analysis
 - **Output**: SDFG with allocation/deallocation tasklets inserted
 - **Current Location**: `allocate_arrays_in_scope()`, `deallocate_arrays_in_scope()`
 - **Note**: This modifies the SDFG structure rather than generating code
 
-#### 8. **CopyToMapPass**
-- **Purpose**: Convert complex memory copies to Map nodes where needed
+#### 10. **CopyToMap**
+- **Purpose**: Convert nontrivial memory copies to Map nodes where needed
 - **Input**: SDFG with targets identified
 - **Output**: SDFG with transformed copies
 - **Current Location**: `cuda.py` preprocessing, various target preprocessors
 - **Applies To**: GPU strided copies, FPGA transfers
 
-#### 9. **StreamAssignmentPass** (GPU-specific)
-- **Purpose**: Assign CUDA streams for concurrent execution
-- **Input**: GPU-targeted SDFG
-- **Output**: SDFG with stream assignments stored in node metadata
-- **Note**: Stream assignments are stored directly in `Node.metadata` fields rather than replicated in pipeline_results dictionary for efficiency
-- **Current Location**: Embedded in CUDA code generation
-
-#### 10. **TaskletLanguageLoweringPass**
-- **Purpose**: Convert Python/generic tasklets to target language (C++/CUDA/etc.)
+#### 11. **LowerTaskletLanguage**
+- **Purpose**: Convert Python/generic tasklets to tasklets in the target language (C++/CUDA/etc.)
 - **Input**: SDFG with tasklets
 - **Output**: SDFG with lowered tasklets
 - **Current Location**: Distributed across target generators
 
+#### 12. **LowerMemlets**
+- **Purpose**: Lower high-level memlets to explicit copy operations
+- **Input**: SDFG with target analysis
+- **Output**: SDFG with explicit copies annotated (e.g., as tasklets)
+- **Current Location**: Embedded in target-specific copy generation
+
+#### 13. **SplitSDFGToTargets**
+- **Purpose**: The final lowering step splits the single SDFG into an SDFG per target file.
+               This means that, for example, a GPU kernel map will be converted to an ExternalSDFG call
+               to another SDFG file that contains the kernel.
+- **Input**: SDFG
+- **Output**: List of SDFGs (one per target file)
+- **Current Location**: Implicit in current system
+- **Note**: This step makes explicit the separation of generated code into translation units, either due to necessity
+            (e.g., different output language) or for performance (e.g., parallel compilation, avoiding recompilation).
+            Using multiple SDFGs and adding user-defined knobs to tune this process could increase code generation
+            and compilation scalability.
+
 ### Phase 3: Code Generation Passes
 
-#### 10. **StateStructCreationPass**
+#### 14. **GenerateStateStruct**
 - **Purpose**: Generate state struct definitions for persistent data
 - **Input**: SDFG with allocation info
 - **Output**: pipeline_results["state_struct"] = {struct_def, struct_init}
 - **Current Location**: `DaCeCodeGenerator.generate_code()`
 
-#### 11. **MemletLoweringPass**
-- **Purpose**: Lower high-level memlets to explicit copy operations
-- **Input**: SDFG with target analysis
-- **Output**: SDFG with explicit copies as tasklets
-- **Current Location**: Embedded in target-specific copy generation
-
-#### 12. **SDFGSplittingPass**
-- **Purpose**: Split complex SDFGs into multiple files if needed
-- **Input**: SDFG with memlet lowering complete
-- **Output**: List of SDFGs (one per target file)
-- **Current Location**: Implicit in current system
-- **Note**: Moved earlier to enable per-file frame and target code generation
-
-#### 13. **TargetCodeGenerationPass**
-- **Purpose**: Generate both frame code and target-specific code for each SDFG file by calling the appropriate target code generators
-- **Input**: Split SDFGs with all previous analysis
+#### 15. **GenerateTargetCode**
+- **Purpose**: Generate both frame code and target-specific code for each SDFG file by traversing the graph and emitting
+               code for each element.
+- **Input**: Split SDFGs with all previous analyses
 - **Output**: pipeline_results["code_objects"] = List[CodeObject] with complete code
 - **Current Location**: Combined from `DaCeCodeGenerator.generate_code()` and target-specific `get_generated_codeobjects()`
-- **Note**: This pass calls the target code generators (CppCodeGen, GPUCodeGen, FPGACodeGen, etc.) to generate platform-specific code
+- **Note**: This pass may call individual target code generators (CppCodeGen, GPUCodeGen, FPGACodeGen, etc.) to
+            generate platform-specific code
 
-#### 14. **HeaderGenerationPass**
+#### 14. **GenerateHeaders**
 - **Purpose**: Generate C/C++ header files for SDFG interface
 - **Input**: CodeObjects with complete code
 - **Output**: pipeline_results["headers"] = {call_header, sample_main}
 - **Current Location**: `generate_headers()`, `generate_dummy()`
+- **Note**: This will also generate the code sample that DaCe provides within a cache folder
 
 ## Information Flow Design
 
@@ -203,142 +231,34 @@ class CodeGenerationPipeline(Pipeline):
 
     def __init__(self):
         super().__init__([
-            # Phase 1: Analysis
+            # Phase 1: Scheduling
+            ValidationPass(),
             TypeInferencePass(),
             LibraryExpansionPass(),
+            TypeInferencePass(),
             MetadataCollectionPass(),
+            ControlFlowRaising(),
             AllocationAnalysisPass(),
-            ControlFlowAnalysisPass(),
-            TargetAnalysisPass(),
+            StreamAssignmentPass(),
 
-            # Phase 2: Transformations
-            AllocationPass(),
-            CopyToMapPass(),
+            # Phase 2: Lowering
+            LowerAllocations(),
             ConditionalPipeline([
-                (lambda r: 'cuda' in r.get('targets', []), StreamAssignmentPass()),
+                (lambda r: 'cuda' in r.get('targets', []), CopyToMapPass()),
                 (lambda r: 'fpga' in r.get('targets', []), FPGAPreprocessingPass()),
             ]),
-            TaskletLanguageLoweringPass(),
+            LowerTaskletLanguage(),
+            LowerMemlets(),
+            SplitSDFGToTargets(),
 
             # Phase 3: Code Generation
-            StateStructCreationPass(),
-            MemletLoweringPass(),
-            SDFGSplittingPass(),
-            FrameAndTargetCodeGenerationPass(),
-            HeaderGenerationPass(),
-        ])
-```
-
-### Target-Specific Sub-Pipelines
-
-```python
-class CUDACodegenPipeline(Pipeline):
-    """CUDA-specific code generation pipeline."""
-
-    def __init__(self):
-        super().__init__([
-            CUDATargetValidationPass(),
-            CUDAMemoryAnalysisPass(),
-            CUDAKernelExtractionPass(),
-            CUDAStreamAssignmentPass(),
-            CUDAKernelGenerationPass(),
-            CUDALaunchCodePass(),
-        ])
-
-class FPGACodegenPipeline(Pipeline):
-    """FPGA-specific code generation pipeline."""
-
-    def __init__(self):
-        super().__init__([
-            FPGAResourceAnalysisPass(),
-            FPGAStreamingPass(),
-            FPGAHLSGenerationPass(),
-            FPGAHostCodePass(),
+            GenerateStateStruct(),
+            GenerateTargetCode(),
+            GenerateHeaders(),
         ])
 ```
 
 ## Information Flow and Reuse
-
-### Pipeline Results Schema
-
-The `pipeline_results` dictionary will contain structured information to maximize reuse:
-
-```python
-pipeline_results = {
-    # From TypeInferencePass
-    "type_info": {
-        "connector_types": Dict[Node, Dict[str, dtypes.typeclass]],
-        "storage_types": Dict[str, dtypes.StorageType],
-        "schedule_types": Dict[Node, dtypes.ScheduleType],
-    },
-
-    # From MetadataCollectionPass
-    "metadata": {
-        "free_symbols": Dict[int, Set[str]],
-        "symbols_and_constants": Dict[int, Set[str]],
-        "arglist": Dict[str, data.Data],
-        "shared_transients": Dict[int, Set[str]],
-    },
-
-    # From AllocationAnalysisPass
-    "allocation_info": {
-        "to_allocate": DefaultDict[scope, List[allocation_tuple]],
-        "where_allocated": Dict[Tuple[SDFG, str], scope],
-        "allocation_scopes": Dict[str, scope],
-    },
-
-    # From TargetAnalysisPass
-    "targets": {
-        "required_targets": Set[TargetCodeGenerator],
-        "dispatch_routes": Dict[Node, TargetCodeGenerator],
-        "copy_dispatchers": Dict[edge, TargetCodeGenerator],
-    },
-
-    # From ControlFlowAnalysisPass
-    "control_flow": {
-        "control_flow_tree": Dict[SDFG, ControlFlow],
-        "structured_regions": Dict[SDFG, List[ControlFlowRegion]],
-    },
-
-    # From StreamAssignmentPass (GPU)
-    "stream_info": {
-        "stream_assignments": Dict[Node, int],
-        "stream_dependencies": nx.DiGraph,
-        "synchronization_points": List[Tuple[Node, Node]],
-    },
-
-    # From StateStructCreationPass
-    "state_struct": {
-        "struct_definition": str,
-        "struct_members": List[str],
-        "initialization_code": str,
-    },
-
-    # From AllocationCodePass
-    "allocation_code": {
-        "alloc_code_by_scope": Dict[scope, str],
-        "dealloc_code_by_scope": Dict[scope, str],
-        "persistent_allocations": List[str],
-    },
-
-    # From FrameCodeGenerationPass
-    "frame_code": {
-        "global_code": str,
-        "local_code": str,
-        "function_signatures": Dict[str, str],
-        "header_includes": List[str],
-    },
-
-    # From TargetCodeGenerationPass
-    "target_code": {
-        "code_objects": List[CodeObject],
-        "target_specific_code": Dict[str, str],
-        "compilation_flags": Dict[str, List[str]],
-    },
-}
-```
-
-### Information Reuse Strategies
 
 1. **Caching Analysis Results**: Store expensive analysis results (allocation lifetime, control flow) to avoid recomputation
 2. **Incremental Updates**: Allow passes to update only changed portions of the SDFG
@@ -364,6 +284,9 @@ dace/codegen/
 ```
 
 ### Proposed Structure
+
+This is only a proposed structure and might change as implementation commences.
+
 ```
 dace/codegen/
 ├── __init__.py
@@ -380,16 +303,15 @@ dace/codegen/
 │   │   ├── __init__.py
 │   │   ├── type_inference.py
 │   │   ├── metadata_collection.py
-│   │   ├── allocation_analysis.py
-│   │   ├── control_flow_analysis.py
-│   │   └── target_analysis.py
+│   │   └── allocation_analysis.py
 │   ├── transformation/     # Transformation passes
 │   │   ├── __init__.py
 │   │   ├── copy_to_map.py
 │   │   ├── stream_assignment.py
 │   │   ├── tasklet_lowering.py
+│   │   ├── library_node_expansion.py
 │   │   └── memlet_lowering.py
-│   ├── codegen/           # Code generation passes
+│   ├── generation/           # Code generation passes
 │   │   ├── __init__.py
 │   │   ├── state_struct.py
 │   │   ├── allocation_code.py
@@ -405,7 +327,7 @@ dace/codegen/
 │   ├── __init__.py
 │   ├── base.py            # Base target interface (from target.py)
 │   ├── openmp.py          # OpenMP backend (split from cpu.py)
-│   ├── cpp.py             # Pure C++ backend
+│   ├── cpp.py             # Pure C++ backend (split from cpu.py and cpp.py)
 │   ├── gpu.py             # GPU backend (generalized from cuda.py)
 │   ├── fpga/              # FPGA backends
 │   └── specialized/       # Other specialized targets
@@ -419,11 +341,6 @@ dace/codegen/
 ```
 
 ## Target Refactoring
-
-### Current Issues
-- **CPU backend** actually does OpenMP generation
-- **CUDA backend** is GPU-specific, not general GPU
-- Poor separation between generic and specific backends
 
 ### Proposed Refactoring
 
@@ -446,44 +363,6 @@ dace/codegen/
 - Covers the superset of both NVIDIA and AMD GPU features
 - Device memory management and kernel launch logic
 
-### Target APIs and Usage
-
-The refactored target system provides a clear API for code generation passes:
-
-#### Target Discovery and Selection
-```python
-class TargetAnalysisPass(Pass):
-    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
-        # Discover available targets based on node types and GPU detection
-        targets = discover_targets(sdfg)
-        # Select appropriate target generators
-        generators = {
-            'cpu': CppCodeGen() if no_parallelism else OpenMPCodeGen(),
-            'gpu': GPUCodeGen(),  # Handles both CUDA and HIP
-            'fpga': FPGACodeGen(),
-        }
-        pipeline_results['targets'] = targets
-        pipeline_results['generators'] = generators
-```
-
-#### Target-Specific Code Generation
-```python
-class FrameAndTargetCodeGenerationPass(Pass):
-    def apply_pass(self, sdfg: SDFG, pipeline_results: dict) -> None:
-        generators = pipeline_results['generators']
-        for target, generator in generators.items():
-            # Each generator handles its specific code generation
-            code_objects = generator.generate_code(sdfg, pipeline_results)
-            pipeline_results['code_objects'].extend(code_objects)
-```
-
-#### Target Interface
-Each target generator implements a common interface:
-- `can_handle(node)`: Check if target can handle specific node types
-- `generate_code(sdfg, pipeline_results)`: Generate code for target
-- `get_includes()`: Return required header includes
-- `get_dependencies()`: Return compilation dependencies
-
 ### Target Hierarchy
 ```
 TargetCodeGenerator (base)
@@ -497,10 +376,8 @@ TargetCodeGenerator (base)
 ├── FPGACodeGen (FPGA base)
 │   ├── XilinxCodeGen
 │   ├── IntelFPGACodeGen
-│   └── OpenCLCodeGen (Intel FPGA only)
-└── SpecializedCodeGen
-    ├── MLIRCodeGen
-    └── RTLCodeGen (part of FPGA toolchain)
+|   └── RTLCodeGen
+└── MLIRCodeGen
 ```
 
 ## Implementation Roadmap
@@ -531,7 +408,7 @@ TargetCodeGenerator (base)
 
 ### Phase 5: Target Refactoring (Weeks 9-10)
 1. Split CPU backend into C++ and OpenMP
-2. Rename CUDA backend to GPU
+2. Refactor CUDA backend to GPU
 3. Reorganize FPGA backends
 
 ### Phase 6: Integration and Testing (Weeks 11-12)
