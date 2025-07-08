@@ -868,9 +868,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             pass
         # If scope(dst) contains scope(src), then dst must be a data node,
         # unless the memlet is empty in order to connect to a scope
+        # this can also be tasklet where all edges have emtpy memlets
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
                 if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
+                    pass
+                if (e.data.is_empty() and isinstance(dst_node, nd.Tasklet)
+                        and all(oe.data.is_empty() for oe in state.out_edges(dst_node)) and len(node.in_connectors) == 0
+                        and len(node.out_connectors) == 0):
                     pass
                 else:
                     raise InvalidSDFGEdgeError(

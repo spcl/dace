@@ -2116,3 +2116,28 @@ def set_nested_sdfg_parent_references(sdfg: SDFG):
             if isinstance(node, NestedSDFG):
                 node.sdfg.parent_sdfg = sdfg
                 set_nested_sdfg_parent_references(node.sdfg)
+
+
+def add_missing_symbols_to_nsdfg(parent_sdfg: SDFG, nsdfg: nd.NestedSDFG, state: SDFGState):
+    connectors = set(nsdfg.in_connectors.keys()).union(nsdfg.out_connectors.keys())
+    symbols = set(k for k in nsdfg.sdfg.free_symbols if k not in connectors)
+    missing_symbols = [s for s in symbols if s not in nsdfg.symbol_mapping]
+
+    for missing_symbol in missing_symbols:
+        smybols_defined_at_scope = state.symbols_defined_at(nsdfg)
+        if missing_symbol not in smybols_defined_at_scope:
+            raise Exception(
+                f"Missing Symbol {missing_symbol} of Nested SDFG {nsdfg} ({nsdfg.sdfg.label}) not found in parent SDFG ({parent_sdfg.label})."
+            )
+
+        assert smybols_defined_at_scope[missing_symbol] is not None
+        if missing_symbol not in nsdfg.sdfg.symbols:
+            nsdfg.sdfg.add_symbol(
+                name=missing_symbol,
+                stype=smybols_defined_at_scope[missing_symbol],
+                find_new_name=False,
+            )
+
+        # Identity for the symbol mapping
+        assert missing_symbol not in nsdfg.symbol_mapping
+        nsdfg.symbol_mapping[missing_symbol] = missing_symbol
