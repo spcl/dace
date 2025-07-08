@@ -92,7 +92,9 @@ CPU_SCHEDULES = [
 ]
 
 # A subset of on-GPU storage types
-GPU_STORAGES = [StorageType.GPU_Shared, ]
+GPU_STORAGES = [
+    StorageType.GPU_Shared,
+]
 
 # A subset of on-FPGA storage types
 FPGA_STORAGES = [

@@ -13,7 +13,8 @@ def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
             if isinstance(node, dace.sdfg.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                 next_map = None
                 for n in state.bfs_nodes(node):
-                    if isinstance(n, dace.sdfg.nodes.MapEntry) and n != node and n.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock:
+                    if isinstance(n, dace.sdfg.nodes.MapEntry
+                                  ) and n != node and n.map.schedule == dace.dtypes.ScheduleType.GPU_ThreadBlock:
                         next_map = n
                         break
                     elif isinstance(n, dace.nodes.MapExit):
@@ -26,41 +27,46 @@ def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
                 for in_edge in state.in_edges(next_map):
                     if in_edge.data is not None:
                         in_arr_name = in_edge.data.data
-                        copy_shape = [(0, (((e) - b)//s), 1) for b, e, s in in_edge.data.subset]
-                        copied_shape = [(((e + 1) - b)//s) for b, e, s in in_edge.data.subset]
+                        copy_shape = [(0, (((e) - b) // s), 1) for b, e, s in in_edge.data.subset]
+                        copied_shape = [(((e + 1) - b) // s) for b, e, s in in_edge.data.subset]
                         copy_offset = [b for b, _, _ in in_edge.data.subset]
                         shared_mem_name = "shr_" + in_arr_name
                         in_arr = sdfg.arrays[in_arr_name]
                         if shared_mem_name not in sdfg.arrays:
-                            sdfg.add_array(shared_mem_name, copied_shape, in_arr.dtype, storage=dace.dtypes.StorageType.GPU_Shared, transient=True)
+                            sdfg.add_array(shared_mem_name,
+                                           copied_shape,
+                                           in_arr.dtype,
+                                           storage=dace.dtypes.StorageType.GPU_Shared,
+                                           transient=True)
 
                         if add_src_access_node is True:
                             a1 = state.add_access(in_arr_name)
                             a2 = state.add_access(shared_mem_name)
-                            e1 = state.add_edge(a1, None, a2, None, dace.Memlet(
-                                data=in_arr_name,
-                                subset=in_edge.data.subset,
-                                other_subset=dace.subsets.Range(copy_shape),
-                                wcr=None,
-                            ))
+                            e1 = state.add_edge(
+                                a1, None, a2, None,
+                                dace.Memlet(
+                                    data=in_arr_name,
+                                    subset=in_edge.data.subset,
+                                    other_subset=dace.subsets.Range(copy_shape),
+                                    wcr=None,
+                                ))
                             e2 = state.add_edge(a2, None, next_map, in_edge.dst_conn,
-                                                dace.Memlet.from_array(shared_mem_name,
-                                                                    sdfg.arrays[shared_mem_name]))
-                            e3 = state.add_edge(in_edge.src, in_edge.src_conn, a1, None,
-                                                copy.deepcopy(in_edge.data))
+                                                dace.Memlet.from_array(shared_mem_name, sdfg.arrays[shared_mem_name]))
+                            e3 = state.add_edge(in_edge.src, in_edge.src_conn, a1, None, copy.deepcopy(in_edge.data))
                             edges_to_rm.add(in_edge)
                             src_name_dst_name_offset[in_arr_name] = (shared_mem_name, copy_offset)
                         else:
                             a2 = state.add_access(shared_mem_name)
-                            e1 = state.add_edge(in_edge.src, in_edge.src_conn, a2, None, dace.Memlet(
-                                data=in_arr_name,
-                                subset=in_edge.data.subset,
-                                other_subset=dace.subsets.Range(copy_shape),
-                                wcr=None,
-                            ))
+                            e1 = state.add_edge(
+                                in_edge.src, in_edge.src_conn, a2, None,
+                                dace.Memlet(
+                                    data=in_arr_name,
+                                    subset=in_edge.data.subset,
+                                    other_subset=dace.subsets.Range(copy_shape),
+                                    wcr=None,
+                                ))
                             e2 = state.add_edge(a2, None, next_map, in_edge.dst_conn,
-                                                dace.Memlet.from_array(shared_mem_name,
-                                                                    sdfg.arrays[shared_mem_name]))
+                                                dace.Memlet.from_array(shared_mem_name, sdfg.arrays[shared_mem_name]))
                             edges_to_rm.add(in_edge)
                             src_name_dst_name_offset[in_arr_name] = (shared_mem_name, copy_offset)
 
@@ -69,12 +75,13 @@ def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
                     if edge.data is not None and edge.data.data in src_name_dst_name_offset:
                         dst_name, offset = src_name_dst_name_offset[edge.data.data]
                         edge.data.data = dst_name
-                        old_subset = [(b,e,s) for b, e, s in edge.data.subset]
+                        old_subset = [(b, e, s) for b, e, s in edge.data.subset]
                         new_subset = [(b - offset[i], e - offset[i], s) for i, (b, e, s) in enumerate(old_subset)]
                         edge.data.subset = dace.subsets.Range(new_subset)
 
                 for edge in edges_to_rm:
                     state.remove_edge(edge)
+
 
 def test_standalone_execution():
     """Standalone test function that can be run without pytest."""
@@ -122,19 +129,17 @@ def test_standalone_execution():
                 #node.map.gpu_block_size = (256, 1, 1)  # Set GPU block size for the map entry
                 # Apply multiple buffering transformation
                 options_dict = {
-                    "device_map_type":dace.dtypes.ScheduleType.GPU_Device,
-                    "copy_src_type":dace.dtypes.StorageType.GPU_Global,
-                    "copy_dst_type":dace.dtypes.StorageType.GPU_Shared,
+                    "device_map_type": dace.dtypes.ScheduleType.GPU_Device,
+                    "copy_src_type": dace.dtypes.StorageType.GPU_Global,
+                    "copy_dst_type": dace.dtypes.StorageType.GPU_Shared,
                     "synchronous": True,
                 }
-                db_transform_can_be_applied = MultipleBuffering().can_be_applied_to(
-                    sdfg=state.sdfg,
-                    options=options_dict,
-                    map_entry=node,
-                    expr_index=state.node_id(node),
-                    permissive=False,
-                    where=node
-                )
+                db_transform_can_be_applied = MultipleBuffering().can_be_applied_to(sdfg=state.sdfg,
+                                                                                    options=options_dict,
+                                                                                    map_entry=node,
+                                                                                    expr_index=state.node_id(node),
+                                                                                    permissive=False,
+                                                                                    where=node)
                 assert db_transform_can_be_applied, f"MultipleBuffering transformation should be applicable to the map entry. Returned:{db_transform_can_be_applied}"
 
                 MultipleBuffering().apply_to(
@@ -147,19 +152,17 @@ def test_standalone_execution():
             if isinstance(node, dace.sdfg.nodes.MapEntry) and node.map.schedule == dace.dtypes.ScheduleType.GPU_Device:
                 # Apply multiple buffering transformation
                 options_dict = {
-                    "device_map_type":dace.dtypes.ScheduleType.GPU_Device,
-                    "copy_src_type":dace.dtypes.StorageType.GPU_Global,
-                    "copy_dst_type":dace.dtypes.StorageType.GPU_Shared,
+                    "device_map_type": dace.dtypes.ScheduleType.GPU_Device,
+                    "copy_src_type": dace.dtypes.StorageType.GPU_Global,
+                    "copy_dst_type": dace.dtypes.StorageType.GPU_Shared,
                     "synchronous": False,
                 }
-                db_transform_can_be_applied = MultipleBuffering().can_be_applied_to(
-                    sdfg=state.sdfg,
-                    options=options_dict,
-                    map_entry=node,
-                    expr_index=state.node_id(node),
-                    permissive=False,
-                    where=node
-                )
+                db_transform_can_be_applied = MultipleBuffering().can_be_applied_to(sdfg=state.sdfg,
+                                                                                    options=options_dict,
+                                                                                    map_entry=node,
+                                                                                    expr_index=state.node_id(node),
+                                                                                    permissive=False,
+                                                                                    where=node)
                 assert db_transform_can_be_applied, f"MultipleBuffering transformation should be applicable to the map entry. Returned:{db_transform_can_be_applied}"
 
                 MultipleBuffering().apply_to(
@@ -167,8 +170,6 @@ def test_standalone_execution():
                     sdfg=transformed_sdfg2,
                     options=options_dict,
                 )
-
-
 
     # Validate SDFGs
     original_sdfg_w_shr_mem.validate()
@@ -178,12 +179,12 @@ def test_standalone_execution():
 
     # Initialize data
     cp.random.seed(42)
-    vals_A_orig = cp.fromfunction(lambda i, : i * (i + 2) / N_val, (N_val,), dtype=cp.float64)
-    vals_B_orig = cp.fromfunction(lambda i, : i * (i + 3) / N_val, (N_val,), dtype=cp.float64)
-    vals_C_orig = cp.fromfunction(lambda i, : i * 0 / N_val, (N_val,), dtype=cp.float64)
+    vals_A_orig = cp.fromfunction(lambda i, : i * (i + 2) / N_val, (N_val, ), dtype=cp.float64)
+    vals_B_orig = cp.fromfunction(lambda i, : i * (i + 3) / N_val, (N_val, ), dtype=cp.float64)
+    vals_C_orig = cp.fromfunction(lambda i, : i * 0 / N_val, (N_val, ), dtype=cp.float64)
 
     vals_A_2 = vals_A_orig.copy()
-    vals_B_2= vals_B_orig.copy()
+    vals_B_2 = vals_B_orig.copy()
     vals_C_2 = vals_C_orig.copy()
 
     # Execute SDFGs
@@ -231,7 +232,6 @@ def test_standalone_execution():
             print("Sample of buffered values:", vals_C_2[:64])
             print("Sample of differences:", cp.abs(vals_C_orig - vals_C_2)[:64])
     assert vals_C_close
-
 
 
 if __name__ == "__main__":

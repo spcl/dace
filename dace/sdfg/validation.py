@@ -873,7 +873,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
                     pass
                 else:
-                    if isinstance(dst_node, nd.Tasklet) and len(dst_node.in_connectors) == 0 and len(dst_node.out_connectors) == 0:
+                    if isinstance(dst_node, nd.Tasklet) and len(dst_node.in_connectors) == 0 and len(
+                            dst_node.out_connectors) == 0:
                         # Tasklets with no input or output connector -> sync tasklet -> OK
                         pass
                     else:

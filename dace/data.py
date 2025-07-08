@@ -2254,7 +2254,9 @@ def make_reference_from_descriptor(descriptor: Array,
     evaluated_strides = tuple(symbolic.evaluate(s, symbols) for s in descriptor.strides)
     return create_array(evaluated_shape, npdtype, evaluated_size, evaluated_strides)
 
+
 class PipelineDescriptor:
+
     def __init__(self, name: str, depth: int):
         self.name = name
         self.depth = depth
