@@ -26,11 +26,7 @@ from dace.libraries.torch.dispatchers.common import DaCeMLTorchFunction, compile
 
 log = logging.getLogger(__name__)
 
-_REPLACED_CTYPES = {
-    dace.int64: "int64_t",
-    dace.uint64: "uint64_t",
-    dace.float16: "at::Half"
-}
+_REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16: "at::Half"}
 
 
 def torch_ctype(dtype: dace.typeclass) -> str:
@@ -78,8 +74,7 @@ Tensor {name} = torch::{'zeros' if zeros else 'empty'}(
     """
 
 
-def initialize_outputs_code(module: 'dace.frontend.python.DaceModule',
-                            output_names: List[str]) -> str:
+def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_names: List[str]) -> str:
     """ Generate the code that initializes the output tensors
 
         :param module: the module
@@ -96,12 +91,11 @@ def initialize_outputs_code(module: 'dace.frontend.python.DaceModule',
     return code
 
 
-def argument_codegen(
-        sdfg: dace.SDFG,
-        clean_weights: Dict[str, torch.Tensor],
-        input_names: List[str],
-        output_names: List[str],
-        guard_contiguous: Optional[List[str]] = None) -> Tuple[str, str, str]:
+def argument_codegen(sdfg: dace.SDFG,
+                     clean_weights: Dict[str, torch.Tensor],
+                     input_names: List[str],
+                     output_names: List[str],
+                     guard_contiguous: Optional[List[str]] = None) -> Tuple[str, str, str]:
     """ Generate the code that grabs the pointers of inputs and outputs.
 
         The names of the tensors will match the SDFG tensor names. Tensors that are not created by us (i.e. inputs)
@@ -129,8 +123,7 @@ def argument_codegen(
         tctype = torch_ctype(arglist[name].dtype)
         dctype = arglist[name].dtype
 
-        if isinstance(arglist[name], data.Array) or dt.can_access(
-                dt.ScheduleType.GPU_Device, arglist[name].storage):
+        if isinstance(arglist[name], data.Array) or dt.can_access(dt.ScheduleType.GPU_Device, arglist[name].storage):
             if name in guard_contiguous:
                 if logging.root.level <= logging.DEBUG:
                     ptr_init_code += f"""
@@ -148,17 +141,14 @@ def argument_codegen(
             else:
                 ptr_init_code += '\n' + f"{dctype} {name}_ptr = static_cast<{dctype}>({name}.item().to<{tctype}>());"
         else:
-            raise ValueError(
-                f"Unsupported data type {type(arglist[name])} for descriptor {name}"
-            )
+            raise ValueError(f"Unsupported data type {type(arglist[name])} for descriptor {name}")
 
     ptr_init_code += '\n'
 
     # outputs and bwd arrays
     ptr_init_code += '\n'.join(
         f"{arglist[name].dtype.ctype} *{name}_ptr = reinterpret_cast<{arglist[name].dtype.ctype}*>"
-        f"({name}.data_ptr<{torch_ctype(arglist[name].dtype)}>());"
-        for name in sorted(output_names))
+        f"({name}.data_ptr<{torch_ctype(arglist[name].dtype)}>());" for name in sorted(output_names))
     ptr_init_code += "\n// setup constant arguments\n"
 
     all_access_nodes = set()
@@ -166,31 +156,21 @@ def argument_codegen(
         all_access_nodes |= set(n.data for n in state.data_nodes())
 
     # initialize all remaining parameters
-    remaining = set(arglist).difference(
-        itertools.chain(input_names, output_names))
+    remaining = set(arglist).difference(itertools.chain(input_names, output_names))
     for name in sorted(remaining):
         # remaining args must be constants
         if name not in clean_weights:
-            raise ValueError(
-                f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
-                f" of the PyTorch Module, and not a constant.")
+            raise ValueError(f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
+                             f" of the PyTorch Module, and not a constant.")
         if arglist[name].total_size > 1000:
-            raise ValueError(
-                f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
-                f" of the PyTorch Module, and is too large.")
-
-        # Skip parameter if it is not used
-        if name not in all_access_nodes:
-            desc = sdfg.arrays[name]
-            ptr_init_code += f"{desc.dtype.ctype} *{name}_ptr = nullptr;\n"
-            continue
+            raise ValueError(f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
+                             f" of the PyTorch Module, and is too large.")
 
         value = clean_weights[name]
         ptr_init_code += f"{constant_initializer_code(name, arglist[name], value)}\n"
 
     arguments = ", ".join(f"{n}_ptr" for n in arglist)
-    init_arguments = ", ".join(f"{n}_ptr" for n, desc in arglist.items()
-                               if isinstance(desc, data.Scalar))
+    init_arguments = ", ".join(f"{n}_ptr" for n, desc in arglist.items() if isinstance(desc, data.Scalar))
 
     return ptr_init_code, arguments, init_arguments
 
@@ -247,8 +227,7 @@ def save_non_inputs_outputs(names: List[str]):
     return "\n".join(f'ctx->saved_data["{n}"] = {n};' for n in names)
 
 
-def recover_saved_inputs_outputs(saved_inputs_outputs: List[str],
-                                 other_saved: List[str]):
+def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: List[str]):
     code = ""
     if saved_inputs_outputs:
         code += "auto saved = ctx->get_saved_variables();\n"
@@ -261,14 +240,11 @@ def recover_saved_inputs_outputs(saved_inputs_outputs: List[str],
     return code
 
 
-def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG,
-                      outputs: List[str]) -> str:
+def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str]) -> str:
     code = "// input grads"
-    for param_name, grad_name in sorted(
-            backward_result.required_grad_names.items()):
+    for param_name, grad_name in sorted(backward_result.required_grad_names.items()):
         zero_init = backward_result.zero_init.get(param_name, True)
-        code += "\n" + tensor_init_for_desc(
-            grad_name, sdfg.arrays[grad_name], zeros=zero_init)
+        code += "\n" + tensor_init_for_desc(grad_name, sdfg.arrays[grad_name], zeros=zero_init)
 
     code += "// output grads"
     for i, o in enumerate(outputs):
@@ -278,11 +254,9 @@ def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG,
     return code
 
 
-def code_for_backward_function(
-        module: 'dace.frontend.python.module.DaceModule',
-        forward_sdfg: dace.SDFG, backward_sdfg: dace.SDFG,
-        backward_result: BackwardResult,
-        forwarded_arrays: Dict[str, data.Data]) -> str:
+def code_for_backward_function(module: 'dace.frontend.python.module.DaceModule', forward_sdfg: dace.SDFG,
+                               backward_sdfg: dace.SDFG, backward_result: BackwardResult,
+                               forwarded_arrays: Dict[str, data.Data]) -> str:
 
     inputs, outputs = get_arglist(module)
     sdfg_name = forward_sdfg.name
@@ -290,34 +264,27 @@ def code_for_backward_function(
     ret_str = return_type_str(outputs)
 
     outputs_with_forwarded_outputs = copy.deepcopy(outputs)
-    outputs_with_forwarded_outputs.extend(
-        n for n in forwarded_arrays if n not in inputs and n not in outputs)
+    outputs_with_forwarded_outputs.extend(n for n in forwarded_arrays if n not in inputs and n not in outputs)
 
-    fwd_ptr_init_code, fwd_sdfg_call_arguments, _ = argument_codegen(
-        forward_sdfg, module.dace_model.clean_weights, inputs,
-        outputs_with_forwarded_outputs)
+    fwd_ptr_init_code, fwd_sdfg_call_arguments, _ = argument_codegen(forward_sdfg, module.dace_model.clean_weights,
+                                                                     inputs, outputs_with_forwarded_outputs)
 
     # inputs are given_grads + forwarded_outputs
-    bwd_inputs = list(
-        backward_result.given_grad_names.values()) + list(forwarded_arrays)
+    bwd_inputs = list(backward_result.given_grad_names.values()) + list(forwarded_arrays)
 
     # outputs are required grads
     bwd_outputs = list(backward_result.required_grad_names.values())
 
-    bwd_ptr_init_code, bwd_sdfg_call_arguments, _ = argument_codegen(
-        backward_sdfg,
-        module.dace_model.clean_weights,
-        bwd_inputs,
-        bwd_outputs,
-        guard_contiguous=list(backward_result.given_grad_names.values()))
+    bwd_ptr_init_code, bwd_sdfg_call_arguments, _ = argument_codegen(backward_sdfg,
+                                                                     module.dace_model.clean_weights,
+                                                                     bwd_inputs,
+                                                                     bwd_outputs,
+                                                                     guard_contiguous=list(
+                                                                         backward_result.given_grad_names.values()))
 
     # saved inputs/outputs
-    saved_io_for_backward = [
-        n for n in forwarded_arrays if n in inputs or n in outputs
-    ]
-    other_saved_for_backward = [
-        n for n in forwarded_arrays if n not in inputs and n not in outputs
-    ]
+    saved_io_for_backward = [n for n in forwarded_arrays if n in inputs or n in outputs]
+    other_saved_for_backward = [n for n in forwarded_arrays if n not in inputs and n not in outputs]
     return f"""
 {get_header(forward_sdfg, backward_sdfg, inputs, outputs, module.use_cuda)}
 class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function> {{
@@ -399,8 +366,7 @@ m.impl("{sdfg_name}", {sdfg_name}_autograd);
 """
 
 
-def code_for_module(module: 'dace.frontend.python.module.DaceModule',
-                    compiled_sdfg: CompiledSDFG) -> str:
+def code_for_module(module: 'dace.frontend.python.module.DaceModule', compiled_sdfg: CompiledSDFG) -> str:
     """ Generate the code for an operator that calls the sdfgs in the module.
 
         :param module: the module.
@@ -411,8 +377,9 @@ def code_for_module(module: 'dace.frontend.python.module.DaceModule',
     sdfg_name = compiled_sdfg.sdfg.name
 
     ret_str = return_type_str(outputs)
-    ptr_init_code, sdfg_call_arguments, init_arguments = argument_codegen(
-        compiled_sdfg.sdfg, module.dace_model.clean_weights, inputs, outputs)
+    ptr_init_code, sdfg_call_arguments, init_arguments = argument_codegen(compiled_sdfg.sdfg,
+                                                                          module.dace_model.clean_weights, inputs,
+                                                                          outputs)
     return f"""
 {get_header(compiled_sdfg.sdfg, None, inputs, outputs, module.use_cuda)}
 
@@ -442,8 +409,7 @@ TORCH_LIBRARY_IMPL(dace_{sdfg_name}, {'CUDA' if module.use_cuda else 'CPU'}, m) 
         """
 
 
-def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: Optional[dace.SDFG], inputs,
-               outputs, use_cuda: bool) -> str:
+def get_header(fwd_sdfg: dace.SDFG, bwd_sdfg: Optional[dace.SDFG], inputs, outputs, use_cuda: bool) -> str:
     return f"""
 #include <torch/torch.h>
 #include <torch/script.h>
@@ -461,9 +427,8 @@ TORCH_LIBRARY(dace_{fwd_sdfg.name}, m) {{
 """
 
 
-def register_and_compile_torch_extension(
-        module: 'dace.frontend.python.module.DaceModule',
-        dummy_inputs) -> DaCeMLTorchFunction:
+def register_and_compile_torch_extension(module: 'dace.frontend.python.module.DaceModule',
+                                         dummy_inputs) -> DaCeMLTorchFunction:
     """ Get a torch callable for the module. This will compile the sdfg, compile a PyTorch C++ operator, register it
         with PyTorch and return the function that calls it.
 
@@ -483,17 +448,14 @@ def register_and_compile_torch_extension(
         PyTorch.full_class_path(),
     }
     if module.backward:
-        compiled, handle_ptr, compiled_bwd, bwd_handle_ptr = compile_and_init_sdfgs(
-            module, dummy_inputs)
+        compiled, handle_ptr, compiled_bwd, bwd_handle_ptr = compile_and_init_sdfgs(module, dummy_inputs)
 
         compiled_sdfgs = [compiled, compiled_bwd]
         ptrs = [handle_ptr, bwd_handle_ptr]
         if compiled_bwd is not None:
             environments.add(get_env_for_sdfg(compiled_bwd).full_class_path())
             bwd_sdfg = compiled_bwd.sdfg
-            code = code_for_backward_function(module, compiled.sdfg, bwd_sdfg,
-                                              module._ad_result,
-                                              module._ad_inp_arrs)
+            code = code_for_backward_function(module, compiled.sdfg, bwd_sdfg, module._ad_result, module._ad_inp_arrs)
         else:
             bwd_sdfg = module.backward_sdfg
             compiled_sdfgs = [compiled]
@@ -515,40 +477,28 @@ def register_and_compile_torch_extension(
                          targets.cpu.CPUCodeGen,
                          f"Torch{module.sdfg_name}",
                          environments=environments)
-    torch_module_build_path = os.path.join('.dacecache',
-                                           f"torch_{compiled.sdfg.name}")
+    torch_module_build_path = os.path.join('.dacecache', f"torch_{compiled.sdfg.name}")
 
     compiler.generate_program_folder(None, [program], torch_module_build_path)
-    include_path = os.path.abspath(
-        os.path.join('.dacecache', compiled.sdfg.name, "include"))
-    include_path_bwd = os.path.abspath(
-        os.path.join('.dacecache', f"{compiled.sdfg.name}_backward",
-                     "include"))
-    dace_include_path = os.path.abspath(
-        os.path.join(os.path.dirname(dace.__file__), "runtime", "include"))
-    code_path = os.path.join('.dacecache', compiled.sdfg.name, "src", "cpu",
-                             f"{compiled.sdfg.name}.cpp")
-    code_path_bwd = os.path.join('.dacecache',
-                                 f"{compiled.sdfg.name}_backward", "src",
-                                 "cpu", f"{compiled.sdfg.name}_backward.cpp")
-    torch_code_path = os.path.join('.dacecache', f"torch_{compiled.sdfg.name}",
-                                   "src", "cpu",
+    include_path = os.path.abspath(os.path.join('.dacecache', compiled.sdfg.name, "include"))
+    include_path_bwd = os.path.abspath(os.path.join('.dacecache', f"{compiled.sdfg.name}_backward", "include"))
+    dace_include_path = os.path.abspath(os.path.join(os.path.dirname(dace.__file__), "runtime", "include"))
+    code_path = os.path.join('.dacecache', compiled.sdfg.name, "src", "cpu", f"{compiled.sdfg.name}.cpp")
+    code_path_bwd = os.path.join('.dacecache', f"{compiled.sdfg.name}_backward", "src", "cpu",
+                                 f"{compiled.sdfg.name}_backward.cpp")
+    torch_code_path = os.path.join('.dacecache', f"torch_{compiled.sdfg.name}", "src", "cpu",
                                    f"torch_{compiled.sdfg.name}.cpp")
     sources = [code_path, torch_code_path]
     if os.path.exists(code_path_bwd):
         sources.append(code_path_bwd)
     dace_include_path_blas = os.path.abspath(
-        os.path.join(os.path.dirname(dace.__file__), "libraries", "blas",
-                     "include"))
+        os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
     conda_lib_path = os.path.abspath(os.getenv("CONDA_PREFIX") + "/lib")
     torch.utils.cpp_extension.load(
         name=libname,
         sources=sources,
         extra_cflags=["-g"],
-        extra_include_paths=[
-            include_path, include_path_bwd, dace_include_path,
-            dace_include_path_blas
-        ],
+        extra_include_paths=[include_path, include_path_bwd, dace_include_path, dace_include_path_blas],
         extra_ldflags=[
             f'-L{conda_lib_path}',
             '-lcblas',
@@ -556,12 +506,9 @@ def register_and_compile_torch_extension(
         is_python_module=False,
     )
 
-    torch_function = operator.attrgetter(
-        f"dace_{compiled.sdfg.name}.{compiled.sdfg.name}")(torch.ops)
+    torch_function = operator.attrgetter(f"dace_{compiled.sdfg.name}.{compiled.sdfg.name}")(torch.ops)
 
-    result = DaCeMLTorchFunction(function=torch_function,
-                                 compiled_sdfgs=compiled_sdfgs,
-                                 ptr=ptrs)
+    result = DaCeMLTorchFunction(function=torch_function, compiled_sdfgs=compiled_sdfgs, ptr=ptrs)
     return result
 
 
@@ -580,10 +527,7 @@ def get_env_for_sdfg(compiled: CompiledSDFG):
         cmake_compile_flags = []
         cmake_link_flags = []
         cmake_files = []
-        cmake_libraries = [
-            os.path.join(sdfg_build_path, "build",
-                         platform_library_name(compiled.sdfg.name))
-        ]
+        cmake_libraries = [os.path.join(sdfg_build_path, "build", platform_library_name(compiled.sdfg.name))]
         state_fields = []
         dependencies = []
         headers = []
