@@ -818,39 +818,42 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 
 
 def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
-    outside_uses_different_symbol: bool,
+    outside_and_inner_symbol_have_same_meaning: bool,
     separate_write_back_state: bool,
 ) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     The SDFGs created by this function are rather similar to
-    `_make_sdfg_for_multistate_inlining_with_symbol_promotion()`. However, here a scalar is not
-    promoted to a symbol instead we start from a symbol to begin with and use the `symbol_mapping`.
-    Furthermore, the outside always uses a symbolic size for the transient.
+    `_make_sdfg_for_multistate_inlining_with_symbol_promotion()`, but there are some differences.
+    For example there are no scalars involved, instead everything is done through by symbols
+    from the beginning.
 
-    Args:
-        outside_uses_different_symbol: Use a different symbol name on the outside
-        separate_write_back_state: There is an extra state to perform the `t -> b` copy in the inner SDFG.
+    The `outside_and_inner_symbol_have_same_meaning` influences how the symbol mapping is set up.
+    If it is `True` then the symbol on the outside and inside are supposed to have the same name,
+    thus the symbol mapping will be `inside_symbol: outside_symbol`. However, in case it is `False`
+    then the symbols are handled differently, however, the outer symbol is mapped into the inner
+    SDFG.
+
+    If `separate_write_back_state` then the copy of `t` into `b` is in a separate state, otherwise
+    it is in a different state. Thus, if it is `False` then the inner SDFG has only one state,
+    which makes it applicable to `InlineSDFG`.
     """
-
     inner_symbol_name = "inner_symbol"
-    outer_symbol_name = "outer_symbol" if outside_uses_different_symbol else inner_symbol_name
+    outer_symbol_name = "outer_symbol"
 
     # Create the inner SDFG.
     inner_sdfg = dace.SDFG(unique_name("inner_sdfg"))
-    inner_istate = inner_sdfg.add_state(is_start_block=True)
-    inner_state = inner_sdfg.add_state_after(inner_istate, assignments={inner_symbol_name: "inner_scalar"})
+    inner_state = inner_sdfg.add_state(is_start_block=True)
 
     inner_sdfg.add_symbol(inner_symbol_name, dace.int32)
-    inner_sdfg.add_scalar(
-        "inner_scalar",
-        dtype=dace.int32,
-        transient=False,
-    )
 
     inner_shapes = {
         "t": (inner_symbol_name, ),
-        "b": (outer_symbol_name, ),  # We need that to ensure that we can inline the SDFG.
     }
+
+    if outside_and_inner_symbol_have_same_meaning:
+        inner_shapes["b"] = (inner_symbol_name, )
+    else:
+        inner_shapes["b"] = (outer_symbol_name, )  # We need that to ensure that we can inline the SDFG.
 
     for name in "abt":
         inner_sdfg.add_array(
@@ -877,7 +880,11 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
         inner_astate = inner_sdfg.add_state_after(inner_state)
         inner_astate.add_nedge(inner_astate.add_access("t"), inner_astate.add_access("b"),
                                dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
+
     else:
+        # Because we are using `inner_symbol` here to denote the size that we copy, it does not
+        #  show up in the signature of the inner SDFG. If we would describe the copy in terms of
+        #  `outer_symbol` then that symbol would show up.
         inner_state.add_nedge(t, inner_state.add_access("b"),
                               dace.Memlet(f"t[0:({inner_symbol_name} - 1)] -> [1:{inner_symbol_name}]"))
 
@@ -885,14 +892,8 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     outer_sdfg = dace.SDFG(unique_name("outer_sdfg"))
     outer_state = outer_sdfg.add_state(is_start_block=True)
 
-    outer_sdfg.add_scalar(
-        "outer_scalar",
-        dace.int32,
-        transient=True,
-    )
-
     shape_of_T = (outer_symbol_name, )
-    outer_sdfg.add_symbol(shape_of_T[0], dace.int32)
+    outer_sdfg.add_symbol(outer_symbol_name, dace.int32)
 
     outer_sdfg.add_array(
         "A",
@@ -916,41 +917,24 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     )
 
     A, B, T = (outer_state.add_access(name) for name in "ABT")
-    outer_a_shape_scalar = outer_state.add_access("outer_scalar")
 
-    symbol_mapping = {}
-
-    if outside_uses_different_symbol:
-        # This is an artefact that is needed to allow inlining.
-        symbol_mapping[outer_symbol_name] = outer_symbol_name
+    if outside_and_inner_symbol_have_same_meaning:
+        symbol_mapping = {
+            inner_symbol_name: outer_symbol_name,
+        }
+    else:
+        symbol_mapping = {
+            outer_symbol_name: outer_symbol_name,  # We need that to ensure that we can inline the inner SDFG.
+            inner_symbol_name: inner_symbol_name,  # Need to propagate upward
+        }
+        outer_sdfg.add_symbol(inner_symbol_name, dace.int32)
 
     nsdfg_node = outer_state.add_nested_sdfg(
         sdfg=inner_sdfg,
         parent=outer_sdfg,
-        inputs={"inner_scalar", "a"},
+        inputs={"a"},
         outputs={"b"},
         symbol_mapping=symbol_mapping,
-    )
-
-    outer_tasklet_for_setting_size = outer_state.add_tasklet(
-        "outer_tasklet_for_setting_size",
-        inputs={},
-        outputs={"__out"},
-        code="__out = 20",
-    )
-    outer_state.add_edge(
-        outer_tasklet_for_setting_size,
-        "__out",
-        outer_a_shape_scalar,
-        None,
-        dace.Memlet("outer_scalar[0]"),
-    )
-    outer_state.add_edge(
-        outer_a_shape_scalar,
-        None,
-        nsdfg_node,
-        "inner_scalar",
-        dace.Memlet("outer_scalar[0]"),
     )
 
     outer_state.add_edge(
@@ -1009,6 +993,8 @@ def test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state: 
     assert inner_sdfg.symbols.keys() == {"inner_symbol"}
 
     # Test if it is possible to compile the thing.
+    outer_sdfg.regenerate_code = True
+    outer_sdfg._recompile = True
     initial_outer_csdfg = outer_sdfg.compile()
 
     count = outer_sdfg.apply_transformations_repeated(InlineMultistateSDFG())
@@ -1090,6 +1076,8 @@ def _perform_multistate_inline_test_same_symbol_name_used_on_outer_and_inner_sdf
     assert outer_sdfg.symbols.keys() == {outer_symbol_name}
 
     # Test if it is possible to compile the thing.
+    outer_sdfg.regenerate_code = True
+    outer_sdfg._recompile = True
     initial_outer_csdfg = outer_sdfg.compile()
 
     count = outer_sdfg.apply_transformations_repeated(InlineMultistateSDFG())
@@ -1164,8 +1152,118 @@ def test_multistate_inlining_different_symbols_used(separate_write_back_state: b
         separate_write_back_state=separate_write_back_state, outside_uses_different_symbol=True)
 
 
-def test_multistate_inline_with_symbol_mapping():
-    pass
+def _perform_test_multistate_inline_with_symbol_mapping(separate_write_back_state: bool,
+                                                        outside_and_inner_symbol_have_same_meaning: bool,
+                                                        use_InlineSDFG_transformation: bool):
+
+    outer_sdfg, inner_sdfg, inner_state, nsdfg_node = _make_sdfg_for_multistate_inlining_with_symbol_mapping(
+        outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning,
+        separate_write_back_state=separate_write_back_state,
+    )
+
+    inner_symbol_name = "inner_symbol"
+    outer_symbol_name = "outer_symbol"
+
+    assert inner_sdfg.number_of_nodes() == (2 if separate_write_back_state else 1)
+    assert outer_sdfg.number_of_nodes() == 1
+
+    assert outer_sdfg.arrays.keys() == {"A", "B", "T"}
+    assert str(outer_sdfg.arrays["T"].shape[0]) == outer_symbol_name
+    assert all(arr.shape == (20, ) for aname, arr in outer_sdfg.arrays.items() if aname != "T")
+
+    assert inner_sdfg.arrays.keys() == {"a", "b", "t"}
+    assert str(inner_sdfg.arrays["t"].shape[0]) == inner_symbol_name
+
+    if outside_and_inner_symbol_have_same_meaning:
+        assert inner_sdfg.free_symbols == {inner_symbol_name}
+        assert outer_sdfg.free_symbols == {outer_symbol_name}
+
+        assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", outer_symbol_name}
+        assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", inner_symbol_name}
+
+        assert len(nsdfg_node.symbol_mapping) == 1
+        assert str(nsdfg_node.symbol_mapping[inner_symbol_name]) == outer_symbol_name
+
+        assert str(inner_sdfg.arrays["b"].shape[0]) == inner_symbol_name
+
+    else:
+        assert outer_sdfg.free_symbols == {inner_symbol_name, outer_symbol_name}
+        assert inner_sdfg.free_symbols == {inner_symbol_name, outer_symbol_name}
+
+        assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", outer_symbol_name, inner_symbol_name}
+        assert set(inner_sdfg.signature_arglist(False)) == {"a", "b", inner_symbol_name}
+
+        assert len(nsdfg_node.symbol_mapping) == 2
+        assert str(nsdfg_node.symbol_mapping[outer_symbol_name]) == outer_symbol_name
+        assert str(nsdfg_node.symbol_mapping[inner_symbol_name]) == inner_symbol_name
+
+        assert str(inner_sdfg.arrays["b"].shape[0]) == outer_symbol_name
+
+    outer_sdfg.regenerate_code = True
+    outer_sdfg._recompile = True
+    initial_csdfg = outer_sdfg.compile()
+
+    if use_InlineSDFG_transformation:
+        assert not separate_write_back_state
+        inline_trafo = InlineSDFG()
+    else:
+        inline_trafo = InlineMultistateSDFG()
+
+    count = outer_sdfg.apply_transformations_repeated(inline_trafo)
+    assert count == 1
+    outer_sdfg.validate()
+
+    if use_InlineSDFG_transformation:
+        assert outer_sdfg.number_of_nodes() == 1
+    else:
+        assert outer_sdfg.number_of_nodes() == (4 if separate_write_back_state else 3)
+
+    assert outer_sdfg.arrays.keys() == {"A", "B", "t", "T"}
+    assert all((not arr.transient) and arr.shape == (20, ) for aname, arr in outer_sdfg.arrays.items() if aname in "AB")
+
+    if outside_and_inner_symbol_have_same_meaning:
+        assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", outer_symbol_name}
+        assert outer_sdfg.free_symbols == {outer_symbol_name}
+        assert outer_sdfg.symbols.keys() == {outer_symbol_name}
+
+        assert all(arr.transient and str(arr.shape[0]) == outer_symbol_name for aname, arr in outer_sdfg.arrays.items()
+                   if aname in "Tt")
+
+    else:
+        expected_shapes = {"T": outer_symbol_name, "t": inner_symbol_name}
+        assert all(arr.transient and str(arr.shape[0]) == expected_shapes[aname]
+                   for aname, arr in outer_sdfg.arrays.items() if aname in "Tt")
+
+        # Because the symbols are technically different, or allowed to be different, they are still
+        #  in the SDFG and are needed.
+        assert set(outer_sdfg.signature_arglist(False)) == {"A", "B", outer_symbol_name, inner_symbol_name}
+        assert outer_sdfg.free_symbols == {inner_symbol_name, outer_symbol_name}
+
+        assert outer_sdfg.symbols.keys() == {outer_symbol_name, inner_symbol_name}
+
+    outer_sdfg.regenerate_code = True
+    outer_sdfg._recompile = True
+    outer_csdfg = outer_sdfg.compile()
+
+
+@pytest.mark.parametrize("separate_write_back_state", [True, False])
+@pytest.mark.parametrize("outside_and_inner_symbol_have_same_meaning", [True, False])
+def test_multistate_inline_with_symbol_mapping(separate_write_back_state: bool,
+                                               outside_and_inner_symbol_have_same_meaning: bool):
+
+    _perform_test_multistate_inline_with_symbol_mapping(
+        separate_write_back_state=separate_write_back_state,
+        outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning,
+        use_InlineSDFG_transformation=False,
+    )
+
+
+@pytest.mark.parametrize("outside_and_inner_symbol_have_same_meaning", [True, False])
+def test_singlestate_inline_with_symbol_mapping(outside_and_inner_symbol_have_same_meaning: bool):
+    _perform_test_multistate_inline_with_symbol_mapping(
+        separate_write_back_state=False,
+        outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning,
+        use_InlineSDFG_transformation=True)
 
 
 if __name__ == "__main__":
