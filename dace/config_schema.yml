@@ -457,7 +457,7 @@ required:
                             Yakup Koray Budanaz for Berkays master-thesis.
                         enum: [legacy, experimental]
                         default: experimental
-                        
+
                     gpu_index_type:
                         type: str
                         title: Thread/block/warp index data type
@@ -467,7 +467,7 @@ required:
                             The type is based on the type-classes in ``dace.dtypes``. For example,
                             ``uint64`` is equivalent to ``dace.uint64``. Change this setting when large
                             index types are needed to address memory offsets that are beyond the 32-bit
-                            range, or to reduce memory usage. This replaces ``thread_id_type`` in 
+                            range, or to reduce memory usage. This replaces ``thread_id_type`` in
                             ``ExperimentalCUDACodeGen`` , as the new name more accurately reflects its broader
                             usage.
 
@@ -476,7 +476,7 @@ required:
                         title: CUDA warp size
                         description: >
                             Defines the warp size used during CUDA code generation. The default and current
-                            standard value for CUDA is 32. This should only be changed if future CUDA 
+                            standard value for CUDA is 32. This should only be changed if future CUDA
                             architectures explicitly alter the warp size. Modifying this value arbitrarily may
                             result in incorrect or unknown behavior, and is therefore strongly discouraged.
                         default: 32
@@ -486,18 +486,18 @@ required:
                         title: HIP warp size
                         description: >
                             Specifies the warp size (also known as wavefront size) for HIP code generation.
-                            The default value for AMD GPUs is typically 64. This setting should only be modified 
+                            The default value for AMD GPUs is typically 64. This setting should only be modified
                             if you have a clear understanding of what you are doing.
                         default: 64
-                    
+
                     auto_syncthreads_insertion:
                         type: bool
                         title: Insert Default __syncthreads() Tasklets
                         description: >
-                            If enabled, inserts default __syncthreads() tasklets during preprocessing 
-                            in ExperimentalCUDACodeGen to ensure shared memory is ready before access. 
-                            This is a simple safeguard for correctness—it may not be complete, but it 
-                            does the job for basic SDFGs. Disable if you handle synchronization manually 
+                            If enabled, inserts default __syncthreads() tasklets during preprocessing
+                            in ExperimentalCUDACodeGen to ensure shared memory is ready before access.
+                            This is a simple safeguard for correctness—it may not be complete, but it
+                            does the job for basic SDFGs. Disable if you handle synchronization manually
                             or use other mechanisms like async copies or pipelines.
                         default: True
 
@@ -507,8 +507,8 @@ required:
                         description: >
                             Specifies the name of the variable that holds the current thread block group,
                             initialized using `cooperative_groups::this_thread_block()`. This is useful in
-                            contexts like custom tasklets, where the variable is explicitly referenced 
-                            (e.g., `cooperative_groups::wait(block)`). Setting this allows users to customize the 
+                            contexts like custom tasklets, where the variable is explicitly referenced
+                            (e.g., `cooperative_groups::wait(block)`). Setting this allows users to customize the
                             variable name without modifying the source code or relying on a fixed name.
                         default: block
 

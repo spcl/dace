@@ -274,14 +274,13 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
         # Avoid import loop
         from dace.codegen.targets.cuda import CUDACodeGen
         from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
-        
+
         # Check whether we are in kernel/ device code of GPU backend
         cuda_impl = Config.get('compiler', 'cuda', 'implementation')
         if cuda_impl == "legacy":
             in_device_code = CUDACodeGen._in_device_code
         elif cuda_impl == "experimental":
             in_device_code = ExperimentalCUDACodeGen._in_kernel_code
-
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'

@@ -23,7 +23,7 @@ def test_correctness_and_reuse():
     size = 512
     a = cp.random.rand(size, dtype=cp.float64)
     b = cp.random.rand(size, dtype=cp.float64)
-    c = cp.zeros((size,), dtype=cp.float64)
+    c = cp.zeros((size, ), dtype=cp.float64)
 
     # count that there is only one __syncthread(); call. You can also inspect the final SDFG in the cache for that
     generated_code = sdfg.generate_code()[1].clean_code

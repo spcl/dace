@@ -502,10 +502,7 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
-    metadata = Property(dtype=dict,
-                        desc="Metada attached to the SDFG",
-                        default=None,
-                        allow_none=True)
+    metadata = Property(dtype=dict, desc="Metada attached to the SDFG", default=None, allow_none=True)
 
     def __init__(self,
                  name: str,

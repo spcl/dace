@@ -1,9 +1,9 @@
-What was bad: 
+What was bad:
 
 
 - Also dead code at "copy_memory", the first "dst_schedule" in the src_node if-else case it dead code.
   In Fact, "dst_schedule" is not even needed at all. So we have "double dead code", once a computation
-  which gets overwritten, and once we compute smth we don't need. 
+  which gets overwritten, and once we compute smth we don't need.
 
 - Damn, even the copy_memory input named "memlet" is wrong.. this should be an edge type, not a memlet type.
 
@@ -13,7 +13,7 @@ What was bad:
 
 - Again dead code: Computes "copy_shape" twice, first definition seems wrong and is not even used.
 
-- Stream handling in CudaCodeGen check is just random- streams are not handled by the codegen. 
+- Stream handling in CudaCodeGen check is just random- streams are not handled by the codegen.
 
 - again, define local variables but then not use it. In this case: dtype
 
@@ -25,12 +25,10 @@ What was bad:
 Tell Yakup:
 
 - I removed any logic that should handle cudaStream synchronization since I am not responsible for it.
-  In order to help to extend it in the future, I have two options. 
+  In order to help to extend it in the future, I have two options.
   1. I can add function calls (which are empty i.e. do nothing) that signal what should be implemented once
      there is a good solution of handling cuda streams in DaCe's new version
   2. Document it and say that several streams are not supported (people could come up with completely new
      approaches to handle streams maybe)
   3. We got smth wrong. CopyToMap handles only GPU<->GPU code cases.
   4. I tried to handle "special case" as I understood... maybe worth to look at it closer with you
-
-

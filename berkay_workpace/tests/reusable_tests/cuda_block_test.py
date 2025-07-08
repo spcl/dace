@@ -15,7 +15,7 @@ def cudahello(V, Vout):
     def multiplication(i):
 
         # I don't understand why this is here
-        # Probably will be removed later? 
+        # Probably will be removed later?
         @dace.map(_[0:32])
         def mult_block(bi):
             in_V << V[i + bi]
@@ -161,7 +161,6 @@ def test_custom_block_size_twomaps():
     sdfg.compile()
 
 
-
 """
 # Not implemened
 @pytest.mark.gpu
@@ -195,8 +194,6 @@ def test_block_thread_specialization():
     sdfg(a)
     assert np.allclose(a, ref)
 """
-
-
 
 if __name__ == "__main__":
     test_cpu()

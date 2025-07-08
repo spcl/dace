@@ -283,15 +283,15 @@ class AccessNode(Node):
                               default=dtypes.DataInstrumentationType.No_Instrumentation)
     instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
                                         default=CodeBlock("1", language=dtypes.Language.CPP))
-    
+
     # Experimental-CUDA-specific properties
     async_copy = Property(dtype=bool,
-                        desc="Marks the data copy to this node (if any) as asynchronous (CUDA-specific).",
-                        default=False)
+                          desc="Marks the data copy to this node (if any) as asynchronous (CUDA-specific).",
+                          default=False)
 
     async_pipeline = Property(dtype=str,
                               desc="Name of the CUDA pipeline responsible for synchronization. "
-                                   "Only relevant if async_copy is True. May be None.",
+                              "Only relevant if async_copy is True. May be None.",
                               allow_none=True)
 
     def __init__(self, data, debuginfo=None):

@@ -13,6 +13,7 @@ from dace.codegen.targets.experimental_cuda_helpers import gpu_utils
 from dace.transformation import helpers, transformation
 from dace.transformation.dataflow.tiling import MapTiling
 
+
 @make_properties
 class AddThreadBlockMap(transformation.SingleStateTransformation):
     """
@@ -67,13 +68,12 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                 f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {default_block_size_config}. '
                 'You can either specify the block size to use with the gpu_block_size property, '
                 'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
-                'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html'
-                )
-            
+                'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+
             # 2) Reject unsupported 'max' setting
             if default_block_size_config == 'max':
-                raise NotImplementedError('max dynamic block size unimplemented') 
-            
+                raise NotImplementedError('max dynamic block size unimplemented')
+
             # 3) Parse & normalize the default block size to 3D
             default_block_size = [int(x) for x in default_block_size_config.split(',')]
             default_block_size = gpu_utils.to_3d_dims(default_block_size)
@@ -85,8 +85,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
             # 5) If block has more "active" dims than the grid, collapse extras
             active_block_dims = max(1, sum(1 for b in default_block_size if b != 1))
-            active_grid_dims  = max(1, sum(1 for g in kernel_domain_size  if g != 1))
-
+            active_grid_dims = max(1, sum(1 for g in kernel_domain_size if g != 1))
 
             if active_block_dims > active_grid_dims:
                 tail_product = gpu_utils.product(default_block_size[active_grid_dims:])
@@ -98,31 +97,33 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
             else:
                 block_size = default_block_size
 
-
         # Validate that the block size does not exeed any limits
         gpu_utils.validate_block_size_limits(kernel_map_entry, block_size)
 
         # Note order is [blockDim.x, blockDim.y, blockDim.z]
         return block_size
-                
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         """
         Determines whether the transformation can be applied to the given map entry.
 
         The transformation only applies to maps with a GPU_Device schedule (i.e., kernel map entries).
-        It is not applicable if a nested GPU_ThreadBlock or GPU_ThreadBlock_Dynamic map exists 
+        It is not applicable if a nested GPU_ThreadBlock or GPU_ThreadBlock_Dynamic map exists
         within the kernel scope, as that indicates the thread-block schedule is already defined.
         The same restriction applies in the case of dynamic parallelism (nested kernel launches).
         """
         # Only applicable to GPU_Device maps
         if self.map_entry.map.schedule != dtypes.ScheduleType.GPU_Device:
             return False
-        
+
         # Traverse inner scopes (ordered outer -> inner)
         for _, inner_entry in helpers.get_internal_scopes(graph, self.map_entry):
             schedule = inner_entry.map.schedule
 
-            if schedule in {dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,}:
+            if schedule in {
+                    dtypes.ScheduleType.GPU_ThreadBlock,
+                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+            }:
                 # Already scheduled with thread block — cannot apply
                 return False
 
@@ -140,7 +141,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         This is achieved by applying the `MapTiling` transformation to `self.map_entry`,
         using a computed block size. Essentially `self.map_entry` becomes the thread block map and
-        the new inserted parent map is the new kernel map. The schedules are set accordingly. 
+        the new inserted parent map is the new kernel map. The schedules are set accordingly.
         A final consistency check verifies that the resulting thread block map's range fits into the
         computed block size.
 
@@ -153,7 +154,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         # Reverse for map tiling to prioritize later dimensions for better memory/performance
         reversed_block_size = gpu_block_size[::-1]
-        
+
         # TODO: Update this once MapTiling accounts for existing strides when applying tile sizes.
         # The code below is a workaround that manually adjusts tile sizes to account for existing strides.
         num_dims = len(kernel_map_entry.map.params)
@@ -168,19 +169,17 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
             adjusted_block_size = reversed_block_size[-num_dims:]
 
         tile_sizes = [stride * block for stride, block in zip(existing_strides, adjusted_block_size)]
-        
+
         # Apply map tiling transformation
-        MapTiling.apply_to(
-            sdfg=sdfg,
-            options={
-                "prefix": "b",
-                "tile_sizes": tile_sizes,
-                "tile_trivial": True,
-                "skew": False
-            },
-            map_entry=kernel_map_entry
-        )
-        
+        MapTiling.apply_to(sdfg=sdfg,
+                           options={
+                               "prefix": "b",
+                               "tile_sizes": tile_sizes,
+                               "tile_trivial": True,
+                               "skew": False
+                           },
+                           map_entry=kernel_map_entry)
+
         # After tiling: kernel_map_entry is now the thread block map, configure its schedule
         thread_block_map_entry = kernel_map_entry
         thread_block_map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
@@ -190,15 +189,14 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         new_kernel_entry.map.gpu_block_size = gpu_block_size
 
         # Catch any unexpected mismatches of inserted threadblock map's block size and the used block size
-        tb_size = gpu_utils.to_3d_dims([symbolic.overapproximate(sz) for sz in thread_block_map_entry.map.range.size()[::-1]])
+        tb_size = gpu_utils.to_3d_dims(
+            [symbolic.overapproximate(sz) for sz in thread_block_map_entry.map.range.size()[::-1]])
         max_block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(tb_size, gpu_block_size)]
 
         if max_block_size != gpu_block_size:
-            raise ValueError(
-                f"Block size mismatch: the overapproximated extent of the thread block map "
-                f"({tb_size}) is not enclosed by the derived block size ({gpu_block_size}). "
-                "They are expected to be equal or the derived block size to be larger."
-            )
+            raise ValueError(f"Block size mismatch: the overapproximated extent of the thread block map "
+                             f"({tb_size}) is not enclosed by the derived block size ({gpu_block_size}). "
+                             "They are expected to be equal or the derived block size to be larger.")
 
     def update_names():
         pass

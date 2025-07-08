@@ -7,9 +7,10 @@ from dace.config import Config
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("vec_size", [0, 15, 32, 67]) # default block size is 32, so these parameters handle interesting groups
+@pytest.mark.parametrize("vec_size",
+                         [0, 15, 32, 67])  # default block size is 32, so these parameters handle interesting groups
 def test_1d_maps_fixed_sizes(vec_size):
-    """ 
+    """
     Tests flat 1D vector copy from B to A using a single GPU_Device map (no thread blocking) for fixed size arrays.
     The vector sizes are chosen to cover interesting cases considering a default block size is 32.
     """
@@ -37,21 +38,20 @@ def test_1d_maps_fixed_sizes(vec_size):
     cp.testing.assert_array_equal(A, B)
 
 
-
-
 @pytest.mark.gpu
 @pytest.mark.parametrize("n", [0, 15, 32, 67])
 def test_1d_maps_dynamic_sizes(n):
-    """ 
+    """
     Tests flat 1D vector copy from B to A using a single GPU_Device map (no thread blocking) for variable size arrays.
     The vector sizes are chosen to cover interesting cases considering a default block size is 32.
     """
     N = dace.symbol('N')
 
     @dace.program
-    def vector_copy_dyn_sizes(A: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global, B: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global):
+    def vector_copy_dyn_sizes(A: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global,
+                              B: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global):
         for i in dace.map[0:N] @ dace.dtypes.ScheduleType.GPU_Device:
-                A[i] = B[i]
+            A[i] = B[i]
 
     sdfg = vector_copy_dyn_sizes.to_sdfg()
 
@@ -69,11 +69,10 @@ def test_1d_maps_dynamic_sizes(n):
     cp.testing.assert_array_equal(A, B)
 
 
-
 @pytest.mark.gpu
 @pytest.mark.parametrize("s", [1, 2, 32, 33])
 def test_1d_maps_strides(s):
-    """ 
+    """
     Tests flat 1D vector copy from B to A using a single GPU_Device map (no thread blocking) for different strides.
     N is variable in the sdfg/code but we just test for N = 67 here.
     """
@@ -81,9 +80,10 @@ def test_1d_maps_strides(s):
     n = 67
 
     @dace.program
-    def vector_copy_strides(A: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global, B: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global):
+    def vector_copy_strides(A: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global,
+                            B: dace.float64[N] @ dace.dtypes.StorageType.GPU_Global):
         for i in dace.map[0:N:s] @ dace.dtypes.ScheduleType.GPU_Device:
-                A[i] = B[i]
+            A[i] = B[i]
 
     sdfg = vector_copy_strides.to_sdfg()
 
@@ -104,7 +104,6 @@ def test_1d_maps_strides(s):
     mask = cp.ones(n, dtype=bool)
     mask[::s] = False
     cp.testing.assert_array_equal(A[mask], cp.zeros_like(A[mask]))
-
 
 
 @pytest.mark.gpu
@@ -139,15 +138,14 @@ def test_2d_maps_dynamic_sizes(shape):
     cp.testing.assert_array_equal(A, B)
 
 
-
 # higher dimensions in old tests
-
-
 
 if __name__ == '__main__':
 
-    print(f"\n\n\033[94m[INFO] You are using the \033[92m{Config.get('compiler', 'cuda', 'implementation')}\033[94m CUDA implementation.\033[0m \n\n")
-    
+    print(
+        f"\n\n\033[94m[INFO] You are using the \033[92m{Config.get('compiler', 'cuda', 'implementation')}\033[94m CUDA implementation.\033[0m \n\n"
+    )
+
     # Warnings are ignored
     pytest.main(["-v", "-p", "no:warnings", __file__])
 

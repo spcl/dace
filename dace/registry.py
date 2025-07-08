@@ -45,7 +45,6 @@ def autoregister(cls: Type, **kwargs):
         if Config.get('compiler', 'cuda', 'implementation') == 'legacy' and kwargs['name'] == 'experimental_cuda':
             return
 
-
     registered = False
     for base in cls.__bases__:
         if hasattr(base, '_registry_') and hasattr(base, 'register'):

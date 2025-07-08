@@ -1,6 +1,7 @@
 from typing import Dict, Union
 from dace import SDFG, nodes
 
+
 class GPUStreamManager:
     """
     Manages GPU backend streams (e.g., CUDA or HIP streams) for nodes in an SDFG.
@@ -32,7 +33,7 @@ class GPUStreamManager:
         if node in self.assigned_streams and self.assigned_streams[node] != "nullptr":
             return self.stream_access_template.format(gpu_stream=self.assigned_streams[node])
         return "nullptr"
-    
+
     def get_stream_edge(self, src_node: nodes.Node, dst_node: nodes.Node) -> str:
         """
         Returns the stream access expression for an edge based on either the

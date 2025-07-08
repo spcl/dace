@@ -41,9 +41,9 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         K6
 
     would be scheduled as:
-        K1, K2     → stream 0  
-        K3, K4, K5 → stream 1  
-        K6         → stream 2  
+        K1, K2     → stream 0
+        K3, K4, K5 → stream 1
+        K6         → stream 2
 
     (assuming no limit on the number of concurrent streams)
 
@@ -57,7 +57,7 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         self._max_concurrent_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
 
         # needed to call correct backend synchronization functions
-        self._backend: str = common.get_gpu_backend() 
+        self._backend: str = common.get_gpu_backend()
 
         # This is expected to be set by the calling backend code generator before applying the pass
         self._gpu_stream_access_template: str = ""
@@ -73,8 +73,9 @@ class NaiveGPUStreamScheduler(ppl.Pass):
             self._assign_gpu_streams_in_state(sdfg, False, state, assigned_nodes, 0)
 
         # 2. If only one stream is used set all assignments to "nullptr".
-        num_assigned_streams = max(assigned_nodes.values(), default=0)  # self.max_concurrent_streams == -1 (default) also handled here
-        if num_assigned_streams == 0:  
+        num_assigned_streams = max(assigned_nodes.values(),
+                                   default=0)  # self.max_concurrent_streams == -1 (default) also handled here
+        if num_assigned_streams == 0:
             for k in assigned_nodes.keys():
                 assigned_nodes[k] = "nullptr"
 
@@ -83,7 +84,8 @@ class NaiveGPUStreamScheduler(ppl.Pass):
 
         return assigned_nodes
 
-    def _assign_gpu_streams_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState, assigned_nodes: Dict, gpu_stream:int):
+    def _assign_gpu_streams_in_state(self, sdfg: SDFG, in_nested_sdfg: bool, state: SDFGState, assigned_nodes: Dict,
+                                     gpu_stream: int):
         """
         Processes connected components in a state, assigning each to a different GPU stream if not inside a nested SDFG.
         If inside a nested SDFG, components inherit the stream from the parent state/component.
@@ -97,14 +99,14 @@ class NaiveGPUStreamScheduler(ppl.Pass):
             nodes_assigned_before = len(assigned_nodes)
 
             for node in component:
-                
+
                 if self._is_relevant_for_gpu_stream(node, sdfg, state):
                     assigned_nodes[node] = gpu_stream
-                
+
                 if isinstance(node, nodes.NestedSDFG):
                     for nested_state in node.sdfg.states():
                         self._assign_gpu_streams_in_state(node.sdfg, True, nested_state, assigned_nodes, gpu_stream)
-                    
+
             # Move to next stream if we assigned streams to any node in this component (careful: if nested, states are in same component)
             if not in_nested_sdfg and len(assigned_nodes) > nodes_assigned_before:
                 gpu_stream = self._next_stream(gpu_stream)
@@ -113,7 +115,7 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         """
         Returns all weakly connected components in the given directed graph.
 
-        A weakly connected component is a maximal group of nodes such that each pair 
+        A weakly connected component is a maximal group of nodes such that each pair
         of nodes is connected by a path when ignoring edge directions.
 
         :param graph: A directed graph (Graph) instance.
@@ -170,26 +172,23 @@ class NaiveGPUStreamScheduler(ppl.Pass):
 
         for n in node_and_neighbors:
             # GPU global memory access nodes
-            if (isinstance(n, nodes.AccessNode) and 
-                n.desc(sdfg).storage == dtypes.StorageType.GPU_Global):
+            if (isinstance(n, nodes.AccessNode) and n.desc(sdfg).storage == dtypes.StorageType.GPU_Global):
                 return True
-            
+
             # GPU-scheduled map entry/exit nodes (kernels)
-            if (isinstance(n, (nodes.EntryNode, nodes.ExitNode)) and 
-                n.schedule in dtypes.GPU_SCHEDULES):
+            if (isinstance(n, (nodes.EntryNode, nodes.ExitNode)) and n.schedule in dtypes.GPU_SCHEDULES):
                 return True
-            
+
             # GPU-scheduled library nodes
-            if (isinstance(n, nodes.LibraryNode) and 
-                n.schedule in dtypes.GPU_SCHEDULES):
+            if (isinstance(n, nodes.LibraryNode) and n.schedule in dtypes.GPU_SCHEDULES):
                 return True
 
         return False
-        
+
     def _next_stream(self, gpu_stream: int) -> int:
         """
         Returns the next CUDA stream index based on the configured concurrency policy.
-        
+
         - If max_concurrent_streams == 0: unlimited streams → increment stream index
         - If max_concurrent_streams == -1: default → always return 0
         - Else: wrap around within the allowed number of streams
@@ -228,15 +227,14 @@ class NaiveGPUStreamScheduler(ppl.Pass):
 
             sync_code = "\n".join(sync_code_lines)
 
-            tasklet = state.add_tasklet(
-                name=f"gpu_stream_sync_{state}", inputs=set(), outputs=set(),
-                code=sync_code,
-                language=dtypes.Language.CPP
-                )
-            
+            tasklet = state.add_tasklet(name=f"gpu_stream_sync_{state}",
+                                        inputs=set(),
+                                        outputs=set(),
+                                        code=sync_code,
+                                        language=dtypes.Language.CPP)
+
             for sink_node in sink_nodes:
                 state.add_edge(sink_node, None, tasklet, None, dace.Memlet())
-
 
         #----------------- Insert synchronization tasklets after specific nodes -----------------
 
@@ -250,26 +248,28 @@ class NaiveGPUStreamScheduler(ppl.Pass):
                 gpu_stream_access_expr = self._gpu_stream_access_template.format(gpu_stream=stream)
 
             tasklet = state.add_tasklet(
-                name=f"gpu_stream_sync_{stream}", inputs=set(), outputs=set(),
+                name=f"gpu_stream_sync_{stream}",
+                inputs=set(),
+                outputs=set(),
                 code=f"DACE_GPU_CHECK({self._backend}StreamSynchronize({gpu_stream_access_expr}));\n",
-                language=dtypes.Language.CPP
-                )
-            
+                language=dtypes.Language.CPP)
+
             # important: First get the successors, then add the tasklet
             successors = list(state.successors(node))
             state.add_edge(node, None, tasklet, None, dace.Memlet())
 
-            for succ in successors :
+            for succ in successors:
                 state.add_edge(tasklet, None, succ, None, dace.Memlet())
-            
-    def _identify_sync_locations(self, sdfg: SDFG, assigned_nodes: Dict) -> Tuple[Dict[SDFGState, Set[str]], Dict[nodes.Node, SDFGState]]:
+
+    def _identify_sync_locations(self, sdfg: SDFG,
+                                 assigned_nodes: Dict) -> Tuple[Dict[SDFGState, Set[str]], Dict[nodes.Node, SDFGState]]:
         """
         Heuristically identifies GPU stream synchronization points in an SDFG.
 
         Synchronization is needed:
         - At the end of a state, if we copy to/from GPU AccessNodes.
         - Immediately after a node, if data leaves GPU memory and is further used.
-        
+
         Returns:
             - sync_state: Maps each SDFGState to a set of stream IDs to sync at the end of the state.
             - sync_node: Maps individual nodes to the state where a sync is required after the node.
@@ -278,14 +278,16 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         # ------------------ Helper predicates -----------------------------
 
         def is_gpu_accessnode(node, state):
-            return isinstance(node, nodes.AccessNode) and node.desc(state.parent).storage == dtypes.StorageType.GPU_Global
+            return isinstance(node, nodes.AccessNode) and node.desc(
+                state.parent).storage == dtypes.StorageType.GPU_Global
 
         def is_nongpu_accessnode(node, state):
-            return isinstance(node, nodes.AccessNode) and node.desc(state.parent).storage not in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN
-        
+            return isinstance(node, nodes.AccessNode) and node.desc(
+                state.parent).storage not in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN
+
         def is_kernel_exit(node):
             return isinstance(node, nodes.ExitNode) and node.schedule == dtypes.ScheduleType.GPU_Device
-        
+
         def is_sink_node(node, state):
             return state.out_degree(node) == 0
 
@@ -317,11 +319,11 @@ class NaiveGPUStreamScheduler(ppl.Pass):
 
             else:
                 continue
-        
+
             # Check that state is indeed a SDFGState when added to the dictionary, to be on the safe side
             if not isinstance(state, SDFGState):
                 raise NotImplementedError(f"Unexpected parent type '{type(state).__name__}' for edge '{edge}'. "
-                                           "Expected 'SDFGState'. Please handle this case explicitly.")
+                                          "Expected 'SDFGState'. Please handle this case explicitly.")
 
         # Remove states with no syncs
         sync_state = {state: streams for state, streams in sync_state.items() if len(streams) > 0}

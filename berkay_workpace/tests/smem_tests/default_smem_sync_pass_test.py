@@ -4,8 +4,6 @@ from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 
 import pytest
-
-
 """
 Simple tests checking core functionality of the "DefaultSharedMemorySync" pass.
 """
@@ -17,12 +15,12 @@ def test_scalar_multiplic():
     Constructs an SDFG that performs scalar multiplication on a vector.
 
     In this test, a sequential loop is placed inside the GPU kernel, reusing shared memory.
-    As a result, the 'DefaultSharedMemorySync' pass should insert a "__syncthreads();" 
+    As a result, the 'DefaultSharedMemorySync' pass should insert a "__syncthreads();"
     at the end of each iteration to ensure correctness.
 
-    Note: This test is designed to evaluate where the 'DefaultSharedMemorySync' pass places 
-    synchronization tasklets. In this particular example, the inserted synchronizations are 
-    not strictly necessary and could be avoided with more advanced analysis, which is beyond 
+    Note: This test is designed to evaluate where the 'DefaultSharedMemorySync' pass places
+    synchronization tasklets. In this particular example, the inserted synchronizations are
+    not strictly necessary and could be avoided with more advanced analysis, which is beyond
     the scope of this pass.
     """
 
@@ -33,17 +31,21 @@ def test_scalar_multiplic():
     state = sdfg.add_state("main")
 
     # Add arrays
-    sdfg.add_array("A", (128,), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("A", (128, ), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
     sdfg.add_scalar("scalar", dace.uint32)
-    sdfg.add_array("S", (32,), dace.uint32, storage=dace.dtypes.StorageType.GPU_Shared, transient=True, lifetime=dace.dtypes.AllocationLifetime.Scope)
+    sdfg.add_array("S", (32, ),
+                   dace.uint32,
+                   storage=dace.dtypes.StorageType.GPU_Shared,
+                   transient=True,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope)
 
     # Add access nodes
     a_acc = state.add_read("A")
     a_store = state.add_write("A")
     scalar_acc = state.add_access("scalar")
-    s_acc= state.add_access("S")
+    s_acc = state.add_access("S")
 
-    # Sequential map (outermost) 
+    # Sequential map (outermost)
     seq_map_entry, seq_map_exit = state.add_map(
         "seq_map",
         dict(k="0:4"),
@@ -65,21 +67,17 @@ def test_scalar_multiplic():
     )
 
     # Add tasklets for A -> S -> B
-    tasklet1 = state.add_tasklet(
-        "addMult",
-        inputs={"__inp_A", "__inp_scalar"},
-        outputs={"__out"},
-        code="__out = __inp_A * __inp_scalar;",
-        language=dace.dtypes.Language.CPP
-    )
+    tasklet1 = state.add_tasklet("addMult",
+                                 inputs={"__inp_A", "__inp_scalar"},
+                                 outputs={"__out"},
+                                 code="__out = __inp_A * __inp_scalar;",
+                                 language=dace.dtypes.Language.CPP)
 
-    tasklet2 = state.add_tasklet(
-        "store_to_global",
-        inputs={"__inp"},
-        outputs={"__out"},
-        code="__out = __inp;",
-        language=dace.dtypes.Language.CPP
-    )
+    tasklet2 = state.add_tasklet("store_to_global",
+                                 inputs={"__inp"},
+                                 outputs={"__out"},
+                                 code="__out = __inp;",
+                                 language=dace.dtypes.Language.CPP)
 
     # Edges
 
@@ -104,22 +102,20 @@ def test_scalar_multiplic():
     state.add_edge(tb_map_exit, None, seq_map_exit, None, dace.Memlet("A[32 * k: 32 * (k+1)]"))
     state.add_edge(seq_map_exit, None, gpu_map_exit, None, dace.Memlet("A[0:128]"))
     state.add_edge(gpu_map_exit, None, a_store, None, dace.Memlet("A[0:128]"))
-    
-    sdfg.fill_scope_connectors()
 
+    sdfg.fill_scope_connectors()
 
     #----------------- Apply pass --------------------
 
     DefaultSharedMemorySync().apply_pass(sdfg, None)
-
 
     #----------------- Check correct insertion of sync tasklets --------------------
 
     # s_acc has a sync tasklet successor
     found = None
     for succ in state.successors(s_acc):
-        if (hasattr(succ, "_label") and succ._label == "pre_sync_barrier" and
-            isinstance(succ, nodes.Tasklet) and "__syncthreads();" in succ.code.code):
+        if (hasattr(succ, "_label") and succ._label == "pre_sync_barrier" and isinstance(succ, nodes.Tasklet)
+                and "__syncthreads();" in succ.code.code):
             found = succ
             break
 
@@ -128,12 +124,13 @@ def test_scalar_multiplic():
     # smem is reused in seq map, so we need synchronization after each iteration
     found = None
     for pred in state.predecessors(seq_map_exit):
-        if (hasattr(pred, "_label") and pred._label == "post_sync_barrier" and
-            isinstance(pred, nodes.Tasklet) and "__syncthreads();" in pred.code.code):
+        if (hasattr(pred, "_label") and pred._label == "post_sync_barrier" and isinstance(pred, nodes.Tasklet)
+                and "__syncthreads();" in pred.code.code):
             found = pred
             break
 
     assert found is not None, "There should be a synchronization tasklet after each iteration of the sequential map"
+
 
 @pytest.mark.gpu
 def test_scalar_multiplic_special():
@@ -153,17 +150,21 @@ def test_scalar_multiplic_special():
     state = sdfg.add_state("main")
 
     # Add arrays
-    sdfg.add_array("A", (32,), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("A", (32, ), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
     sdfg.add_scalar("scalar", dace.uint32)
-    sdfg.add_array("S", (32,), dace.uint32, storage=dace.dtypes.StorageType.GPU_Shared, transient=True, lifetime=dace.dtypes.AllocationLifetime.Scope)
+    sdfg.add_array("S", (32, ),
+                   dace.uint32,
+                   storage=dace.dtypes.StorageType.GPU_Shared,
+                   transient=True,
+                   lifetime=dace.dtypes.AllocationLifetime.Scope)
 
     # Add access nodes
     a_acc = state.add_read("A")
     a_store = state.add_write("A")
     scalar_acc = state.add_access("scalar")
-    s_acc= state.add_access("S")
+    s_acc = state.add_access("S")
 
-    # Sequential map (outermost) 
+    # Sequential map (outermost)
     seq_map_entry, seq_map_exit = state.add_map(
         "seq_map",
         dict(k="0:1"),
@@ -185,21 +186,17 @@ def test_scalar_multiplic_special():
     )
 
     # Add tasklets for A -> S -> B
-    tasklet1 = state.add_tasklet(
-        "addMult",
-        inputs={"__inp_A", "__inp_scalar"},
-        outputs={"__out"},
-        code="__out = __inp_A * __inp_scalar;",
-        language=dace.dtypes.Language.CPP
-    )
+    tasklet1 = state.add_tasklet("addMult",
+                                 inputs={"__inp_A", "__inp_scalar"},
+                                 outputs={"__out"},
+                                 code="__out = __inp_A * __inp_scalar;",
+                                 language=dace.dtypes.Language.CPP)
 
-    tasklet2 = state.add_tasklet(
-        "store_to_global",
-        inputs={"__inp"},
-        outputs={"__out"},
-        code="__out = __inp;",
-        language=dace.dtypes.Language.CPP
-    )
+    tasklet2 = state.add_tasklet("store_to_global",
+                                 inputs={"__inp"},
+                                 outputs={"__out"},
+                                 code="__out = __inp;",
+                                 language=dace.dtypes.Language.CPP)
 
     # Edges
 
@@ -224,22 +221,20 @@ def test_scalar_multiplic_special():
     state.add_edge(tb_map_exit, None, seq_map_exit, None, dace.Memlet("A[32 * k: 32 * (k+1)]"))
     state.add_edge(seq_map_exit, None, gpu_map_exit, None, dace.Memlet("A[0:32]"))
     state.add_edge(gpu_map_exit, None, a_store, None, dace.Memlet("A[0:32]"))
-    
-    sdfg.fill_scope_connectors()
 
+    sdfg.fill_scope_connectors()
 
     #----------------- Apply pass --------------------
 
     DefaultSharedMemorySync().apply_pass(sdfg, None)
-
 
     #----------------- Check correct insertion of sync tasklets --------------------
 
     # s_acc has a sync tasklet successor
     found = None
     for succ in state.successors(s_acc):
-        if (hasattr(succ, "_label") and succ._label == "pre_sync_barrier" and
-            isinstance(succ, nodes.Tasklet) and "__syncthreads();" in succ.code.code):
+        if (hasattr(succ, "_label") and succ._label == "pre_sync_barrier" and isinstance(succ, nodes.Tasklet)
+                and "__syncthreads();" in succ.code.code):
             found = succ
             break
 
@@ -248,12 +243,13 @@ def test_scalar_multiplic_special():
     # smem is NOT reused in seq map
     found = None
     for pred in state.predecessors(seq_map_exit):
-        if (hasattr(pred, "_label") and pred._label == "post_sync_barrier" and
-            isinstance(pred, nodes.Tasklet) and "__syncthreads();" in pred.code.code):
+        if (hasattr(pred, "_label") and pred._label == "post_sync_barrier" and isinstance(pred, nodes.Tasklet)
+                and "__syncthreads();" in pred.code.code):
             found = pred
             break
 
     assert found is None, "The DefaultSharedMemorySync pass should not have inserted at the end of the sequential map body"
+
 
 @pytest.mark.gpu
 def test_scalar_multiplic_loopRegion():
@@ -270,19 +266,17 @@ def test_scalar_multiplic_loopRegion():
     state = sdfg.add_state("main")
 
     # Arrays and access nodes
-    sdfg.add_array("A", (128,), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_array("A", (128, ), dace.uint32, storage=dace.dtypes.StorageType.GPU_Global)
     sdfg.add_scalar("scalar", dace.uint32)
     a_acc = state.add_read("A")
     a_store = state.add_write("A")
     scalar_acc = state.add_access("scalar")
 
     # Device and thread-block maps
-    gpu_map_entry, gpu_map_exit = state.add_map(
-        "gpu_map", dict(i="0:32:32"), schedule=dace.dtypes.ScheduleType.GPU_Device
-    )
-    tb_map_entry, tb_map_exit = state.add_map(
-        "tb", dict(j="0:32"), schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock
-    )
+    gpu_map_entry, gpu_map_exit = state.add_map("gpu_map",
+                                                dict(i="0:32:32"),
+                                                schedule=dace.dtypes.ScheduleType.GPU_Device)
+    tb_map_entry, tb_map_exit = state.add_map("tb", dict(j="0:32"), schedule=dace.dtypes.ScheduleType.GPU_ThreadBlock)
 
     # Nested SDFG setup
     inner_sdfg = dace.SDFG('nested_sdfg')
@@ -293,22 +287,22 @@ def test_scalar_multiplic_loopRegion():
     inner_state = loopreg.add_state("use_smem")
 
     # Shared memory and result
-    inner_sdfg.add_array("S", (32,), dace.uint32, storage=dace.dtypes.StorageType.GPU_Shared, transient=True)
+    inner_sdfg.add_array("S", (32, ), dace.uint32, storage=dace.dtypes.StorageType.GPU_Shared, transient=True)
     inner_sdfg.add_scalar("tmp_ret", dace.uint32)
     s_acc = inner_state.add_access("S")
     ret = inner_state.add_write("tmp_ret")
 
     # Tasklets
-    tasklet1 = inner_state.add_tasklet(
-        "assign_to_smem", inputs={}, outputs={"__out1"},
-        code="__out1 = __inp_A[j + 32 * k]",
-        language=dace.dtypes.Language.CPP
-    )
-    tasklet2 = inner_state.add_tasklet(
-        "addMult", inputs={"__inp2"}, outputs={"__out2"},
-        code="__out2 = __inp2 * __inp_scalar;",
-        language=dace.dtypes.Language.CPP
-    )
+    tasklet1 = inner_state.add_tasklet("assign_to_smem",
+                                       inputs={},
+                                       outputs={"__out1"},
+                                       code="__out1 = __inp_A[j + 32 * k]",
+                                       language=dace.dtypes.Language.CPP)
+    tasklet2 = inner_state.add_tasklet("addMult",
+                                       inputs={"__inp2"},
+                                       outputs={"__out2"},
+                                       code="__out2 = __inp2 * __inp_scalar;",
+                                       language=dace.dtypes.Language.CPP)
 
     # Main SDFG edges
     state.add_edge(a_acc, None, gpu_map_entry, None, dace.Memlet("A[0:128]"))
@@ -331,7 +325,6 @@ def test_scalar_multiplic_loopRegion():
     #----------------- Apply pass --------------------
 
     DefaultSharedMemorySync().apply_pass(sdfg, None)
-
 
     #----------------- Check correct insertion of sync tasklets --------------------
 
