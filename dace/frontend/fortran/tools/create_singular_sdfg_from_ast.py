@@ -56,10 +56,10 @@ def main():
     assert gmap.keys() == {entry_point[-1]}
     g: SDFG = singular(v for v in gmap.values())
     # Save once simplifying, in case simplification fails.
-    g.save(output_sdfg)
+    g.save(output_sdfg, compress=output_sdfg.endswith('.sdfgz'))
     g.simplify()
     # Save once before compiling, in case compilation fails.
-    g.save(output_sdfg)
+    g.save(output_sdfg, compress=output_sdfg.endswith('.sdfgz'))
     g.compile()
 
 
