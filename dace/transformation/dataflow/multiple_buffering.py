@@ -302,6 +302,8 @@ class MultipleBuffering(transformation.SingleStateTransformation):
                 array_name=array_name,
                 dim_to_append=self.pipeline_depth,
             )
+            # Add pipe descriptor to the dst array
+            sdfg.arrays[array_name].pipedescriptor = pipedescriptor
 
         # Generate expressions for pipeline prefill
         for access_node in copy_access_nodes:
