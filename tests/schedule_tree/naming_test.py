@@ -173,8 +173,8 @@ def _check_for_name_clashes(stree: tn.ScheduleTreeNode):
 
     def _traverse(node: tn.ScheduleTreeScope, scopes: List[str]):
         for child in node.children:
-            if isinstance(child, tn.ForScope):
-                itervar = child.header.itervar
+            if isinstance(child, tn.LoopScope):
+                itervar = child.loop.loop.loop_variable
                 if itervar in scopes:
                     raise NameError('Nested scope redefines iteration variable')
                 _traverse(child, scopes + [itervar])

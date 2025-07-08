@@ -556,13 +556,13 @@ class RedundantArray(pm.SingleStateTransformation):
         from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
-            if isinstance(e.src, Reduce) or (isinstance(e.src, nodes.NestedSDFG)
+            if isinstance(e.src, Reduce) or (isinstance(e.src, (nodes.NestedSDFG, nodes.LibraryNode))
                                              and len(in_desc.shape) != len(out_desc.shape)):
                 reduction = True
 
         # If:
         # 1. A reduce node is involved; or
-        # 2. A NestedSDFG node is involved and the arrays have different dimensionality; or
+        # 2. A NestedSDFG or Library node is involved and the arrays have different dimensionality; or
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
@@ -1316,6 +1316,21 @@ class RedundantReadSlice(pm.SingleStateTransformation):
             if any(m != a for m, a in zip(tmp.size(), out_shape)):
                 return False
 
+        if not permissive:
+            # Ensure the view is not an input to a library node, where it may change the behavior, and similarly is not
+            # being used to change the strides for a nested SDFG.
+            for e in graph.out_edges(out_array):
+                for sink in graph.memlet_tree(e).leaves():
+                    sink_node = sink.dst
+                    sink_conn = sink.dst_conn
+                    if isinstance(sink_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(sink_node, nodes.NestedSDFG):
+                        if sink_conn in sink_node.sdfg.arrays and isinstance(out_desc, data.ArrayView):
+                            ndesc = sink_node.sdfg.arrays[sink_conn]
+                            if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
+                                return False
+
         return True
 
     def apply(self, graph, sdfg):
@@ -1453,6 +1468,21 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                 return False
             if any(m != a for m, a in zip(tmp.size(), in_shape)):
                 return False
+
+        if not permissive:
+            # Ensure the view is not an output from a library node, where it may change the behavior, and similarly is
+            # not being used to change the strides for a nested SDFG.
+            for e in graph.in_edges(in_array):
+                for source in graph.memlet_tree(e).leaves():
+                    source_node = source.src
+                    source_conn = source.src_conn
+                    if isinstance(source_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(source_node, nodes.NestedSDFG):
+                        if source_conn in source_node.sdfg.arrays and isinstance(in_desc, data.ArrayView):
+                            ndesc = source_node.sdfg.arrays[source_conn]
+                            if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
+                                return False
 
         return True
 

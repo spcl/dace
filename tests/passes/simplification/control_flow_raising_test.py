@@ -1,9 +1,9 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace
 import numpy as np
-from dace.sdfg.state import ConditionalBlock
+from dace.sdfg.state import ConditionalBlock, UnstructuredControlFlow
 from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -114,6 +114,80 @@ def test_elif_chain(lowered_returns: bool):
     assert elif_chain(15)[0] == 4
 
 
+def test_unstructured_control_flow_sibling_loops():
+    sdfg = dace.SDFG('unstructured_control_flow_sibling_loops')
+
+    sdfg.add_array('A', (10, ), dace.int32)
+    sdfg.add_array('B', (10, ), dace.int32)
+
+    init_state = sdfg.add_state('init', is_start_block=True)
+
+    # Add a first loop
+    l1_before = sdfg.add_state_after(init_state, 'l1_before')
+    l1_guard = sdfg.add_state('l1_guard')
+    l1_body1 = sdfg.add_state('l1_body1')
+    l1_body2 = sdfg.add_state_after(l1_body1, 'l1_body2')
+    l1_exit = sdfg.add_state('l1_exit')
+    sdfg.add_edge(l1_before, l1_guard, dace.InterstateEdge(assignments={'i': '0'}))
+    sdfg.add_edge(l1_guard, l1_body1, dace.InterstateEdge('i < 10'))
+    sdfg.add_edge(l1_guard, l1_exit, dace.InterstateEdge('i >= 10'))
+    sdfg.add_edge(l1_body2, l1_guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+
+    # Add a second loop
+    l2_before = sdfg.add_state_after(l1_exit, 'l2_before')
+    l2_guard = sdfg.add_state('l2_guard')
+    l2_body1 = sdfg.add_state('l2_body1')
+    l2_body2 = sdfg.add_state_after(l2_body1, 'l2_body2')
+    l2_exit = sdfg.add_state('l2_exit')
+    sdfg.add_edge(l2_before, l2_guard, dace.InterstateEdge(assignments={'j': '0'}))
+    sdfg.add_edge(l2_guard, l2_body1, dace.InterstateEdge('j < 10'))
+    sdfg.add_edge(l2_guard, l2_exit, dace.InterstateEdge('j >= 10'))
+    sdfg.add_edge(l2_body2, l2_guard, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+
+    exit_state = sdfg.add_state_after(l2_exit, 'exit')
+
+    # Add an edge from the body of the first loop to the body of the second loop - this is the unstructured control flow
+    sdfg.add_edge(l1_body1, l2_body1, dace.InterstateEdge(condition='A[i] == 1', assignments={'j': '3'}))
+
+    # Add some computation
+    a1 = l1_body2.add_access('A')
+    t1 = l1_body2.add_tasklet('t1', {}, {'o1'}, 'o1 = 1')
+    l1_body2.add_edge(t1, 'o1', a1, None, dace.Memlet('A[i]'))
+
+    a2 = l2_body2.add_access('B')
+    t2 = l2_body2.add_tasklet('t2', {}, {'o1'}, 'o1 = 1')
+    l2_body2.add_edge(t2, 'o1', a2, None, dace.Memlet('B[j]'))
+
+    FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
+
+    unstructured_region = None
+    top_level_nodes = set(sdfg.nodes())
+    for node in top_level_nodes:
+        if isinstance(node, UnstructuredControlFlow):
+            unstructured_region = node
+            break
+    assert unstructured_region is not None
+    unstructured_nodes = set(unstructured_region.nodes())
+    assert exit_state in top_level_nodes
+    assert init_state in top_level_nodes
+    assert all(n in unstructured_nodes
+               for n in [l1_guard, l1_body1, l1_body2, l1_exit, l2_guard, l2_body1, l2_body2, l2_exit])
+
+    A_test = np.zeros((10, ), np.int32)
+    B_test = np.zeros((10, ), np.int32)
+    A_test[3] = 1  # This will trigger the jump from the first loop to the second loop
+
+    A_valid = np.zeros((10, ), np.int32)
+    A_valid[:4] = 1
+    B_valid = np.zeros((10, ), np.int32)
+    B_valid[3:] = 1
+
+    sdfg(A=A_test, B=B_test)
+
+    assert np.allclose(A_test, A_valid)
+    assert np.allclose(B_test, B_valid)
+
+
 if __name__ == '__main__':
     test_dataflow_if_check(False)
     test_dataflow_if_check(True)
@@ -121,3 +195,4 @@ if __name__ == '__main__':
     test_nested_if_chain(True)
     test_elif_chain(False)
     test_elif_chain(True)
+    test_unstructured_control_flow_sibling_loops()
