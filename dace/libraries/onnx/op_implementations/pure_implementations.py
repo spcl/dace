@@ -923,11 +923,7 @@ class PureReduceMean(ONNXForward):
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
 
-        if axes_desc.shape == (1, ):
-            # axes_arr will be a scalar in this case
-            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
-        else:
-            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
+        axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 
         tasklet_code = (f"""
             constexpr long long input_dims = {len(data_desc.shape)};
@@ -2348,11 +2344,7 @@ class PureReduceSum(ONNXForward):
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
 
-        if axes_desc.shape == (1, ):
-            # axes_arr will be a scalar in this case
-            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
-        else:
-            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
+        axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
@@ -2494,11 +2486,7 @@ class PureReduceMax(ONNXForward):
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
 
-        if axes_desc.shape == (1, ):
-            # axes_arr will be a scalar in this case
-            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
-        else:
-            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
+        axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
@@ -2643,11 +2631,7 @@ class PureReduceMin(ONNXForward):
         assert len(axes_desc.shape) == 1  # axes_desc is a 1D array
         [num_reduce_axes] = axes_desc.shape
 
-        if axes_desc.shape == (1, ):
-            # axes_arr will be a scalar in this case
-            axes_arr_code = "long long reduce_dims[1] = {axes_arr};"
-        else:
-            axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
+        axes_arr_code = f"long long reduce_dims [num_reduce_dims] = {{{', '.join([f'axes_arr[{i}]' for i in range(num_reduce_axes)])}}};"
 
         # Create the reduction tasklet with embedded constants
         tasklet_code = (f"""
