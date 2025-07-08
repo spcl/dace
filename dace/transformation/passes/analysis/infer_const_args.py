@@ -7,7 +7,7 @@ import dace.sdfg.utils as sdutils
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
-class InfetConstantArguments(ppl.Pass):
+class InferConstantArguments(ppl.Pass):
     """
     Evaluates which symbols and data are const within a scope.
     """
