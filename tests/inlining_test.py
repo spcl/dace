@@ -820,7 +820,6 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     outside_and_inner_symbol_have_same_meaning: bool,
     separate_write_back_state: bool,
-    inside_uses_same_name: bool,
 ) -> Tuple[dace.SDFG, dace.SDFG, dace.SDFGState, dace.nodes.NestedSDFG]:
     """
     The SDFGs created by this function are rather similar to
@@ -837,13 +836,9 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
     If `separate_write_back_state` then the copy of `t` into `b` is in a separate state, otherwise
     it is in a different state. Thus, if it is `False` then the inner SDFG has only one state,
     which makes it applicable to `InlineSDFG`.
-
-    If `inside_uses_same_name` is `True` then the inner SDFG will use the same symbol name. In case
-    it is `True` and `outside_and_inner_symbol_have_same_meaning` is `False` it means that there is
-    a name clash.
     """
     outer_symbol_name = "outer_symbol"
-    inner_symbol_name = outer_symbol_name if inside_uses_same_name else "inner_symbol"
+    inner_symbol_name = "inner_symbol"
 
     # Create the inner SDFG.
     inner_sdfg = dace.SDFG(unique_name("inner_sdfg"))
@@ -1165,11 +1160,10 @@ def _perform_test_multistate_inline_with_symbol_mapping(
     outer_sdfg, inner_sdfg, inner_state, nsdfg_node = _make_sdfg_for_multistate_inlining_with_symbol_mapping(
         outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning,
         separate_write_back_state=separate_write_back_state,
-        inside_uses_same_name=False,
     )
 
-    inner_symbol_name = "inner_symbol"
     outer_symbol_name = "outer_symbol"
+    inner_symbol_name = "inner_symbol"
 
     assert inner_sdfg.number_of_nodes() == (2 if separate_write_back_state else 1)
     assert outer_sdfg.number_of_nodes() == 1
@@ -1231,10 +1225,10 @@ def _perform_test_multistate_inline_with_symbol_mapping(
         assert len(ac_nodes) == 4
     else:
         if separate_write_back_state:
-            assert len(ac_nodes) == 7
+            assert len(ac_nodes) == 6
             assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 2
         else:
-            assert len(ac_nodes) == 6
+            assert len(ac_nodes) == 5
             assert len([ac.data for ac in ac_nodes if ac.data == "t"]) == 1
         assert len([ac.data for ac in ac_nodes if ac.data == "T"]) == 2
 
