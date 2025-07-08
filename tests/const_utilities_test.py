@@ -80,13 +80,26 @@ def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
                     state.remove_edge(edge)
 
 
-def _check_map_entries(state, schedule, expected_data, expected_symbols):
+def _check_map_entries(state, include_symbols_for_offset_calculation, const_only, schedule, expected_data,
+                       expected_symbols):
     map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry) and n.map.schedule == schedule]
     for me in map_entries:
-        const_data = sdutils.get_constant_data(me, state)
-        const_symbols = sdutils.get_constant_symbols(me, state)
-        assert expected_data == const_data
-        assert expected_symbols == const_symbols
+        if const_only:
+            const_data = sdutils.get_constant_data(scope=me, parent_state=state)
+            const_symbols = sdutils.get_constant_symbols(
+                scope=me,
+                parent_state=state,
+                include_symbols_for_offset_calculations=include_symbols_for_offset_calculation)
+            assert expected_data == const_data, f"(Const Data) Expected {expected_data}, got {const_data} in map {me.label}"
+            assert expected_symbols == const_symbols, f"(Const Symbols) Expected {expected_symbols}, got {const_symbols} in map {me.label}"
+        else:
+            used_data = sdutils.get_used_data(scope=me, parent_state=state)
+            used_symbols = sdutils.get_used_symbols(
+                scope=me,
+                parent_state=state,
+                include_symbols_for_offset_calculations=include_symbols_for_offset_calculation)
+            assert expected_data == used_data, f"(Used Data) Expected {expected_data}, got {used_data} in map {me.label}"
+            assert expected_symbols == used_symbols, f"(Used Symbols) Expected {expected_symbols}, got {used_symbols} in map {me.label}"
 
 
 def _gen_sdfg_with_symbol_use_in_nsdfg(write_only: bool = True) -> dace.SDFG:
@@ -172,16 +185,57 @@ def test_const_utilities_case_non_const_input_not_present_in_output():
     # Test cases
     original_state = next(iter(original_sdfg.all_states()))
     transformed_state = next(iter(transformed_sdfg.all_states()))
+    assert original_state is not None
+    assert transformed_state is not None
+
+    all_data_names = set(node.data for node in original_state.data_nodes())
+    transformed_sdfg_tmp_names = set(node.data for node in transformed_state.data_nodes()
+                                     if transformed_sdfg.arrays[node.data].transient)
+    original_sdfg_tmp_names = set(node.data for node in original_state.data_nodes()
+                                  if original_sdfg.arrays[node.data].transient)
 
     # Original state tests
-    _check_map_entries(original_state, dace.dtypes.ScheduleType.GPU_Device, {"A", "B"}, {"i"})
-    _check_map_entries(original_state, dace.dtypes.ScheduleType.Sequential, {"A", "B"}, {"i", "k"})
-    _check_map_entries(original_state, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"A", "B"}, {"i", "j", "k"})
+    _check_map_entries(original_state, True, False, dace.dtypes.ScheduleType.GPU_Device, all_data_names - {"C"},
+                       {"i", "N"})
+    _check_map_entries(original_state, True, False, dace.dtypes.ScheduleType.Sequential, all_data_names - {"C"},
+                       {"i", "k", "N"})
+    _check_map_entries(original_state, True, False, dace.dtypes.ScheduleType.GPU_ThreadBlock, all_data_names - {"C"},
+                       {"i", "j", "k", "N"})
 
     # Transformed state tests
-    _check_map_entries(transformed_state, dace.dtypes.ScheduleType.GPU_Device, set(), {"i"})
-    _check_map_entries(transformed_state, dace.dtypes.ScheduleType.Sequential, set(), {"i", "k"})
-    _check_map_entries(transformed_state, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"shr_A", "shr_B"}, {"i", "j", "k"})
+    _check_map_entries(transformed_state, True, False, dace.dtypes.ScheduleType.GPU_Device,
+                       all_data_names - {"C"} | {"shr_A", "shr_B"}, {"i", "N"})
+    _check_map_entries(transformed_state, True, False, dace.dtypes.ScheduleType.Sequential,
+                       all_data_names - {"C"} | {"shr_A", "shr_B"}, {"i", "k", "N"})
+    # Using only shr_a and shr_b means no need of N
+    _check_map_entries(transformed_state, True, False, dace.dtypes.ScheduleType.GPU_ThreadBlock,
+                       {"shr_A", "shr_B"} | transformed_sdfg_tmp_names, {"i", "j", "k"})
+
+    # Original state tests
+    _check_map_entries(original_state, True, True, dace.dtypes.ScheduleType.GPU_Device, {"A", "B"}, {"i", "N"})
+    _check_map_entries(original_state, True, True, dace.dtypes.ScheduleType.Sequential, {"A", "B"}, {"i", "k", "N"})
+    _check_map_entries(original_state, True, True, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"A", "B"},
+                       {"i", "j", "k", "N"})
+
+    # Transformed state tests
+    _check_map_entries(transformed_state, True, True, dace.dtypes.ScheduleType.GPU_Device, set(), {"i", "N"})
+    _check_map_entries(transformed_state, True, True, dace.dtypes.ScheduleType.Sequential, set(), {"i", "k", "N"})
+    # Using only shr_a and shr_b means no need of N
+    _check_map_entries(transformed_state, True, True, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"shr_A", "shr_B"},
+                       {"i", "j", "k"})
+
+    # Original state tests
+    _check_map_entries(original_state, False, True, dace.dtypes.ScheduleType.GPU_Device, {"A", "B"}, {"i"})
+    _check_map_entries(original_state, False, True, dace.dtypes.ScheduleType.Sequential, {"A", "B"}, {"i", "k"})
+    _check_map_entries(original_state, False, True, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"A", "B"},
+                       {"i", "j", "k"})
+
+    # Transformed state tests
+    _check_map_entries(transformed_state, False, True, dace.dtypes.ScheduleType.GPU_Device, set(), {"i"})
+    _check_map_entries(transformed_state, False, True, dace.dtypes.ScheduleType.Sequential, set(), {"i", "k"})
+    # Using only shr_a and shr_b means no need of N
+    _check_map_entries(transformed_state, False, True, dace.dtypes.ScheduleType.GPU_ThreadBlock, {"shr_A", "shr_B"},
+                       {"i", "j", "k"})
 
 
 def test_const_utilities_case_write_only_free_symbol_in_nsdfg():
