@@ -16,10 +16,6 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp, fpga
 from typing import List, Union, Tuple
 
-from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
-from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
-from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
-from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
 from dace.sdfg.state import ControlFlowRegion
 
 REDUCTION_TYPE_TO_HLSLIB = {
@@ -1144,6 +1140,12 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                     }
                 }
 
+            # Avoid importing submodule if not necessary
+            from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
+            from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
+            from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
+            from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
+
             # Trigger the generation
             self._ip_codes.append((f"{kernel_name}_control", 'v', rtllib_control(rtllib_config)))
             self._ip_codes.append((f'{kernel_name}_top', 'v', rtllib_top(rtllib_config)))
@@ -1214,8 +1216,15 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
     def allocate_view(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: dace.SDFGState, state_id: int,
                       node: dace.nodes.AccessNode, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                       allocation_stream: CodeIOStream) -> None:
-        return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, global_stream, declaration_stream,
-                                               allocation_stream)
+        return self._cpu_codegen.allocate_view(sdfg,
+                                               cfg,
+                                               dfg,
+                                               state_id,
+                                               node,
+                                               global_stream,
+                                               declaration_stream,
+                                               allocation_stream,
+                                               decouple_array_interfaces=self._decouple_array_interfaces)
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         # Connectors that are both input and output share the same name, unless

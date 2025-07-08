@@ -225,6 +225,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     from dace import data as dt
     from dace.codegen.targets import fpga
     from dace.sdfg.scope import is_devicelevel_fpga, is_devicelevel_gpu
+    from dace.sdfg.state import ConditionalBlock
 
     references = references or set()
 
@@ -241,6 +242,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
         for cfg in sdfg.all_control_flow_regions():
+            if isinstance(cfg, ConditionalBlock):
+                continue
             blocks = cfg.nodes()
             if len(blocks) != len(set([s.label for s in blocks])):
                 raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)

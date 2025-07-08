@@ -34,6 +34,11 @@ def infer_types(code, symbols=None):
         _dispatch(ast.parse(code), symbols, inferred_symbols)
     elif isinstance(code, ast.AST):
         _dispatch(code, symbols, inferred_symbols)
+    elif isinstance(code, symbol):
+        if code.name in symbols:
+            inferred_symbols[code.name] = symbols[code.name]
+        else:
+            inferred_symbols[code.name] = code.dtype
     elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
         _dispatch(ast.parse(symstr(code)), symbols, inferred_symbols)
     elif isinstance(code, list):
@@ -59,6 +64,10 @@ def infer_expr_type(code, symbols=None):
     inferred_symbols = {}
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
+    elif isinstance(code, symbol):
+        if code.name in symbols:
+            return symbols[code.name]
+        return code.dtype
     elif isinstance(code, sympy.Basic):
         parsed_ast = ast.parse(sympy.printing.pycode(code, allow_unknown_functions=True))
     elif isinstance(code, SymExpr):

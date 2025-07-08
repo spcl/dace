@@ -1,11 +1,11 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import itertools
 import sympy as sp
 
 from dace import dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.replacements import _define_local_scalar
+from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from numbers import Integral, Number
@@ -13,15 +13,15 @@ from typing import Sequence, Tuple, Union
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
-ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 ##### MPI Cartesian Communicators
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Create_cart')
 @oprepo.replaces('dace.comm.Cart_create')
-def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: ShapeType):
-    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
+def _cart_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dims: ShapeType):
+    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with
+        [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
         :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
         :return: Name of the new process-grid descriptor.
     """
@@ -50,7 +50,7 @@ def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: Shape
 
 
 @oprepo.replaces_method('Intracomm', 'Create_cart')
-def _intracomm_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, dims: ShapeType):
+def _intracomm_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, dims: ShapeType):
     """ Equivalent to `dace.comm.Cart_create(dims).
         :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
         :return: Name of the new process-grid descriptor.
@@ -64,7 +64,7 @@ def _intracomm_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm:
 
 
 @oprepo.replaces('dace.comm.Cart_sub')
-def _cart_sub(pv: 'ProgramVisitor',
+def _cart_sub(pv: ProgramVisitor,
               sdfg: SDFG,
               state: SDFGState,
               parent_grid: str,
@@ -105,8 +105,8 @@ def _cart_sub(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessGrid', 'Sub')
-def _pgrid_sub(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, parent_grid: str, color: Sequence[Union[Integral,
-                                                                                                           bool]]):
+def _pgrid_sub(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, parent_grid: str, color: Sequence[Union[Integral,
+                                                                                                         bool]]):
     """ Equivalent to `dace.comm.Cart_sub(parent_grid, color).
         :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
         :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
@@ -120,19 +120,19 @@ def _pgrid_sub(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, parent_grid: 
 for left_cls, right_cls in itertools.product(['Comm', 'Cartcomm', 'Intracomm'], repeat=2):
 
     @oprepo.replaces_operator(left_cls, 'Eq', otherclass=right_cls)
-    def _eq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+    def _eq_comm(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 == op2
 
     @oprepo.replaces_operator(left_cls, 'NotEq', otherclass=right_cls)
-    def _noteq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+    def _noteq_comm(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 != op2
 
     @oprepo.replaces_operator(left_cls, 'Is', otherclass=right_cls)
-    def _is_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+    def _is_comm(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 is op2
 
     @oprepo.replaces_operator(left_cls, 'IsNot', otherclass=right_cls)
-    def _isnot_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+    def _isnot_comm(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 is not op2
 
 
@@ -141,7 +141,7 @@ for cls_a, cls_b, op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 
 
     @oprepo.replaces_operator(cls_a, op, otherclass=cls_b)
     @oprepo.replaces_operator(cls_b, op, otherclass=cls_a)
-    def _op_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: Union[str, 'Comm'], op2: Union[str, 'Comm']):
+    def _op_pgrid(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Union[str, 'Comm'], op2: Union[str, 'Comm']):
         if op in ('Eq', 'Is'):
             return False
         return True
@@ -161,6 +161,7 @@ def _bcast(pv: ProgramVisitor,
            fcomm: str = None):
 
     from dace.libraries.mpi.nodes.bcast import Bcast
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
 
     libnode = Bcast('_Bcast_', grid, fcomm)
     desc = sdfg.arrays[buffer]
@@ -183,7 +184,7 @@ def _bcast(pv: ProgramVisitor,
 
 @oprepo.replaces_method('Cartcomm', 'Bcast')
 @oprepo.replaces_method('Intracomm', 'Bcast')
-def _intracomm_bcast(pv: 'ProgramVisitor',
+def _intracomm_bcast(pv: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
                      comm: str,
@@ -201,7 +202,7 @@ def _intracomm_bcast(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessGrid', 'Bcast')
-def _pgrid_bcast(pv: 'ProgramVisitor',
+def _pgrid_bcast(pv: ProgramVisitor,
                  sdfg: SDFG,
                  state: SDFGState,
                  pgrid: str,
@@ -229,6 +230,7 @@ def _Reduce(pv: ProgramVisitor,
             grid: str = None):
 
     from dace.libraries.mpi.nodes.reduce import Reduce
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
 
     libnode = Reduce('_Reduce_', op, grid)
     desc = sdfg.arrays[buffer]
@@ -251,7 +253,7 @@ def _Reduce(pv: ProgramVisitor,
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Alltoall')
 @oprepo.replaces('dace.comm.Alltoall')
-def _alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inbuffer: str, outbuffer: str, grid: str = None):
+def _alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inbuffer: str, outbuffer: str, grid: str = None):
 
     from dace.libraries.mpi.nodes.alltoall import Alltoall
 
@@ -267,8 +269,7 @@ def _alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inbuffer: str,
 
 
 @oprepo.replaces_method('Intracomm', 'Alltoall')
-def _intracomm_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: str,
-                        out_buffer: str):
+def _intracomm_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: str, out_buffer: str):
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer)`. """
 
     from mpi4py import MPI
@@ -279,7 +280,7 @@ def _intracomm_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icom
 
 
 @oprepo.replaces_method('ProcessGrid', 'Alltoall')
-def _pgrid_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: str, out_buffer: str):
+def _pgrid_alltoall(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: str, out_buffer: str):
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer, grid=pgrid)`. """
 
     from mpi4py import MPI
@@ -303,7 +304,7 @@ def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op
 
 
 @oprepo.replaces_method('Intracomm', 'Allreduce')
-def _intracomm_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: 'InPlace',
+def _intracomm_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: 'InPlace',
                          out_buffer: str, op: str):
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
 
@@ -319,7 +320,7 @@ def _intracomm_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, ico
 
 
 @oprepo.replaces_method('ProcessGrid', 'Allreduce')
-def _pgrid_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: 'InPlace',
+def _pgrid_allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: 'InPlace',
                      out_buffer: str, op: str):
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op, grid=pgrid)`. """
 
@@ -341,6 +342,7 @@ def _scatter(pv: ProgramVisitor,
              root: Union[str, sp.Expr, Number] = 0):
 
     from dace.libraries.mpi.nodes.scatter import Scatter
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
 
     libnode = Scatter('_Scatter_')
     in_desc = sdfg.arrays[in_buffer]
@@ -372,6 +374,7 @@ def _gather(pv: ProgramVisitor,
             root: Union[str, sp.Expr, Number] = 0):
 
     from dace.libraries.mpi.nodes.gather import Gather
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
 
     libnode = Gather('_Gather_')
     in_desc = sdfg.arrays[in_buffer]
@@ -404,7 +407,7 @@ def _send(pv: ProgramVisitor,
           buffer: str,
           dst: Union[str, sp.Expr, Number],
           tag: Union[str, sp.Expr, Number] = 0):
-
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.send import Send
 
     libnode = Send('_Send_')
@@ -470,7 +473,7 @@ def _send(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Send')
-def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
+def _intracomm_send(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                     dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.end(buffer, dst, tag)`. """
 
@@ -482,7 +485,7 @@ def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: s
 
 
 @oprepo.replaces_method('ProcessGrid', 'Send')
-def _pgrid_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+def _pgrid_send(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
                 dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Send(buffer, dst, tag, grid=pgrid)`. """
 
@@ -500,7 +503,7 @@ def _isend(pv: ProgramVisitor,
            tag: Union[str, sp.Expr, Number],
            request: str = None,
            grid: str = None):
-
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.isend import Isend
 
     ret_req = False
@@ -592,7 +595,7 @@ def _isend(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Isend')
-def _intracomm_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
+def _intracomm_isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                      dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`. """
 
@@ -606,7 +609,7 @@ def _intracomm_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 
 
 
 @oprepo.replaces_method('ProcessGrid', 'Isend')
-def _pgrid_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+def _pgrid_isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
                  dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
 
@@ -624,7 +627,7 @@ def _recv(pv: ProgramVisitor,
           buffer: str,
           src: Union[str, sp.Expr, Number],
           tag: Union[str, sp.Expr, Number] = 0):
-
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.recv import Recv
 
     libnode = Recv('_Recv_')
@@ -690,7 +693,7 @@ def _recv(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Recv')
-def _intracomm_Recv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
+def _intracomm_Recv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                     src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Recv(buffer, src, tagq)`. """
 
@@ -702,7 +705,7 @@ def _intracomm_Recv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: s
 
 
 @oprepo.replaces_method('ProcessGrid', 'Recv')
-def _pgrid_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+def _pgrid_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
                  src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Recv(buffer, dst, tag, grid=pgrid)`. """
 
@@ -721,6 +724,7 @@ def _irecv(pv: ProgramVisitor,
            request: str = None,
            grid: str = None):
 
+    from dace.frontend.python.replacements.array_creation_dace import _define_local_scalar
     from dace.libraries.mpi.nodes.irecv import Irecv
 
     ret_req = False
@@ -810,7 +814,7 @@ def _irecv(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Irecv')
-def _intracomm_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
+def _intracomm_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                      src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`. """
 
@@ -824,7 +828,7 @@ def _intracomm_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 
 
 
 @oprepo.replaces_method('ProcessGrid', 'Irecv')
-def _pgrid_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+def _pgrid_irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
                  src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
 

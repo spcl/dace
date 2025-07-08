@@ -12,23 +12,27 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
     res_rhs = None
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
-            subset = dc(edge.data.subset)
-            squeezed = subset.squeeze()
-            size = subset.size()
+            size = edge.data.subset.size()
+            squeezed = dc(edge.data.subset)
+            squeezed_dims = squeezed.squeeze()
+            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
-            res = edge, outer_array, size, strides
+            strides = list(outer_array.strides)
+            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
             else:
                 res_rhs = res
         elif edge.src_conn == name_out:
-            subset = dc(edge.data.subset)
-            squeezed = subset.squeeze()
-            size = subset.size()
+            size = edge.data.subset.size()
+            squeezed = dc(edge.data.subset)
+            squeezed_dims = squeezed.squeeze()
+            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
-            res_out = edge, outer_array, size, strides
+            strides = list(outer_array.strides)
+            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
             raise ValueError("Matrix multiplication connector "
@@ -87,7 +91,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     from dace.codegen.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride), (_, _, bshape, bstride), (_, _, cshape, cstride) = _get_matmul_operands(node, state, sdfg)
+    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _,
+                                                                   _) = _get_matmul_operands(node, state, sdfg)
 
     if getattr(node, 'transA', False):
         ashape = list(reversed(ashape))
@@ -143,9 +148,10 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         a, b, c = _get_matmul_operands(node, state, sdfg)
-        size_a = a[2]
-        size_b = b[2]
-        if len(size_a) == 2 and len(size_b) == 2:
+        size_a = a[4]
+        size_b = b[4]
+        size_c = c[4]
+        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
             beta = node.beta

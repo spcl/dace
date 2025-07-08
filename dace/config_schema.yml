@@ -982,6 +982,16 @@ required:
             be called before every compiled SDFG's generated code is invoked. Used
             for functionality such as low-level profiling.
 
+    external_transformations_path:
+        type: str
+        default: '$HOME/dace_transformations/external_transformations'
+        default_Windows: '%USERPROFILE%\\dace_transformations\\external_transformations'
+        title: External transformations path
+        description: >
+            Path to a directory containing external transformations that are not
+            included in the main DaCe package. This path is added to the Python path
+            and can be used to import custom transformation modules.
+
     #############################################
     # Experimental features
 
