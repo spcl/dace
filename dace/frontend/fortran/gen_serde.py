@@ -974,8 +974,8 @@ struct {name} {{
     cpp_serializer_fns: str = '\n'.join(cpp_serializer_fns)
 
     cpp_code = f"""
-#ifndef __DACE_SERDE__
-#define __DACE_SERDE__
+#ifndef __DACE_{mod_name.upper()}_SERDE__
+#define __DACE_{mod_name.upper()}_SERDE__
 
 #include <cassert>
 #include <istream>
@@ -984,7 +984,6 @@ struct {name} {{
 #include <sstream>
 #include <optional>
 #include <algorithm>
-#include <format>
 #include <vector>
 #include <map>
 #include <set>
@@ -992,9 +991,7 @@ struct {name} {{
 #include <string_view>
 #include <numeric>
 
-#include "{g.name}.h"
-
-namespace serde {{
+namespace {mod_name} {{
     std::vector<std::string_view> split(std::string_view s, char delim) {{
         std::vector<std::string_view> parts;
         for (int start_pos = 0, next_pos; start_pos < s.length(); start_pos = next_pos + 1) {{
@@ -1068,19 +1065,48 @@ namespace serde {{
     }}
 
     void read_scalar(float& x, std::istream& s) {{
-        if (s.eof()) return;
-        scroll_space(s);
-        long double y;
-        s >> y;
-        x = y;
+        long double xx;
+        read_scalar(xx, s);
+        x = static_cast<float>(xx);
     }}
 
     void read_scalar(double& x, std::istream& s) {{
+        long double xx;
+        read_scalar(xx, s);
+        x = static_cast<double>(xx);
+    }}
+
+    void read_scalar(long double& x, std::istream& s) {{
         if (s.eof()) return;
         scroll_space(s);
-        long double y;
-        s >> y;
-        x = y;
+
+        std::string line;
+        assert(std::getline(s, line));
+        assert(!line.empty());
+
+        // Find the position to insert 'E' if needed (looking for exponent sign from
+        // right)
+        for (int i = line.length() - 1; i >= 0; --i) {{
+            char current_char = line[i];
+            if (current_char == '+' || current_char == '-') {{
+                // Found a potential exponent sign. Check preceding character.
+                if (i > 0 && (std::isdigit(line[i - 1]) || line[i - 1] == '.') &&
+                    !(line[i - 1] == 'E' || line[i - 1] == 'e' || line[i - 1] == 'D' ||
+                    line[i - 1] == 'd')) {{
+                line.insert(i, "E"); // Insert 'E' and break
+                break;
+              }}
+            }} else if (current_char == 'E' || current_char == 'e' ||
+                        current_char == 'D' || current_char == 'd') {{
+              // Already standard scientific notation, no insertion needed.
+              break; // Exit loop
+            }}
+        }}
+
+        // Parse the (potentially modified) string
+        std::istringstream iss(line);
+        iss >> x;
+        assert(!iss.fail());
     }}
 
     void read_scalar(bool& x, std::istream& s) {{
@@ -1163,9 +1189,9 @@ namespace serde {{
     }}
 
     {gdata.cpp_serde}
-}}  // namesepace serde
+}}  // namesepace {mod_name}
 
-#endif // __DACE_SERDE__
+#endif // __DACE_{mod_name.upper()}_SERDE__
 """
     result = subprocess.run(['clang-format'], input=cpp_code.strip(), text=True, capture_output=True)
     if not (result.returncode or result.stderr):
