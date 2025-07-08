@@ -1034,6 +1034,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Tasklet -> array
             if isinstance(node, nodes.CodeNode):
                 if not uconn:
+                    return
                     raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
                         str(edge.src), str(edge.dst)))
 

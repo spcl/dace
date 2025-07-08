@@ -286,14 +286,14 @@
         },
         "debuginfo": {
           "type": "DebugInfo",
-          "start_line": 20,
-          "end_line": 29,
+          "start_line": 89,
+          "end_line": 98,
           "start_column": 0,
           "end_column": 0,
-          "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+          "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
         },
         "using_explicit_control_flow": true,
-        "guid": "b1393913-a60f-4a10-a006-50ad9ec459e3"
+        "guid": "d86432fb-dd83-4d68-b1a3-5443e218087b"
       },
       "nodes": [
         {
@@ -328,9 +328,9 @@
           "nodes": [
             {
               "type": "MapEntry",
-              "label": "kernel_26[i=0:N:512]",
+              "label": "kernel_95[i=0:N:512]",
               "attributes": {
-                "label": "kernel_26",
+                "label": "kernel_95",
                 "params": [
                   "i"
                 ],
@@ -348,11 +348,11 @@
                 "schedule": "GPU_Device",
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 26,
-                  "end_line": 26,
+                  "start_line": 95,
+                  "end_line": 95,
                   "start_column": 4,
                   "end_column": 4,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "in_connectors": {
                   "IN_A": null,
@@ -362,7 +362,7 @@
                   "OUT_A": null,
                   "OUT_B": null
                 },
-                "guid": "e572193f-4078-4079-8a7b-f9e60c00c3f9"
+                "guid": "4748988f-5a8b-4bb9-979c-22cba4912dc0"
               },
               "id": 0,
               "scope_entry": null,
@@ -370,7 +370,7 @@
             },
             {
               "type": "MapExit",
-              "label": "kernel_26[i=0:N:512]",
+              "label": "kernel_95[i=0:N:512]",
               "attributes": {
                 "in_connectors": {
                   "IN_C": null
@@ -378,7 +378,7 @@
                 "out_connectors": {
                   "OUT_C": null
                 },
-                "guid": "2692fa6e-5d5b-4152-8604-77292eca079e"
+                "guid": "6b03359b-afbe-4cc4-92de-ebedc84f829b"
               },
               "id": 1,
               "scope_entry": "0",
@@ -390,14 +390,14 @@
               "attributes": {
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 26,
-                  "end_line": 26,
+                  "start_line": 95,
+                  "end_line": 95,
                   "start_column": 4,
                   "end_column": 4,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "data": "A",
-                "guid": "ab74a37e-b46f-4c4f-a769-f5c7a748410d"
+                "guid": "10bb78f3-f3ce-46ff-abd1-b5d1e8e19e17"
               },
               "id": 2,
               "scope_entry": null,
@@ -409,14 +409,14 @@
               "attributes": {
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 26,
-                  "end_line": 26,
+                  "start_line": 95,
+                  "end_line": 95,
                   "start_column": 4,
                   "end_column": 4,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "data": "B",
-                "guid": "61eb4a00-468b-4b1f-860d-09ce3d6d359e"
+                "guid": "b1b04e6f-26af-4e3a-bb90-ed435f77a0df"
               },
               "id": 3,
               "scope_entry": null,
@@ -428,14 +428,14 @@
               "attributes": {
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 26,
-                  "end_line": 26,
+                  "start_line": 95,
+                  "end_line": 95,
                   "start_column": 4,
                   "end_column": 4,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "data": "C",
-                "guid": "f166467e-40a6-46e0-9a94-d19c7e8c9b13"
+                "guid": "c93c561b-1a7f-42b5-af9d-6bdb9cbb586b"
               },
               "id": 4,
               "scope_entry": null,
@@ -443,9 +443,9 @@
             },
             {
               "type": "MapEntry",
-              "label": "kernel_26_4_27[k=0:2]",
+              "label": "kernel_95_4_96[k=0:2]",
               "attributes": {
-                "label": "kernel_26_4_27",
+                "label": "kernel_95_4_96",
                 "params": [
                   "k"
                 ],
@@ -463,21 +463,21 @@
                 "schedule": "Sequential",
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 27,
-                  "end_line": 27,
+                  "start_line": 96,
+                  "end_line": 96,
                   "start_column": 8,
                   "end_column": 8,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "in_connectors": {
-                  "IN___tmp_29_37_r_in_from_1_0_in_from_1_0": null,
-                  "IN___tmp_29_58_r_in_from_1_0_in_from_1_0": null
+                  "IN___tmp_98_37_r_in_from_1_0_in_from_1_0": null,
+                  "IN___tmp_98_58_r_in_from_1_0_in_from_1_0": null
                 },
                 "out_connectors": {
-                  "OUT___tmp_29_37_r_in_from_1_0_in_from_1_0": null,
-                  "OUT___tmp_29_58_r_in_from_1_0_in_from_1_0": null
+                  "OUT___tmp_98_37_r_in_from_1_0_in_from_1_0": null,
+                  "OUT___tmp_98_58_r_in_from_1_0_in_from_1_0": null
                 },
-                "guid": "148ec12e-ac47-4a5e-bc34-836556a4bb1d"
+                "guid": "93ff2336-bf88-4205-9416-d8d5ada0fa43"
               },
               "id": 5,
               "scope_entry": "0",
@@ -485,15 +485,15 @@
             },
             {
               "type": "MapExit",
-              "label": "kernel_26_4_27[k=0:2]",
+              "label": "kernel_95_4_96[k=0:2]",
               "attributes": {
                 "in_connectors": {
-                  "IN___tmp_29_16_w_out_of_1_1_out_of_1_1": null
+                  "IN___tmp_98_16_w_out_of_1_1_out_of_1_1": null
                 },
                 "out_connectors": {
-                  "OUT___tmp_29_16_w_out_of_1_1_out_of_1_1": null
+                  "OUT___tmp_98_16_w_out_of_1_1_out_of_1_1": null
                 },
-                "guid": "525be732-b8e8-4067-a15d-9ad9a5ca1096"
+                "guid": "d36fa430-b62a-4ccf-8aab-69ea2476dff9"
               },
               "id": 6,
               "scope_entry": "5",
@@ -501,9 +501,9 @@
             },
             {
               "type": "MapEntry",
-              "label": "kernel_26_4_27_8_28[j=0:256]",
+              "label": "kernel_95_4_96_8_97[j=0:256]",
               "attributes": {
-                "label": "kernel_26_4_27_8_28",
+                "label": "kernel_95_4_96_8_97",
                 "params": [
                   "j"
                 ],
@@ -521,21 +521,21 @@
                 "schedule": "GPU_ThreadBlock",
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 28,
-                  "end_line": 28,
+                  "start_line": 97,
+                  "end_line": 97,
                   "start_column": 12,
                   "end_column": 12,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "in_connectors": {
-                  "IN___tmp_29_37_r_in_from_1_0": null,
-                  "IN___tmp_29_58_r_in_from_1_0": null
+                  "IN___tmp_98_37_r_in_from_1_0": null,
+                  "IN___tmp_98_58_r_in_from_1_0": null
                 },
                 "out_connectors": {
-                  "OUT___tmp_29_37_r_in_from_1_0": null,
-                  "OUT___tmp_29_58_r_in_from_1_0": null
+                  "OUT___tmp_98_37_r_in_from_1_0": null,
+                  "OUT___tmp_98_58_r_in_from_1_0": null
                 },
-                "guid": "bf2fc620-040a-48b3-be54-f9d9b1997e41"
+                "guid": "cbaaa2f3-f301-4716-a836-6eb53ee8698f"
               },
               "id": 7,
               "scope_entry": "5",
@@ -543,15 +543,15 @@
             },
             {
               "type": "MapExit",
-              "label": "kernel_26_4_27_8_28[j=0:256]",
+              "label": "kernel_95_4_96_8_97[j=0:256]",
               "attributes": {
                 "in_connectors": {
-                  "IN___tmp_29_16_w_out_of_1_1": null
+                  "IN___tmp_98_16_w_out_of_1_1": null
                 },
                 "out_connectors": {
-                  "OUT___tmp_29_16_w_out_of_1_1": null
+                  "OUT___tmp_98_16_w_out_of_1_1": null
                 },
-                "guid": "db988a0e-a1c1-45a3-9905-32dc050c6b76"
+                "guid": "935f0df2-f1ce-4886-9afe-4eaef71e5b09"
               },
               "id": 8,
               "scope_entry": "7",
@@ -567,11 +567,11 @@
                 },
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 29,
-                  "end_line": 29,
+                  "start_line": 98,
+                  "end_line": 98,
                   "start_column": 72,
                   "end_column": 72,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "label": "_Add_",
                 "in_connectors": {
@@ -581,7 +581,7 @@
                 "out_connectors": {
                   "__out": null
                 },
-                "guid": "86df7814-ffdc-41a0-afe1-f211ae009e6a"
+                "guid": "92adee05-eb8b-4d37-8aa3-85e480d724e9"
               },
               "id": 9,
               "scope_entry": "7",
@@ -593,14 +593,14 @@
               "attributes": {
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 29,
-                  "end_line": 29,
+                  "start_line": 98,
+                  "end_line": 98,
                   "start_column": 72,
                   "end_column": 72,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "data": "__tmp3",
-                "guid": "5e5592d0-1ffe-4ddb-9788-b3b72aecae6a"
+                "guid": "9bcc8c35-eea5-4862-a6d8-3228fca200f2"
               },
               "id": 10,
               "scope_entry": "7",
@@ -608,7 +608,7 @@
             },
             {
               "type": "Tasklet",
-              "label": "assign_29_16",
+              "label": "assign_98_16",
               "attributes": {
                 "code": {
                   "string_data": "__out = __inp",
@@ -616,20 +616,20 @@
                 },
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 29,
-                  "end_line": 29,
+                  "start_line": 98,
+                  "end_line": 98,
                   "start_column": 30,
                   "end_column": 30,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
-                "label": "assign_29_16",
+                "label": "assign_98_16",
                 "in_connectors": {
                   "__inp": null
                 },
                 "out_connectors": {
                   "__out": null
                 },
-                "guid": "ee7b20f7-fbc2-49a9-8fba-ccffff2b7780"
+                "guid": "64433f94-2825-4b47-a308-361d508d77f6"
               },
               "id": 11,
               "scope_entry": "7",
@@ -641,14 +641,14 @@
               "attributes": {
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 48,
-                  "end_line": 48,
+                  "start_line": 54,
+                  "end_line": 54,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/test_utils.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "data": "shr_A",
-                "guid": "4905f521-649a-4796-9472-fad5dd9602a1"
+                "guid": "c7684bbd-ea58-48d4-a3e4-59e81016df47"
               },
               "id": 12,
               "scope_entry": "5",
@@ -660,14 +660,14 @@
               "attributes": {
                 "debuginfo": {
                   "type": "DebugInfo",
-                  "start_line": 48,
-                  "end_line": 48,
+                  "start_line": 54,
+                  "end_line": 54,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/test_utils.py"
+                  "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
                 },
                 "data": "shr_B",
-                "guid": "5aea9089-f43c-4272-8cf1-80301f87e5f5"
+                "guid": "de996230-3c3d-4c05-8527-257ceb9dd045"
               },
               "id": 13,
               "scope_entry": "5",
@@ -695,7 +695,7 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "69b08c61-8a53-4825-bd28-3ce6d2fa75f7",
+                    "guid": "65758726-87ca-42be-89ba-a9bb75ddebe7",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -738,7 +738,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "0185e810-4989-4e8b-b57c-1c12f5647a48",
+                    "guid": "17dcfd79-4fcc-4314-a7c1-b845be9c77c0",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -781,7 +781,7 @@
                     },
                     "data": "shr_A",
                     "debuginfo": null,
-                    "guid": "9053c547-1a07-4e28-9a07-b5866a347a2b",
+                    "guid": "123eace6-f607-4d9c-8b7a-b1d91d7cd033",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -801,7 +801,7 @@
               },
               "src": "12",
               "dst": "7",
-              "dst_connector": "IN___tmp_29_37_r_in_from_1_0",
+              "dst_connector": "IN___tmp_98_37_r_in_from_1_0",
               "src_connector": null
             },
             {
@@ -824,7 +824,7 @@
                     },
                     "data": "shr_B",
                     "debuginfo": null,
-                    "guid": "aa3712fc-e871-41e5-ba81-47436eb090a9",
+                    "guid": "197f512b-c4e2-4b15-a7fa-f31a8f1f3863",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -844,7 +844,7 @@
               },
               "src": "13",
               "dst": "7",
-              "dst_connector": "IN___tmp_29_58_r_in_from_1_0",
+              "dst_connector": "IN___tmp_98_58_r_in_from_1_0",
               "src_connector": null
             },
             {
@@ -867,7 +867,7 @@
                     },
                     "data": "__tmp3",
                     "debuginfo": null,
-                    "guid": "232a4b3c-63de-4475-a777-63057a798de3",
+                    "guid": "d97379d3-04f1-4d25-93e4-29e3953be24d",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -910,7 +910,7 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "f2fca7c5-eb37-41b5-aa10-1698132a8f8b",
+                    "guid": "9ac193e2-3c72-48f7-9ef0-f50495152775",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -930,7 +930,7 @@
               },
               "src": "0",
               "dst": "5",
-              "dst_connector": "IN___tmp_29_37_r_in_from_1_0_in_from_1_0",
+              "dst_connector": "IN___tmp_98_37_r_in_from_1_0_in_from_1_0",
               "src_connector": "OUT_A"
             },
             {
@@ -953,7 +953,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "76a9bb89-c68f-4161-8fc0-5d272cb46c5d",
+                    "guid": "30da7eee-07be-4d97-9fe7-6385057477b6",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -973,7 +973,7 @@
               },
               "src": "0",
               "dst": "5",
-              "dst_connector": "IN___tmp_29_58_r_in_from_1_0_in_from_1_0",
+              "dst_connector": "IN___tmp_98_58_r_in_from_1_0_in_from_1_0",
               "src_connector": "OUT_B"
             },
             {
@@ -996,7 +996,7 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "1dd8cf39-3f8a-4419-8403-80c1c0393bfb",
+                    "guid": "1f0ccad2-3828-4366-9a82-2847c3398b35",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1039,7 +1039,7 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "59d4f720-d116-4bb0-be9d-dbee7b4461e5",
+                    "guid": "a92efac1-2678-4303-aa04-5be51f196e25",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1059,8 +1059,8 @@
               },
               "src": "8",
               "dst": "6",
-              "dst_connector": "IN___tmp_29_16_w_out_of_1_1_out_of_1_1",
-              "src_connector": "OUT___tmp_29_16_w_out_of_1_1"
+              "dst_connector": "IN___tmp_98_16_w_out_of_1_1_out_of_1_1",
+              "src_connector": "OUT___tmp_98_16_w_out_of_1_1"
             },
             {
               "type": "MultiConnectorEdge",
@@ -1082,7 +1082,7 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "57a2e327-a170-434b-94b1-784054dc4fae",
+                    "guid": "bf7f1dc2-7ac0-4507-8aef-a67684cc5c44",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1103,7 +1103,7 @@
               "src": "6",
               "dst": "1",
               "dst_connector": "IN_C",
-              "src_connector": "OUT___tmp_29_16_w_out_of_1_1_out_of_1_1"
+              "src_connector": "OUT___tmp_98_16_w_out_of_1_1_out_of_1_1"
             },
             {
               "type": "MultiConnectorEdge",
@@ -1125,7 +1125,7 @@
                     },
                     "data": "shr_A",
                     "debuginfo": null,
-                    "guid": "e1e070d6-e51e-46a7-aa37-6cd892324359",
+                    "guid": "5428f419-c4e3-4cf5-9a13-d42edd7f7fb2",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1146,7 +1146,7 @@
               "src": "7",
               "dst": "9",
               "dst_connector": "__in1",
-              "src_connector": "OUT___tmp_29_37_r_in_from_1_0"
+              "src_connector": "OUT___tmp_98_37_r_in_from_1_0"
             },
             {
               "type": "MultiConnectorEdge",
@@ -1179,7 +1179,7 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "1fbf8afd-549b-4b0d-9a0a-64fd318d6034",
+                    "guid": "eb9ff732-544b-4c5b-80cd-aa0b9dc83fa1",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1210,7 +1210,7 @@
               "src": "5",
               "dst": "12",
               "dst_connector": null,
-              "src_connector": "OUT___tmp_29_37_r_in_from_1_0_in_from_1_0"
+              "src_connector": "OUT___tmp_98_37_r_in_from_1_0_in_from_1_0"
             },
             {
               "type": "MultiConnectorEdge",
@@ -1232,7 +1232,7 @@
                     },
                     "data": "shr_B",
                     "debuginfo": null,
-                    "guid": "57ba67c5-bd2f-4844-9e9c-40753922ad01",
+                    "guid": "3478573b-f7f4-4441-a7a3-bf3ebf93e64b",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1253,7 +1253,7 @@
               "src": "7",
               "dst": "9",
               "dst_connector": "__in2",
-              "src_connector": "OUT___tmp_29_58_r_in_from_1_0"
+              "src_connector": "OUT___tmp_98_58_r_in_from_1_0"
             },
             {
               "type": "MultiConnectorEdge",
@@ -1286,7 +1286,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "bfb890ef-cdef-4ebf-8995-f3754b0953bd",
+                    "guid": "0ce32b4d-333f-459c-a576-2d2e79303500",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1317,7 +1317,7 @@
               "src": "5",
               "dst": "13",
               "dst_connector": null,
-              "src_connector": "OUT___tmp_29_58_r_in_from_1_0_in_from_1_0"
+              "src_connector": "OUT___tmp_98_58_r_in_from_1_0_in_from_1_0"
             },
             {
               "type": "MultiConnectorEdge",
@@ -1339,7 +1339,7 @@
                     },
                     "data": "__tmp3",
                     "debuginfo": null,
-                    "guid": "9e39802d-f185-4f97-aa0d-24ec5e28fa3a",
+                    "guid": "0c0703e8-1a00-4cf7-98d6-7047af804d38",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1382,7 +1382,7 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "cd431e0e-63f8-458d-a4f7-82a85dc09e96",
+                    "guid": "176a1ba4-31ef-4819-8186-173e826e42ac",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1402,12 +1402,12 @@
               },
               "src": "11",
               "dst": "8",
-              "dst_connector": "IN___tmp_29_16_w_out_of_1_1",
+              "dst_connector": "IN___tmp_98_16_w_out_of_1_1",
               "src_connector": "__out"
             }
           ],
           "attributes": {
-            "guid": "328decff-fd21-4fff-881f-74fc87b42fa7",
+            "guid": "8d9c9dc6-b7fe-4305-9b0e-f344e6cb96bc",
             "executions": "1",
             "dynamic_executions": false
           }
@@ -1435,15 +1435,15 @@
     ],
     "debuginfo": {
       "type": "DebugInfo",
-      "start_line": 20,
-      "end_line": 29,
+      "start_line": 89,
+      "end_line": 98,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+      "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
     },
     "using_explicit_control_flow": true,
-    "guid": "b1393913-a60f-4a10-a006-50ad9ec459e3",
-    "hash": "986f8867fdf3dcbeb3b07b32b05c3af6ad04a3b67e786fb203ee054b1d2dbd97"
+    "guid": "d86432fb-dd83-4d68-b1a3-5443e218087b",
+    "hash": "6272783aa43803c69147bfe8f7b1459cb863365e3e0452f06b3881ab8a0997ee"
   },
   "nodes": [
     {
@@ -1472,8 +1472,7 @@
           16,
           17,
           18,
-          19,
-          20
+          19
         ],
         "7": [
           8,
@@ -1485,9 +1484,9 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "kernel_26[i=0:N:512]",
+          "label": "kernel_95[i=0:N:512]",
           "attributes": {
-            "label": "kernel_26",
+            "label": "kernel_95",
             "params": [
               "i"
             ],
@@ -1505,11 +1504,11 @@
             "schedule": "GPU_Device",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 26,
-              "end_line": 26,
+              "start_line": 95,
+              "end_line": 95,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -1519,7 +1518,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "e572193f-4078-4079-8a7b-f9e60c00c3f9"
+            "guid": "4748988f-5a8b-4bb9-979c-22cba4912dc0"
           },
           "id": 0,
           "scope_entry": null,
@@ -1527,7 +1526,7 @@
         },
         {
           "type": "MapExit",
-          "label": "kernel_26[i=0:N:512]",
+          "label": "kernel_95[i=0:N:512]",
           "attributes": {
             "in_connectors": {
               "IN_C": null
@@ -1535,7 +1534,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "2692fa6e-5d5b-4152-8604-77292eca079e"
+            "guid": "6b03359b-afbe-4cc4-92de-ebedc84f829b"
           },
           "id": 1,
           "scope_entry": "0",
@@ -1547,14 +1546,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 26,
-              "end_line": 26,
+              "start_line": 95,
+              "end_line": 95,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "data": "A",
-            "guid": "0af74d98-4cac-44d4-afd5-dcbb63f357fd"
+            "guid": "e2fa79c1-e57c-4267-8019-43579c1c1c09"
           },
           "id": 2,
           "scope_entry": null,
@@ -1566,14 +1565,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 26,
-              "end_line": 26,
+              "start_line": 95,
+              "end_line": 95,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "data": "B",
-            "guid": "43f7746b-9786-42ce-a43c-8b0489e0f7a6"
+            "guid": "68049d0f-8940-43a2-8509-f9a028be8f46"
           },
           "id": 3,
           "scope_entry": null,
@@ -1585,14 +1584,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 26,
-              "end_line": 26,
+              "start_line": 95,
+              "end_line": 95,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "data": "C",
-            "guid": "dd76042d-85d3-47dc-a981-a26bd1c75088"
+            "guid": "bd228903-54ad-4b1c-b473-2eed986516fd"
           },
           "id": 4,
           "scope_entry": null,
@@ -1600,9 +1599,9 @@
         },
         {
           "type": "MapEntry",
-          "label": "kernel_26_4_27[k=0:2]",
+          "label": "kernel_95_4_96[k=0:2]",
           "attributes": {
-            "label": "kernel_26_4_27",
+            "label": "kernel_95_4_96",
             "params": [
               "k"
             ],
@@ -1620,25 +1619,25 @@
             "schedule": "Sequential",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 27,
-              "end_line": 27,
+              "start_line": 96,
+              "end_line": 96,
               "start_column": 8,
               "end_column": 8,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "in_connectors": {
-              "IN___tmp_29_37_r_in_from_1_0_in_from_1_0": null,
-              "IN___tmp_29_58_r_in_from_1_0_in_from_1_0": null,
+              "IN___tmp_98_37_r_in_from_1_0_in_from_1_0": null,
+              "IN___tmp_98_58_r_in_from_1_0_in_from_1_0": null,
               "IN_prefetch_A": null,
               "IN_prefetch_B": null
             },
             "out_connectors": {
-              "OUT___tmp_29_37_r_in_from_1_0_in_from_1_0": null,
-              "OUT___tmp_29_58_r_in_from_1_0_in_from_1_0": null,
+              "OUT___tmp_98_37_r_in_from_1_0_in_from_1_0": null,
+              "OUT___tmp_98_58_r_in_from_1_0_in_from_1_0": null,
               "OUT_prefetch_A": null,
               "OUT_prefetch_B": null
             },
-            "guid": "148ec12e-ac47-4a5e-bc34-836556a4bb1d"
+            "guid": "93ff2336-bf88-4205-9416-d8d5ada0fa43"
           },
           "id": 5,
           "scope_entry": "0",
@@ -1646,15 +1645,15 @@
         },
         {
           "type": "MapExit",
-          "label": "kernel_26_4_27[k=0:2]",
+          "label": "kernel_95_4_96[k=0:2]",
           "attributes": {
             "in_connectors": {
-              "IN___tmp_29_16_w_out_of_1_1_out_of_1_1": null
+              "IN___tmp_98_16_w_out_of_1_1_out_of_1_1": null
             },
             "out_connectors": {
-              "OUT___tmp_29_16_w_out_of_1_1_out_of_1_1": null
+              "OUT___tmp_98_16_w_out_of_1_1_out_of_1_1": null
             },
-            "guid": "525be732-b8e8-4067-a15d-9ad9a5ca1096"
+            "guid": "d36fa430-b62a-4ccf-8aab-69ea2476dff9"
           },
           "id": 6,
           "scope_entry": "5",
@@ -1662,9 +1661,9 @@
         },
         {
           "type": "MapEntry",
-          "label": "kernel_26_4_27_8_28[j=0:256]",
+          "label": "kernel_95_4_96_8_97[j=0:256]",
           "attributes": {
-            "label": "kernel_26_4_27_8_28",
+            "label": "kernel_95_4_96_8_97",
             "params": [
               "j"
             ],
@@ -1682,23 +1681,21 @@
             "schedule": "GPU_ThreadBlock",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 28,
-              "end_line": 28,
+              "start_line": 97,
+              "end_line": 97,
               "start_column": 12,
               "end_column": 12,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "in_connectors": {
-              "IN___tmp_29_37_r_in_from_1_0": null,
-              "IN___tmp_29_58_r_in_from_1_0": null,
-              "prefetch_shr_A": null,
-              "prefetch_shr_B": null
+              "IN___tmp_98_37_r_in_from_1_0": null,
+              "IN___tmp_98_58_r_in_from_1_0": null
             },
             "out_connectors": {
-              "OUT___tmp_29_37_r_in_from_1_0": null,
-              "OUT___tmp_29_58_r_in_from_1_0": null
+              "OUT___tmp_98_37_r_in_from_1_0": null,
+              "OUT___tmp_98_58_r_in_from_1_0": null
             },
-            "guid": "bf2fc620-040a-48b3-be54-f9d9b1997e41"
+            "guid": "cbaaa2f3-f301-4716-a836-6eb53ee8698f"
           },
           "id": 7,
           "scope_entry": "5",
@@ -1706,15 +1703,15 @@
         },
         {
           "type": "MapExit",
-          "label": "kernel_26_4_27_8_28[j=0:256]",
+          "label": "kernel_95_4_96_8_97[j=0:256]",
           "attributes": {
             "in_connectors": {
-              "IN___tmp_29_16_w_out_of_1_1": null
+              "IN___tmp_98_16_w_out_of_1_1": null
             },
             "out_connectors": {
-              "OUT___tmp_29_16_w_out_of_1_1": null
+              "OUT___tmp_98_16_w_out_of_1_1": null
             },
-            "guid": "db988a0e-a1c1-45a3-9905-32dc050c6b76"
+            "guid": "935f0df2-f1ce-4886-9afe-4eaef71e5b09"
           },
           "id": 8,
           "scope_entry": "7",
@@ -1730,11 +1727,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 29,
-              "end_line": 29,
+              "start_line": 98,
+              "end_line": 98,
               "start_column": 72,
               "end_column": 72,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "label": "_Add_",
             "in_connectors": {
@@ -1744,7 +1741,7 @@
             "out_connectors": {
               "__out": null
             },
-            "guid": "86df7814-ffdc-41a0-afe1-f211ae009e6a"
+            "guid": "92adee05-eb8b-4d37-8aa3-85e480d724e9"
           },
           "id": 9,
           "scope_entry": "7",
@@ -1756,14 +1753,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 29,
-              "end_line": 29,
+              "start_line": 98,
+              "end_line": 98,
               "start_column": 72,
               "end_column": 72,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
             "data": "__tmp3",
-            "guid": "189ae714-2453-4033-9ea3-497068c70521"
+            "guid": "480998aa-e861-4092-a043-5639a355c629"
           },
           "id": 10,
           "scope_entry": "7",
@@ -1771,7 +1768,7 @@
         },
         {
           "type": "Tasklet",
-          "label": "assign_29_16",
+          "label": "assign_98_16",
           "attributes": {
             "code": {
               "string_data": "__out = __inp",
@@ -1779,20 +1776,20 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 29,
-              "end_line": 29,
+              "start_line": 98,
+              "end_line": 98,
               "start_column": 30,
               "end_column": 30,
-              "filename": "/home/primrose/Work/DaceLayoutAndScheduleTransformations/layout_and_schedule_transformations/tests/multiple_buffering_test.py"
+              "filename": "/home/primrose/Work/dace/tests/transformations/multiple_buffering_test.py"
             },
-            "label": "assign_29_16",
+            "label": "assign_98_16",
             "in_connectors": {
               "__inp": null
             },
             "out_connectors": {
               "__out": null
             },
-            "guid": "ee7b20f7-fbc2-49a9-8fba-ccffff2b7780"
+            "guid": "64433f94-2825-4b47-a308-361d508d77f6"
           },
           "id": 11,
           "scope_entry": "7",
@@ -1912,7 +1909,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "eea04031-8543-47bf-8b5a-f84b21ebbe6f"
+                "guid": "f94e5217-c4f1-46a4-afdc-da0185f8f45b"
               },
               "nodes": [
                 {
@@ -1931,19 +1928,19 @@
                       "language": "Python"
                     },
                     "loop_variable": "pipe_stage",
-                    "guid": "5bc4de60-cb97-4474-81ee-2eb518eef744"
+                    "guid": "1953b28b-8f55-45ac-9f33-168fb08dca3e"
                   },
                   "nodes": [
                     {
                       "type": "ConditionalBlock",
                       "attributes": {
-                        "guid": "03025064-bdb3-43db-909c-3488ec9b7504"
+                        "guid": "15bc7f27-eb3b-4991-ab35-89220f06f406"
                       },
                       "nodes": [
                         {
                           "type": "ControlFlowRegion",
                           "attributes": {
-                            "guid": "05b5e995-af61-4e76-854c-081bc25f7a42"
+                            "guid": "0c174dbd-474e-4634-b190-491e0c5ab8b2"
                           },
                           "nodes": [
                             {
@@ -1956,7 +1953,9 @@
                                   0,
                                   1,
                                   2,
-                                  3
+                                  3,
+                                  4,
+                                  5
                                 ]
                               },
                               "nodes": [
@@ -1966,14 +1965,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 771,
-                                      "end_line": 771,
+                                      "start_line": 856,
+                                      "end_line": 856,
                                       "start_column": 0,
                                       "end_column": 0,
                                       "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                     },
                                     "data": "B",
-                                    "guid": "c41027b9-626d-4477-9adb-64d4737d1262"
+                                    "guid": "7a229696-1b0e-4cc3-bfba-b0d5526ebb0d"
                                   },
                                   "id": 0,
                                   "scope_entry": null,
@@ -1985,14 +1984,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 772,
-                                      "end_line": 772,
+                                      "start_line": 857,
+                                      "end_line": 857,
                                       "start_column": 0,
                                       "end_column": 0,
                                       "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                     },
                                     "data": "shr_B",
-                                    "guid": "b0787fde-9244-48b5-a20e-aa7eda1dde3b"
+                                    "guid": "948f2521-89e6-463d-b326-4f39fc82c7a0"
                                   },
                                   "id": 1,
                                   "scope_entry": null,
@@ -2004,14 +2003,14 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 771,
-                                      "end_line": 771,
+                                      "start_line": 856,
+                                      "end_line": 856,
                                       "start_column": 0,
                                       "end_column": 0,
                                       "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                     },
                                     "data": "A",
-                                    "guid": "1b3ebd30-f4f5-4dcd-9d69-268a6198a074"
+                                    "guid": "5bdcde52-e626-4979-a389-b73ba6e6f927"
                                   },
                                   "id": 2,
                                   "scope_entry": null,
@@ -2023,16 +2022,64 @@
                                   "attributes": {
                                     "debuginfo": {
                                       "type": "DebugInfo",
-                                      "start_line": 772,
-                                      "end_line": 772,
+                                      "start_line": 857,
+                                      "end_line": 857,
                                       "start_column": 0,
                                       "end_column": 0,
                                       "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                     },
                                     "data": "shr_A",
-                                    "guid": "49ff03e3-8c02-4502-8f41-42cfa81acc43"
+                                    "guid": "355f3366-55d5-4d29-a305-dfba28639f89"
                                   },
                                   "id": 3,
+                                  "scope_entry": null,
+                                  "scope_exit": null
+                                },
+                                {
+                                  "type": "Tasklet",
+                                  "label": "producer_acquire_pipe",
+                                  "attributes": {
+                                    "code": {
+                                      "string_data": "pipe.consumer_acquire();",
+                                      "language": "CPP"
+                                    },
+                                    "debuginfo": {
+                                      "type": "DebugInfo",
+                                      "start_line": 380,
+                                      "end_line": 380,
+                                      "start_column": 0,
+                                      "end_column": 0,
+                                      "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                    },
+                                    "side_effects": true,
+                                    "label": "producer_acquire_pipe",
+                                    "guid": "c478ba2a-9f56-45f7-942f-6a6c9153a1d0"
+                                  },
+                                  "id": 4,
+                                  "scope_entry": null,
+                                  "scope_exit": null
+                                },
+                                {
+                                  "type": "Tasklet",
+                                  "label": "producer_commit_pipe",
+                                  "attributes": {
+                                    "code": {
+                                      "string_data": "pipe.consumer_commit();",
+                                      "language": "CPP"
+                                    },
+                                    "debuginfo": {
+                                      "type": "DebugInfo",
+                                      "start_line": 390,
+                                      "end_line": 390,
+                                      "start_column": 0,
+                                      "end_column": 0,
+                                      "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                    },
+                                    "side_effects": true,
+                                    "label": "producer_commit_pipe",
+                                    "guid": "fb90138b-abb2-4752-9bc4-d9d55324886c"
+                                  },
+                                  "id": 5,
                                   "scope_entry": null,
                                   "scope_exit": null
                                 }
@@ -2075,7 +2122,7 @@
                                         },
                                         "data": "B",
                                         "debuginfo": null,
-                                        "guid": "f10bf60c-98c6-498b-8bb1-b32392cee7ec",
+                                        "guid": "07276b3c-739f-46ae-bb20-390a445ca75c",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -2151,7 +2198,7 @@
                                         },
                                         "data": "A",
                                         "debuginfo": null,
-                                        "guid": "9289d8e8-28ba-469c-9130-53adce8d0b59",
+                                        "guid": "07d7acea-e0db-45d9-8c2f-246296f71ffa",
                                         "src_subset": {
                                           "type": "Range",
                                           "ranges": [
@@ -2189,10 +2236,94 @@
                                   "dst": "3",
                                   "dst_connector": null,
                                   "src_connector": null
+                                },
+                                {
+                                  "type": "MultiConnectorEdge",
+                                  "attributes": {
+                                    "data": {
+                                      "type": "Memlet",
+                                      "attributes": {
+                                        "volume": "1",
+                                        "debuginfo": null,
+                                        "guid": "0f9c8337-a0df-470c-b984-6ffe36730ec9",
+                                        "src_subset": null,
+                                        "dst_subset": null,
+                                        "is_data_src": false,
+                                        "num_accesses": "1"
+                                      }
+                                    }
+                                  },
+                                  "src": "4",
+                                  "dst": "0",
+                                  "dst_connector": null,
+                                  "src_connector": null
+                                },
+                                {
+                                  "type": "MultiConnectorEdge",
+                                  "attributes": {
+                                    "data": {
+                                      "type": "Memlet",
+                                      "attributes": {
+                                        "volume": "1",
+                                        "debuginfo": null,
+                                        "guid": "c57cf2c0-8238-443e-b743-e264dc9723db",
+                                        "src_subset": null,
+                                        "dst_subset": null,
+                                        "is_data_src": false,
+                                        "num_accesses": "1"
+                                      }
+                                    }
+                                  },
+                                  "src": "1",
+                                  "dst": "5",
+                                  "dst_connector": null,
+                                  "src_connector": null
+                                },
+                                {
+                                  "type": "MultiConnectorEdge",
+                                  "attributes": {
+                                    "data": {
+                                      "type": "Memlet",
+                                      "attributes": {
+                                        "volume": "1",
+                                        "debuginfo": null,
+                                        "guid": "a0f2b6f9-dbdd-4d37-9b0e-e75a74f4621b",
+                                        "src_subset": null,
+                                        "dst_subset": null,
+                                        "is_data_src": false,
+                                        "num_accesses": "1"
+                                      }
+                                    }
+                                  },
+                                  "src": "4",
+                                  "dst": "2",
+                                  "dst_connector": null,
+                                  "src_connector": null
+                                },
+                                {
+                                  "type": "MultiConnectorEdge",
+                                  "attributes": {
+                                    "data": {
+                                      "type": "Memlet",
+                                      "attributes": {
+                                        "volume": "1",
+                                        "debuginfo": null,
+                                        "guid": "ada740d2-5199-4f0d-a75e-e9327ea681f7",
+                                        "src_subset": null,
+                                        "dst_subset": null,
+                                        "is_data_src": false,
+                                        "num_accesses": "1"
+                                      }
+                                    }
+                                  },
+                                  "src": "3",
+                                  "dst": "5",
+                                  "dst_connector": null,
+                                  "src_connector": null
                                 }
                               ],
                               "attributes": {
-                                "guid": "016184bb-8e43-4101-859a-a2608a20b280"
+                                "guid": "3a623ac0-f8e9-4b15-9f7a-eecd1ccfadb3"
                               }
                             }
                           ],
@@ -2219,7 +2350,7 @@
                           {
                             "type": "ControlFlowRegion",
                             "attributes": {
-                              "guid": "05b5e995-af61-4e76-854c-081bc25f7a42"
+                              "guid": "0c174dbd-474e-4634-b190-491e0c5ab8b2"
                             },
                             "nodes": [
                               {
@@ -2232,7 +2363,9 @@
                                     0,
                                     1,
                                     2,
-                                    3
+                                    3,
+                                    4,
+                                    5
                                   ]
                                 },
                                 "nodes": [
@@ -2242,14 +2375,14 @@
                                     "attributes": {
                                       "debuginfo": {
                                         "type": "DebugInfo",
-                                        "start_line": 771,
-                                        "end_line": 771,
+                                        "start_line": 856,
+                                        "end_line": 856,
                                         "start_column": 0,
                                         "end_column": 0,
                                         "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                       },
                                       "data": "B",
-                                      "guid": "c41027b9-626d-4477-9adb-64d4737d1262"
+                                      "guid": "7a229696-1b0e-4cc3-bfba-b0d5526ebb0d"
                                     },
                                     "id": 0,
                                     "scope_entry": null,
@@ -2261,14 +2394,14 @@
                                     "attributes": {
                                       "debuginfo": {
                                         "type": "DebugInfo",
-                                        "start_line": 772,
-                                        "end_line": 772,
+                                        "start_line": 857,
+                                        "end_line": 857,
                                         "start_column": 0,
                                         "end_column": 0,
                                         "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                       },
                                       "data": "shr_B",
-                                      "guid": "b0787fde-9244-48b5-a20e-aa7eda1dde3b"
+                                      "guid": "948f2521-89e6-463d-b326-4f39fc82c7a0"
                                     },
                                     "id": 1,
                                     "scope_entry": null,
@@ -2280,14 +2413,14 @@
                                     "attributes": {
                                       "debuginfo": {
                                         "type": "DebugInfo",
-                                        "start_line": 771,
-                                        "end_line": 771,
+                                        "start_line": 856,
+                                        "end_line": 856,
                                         "start_column": 0,
                                         "end_column": 0,
                                         "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                       },
                                       "data": "A",
-                                      "guid": "1b3ebd30-f4f5-4dcd-9d69-268a6198a074"
+                                      "guid": "5bdcde52-e626-4979-a389-b73ba6e6f927"
                                     },
                                     "id": 2,
                                     "scope_entry": null,
@@ -2299,16 +2432,64 @@
                                     "attributes": {
                                       "debuginfo": {
                                         "type": "DebugInfo",
-                                        "start_line": 772,
-                                        "end_line": 772,
+                                        "start_line": 857,
+                                        "end_line": 857,
                                         "start_column": 0,
                                         "end_column": 0,
                                         "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                       },
                                       "data": "shr_A",
-                                      "guid": "49ff03e3-8c02-4502-8f41-42cfa81acc43"
+                                      "guid": "355f3366-55d5-4d29-a305-dfba28639f89"
                                     },
                                     "id": 3,
+                                    "scope_entry": null,
+                                    "scope_exit": null
+                                  },
+                                  {
+                                    "type": "Tasklet",
+                                    "label": "producer_acquire_pipe",
+                                    "attributes": {
+                                      "code": {
+                                        "string_data": "pipe.consumer_acquire();",
+                                        "language": "CPP"
+                                      },
+                                      "debuginfo": {
+                                        "type": "DebugInfo",
+                                        "start_line": 380,
+                                        "end_line": 380,
+                                        "start_column": 0,
+                                        "end_column": 0,
+                                        "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                      },
+                                      "side_effects": true,
+                                      "label": "producer_acquire_pipe",
+                                      "guid": "c478ba2a-9f56-45f7-942f-6a6c9153a1d0"
+                                    },
+                                    "id": 4,
+                                    "scope_entry": null,
+                                    "scope_exit": null
+                                  },
+                                  {
+                                    "type": "Tasklet",
+                                    "label": "producer_commit_pipe",
+                                    "attributes": {
+                                      "code": {
+                                        "string_data": "pipe.consumer_commit();",
+                                        "language": "CPP"
+                                      },
+                                      "debuginfo": {
+                                        "type": "DebugInfo",
+                                        "start_line": 390,
+                                        "end_line": 390,
+                                        "start_column": 0,
+                                        "end_column": 0,
+                                        "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                      },
+                                      "side_effects": true,
+                                      "label": "producer_commit_pipe",
+                                      "guid": "fb90138b-abb2-4752-9bc4-d9d55324886c"
+                                    },
+                                    "id": 5,
                                     "scope_entry": null,
                                     "scope_exit": null
                                   }
@@ -2351,7 +2532,7 @@
                                           },
                                           "data": "B",
                                           "debuginfo": null,
-                                          "guid": "f10bf60c-98c6-498b-8bb1-b32392cee7ec",
+                                          "guid": "07276b3c-739f-46ae-bb20-390a445ca75c",
                                           "src_subset": {
                                             "type": "Range",
                                             "ranges": [
@@ -2427,7 +2608,7 @@
                                           },
                                           "data": "A",
                                           "debuginfo": null,
-                                          "guid": "9289d8e8-28ba-469c-9130-53adce8d0b59",
+                                          "guid": "07d7acea-e0db-45d9-8c2f-246296f71ffa",
                                           "src_subset": {
                                             "type": "Range",
                                             "ranges": [
@@ -2465,10 +2646,94 @@
                                     "dst": "3",
                                     "dst_connector": null,
                                     "src_connector": null
+                                  },
+                                  {
+                                    "type": "MultiConnectorEdge",
+                                    "attributes": {
+                                      "data": {
+                                        "type": "Memlet",
+                                        "attributes": {
+                                          "volume": "1",
+                                          "debuginfo": null,
+                                          "guid": "0f9c8337-a0df-470c-b984-6ffe36730ec9",
+                                          "src_subset": null,
+                                          "dst_subset": null,
+                                          "is_data_src": false,
+                                          "num_accesses": "1"
+                                        }
+                                      }
+                                    },
+                                    "src": "4",
+                                    "dst": "0",
+                                    "dst_connector": null,
+                                    "src_connector": null
+                                  },
+                                  {
+                                    "type": "MultiConnectorEdge",
+                                    "attributes": {
+                                      "data": {
+                                        "type": "Memlet",
+                                        "attributes": {
+                                          "volume": "1",
+                                          "debuginfo": null,
+                                          "guid": "c57cf2c0-8238-443e-b743-e264dc9723db",
+                                          "src_subset": null,
+                                          "dst_subset": null,
+                                          "is_data_src": false,
+                                          "num_accesses": "1"
+                                        }
+                                      }
+                                    },
+                                    "src": "1",
+                                    "dst": "5",
+                                    "dst_connector": null,
+                                    "src_connector": null
+                                  },
+                                  {
+                                    "type": "MultiConnectorEdge",
+                                    "attributes": {
+                                      "data": {
+                                        "type": "Memlet",
+                                        "attributes": {
+                                          "volume": "1",
+                                          "debuginfo": null,
+                                          "guid": "a0f2b6f9-dbdd-4d37-9b0e-e75a74f4621b",
+                                          "src_subset": null,
+                                          "dst_subset": null,
+                                          "is_data_src": false,
+                                          "num_accesses": "1"
+                                        }
+                                      }
+                                    },
+                                    "src": "4",
+                                    "dst": "2",
+                                    "dst_connector": null,
+                                    "src_connector": null
+                                  },
+                                  {
+                                    "type": "MultiConnectorEdge",
+                                    "attributes": {
+                                      "data": {
+                                        "type": "Memlet",
+                                        "attributes": {
+                                          "volume": "1",
+                                          "debuginfo": null,
+                                          "guid": "ada740d2-5199-4f0d-a75e-e9327ea681f7",
+                                          "src_subset": null,
+                                          "dst_subset": null,
+                                          "is_data_src": false,
+                                          "num_accesses": "1"
+                                        }
+                                      }
+                                    },
+                                    "src": "3",
+                                    "dst": "5",
+                                    "dst_connector": null,
+                                    "src_connector": null
                                   }
                                 ],
                                 "attributes": {
-                                  "guid": "016184bb-8e43-4101-859a-a2608a20b280"
+                                  "guid": "3a623ac0-f8e9-4b15-9f7a-eecd1ccfadb3"
                                 }
                               }
                             ],
@@ -2505,8 +2770,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 761,
-              "end_line": 761,
+              "start_line": 846,
+              "end_line": 846,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
@@ -2520,7 +2785,7 @@
               "shr_A": null,
               "shr_B": null
             },
-            "guid": "431c5863-6cf8-4bff-a7fc-11bea2357e5e"
+            "guid": "4b7bb879-2f87-4b27-ab91-5bff3773b75f"
           },
           "id": 12,
           "scope_entry": "0",
@@ -2532,14 +2797,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 398,
-              "end_line": 398,
+              "start_line": 446,
+              "end_line": 446,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
             },
             "data": "shr_B",
-            "guid": "9aff2a42-f653-436e-adde-43b71fedb84e"
+            "guid": "18dada66-b1ce-4caa-8c94-a57d620d853c"
           },
           "id": 13,
           "scope_entry": "0",
@@ -2551,14 +2816,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 398,
-              "end_line": 398,
+              "start_line": 446,
+              "end_line": 446,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
             },
             "data": "shr_A",
-            "guid": "d60871ef-9696-4fed-9bac-72fe656f3747"
+            "guid": "a9a91038-4a36-450f-8e1c-199ce6279bb9"
           },
           "id": 14,
           "scope_entry": "0",
@@ -2679,19 +2944,19 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "c1a1acfc-7ab9-4f27-af94-09ce0d5f8c8d"
+                "guid": "1e62ca8f-efd0-4b2b-bd41-f3b62ee3155a"
               },
               "nodes": [
                 {
                   "type": "ConditionalBlock",
                   "attributes": {
-                    "guid": "40691bac-7151-4891-984f-8e3a8d3ac974"
+                    "guid": "c702c15e-b328-4ff6-a444-290cf8272a16"
                   },
                   "nodes": [
                     {
                       "type": "ControlFlowRegion",
                       "attributes": {
-                        "guid": "99957ad5-0143-430c-9e3b-6a6d458c2bcb"
+                        "guid": "49120be2-b132-4968-9b1b-e214c4e4a23b"
                       },
                       "nodes": [
                         {
@@ -2704,7 +2969,9 @@
                               0,
                               1,
                               2,
-                              3
+                              3,
+                              4,
+                              5
                             ]
                           },
                           "nodes": [
@@ -2714,14 +2981,14 @@
                               "attributes": {
                                 "debuginfo": {
                                   "type": "DebugInfo",
-                                  "start_line": 842,
-                                  "end_line": 842,
+                                  "start_line": 924,
+                                  "end_line": 924,
                                   "start_column": 0,
                                   "end_column": 0,
                                   "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                 },
                                 "data": "B",
-                                "guid": "8629e09d-3256-4746-b257-e1d1633b4d09"
+                                "guid": "c428e17a-c2db-456c-9db3-2e2242a08f43"
                               },
                               "id": 0,
                               "scope_entry": null,
@@ -2733,14 +3000,14 @@
                               "attributes": {
                                 "debuginfo": {
                                   "type": "DebugInfo",
-                                  "start_line": 843,
-                                  "end_line": 843,
+                                  "start_line": 925,
+                                  "end_line": 925,
                                   "start_column": 0,
                                   "end_column": 0,
                                   "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                 },
                                 "data": "shr_B",
-                                "guid": "19c17ed2-1764-4274-b020-606c61d4b7f8"
+                                "guid": "e071dd77-90ce-4f0e-9a5e-64695ac2d70c"
                               },
                               "id": 1,
                               "scope_entry": null,
@@ -2752,14 +3019,14 @@
                               "attributes": {
                                 "debuginfo": {
                                   "type": "DebugInfo",
-                                  "start_line": 842,
-                                  "end_line": 842,
+                                  "start_line": 924,
+                                  "end_line": 924,
                                   "start_column": 0,
                                   "end_column": 0,
                                   "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                 },
                                 "data": "A",
-                                "guid": "c231ef74-5202-4f53-a930-10174929ebfc"
+                                "guid": "278ca990-59cf-4e1b-968a-485487fb0fe2"
                               },
                               "id": 2,
                               "scope_entry": null,
@@ -2771,16 +3038,64 @@
                               "attributes": {
                                 "debuginfo": {
                                   "type": "DebugInfo",
-                                  "start_line": 843,
-                                  "end_line": 843,
+                                  "start_line": 925,
+                                  "end_line": 925,
                                   "start_column": 0,
                                   "end_column": 0,
                                   "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                 },
                                 "data": "shr_A",
-                                "guid": "646deb68-da76-4a92-b937-da96ba475b21"
+                                "guid": "a5cc31c2-b856-430e-bc9f-0b8f93022b50"
                               },
                               "id": 3,
+                              "scope_entry": null,
+                              "scope_exit": null
+                            },
+                            {
+                              "type": "Tasklet",
+                              "label": "producer_acquire_pipe",
+                              "attributes": {
+                                "code": {
+                                  "string_data": "pipe.consumer_acquire();",
+                                  "language": "CPP"
+                                },
+                                "debuginfo": {
+                                  "type": "DebugInfo",
+                                  "start_line": 486,
+                                  "end_line": 486,
+                                  "start_column": 0,
+                                  "end_column": 0,
+                                  "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                },
+                                "side_effects": true,
+                                "label": "producer_acquire_pipe",
+                                "guid": "694dbb32-9d8f-408e-88cd-de8062f963e5"
+                              },
+                              "id": 4,
+                              "scope_entry": null,
+                              "scope_exit": null
+                            },
+                            {
+                              "type": "Tasklet",
+                              "label": "producer_commit_pipe",
+                              "attributes": {
+                                "code": {
+                                  "string_data": "pipe.consumer_commit();",
+                                  "language": "CPP"
+                                },
+                                "debuginfo": {
+                                  "type": "DebugInfo",
+                                  "start_line": 496,
+                                  "end_line": 496,
+                                  "start_column": 0,
+                                  "end_column": 0,
+                                  "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                },
+                                "side_effects": true,
+                                "label": "producer_commit_pipe",
+                                "guid": "ec98c77f-a979-4684-9bd7-744aa5d4bd04"
+                              },
+                              "id": 5,
                               "scope_entry": null,
                               "scope_exit": null
                             }
@@ -2823,7 +3138,7 @@
                                     },
                                     "data": "B",
                                     "debuginfo": null,
-                                    "guid": "0d43d4bf-add6-433d-9686-67cb71d9dbb0",
+                                    "guid": "1780aa25-071a-4d0f-bd6b-7f93339acdf3",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -2899,7 +3214,7 @@
                                     },
                                     "data": "A",
                                     "debuginfo": null,
-                                    "guid": "ea82a854-7399-463e-ad83-d281f8f3e8b3",
+                                    "guid": "1e78b324-bfac-40aa-9418-ee8e10e6a76b",
                                     "src_subset": {
                                       "type": "Range",
                                       "ranges": [
@@ -2937,10 +3252,94 @@
                               "dst": "3",
                               "dst_connector": null,
                               "src_connector": null
+                            },
+                            {
+                              "type": "MultiConnectorEdge",
+                              "attributes": {
+                                "data": {
+                                  "type": "Memlet",
+                                  "attributes": {
+                                    "volume": "1",
+                                    "debuginfo": null,
+                                    "guid": "9293a358-75c3-47fb-8ebc-73d67cd79f2c",
+                                    "src_subset": null,
+                                    "dst_subset": null,
+                                    "is_data_src": false,
+                                    "num_accesses": "1"
+                                  }
+                                }
+                              },
+                              "src": "4",
+                              "dst": "0",
+                              "dst_connector": null,
+                              "src_connector": null
+                            },
+                            {
+                              "type": "MultiConnectorEdge",
+                              "attributes": {
+                                "data": {
+                                  "type": "Memlet",
+                                  "attributes": {
+                                    "volume": "1",
+                                    "debuginfo": null,
+                                    "guid": "35a5a5a9-3beb-4393-8361-9776e95af37f",
+                                    "src_subset": null,
+                                    "dst_subset": null,
+                                    "is_data_src": false,
+                                    "num_accesses": "1"
+                                  }
+                                }
+                              },
+                              "src": "1",
+                              "dst": "5",
+                              "dst_connector": null,
+                              "src_connector": null
+                            },
+                            {
+                              "type": "MultiConnectorEdge",
+                              "attributes": {
+                                "data": {
+                                  "type": "Memlet",
+                                  "attributes": {
+                                    "volume": "1",
+                                    "debuginfo": null,
+                                    "guid": "db651f05-1390-4998-bf43-2e7441d9798b",
+                                    "src_subset": null,
+                                    "dst_subset": null,
+                                    "is_data_src": false,
+                                    "num_accesses": "1"
+                                  }
+                                }
+                              },
+                              "src": "4",
+                              "dst": "2",
+                              "dst_connector": null,
+                              "src_connector": null
+                            },
+                            {
+                              "type": "MultiConnectorEdge",
+                              "attributes": {
+                                "data": {
+                                  "type": "Memlet",
+                                  "attributes": {
+                                    "volume": "1",
+                                    "debuginfo": null,
+                                    "guid": "5a6b79a5-f34f-4d4f-baca-5f234b66b1ef",
+                                    "src_subset": null,
+                                    "dst_subset": null,
+                                    "is_data_src": false,
+                                    "num_accesses": "1"
+                                  }
+                                }
+                              },
+                              "src": "3",
+                              "dst": "5",
+                              "dst_connector": null,
+                              "src_connector": null
                             }
                           ],
                           "attributes": {
-                            "guid": "8ba50dba-4244-4519-86f9-189eb2300202"
+                            "guid": "842bf787-acb7-47e5-b7ab-b52500c61cdd"
                           }
                         }
                       ],
@@ -2967,7 +3366,7 @@
                       {
                         "type": "ControlFlowRegion",
                         "attributes": {
-                          "guid": "99957ad5-0143-430c-9e3b-6a6d458c2bcb"
+                          "guid": "49120be2-b132-4968-9b1b-e214c4e4a23b"
                         },
                         "nodes": [
                           {
@@ -2980,7 +3379,9 @@
                                 0,
                                 1,
                                 2,
-                                3
+                                3,
+                                4,
+                                5
                               ]
                             },
                             "nodes": [
@@ -2990,14 +3391,14 @@
                                 "attributes": {
                                   "debuginfo": {
                                     "type": "DebugInfo",
-                                    "start_line": 842,
-                                    "end_line": 842,
+                                    "start_line": 924,
+                                    "end_line": 924,
                                     "start_column": 0,
                                     "end_column": 0,
                                     "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                   },
                                   "data": "B",
-                                  "guid": "8629e09d-3256-4746-b257-e1d1633b4d09"
+                                  "guid": "c428e17a-c2db-456c-9db3-2e2242a08f43"
                                 },
                                 "id": 0,
                                 "scope_entry": null,
@@ -3009,14 +3410,14 @@
                                 "attributes": {
                                   "debuginfo": {
                                     "type": "DebugInfo",
-                                    "start_line": 843,
-                                    "end_line": 843,
+                                    "start_line": 925,
+                                    "end_line": 925,
                                     "start_column": 0,
                                     "end_column": 0,
                                     "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                   },
                                   "data": "shr_B",
-                                  "guid": "19c17ed2-1764-4274-b020-606c61d4b7f8"
+                                  "guid": "e071dd77-90ce-4f0e-9a5e-64695ac2d70c"
                                 },
                                 "id": 1,
                                 "scope_entry": null,
@@ -3028,14 +3429,14 @@
                                 "attributes": {
                                   "debuginfo": {
                                     "type": "DebugInfo",
-                                    "start_line": 842,
-                                    "end_line": 842,
+                                    "start_line": 924,
+                                    "end_line": 924,
                                     "start_column": 0,
                                     "end_column": 0,
                                     "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                   },
                                   "data": "A",
-                                  "guid": "c231ef74-5202-4f53-a930-10174929ebfc"
+                                  "guid": "278ca990-59cf-4e1b-968a-485487fb0fe2"
                                 },
                                 "id": 2,
                                 "scope_entry": null,
@@ -3047,16 +3448,64 @@
                                 "attributes": {
                                   "debuginfo": {
                                     "type": "DebugInfo",
-                                    "start_line": 843,
-                                    "end_line": 843,
+                                    "start_line": 925,
+                                    "end_line": 925,
                                     "start_column": 0,
                                     "end_column": 0,
                                     "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
                                   },
                                   "data": "shr_A",
-                                  "guid": "646deb68-da76-4a92-b937-da96ba475b21"
+                                  "guid": "a5cc31c2-b856-430e-bc9f-0b8f93022b50"
                                 },
                                 "id": 3,
+                                "scope_entry": null,
+                                "scope_exit": null
+                              },
+                              {
+                                "type": "Tasklet",
+                                "label": "producer_acquire_pipe",
+                                "attributes": {
+                                  "code": {
+                                    "string_data": "pipe.consumer_acquire();",
+                                    "language": "CPP"
+                                  },
+                                  "debuginfo": {
+                                    "type": "DebugInfo",
+                                    "start_line": 486,
+                                    "end_line": 486,
+                                    "start_column": 0,
+                                    "end_column": 0,
+                                    "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                  },
+                                  "side_effects": true,
+                                  "label": "producer_acquire_pipe",
+                                  "guid": "694dbb32-9d8f-408e-88cd-de8062f963e5"
+                                },
+                                "id": 4,
+                                "scope_entry": null,
+                                "scope_exit": null
+                              },
+                              {
+                                "type": "Tasklet",
+                                "label": "producer_commit_pipe",
+                                "attributes": {
+                                  "code": {
+                                    "string_data": "pipe.consumer_commit();",
+                                    "language": "CPP"
+                                  },
+                                  "debuginfo": {
+                                    "type": "DebugInfo",
+                                    "start_line": 496,
+                                    "end_line": 496,
+                                    "start_column": 0,
+                                    "end_column": 0,
+                                    "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
+                                  },
+                                  "side_effects": true,
+                                  "label": "producer_commit_pipe",
+                                  "guid": "ec98c77f-a979-4684-9bd7-744aa5d4bd04"
+                                },
+                                "id": 5,
                                 "scope_entry": null,
                                 "scope_exit": null
                               }
@@ -3099,7 +3548,7 @@
                                       },
                                       "data": "B",
                                       "debuginfo": null,
-                                      "guid": "0d43d4bf-add6-433d-9686-67cb71d9dbb0",
+                                      "guid": "1780aa25-071a-4d0f-bd6b-7f93339acdf3",
                                       "src_subset": {
                                         "type": "Range",
                                         "ranges": [
@@ -3175,7 +3624,7 @@
                                       },
                                       "data": "A",
                                       "debuginfo": null,
-                                      "guid": "ea82a854-7399-463e-ad83-d281f8f3e8b3",
+                                      "guid": "1e78b324-bfac-40aa-9418-ee8e10e6a76b",
                                       "src_subset": {
                                         "type": "Range",
                                         "ranges": [
@@ -3213,10 +3662,94 @@
                                 "dst": "3",
                                 "dst_connector": null,
                                 "src_connector": null
+                              },
+                              {
+                                "type": "MultiConnectorEdge",
+                                "attributes": {
+                                  "data": {
+                                    "type": "Memlet",
+                                    "attributes": {
+                                      "volume": "1",
+                                      "debuginfo": null,
+                                      "guid": "9293a358-75c3-47fb-8ebc-73d67cd79f2c",
+                                      "src_subset": null,
+                                      "dst_subset": null,
+                                      "is_data_src": false,
+                                      "num_accesses": "1"
+                                    }
+                                  }
+                                },
+                                "src": "4",
+                                "dst": "0",
+                                "dst_connector": null,
+                                "src_connector": null
+                              },
+                              {
+                                "type": "MultiConnectorEdge",
+                                "attributes": {
+                                  "data": {
+                                    "type": "Memlet",
+                                    "attributes": {
+                                      "volume": "1",
+                                      "debuginfo": null,
+                                      "guid": "35a5a5a9-3beb-4393-8361-9776e95af37f",
+                                      "src_subset": null,
+                                      "dst_subset": null,
+                                      "is_data_src": false,
+                                      "num_accesses": "1"
+                                    }
+                                  }
+                                },
+                                "src": "1",
+                                "dst": "5",
+                                "dst_connector": null,
+                                "src_connector": null
+                              },
+                              {
+                                "type": "MultiConnectorEdge",
+                                "attributes": {
+                                  "data": {
+                                    "type": "Memlet",
+                                    "attributes": {
+                                      "volume": "1",
+                                      "debuginfo": null,
+                                      "guid": "db651f05-1390-4998-bf43-2e7441d9798b",
+                                      "src_subset": null,
+                                      "dst_subset": null,
+                                      "is_data_src": false,
+                                      "num_accesses": "1"
+                                    }
+                                  }
+                                },
+                                "src": "4",
+                                "dst": "2",
+                                "dst_connector": null,
+                                "src_connector": null
+                              },
+                              {
+                                "type": "MultiConnectorEdge",
+                                "attributes": {
+                                  "data": {
+                                    "type": "Memlet",
+                                    "attributes": {
+                                      "volume": "1",
+                                      "debuginfo": null,
+                                      "guid": "5a6b79a5-f34f-4d4f-baca-5f234b66b1ef",
+                                      "src_subset": null,
+                                      "dst_subset": null,
+                                      "is_data_src": false,
+                                      "num_accesses": "1"
+                                    }
+                                  }
+                                },
+                                "src": "3",
+                                "dst": "5",
+                                "dst_connector": null,
+                                "src_connector": null
                               }
                             ],
                             "attributes": {
-                              "guid": "8ba50dba-4244-4519-86f9-189eb2300202"
+                              "guid": "842bf787-acb7-47e5-b7ab-b52500c61cdd"
                             }
                           }
                         ],
@@ -3246,8 +3779,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 832,
-              "end_line": 832,
+              "start_line": 914,
+              "end_line": 914,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
@@ -3261,7 +3794,7 @@
               "shr_A": null,
               "shr_B": null
             },
-            "guid": "457b9063-b1ef-47fa-ac64-2c212ab5d96c"
+            "guid": "4aa1eab4-6385-41ba-9f63-630f122cf942"
           },
           "id": 15,
           "scope_entry": "5",
@@ -3273,14 +3806,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 496,
-              "end_line": 496,
+              "start_line": 578,
+              "end_line": 578,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
             },
             "data": "shr_B",
-            "guid": "e371ae13-b0fe-4cbb-889d-d4ac8b31c21f"
+            "guid": "a1070f22-8d28-42f2-b21b-3bbef82280d3"
           },
           "id": 16,
           "scope_entry": "5",
@@ -3288,28 +3821,31 @@
         },
         {
           "type": "Tasklet",
-          "label": "sync_pipeline_shr_B",
+          "label": "acquire_pipe",
           "attributes": {
             "code": {
-              "string_data": "pipeline_shr_B.consumer_wait();",
+              "string_data": "pipe.consumer_wait();",
               "language": "CPP"
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 549,
-              "end_line": 549,
+              "start_line": 630,
+              "end_line": 630,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
             },
-            "label": "sync_pipeline_shr_B",
+            "side_effects": true,
+            "label": "acquire_pipe",
             "in_connectors": {
-              "_in1": null
+              "_in_shr_A": null,
+              "_in_shr_B": null
             },
             "out_connectors": {
-              "_out1": null
+              "_out_shr_A": null,
+              "_out_shr_B": null
             },
-            "guid": "84793100-da93-4b8c-9456-1533a44515d5"
+            "guid": "8e7f4f84-04aa-4f85-8e05-9ad31ac3de3e"
           },
           "id": 17,
           "scope_entry": "5",
@@ -3321,14 +3857,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 496,
-              "end_line": 496,
+              "start_line": 578,
+              "end_line": 578,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
             },
             "data": "shr_A",
-            "guid": "f38872ae-3a27-42d3-bf8a-5bb504cc02f8"
+            "guid": "95674815-1eab-4bac-885e-59957aff6161"
           },
           "id": 18,
           "scope_entry": "5",
@@ -3336,54 +3872,25 @@
         },
         {
           "type": "Tasklet",
-          "label": "sync_pipeline_shr_A",
+          "label": "consumer_release_pipe",
           "attributes": {
             "code": {
-              "string_data": "pipeline_shr_A.consumer_wait();",
+              "string_data": "pipe.consumer_release();",
               "language": "CPP"
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 549,
-              "end_line": 549,
-              "start_column": 0,
-              "end_column": 0,
-              "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
-            },
-            "label": "sync_pipeline_shr_A",
-            "in_connectors": {
-              "_in1": null
-            },
-            "out_connectors": {
-              "_out1": null
-            },
-            "guid": "e40b5bbc-50e4-4f39-9205-c0e52e50f3dc"
-          },
-          "id": 19,
-          "scope_entry": "5",
-          "scope_exit": "6"
-        },
-        {
-          "type": "Tasklet",
-          "label": "release_pipelines",
-          "attributes": {
-            "code": {
-              "string_data": "pipeline_shr_B.consumer_release();\npipeline_shr_A.consumer_release();",
-              "language": "CPP"
-            },
-            "debuginfo": {
-              "type": "DebugInfo",
-              "start_line": 570,
-              "end_line": 570,
+              "start_line": 652,
+              "end_line": 652,
               "start_column": 0,
               "end_column": 0,
               "filename": "/home/primrose/Work/dace/dace/transformation/dataflow/multiple_buffering.py"
             },
             "side_effects": true,
-            "label": "release_pipelines",
-            "guid": "385fdeb6-b4b2-4d4a-9d7e-6a2c8150fa70"
+            "label": "consumer_release_pipe",
+            "guid": "8b55ad07-19c9-49bf-98af-017959caef88"
           },
-          "id": 20,
+          "id": 19,
           "scope_entry": "5",
           "scope_exit": "6"
         }
@@ -3397,7 +3904,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "c5a715ef-8281-40c6-a5ce-6c005d9bdf59",
+                "guid": "c5fc20f0-ec85-4953-8979-239785765110",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -3405,8 +3912,8 @@
               }
             }
           },
-          "src": "8",
-          "dst": "20",
+          "src": "16",
+          "dst": "7",
           "dst_connector": null,
           "src_connector": null
         },
@@ -3418,7 +3925,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "ae86542a-8a33-46cf-811f-1d5ea7e4264f",
+                "guid": "013e641a-ac55-49f1-babe-4e32a7f2b8aa",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -3426,7 +3933,91 @@
               }
             }
           },
-          "src": "20",
+          "src": "18",
+          "dst": "7",
+          "dst_connector": null,
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "debuginfo": null,
+                "guid": "ed562ca6-4b10-4d27-ab12-938e49350c95",
+                "src_subset": null,
+                "dst_subset": null,
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "8",
+          "dst": "19",
+          "dst_connector": null,
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "debuginfo": null,
+                "guid": "91a43c11-181e-4692-9cac-51de9dd6e251",
+                "src_subset": null,
+                "dst_subset": null,
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "19",
+          "dst": "6",
+          "dst_connector": null,
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "debuginfo": null,
+                "guid": "6f824266-bfb1-4be1-863c-a2e22af2543f",
+                "src_subset": null,
+                "dst_subset": null,
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "8",
+          "dst": "19",
+          "dst_connector": null,
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "1",
+                "debuginfo": null,
+                "guid": "b78539e0-3fd7-4e62-a51e-f4a473d90901",
+                "src_subset": null,
+                "dst_subset": null,
+                "is_data_src": false,
+                "num_accesses": "1"
+              }
+            }
+          },
+          "src": "19",
           "dst": "6",
           "dst_connector": null,
           "src_connector": null
@@ -3451,7 +4042,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "90277fce-a899-4a98-9096-c9bc13119b39",
+                "guid": "9b3c23b5-e386-4edf-a8a1-e7274aac54ae",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3494,7 +4085,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "6dc9354e-bbcf-4372-b5e6-d47e5b615d27",
+                "guid": "dda3a79b-8c79-4417-a7aa-c4a9fcfa0352",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3543,7 +4134,7 @@
                 },
                 "data": "shr_A",
                 "debuginfo": null,
-                "guid": "17775573-6dfe-42b9-9968-e5138ac5bde0",
+                "guid": "ad716fc5-69a5-4bfe-ad9b-f2bbb16d9d3e",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3569,7 +4160,7 @@
           },
           "src": "14",
           "dst": "5",
-          "dst_connector": "IN___tmp_29_37_r_in_from_1_0_in_from_1_0",
+          "dst_connector": "IN___tmp_98_37_r_in_from_1_0_in_from_1_0",
           "src_connector": null
         },
         {
@@ -3598,7 +4189,7 @@
                 },
                 "data": "shr_B",
                 "debuginfo": null,
-                "guid": "d1680be5-efe6-4947-9c23-725e934436bd",
+                "guid": "6c0c9af6-e806-4031-9270-c9031886819a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3624,7 +4215,7 @@
           },
           "src": "13",
           "dst": "5",
-          "dst_connector": "IN___tmp_29_58_r_in_from_1_0_in_from_1_0",
+          "dst_connector": "IN___tmp_98_58_r_in_from_1_0_in_from_1_0",
           "src_connector": null
         },
         {
@@ -3647,7 +4238,7 @@
                 },
                 "data": "__tmp3",
                 "debuginfo": null,
-                "guid": "6861379f-d4ea-4c88-b194-3cf644ff3955",
+                "guid": "ef635686-7699-4f7e-9a4b-cd529006d9cf",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3676,116 +4267,6 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "256",
-                "subset": {
-                  "type": "Range",
-                  "ranges": [
-                    {
-                      "start": "Mod(k + 1, 2)",
-                      "end": "Mod(k + 1, 2)",
-                      "step": "1",
-                      "tile": "1"
-                    },
-                    {
-                      "start": "0",
-                      "end": "255",
-                      "step": "1",
-                      "tile": "1"
-                    }
-                  ]
-                },
-                "data": "shr_A",
-                "debuginfo": null,
-                "guid": "4cd3b695-856a-43a8-aa26-0d356be0414f",
-                "src_subset": {
-                  "type": "Range",
-                  "ranges": [
-                    {
-                      "start": "Mod(k + 1, 2)",
-                      "end": "Mod(k + 1, 2)",
-                      "step": "1",
-                      "tile": "1"
-                    },
-                    {
-                      "start": "0",
-                      "end": "255",
-                      "step": "1",
-                      "tile": "1"
-                    }
-                  ]
-                },
-                "dst_subset": null,
-                "is_data_src": true,
-                "num_accesses": "256"
-              }
-            }
-          },
-          "src": "18",
-          "dst": "7",
-          "dst_connector": "prefetch_shr_A",
-          "src_connector": null
-        },
-        {
-          "type": "MultiConnectorEdge",
-          "attributes": {
-            "data": {
-              "type": "Memlet",
-              "attributes": {
-                "volume": "256",
-                "subset": {
-                  "type": "Range",
-                  "ranges": [
-                    {
-                      "start": "Mod(k + 1, 2)",
-                      "end": "Mod(k + 1, 2)",
-                      "step": "1",
-                      "tile": "1"
-                    },
-                    {
-                      "start": "0",
-                      "end": "255",
-                      "step": "1",
-                      "tile": "1"
-                    }
-                  ]
-                },
-                "data": "shr_B",
-                "debuginfo": null,
-                "guid": "5bfb1bc5-9e69-4171-9f3c-a924d6d87773",
-                "src_subset": {
-                  "type": "Range",
-                  "ranges": [
-                    {
-                      "start": "Mod(k + 1, 2)",
-                      "end": "Mod(k + 1, 2)",
-                      "step": "1",
-                      "tile": "1"
-                    },
-                    {
-                      "start": "0",
-                      "end": "255",
-                      "step": "1",
-                      "tile": "1"
-                    }
-                  ]
-                },
-                "dst_subset": null,
-                "is_data_src": true,
-                "num_accesses": "256"
-              }
-            }
-          },
-          "src": "16",
-          "dst": "7",
-          "dst_connector": "prefetch_shr_B",
-          "src_connector": null
-        },
-        {
-          "type": "MultiConnectorEdge",
-          "attributes": {
-            "data": {
-              "type": "Memlet",
-              "attributes": {
                 "volume": "N",
                 "subset": {
                   "type": "Range",
@@ -3800,7 +4281,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "a0d5df7f-f651-489f-878d-0d60e7652cb1",
+                "guid": "245d76b7-91a4-44fd-8a6d-6af0a8e44f4d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3843,7 +4324,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "9dac117d-7faa-4fc2-ab7c-586720478046",
+                "guid": "a136c9c6-2449-417c-8408-2cba9cc8b13f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3886,7 +4367,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "b8def05b-494b-46eb-9bc6-c48a75198385",
+                "guid": "0f7d6f6f-67a1-4e2d-98a7-558e53741dd4",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3929,7 +4410,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "ff09596e-1fe4-4702-b57f-d6e04402c053",
+                "guid": "88623b99-236d-4786-8e32-811bea940b62",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -3972,7 +4453,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "ce685d36-588d-4cd6-978b-3546f7e26f93",
+                "guid": "fd0d5304-9689-47cf-8c8c-9c105dad6c06",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4015,7 +4496,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "ac7d4bd5-5cfe-4dad-832a-2c3f949f55af",
+                "guid": "b0173626-eff3-4525-aa85-b96e45b5400e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4035,8 +4516,8 @@
           },
           "src": "8",
           "dst": "6",
-          "dst_connector": "IN___tmp_29_16_w_out_of_1_1_out_of_1_1",
-          "src_connector": "OUT___tmp_29_16_w_out_of_1_1"
+          "dst_connector": "IN___tmp_98_16_w_out_of_1_1_out_of_1_1",
+          "src_connector": "OUT___tmp_98_16_w_out_of_1_1"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4058,7 +4539,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "63b28d6f-5f69-4f75-b3e2-4823990157fd",
+                "guid": "961a4232-d88a-460b-9b0b-3ee74068670e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4079,7 +4560,7 @@
           "src": "6",
           "dst": "1",
           "dst_connector": "IN_C",
-          "src_connector": "OUT___tmp_29_16_w_out_of_1_1_out_of_1_1"
+          "src_connector": "OUT___tmp_98_16_w_out_of_1_1_out_of_1_1"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4107,7 +4588,7 @@
                 },
                 "data": "shr_A",
                 "debuginfo": null,
-                "guid": "abd95999-8a64-422c-88bb-36906fba9305",
+                "guid": "32b45c8a-21ff-4d9c-98da-d79ecda534b8",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4134,7 +4615,7 @@
           "src": "7",
           "dst": "9",
           "dst_connector": "__in1",
-          "src_connector": "OUT___tmp_29_37_r_in_from_1_0"
+          "src_connector": "OUT___tmp_98_37_r_in_from_1_0"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4162,7 +4643,7 @@
                 },
                 "data": "shr_A",
                 "debuginfo": null,
-                "guid": "d3d2a22b-6feb-4aac-8363-3e151992cafb",
+                "guid": "dd942060-3ca5-4375-a2e6-24692b4b54c3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4187,9 +4668,9 @@
             }
           },
           "src": "5",
-          "dst": "19",
-          "dst_connector": "_in1",
-          "src_connector": "OUT___tmp_29_37_r_in_from_1_0_in_from_1_0"
+          "dst": "17",
+          "dst_connector": "_in_shr_A",
+          "src_connector": "OUT___tmp_98_37_r_in_from_1_0_in_from_1_0"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4217,7 +4698,7 @@
                 },
                 "data": "shr_B",
                 "debuginfo": null,
-                "guid": "8637db87-9a9f-4c27-afaa-7c6995a16ce1",
+                "guid": "b1380382-374e-4cd8-85b4-0775615b298e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4244,7 +4725,7 @@
           "src": "7",
           "dst": "9",
           "dst_connector": "__in2",
-          "src_connector": "OUT___tmp_29_58_r_in_from_1_0"
+          "src_connector": "OUT___tmp_98_58_r_in_from_1_0"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4272,7 +4753,7 @@
                 },
                 "data": "shr_B",
                 "debuginfo": null,
-                "guid": "8d339332-544e-4173-a66c-a335e8993d7c",
+                "guid": "b8eb6fb0-9e21-467e-be63-2588e4c02c4a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4298,8 +4779,8 @@
           },
           "src": "5",
           "dst": "17",
-          "dst_connector": "_in1",
-          "src_connector": "OUT___tmp_29_58_r_in_from_1_0_in_from_1_0"
+          "dst_connector": "_in_shr_B",
+          "src_connector": "OUT___tmp_98_58_r_in_from_1_0_in_from_1_0"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4321,7 +4802,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "e4f49262-d8a1-4255-8e14-715ba57fdaff",
+                "guid": "b9b72928-b6cd-4e23-b898-3c0d55df4550",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4364,7 +4845,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "d0d710b5-083c-48f3-91de-7968ddbda1ff",
+                "guid": "c96b2013-4ba5-493e-9125-c3ea8005baac",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -4407,7 +4888,7 @@
                 },
                 "data": "__tmp3",
                 "debuginfo": null,
-                "guid": "71ea9976-2759-4850-8f7a-1b5e703bf25a",
+                "guid": "bab10d3a-bad3-4ccd-bf52-b7a83b41304d",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4450,7 +4931,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "b1ce4418-75a4-4381-9827-fa16b36e97e2",
+                "guid": "1490e37f-693d-4c9f-80be-37a03bfda736",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4470,7 +4951,7 @@
           },
           "src": "11",
           "dst": "8",
-          "dst_connector": "IN___tmp_29_16_w_out_of_1_1",
+          "dst_connector": "IN___tmp_98_16_w_out_of_1_1",
           "src_connector": "__out"
         },
         {
@@ -4499,7 +4980,7 @@
                 },
                 "data": "shr_A",
                 "debuginfo": null,
-                "guid": "b889d248-0781-46d4-ab8b-6160c654c033",
+                "guid": "980b5189-720c-47e2-939b-1977b0b8d0a1",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4523,10 +5004,10 @@
               }
             }
           },
-          "src": "19",
+          "src": "17",
           "dst": "7",
-          "dst_connector": "IN___tmp_29_37_r_in_from_1_0",
-          "src_connector": "_out1"
+          "dst_connector": "IN___tmp_98_37_r_in_from_1_0",
+          "src_connector": "_out_shr_A"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4554,7 +5035,7 @@
                 },
                 "data": "shr_B",
                 "debuginfo": null,
-                "guid": "8ff7c450-f4c8-4b4a-b25b-baadce878a89",
+                "guid": "f6cb964f-52e7-4801-9ef5-1ca3eb6a1ba4",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4580,8 +5061,8 @@
           },
           "src": "17",
           "dst": "7",
-          "dst_connector": "IN___tmp_29_58_r_in_from_1_0",
-          "src_connector": "_out1"
+          "dst_connector": "IN___tmp_98_58_r_in_from_1_0",
+          "src_connector": "_out_shr_B"
         },
         {
           "type": "MultiConnectorEdge",
@@ -4609,7 +5090,7 @@
                 },
                 "data": "shr_A",
                 "debuginfo": null,
-                "guid": "44a55ced-6a67-48ae-bcad-cf9619213664",
+                "guid": "dc10acf1-66f1-4e1b-8ea3-f01f0586f952",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4664,7 +5145,7 @@
                 },
                 "data": "shr_A",
                 "debuginfo": null,
-                "guid": "b9092fdc-de95-4a67-8386-fb195d8e280a",
+                "guid": "c4e69a5c-f961-4972-a015-753ab9322fb5",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4719,7 +5200,7 @@
                 },
                 "data": "shr_B",
                 "debuginfo": null,
-                "guid": "14f2eda5-56fa-41b9-bf80-44a5102b6343",
+                "guid": "e2cc2f76-58e9-4f34-bd4c-cb9d5294e2b0",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4774,7 +5255,7 @@
                 },
                 "data": "shr_B",
                 "debuginfo": null,
-                "guid": "23e84f63-c96b-4c3d-bbfc-50ae9e3a365c",
+                "guid": "e4b2e651-174c-47b5-bdfe-a0ed6469e29b",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -4805,7 +5286,7 @@
         }
       ],
       "attributes": {
-        "guid": "328decff-fd21-4fff-881f-74fc87b42fa7",
+        "guid": "8d9c9dc6-b7fe-4305-9b0e-f344e6cb96bc",
         "executions": "1",
         "dynamic_executions": false
       }
