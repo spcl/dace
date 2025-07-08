@@ -1,7 +1,7 @@
 """
 Testing input and output combinations for onnx Ops
 
-| Output \ Input | Scalar CPU | Scalar GPU | Array CPU | Array GPU |
+| Output / Input | Scalar CPU | Scalar GPU | Array CPU | Array GPU |
 |----------------+------------+------------+-----------+-----------|
 | Scalar CPU     | Add        |            | Shape     |           |
 | Scalar GPU     |            | Add        |           | Squeeze   |
@@ -47,14 +47,22 @@ def test_squeeze(gpu, simplify, break_opchecker, sdfg_name):
         sdfg = dace.SDFG(sdfg_name)
 
         sdfg.add_array("X_arr", [1], dace.float32)
+        sdfg.add_array("axes", [1], dace.int64, transient=True)
         sdfg.add_scalar("scalar", dace.float32, transient=True)
         sdfg.add_array("__return", [1], dace.float32)
 
         state = sdfg.add_state()
         access_X = state.add_access("X_arr")
+        access_axes = state.add_access("axes")
         access_scalar = state.add_access("scalar")
 
         access_result = state.add_access("__return")
+
+        # Tasklet to initialize axes
+        init_axes = state.add_tasklet("init_axes", inputs={}, outputs={"__axes": dace.pointer(dace.int64)}, code="__axes[0] = 0;", language=dace.Language.CPP)
+
+        state.add_edge(init_axes, "__axes", access_axes, None,
+                       sdfg.make_array_memlet("axes"))
 
         op_node = donnx.ONNXSqueeze("Squeeze")
 
@@ -64,11 +72,13 @@ def test_squeeze(gpu, simplify, break_opchecker, sdfg_name):
 
         state.add_edge(op_node, "squeezed", access_scalar, None,
                        sdfg.make_array_memlet("scalar"))
-
-        unsqueeze_op = donnx.ONNXUnsqueeze("Unsqueeze", axes=[0])
+        
+        unsqueeze_op = donnx.ONNXUnsqueeze("Unsqueeze")
         state.add_node(unsqueeze_op)
         state.add_edge(access_scalar, None, unsqueeze_op, "data",
                        sdfg.make_array_memlet("scalar"))
+        state.add_edge(access_axes, None, unsqueeze_op, "axes",
+                       sdfg.make_array_memlet("axes"))
         state.add_edge(unsqueeze_op, "expanded", access_result, None,
                        sdfg.make_array_memlet("__return"))
 
@@ -133,18 +143,28 @@ def test_unsqueeze(gpu, simplify, break_opchecker, sdfg_name):
         sdfg = dace.SDFG(sdfg_name)
 
         sdfg.add_scalar("X_arr", dace.float32)
+        sdfg.add_array("axes", [1], dace.int64, transient=True)
         sdfg.add_array("__return", [1], dace.float32)
 
         state = sdfg.add_state()
         access_X = state.add_access("X_arr")
+        access_axes = state.add_access("axes")
 
         access_result = state.add_access("__return")
 
-        op_node = donnx.ONNXUnsqueeze("Unsqueeze", axes=[0])
+        # Tasklet to initialize axes
+        init_axes = state.add_tasklet("init_axes", inputs={}, outputs={"__axes": dace.pointer(dace.int64)}, code="__axes[0] = 0;", language=dace.Language.CPP)
+
+        state.add_edge(init_axes, "__axes", access_axes, None,
+                       sdfg.make_array_memlet("axes"))
+
+        op_node = donnx.ONNXUnsqueeze("Unsqueeze")
 
         state.add_node(op_node)
         state.add_edge(access_X, None, op_node, "data",
                        sdfg.make_array_memlet("X_arr"))
+        state.add_edge(access_axes, None, op_node, "axes",
+                       sdfg.make_array_memlet("axes"))
 
         state.add_edge(op_node, "expanded", access_result, None,
                        sdfg.make_array_memlet("__return"))
@@ -176,6 +196,7 @@ def test_add(gpu, scalars, simplify, break_opchecker, sdfg_name):
             sdfg.add_scalar("X_arr", dace.float32)
             sdfg.add_scalar("W_arr", dace.float32)
             sdfg.add_scalar("Z_arr", dace.float32, transient=True)
+            sdfg.add_array("axes", [1], dace.int64, transient=True)
             sdfg.add_array("__return", [1], dace.float32)
         else:
             sdfg.add_array("X_arr", [2, 2], dace.float32)
@@ -188,6 +209,7 @@ def test_add(gpu, scalars, simplify, break_opchecker, sdfg_name):
 
         if scalars:
             access_Z = state.add_access("Z_arr")
+            access_axes = state.add_access("axes")
 
         access_result = state.add_access("__return")
 
@@ -207,10 +229,18 @@ def test_add(gpu, scalars, simplify, break_opchecker, sdfg_name):
                            sdfg.make_array_memlet("__return"))
 
         if scalars:
-            unsqueeze_op = donnx.ONNXUnsqueeze("Unsqueeze", axes=[0])
+            # Tasklet to initialize axes
+            init_axes = state.add_tasklet("init_axes", inputs={}, outputs={"__axes": dace.pointer(dace.int64)}, code="__axes[0] = 0;", language=dace.Language.CPP)
+
+            state.add_edge(init_axes, "__axes", access_axes, None,
+                           sdfg.make_array_memlet("axes"))
+
+            unsqueeze_op = donnx.ONNXUnsqueeze("Unsqueeze")
             state.add_node(unsqueeze_op)
             state.add_edge(access_Z, None, unsqueeze_op, "data",
                            sdfg.make_array_memlet("Z_arr"))
+            state.add_edge(access_axes, None, unsqueeze_op, "axes",
+                           sdfg.make_array_memlet("axes"))
             state.add_edge(unsqueeze_op, "expanded", access_result, None,
                            sdfg.make_array_memlet("__return"))
 
