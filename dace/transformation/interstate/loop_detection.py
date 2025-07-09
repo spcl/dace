@@ -201,9 +201,6 @@ class DetectLoop(transformation.PatternTransformation):
         elif any(self.exit_state not in postdominators[1][n] for n in loop_nodes):
             # The loop exit must post-dominate all loop nodes
             return None
-        elif nx.has_path(graph.nx, self.exit_state, guard):
-            # If there is a path from the exit state to the guard, this is not a valid loop
-            return None
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):
@@ -860,7 +857,7 @@ def find_rotated_for_loop(
     return itervar, (start, end, stride), (start_states, last_loop_state)
 
 
-class LoopRangeAnnotator(DetectLoop):
+class LoopRangeAnnotator(DetectLoop, transformation.MultiStateTransformation):
 
     def loop_guard_state(self):
         """
