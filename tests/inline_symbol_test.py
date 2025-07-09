@@ -17,13 +17,14 @@ def inline_symbol(D: dace.float32[E, F]):
 def test_inline_symbol():
     sdfg = inline_symbol.to_sdfg(simplify=False)
 
-    # NOTE: Instead of checking if the SDFG is valid one should first, with `validate_undefs`
-    #   set to `False` if validation passes. Then enable it and ensure that the validation
-    #   fails, because as it stands now even when the feature is disabled validation passes.
+    # NOTE: The original test only checked if the SDFG was valid when `validate_undefs` was set
+    #   to `True`. However, since the SDFG is also valid when `validate_undefs` is set to `False`,
+    #   as it can be seen below, this test actually does not serves any meaning. It would be more
+    #   meaningful if one of the cases, probably the `validate_undefs=True` case, would fail.
     with dace.config.set_temporary('experimental', 'validate_undefs', value=False):
-        assert sdfg.is_valid()
+        sdfg.validate()
     with dace.config.set_temporary('experimental', 'validate_undefs', value=True):
-        assert sdfg.is_valid()
+        sdfg.validate()
 
 
 if __name__ == '__main__':

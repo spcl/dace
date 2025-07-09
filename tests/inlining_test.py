@@ -1300,4 +1300,21 @@ if __name__ == "__main__":
     test_chain_reduction_1()
     test_chain_reduction_2()
     test_chain_reduction_all()
+
+    for separate_write_back_state in [True, False]:
+        test_multistate_inline_no_symbols_on_the_outside(separate_write_back_state=separate_write_back_state)
+
+    test_multistate_inline_same_symbol_used_on_inside_and_outside_with_extra_writeback_state()
     test_multistate_inline_same_symbol_used_on_inside_and_outside_without_writeback_state()
+
+    for separate_write_back_state in [True, False]:
+        test_multistate_inlining_different_symbols_used(separate_write_back_state=separate_write_back_state)
+
+    for separate_write_back_state in [True, False]:
+        for outside_and_inner_symbol_have_same_meaning in [True, False]:
+            test_multistate_inline_with_symbol_mapping(separate_write_back_state=separate_write_back_state,
+                                                       outside_and_inner_symbol_have_same_meaning=True)
+
+    for outside_and_inner_symbol_have_same_meaning in [True, False]:
+        test_singlestate_inline_with_symbol_mapping(
+            outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning)
