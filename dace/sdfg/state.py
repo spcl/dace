@@ -2547,6 +2547,33 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
                     node.add_in_connector(edge.dst_conn)
 
+    def expand_library_node(self, node: nd.LibraryNode, implementation: str, **expansion_kwargs) -> str:
+        """
+        Expand a library node with a specific implementation.
+
+        This is a convenience method that provides a clean interface for expanding
+        library nodes from the state level. It automatically handles validation
+        and calls the library node's expand method.
+
+        :param node: The library node to expand
+        :param implementation: The implementation to use for expansion
+        :param expansion_kwargs: Additional keyword arguments for expansion
+        :return: The name of the expanded implementation
+
+        Example:
+            result = state.expand_library_node(gemm_node, 'MKL')
+        """
+        # Check that the node is actually in this state
+        if node not in self.nodes():
+            raise ValueError(f"Node {node} is not in this state")
+
+        # Check that implementation exists
+        if implementation not in node.implementations:
+            raise KeyError(f"Unknown implementation for node {type(node).__name__}: {implementation}")
+
+        # Use the new expand interface
+        return node.expand(self, implementation, **expansion_kwargs)
+
 
 @make_properties
 class ContinueBlock(ControlFlowBlock):
