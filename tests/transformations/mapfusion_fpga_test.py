@@ -2,7 +2,7 @@
 from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import FPGATransformSDFG
-from mapfusion_test import multiple_fusions, fusion_with_transient
+from .mapfusion_test import multiple_fusions, fusion_with_transient
 import numpy as np
 from dace.config import set_temporary
 
