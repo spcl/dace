@@ -320,8 +320,8 @@ if __name__ == '__main__':
     for test_name in work_depth_test_cases.keys():
         test_work_depth(test_name)
 
-    for test, correct in tests_cases_avg_par:
-        test_avg_par(test, correct)
+    for test in tests_cases_avg_par.keys():
+        test_avg_par(test)
 
     for expr, assums, res in assumptions_tests:
         test_assumption_system(expr, assums, res)
