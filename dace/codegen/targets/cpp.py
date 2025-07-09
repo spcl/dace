@@ -266,6 +266,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
         root = name.split('.')[0]
         if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
             name = name.replace('.', '->')
+            name = name.replace('->->->', '...')  # Special case
 
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
@@ -285,6 +286,16 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     return name
 
 
+def get_abs_base_type_and_ptr_count(dtype: dtypes.typeclass) -> Tuple[dtypes.typeclass, int]:
+    base_type = dtype
+    ptr_count = 0
+    while isinstance(base_type, dace.pointer):
+        ptr_count += 1
+        base_type = base_type.base_type
+
+    return base_type, ptr_count
+
+
 def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           sdfg: SDFG,
                           memlet: mmlt.Memlet,
@@ -293,7 +304,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           ancestor: int = 1,
                           is_write: bool = None,
                           device_code: bool = False,
-                          decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
+                          decouple_array_interfaces: bool = False) -> Tuple[dtypes.typeclass, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -304,7 +315,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
-    typedef = conntype.ctype
+    typedef = conntype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer) and not fpga.is_fpga_array(desc)
@@ -318,11 +329,11 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
                 str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
                 for s in dispatcher.frame.free_symbols(desc))):
-            defined_types = dispatcher.declared_arrays.get(ptrname, ancestor)
+            defined_types: Tuple[DefinedType, dtypes.typeclass] = dispatcher.declared_arrays.get(ptrname, ancestor)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
+        defined_types: Tuple[DefinedType, dtypes.typeclass] = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
@@ -340,12 +351,9 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
-    def make_const(expr: str) -> str:
-        # check whether const has already been added before
-        if not expr.startswith("const "):
-            return "const " + expr
-        else:
-            return expr
+    def make_const(expr: dtypes.typeclass) -> dtypes.typeclass:
+        expr.const = True
+        return expr
 
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
@@ -365,11 +373,11 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                 typedef = make_const(typedef)
 
     elif defined_type == DefinedType.ArrayInterface:
-        base_ctype = conntype.base_type.ctype
-        typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
+        base_ctype = conntype.base_type
+        typedef = dtypes.pointer(base_ctype)
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
-        typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        typedef = defined_ctype if is_scalar else dtypes.pointer(defined_ctype)
         if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
@@ -413,7 +421,10 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        if conntype != dtypes.typeclass(None):
+            expr = make_ptr_vector_cast(datadef + offset_expr, defined_ctype, conntype, is_scalar, defined_type)
+        else:
+            expr = datadef + offset_expr
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
@@ -421,8 +432,9 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
     expr = expr.replace('.', '->')
+    expr = expr.replace('->->->', '...')  # Special case
 
-    return (typedef + ref, pointer_name, expr)
+    return (typedef, ref + pointer_name, expr)
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
@@ -630,19 +642,34 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type):
+def make_ptr_vector_cast(dst_expr: str, dst_dtype: dtypes.typeclass, src_dtype: dtypes.typeclass, is_scalar: bool,
+                         defined_type: DefinedType):
     """
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
-    if src_dtype != dst_dtype:
+    src_base, src_ptrs = get_abs_base_type_and_ptr_count(src_dtype)
+    dst_base, dst_ptrs = get_abs_base_type_and_ptr_count(dst_dtype)
+    dst_ptrs -= dst_expr.count('[')  # Count dereferences
+
+    if src_base != dst_base:
         if is_scalar:
-            dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
+            dst_expr = '*(%s)(&%s)' % (dtypes.pointer(src_dtype).as_arg(''), dst_expr)
         elif src_dtype.base_type != dst_dtype:
-            dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
+            dst_expr = '(%s)(&%s)' % (src_dtype.as_arg(''), dst_expr)
         elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
-            dst_expr = '&' + dst_expr
-    elif not is_scalar:
-        dst_expr = '&' + dst_expr
+            if dst_expr.endswith('[0]'):  # Skip expressions of the kind "&x[0]"
+                dst_expr = dst_expr[:-3]
+            else:
+                dst_expr = '&' + dst_expr
+    elif src_ptrs < dst_ptrs:
+        dst_expr = '*' * (dst_ptrs - src_ptrs) + dst_expr
+    elif dst_ptrs < src_ptrs:
+        if dst_expr.endswith('[0]'):  # Skip expressions of the kind "&x[0]"
+            dst_expr = dst_expr[:-3]
+            dst_ptrs += 1
+
+        dst_expr = '&' * (src_ptrs - dst_ptrs) + dst_expr
+
     return dst_expr
 
 
@@ -1214,6 +1241,50 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         memlet, nc, wcr, dtype = self.memlets[target]
         value = self.visit(astutils.copy_tree(node.value))
 
+        # Count dereferences in node.value and if types mismatch, prepend the
+        # correct number of references
+        if isinstance(value, ast.Name):
+            src_derefs = 0
+            cur_node = node.value
+            while isinstance(cur_node, ast.Subscript):
+                cur_node = cur_node.value
+                src_derefs += 1
+
+            target_derefs = 0
+            cur_node = node.targets[-1]
+            while isinstance(cur_node, ast.Subscript):
+                cur_node = cur_node.value
+                target_derefs += 1
+
+            source = rname(node.value)
+            if source in self.memlets:
+                src_dtype = self.memlets[source][3]
+                src_ptrs = 0
+                curdtype = src_dtype
+                while isinstance(curdtype, dace.pointer):
+                    src_ptrs += 1
+                    curdtype = curdtype.base_type
+                target_ptrs = 0
+                curdtype = dtype
+                while isinstance(curdtype, dace.pointer):
+                    target_ptrs += 1
+                    curdtype = curdtype.base_type
+
+                src_ptrs -= src_derefs
+                target_ptrs -= target_derefs
+                if src_ptrs > target_ptrs:
+                    value.id = '*' * (src_ptrs - target_ptrs) + value.id
+                    node.value = value
+                elif src_ptrs < target_ptrs:
+                    # Modify rhs to match the number of pointers in the lhs (not necessary)
+                    # value.id = '&' * (target_ptrs - src_ptrs) + value.id
+                    # node.value = value
+
+                    # If the rhs is a scalar (i.e., this is a store), modify lhs to match the rhs
+                    if isinstance(node.targets[-1], ast.Name) and src_ptrs == 0:
+                        node.targets[-1] = ast.copy_location(
+                            ast.Name(id='*' * (target_ptrs - src_ptrs) + node.targets[-1].id), node.targets[-1])
+
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts
             try:
@@ -1308,7 +1379,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
     def visit_Call(self, node: ast.Call):
         funcname = rname(node.func)
-        if (funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback)):
+        if (funcname in self.sdfg.callback_mapping
+                or (funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback))):
             # Visit arguments without changing their types
             self.allow_casts = False
             result = self.generic_visit(node)

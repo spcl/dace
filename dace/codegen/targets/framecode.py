@@ -877,9 +877,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
             if isinstance(ctype, data.Array):
-                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype.ctype)
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, dtypes.pointer(ctype.dtype))
             else:
-                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
@@ -926,12 +926,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     and config.Config.get('compiler', 'fpga', 'vendor').lower() == 'intel_fpga'):
                 # Emit OpenCL type
                 callsite_stream.write(f'{isvarType.ocltype} {isvarName};\n', sdfg)
-                self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
+                self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType)
             else:
                 # If the variable is passed as an input argument to the SDFG, do not need to declare it
                 if isvarName not in outside_symbols:
                     callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-                    self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
+                    self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType)
+
         callsite_stream.write('\n', sdfg)
 
         #######################################################################

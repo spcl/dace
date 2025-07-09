@@ -95,6 +95,10 @@ def test():
     array_in[:N] = range(0, N)
     array_in[N:] = range(0, N)
     array_out = np.ndarray([N], np.int32)
+
+    # Set the OpenMP sections flag to enable parallel execution
+    sdfg.openmp_sections = True
+
     sdfg(array_in=array_in, array_out=array_out, N=N)
 
     for i, val in enumerate(array_out):
