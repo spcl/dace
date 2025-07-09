@@ -859,6 +859,14 @@ def find_rotated_for_loop(
 
 class LoopRangeAnnotator(DetectLoop, transformation.MultiStateTransformation):
 
+    def can_be_applied(self, graph, expr_index, sdfg, permissive = False):
+        if super().can_be_applied(graph, expr_index, sdfg, permissive):
+            loop_info = self.loop_information()
+            if loop_info is None:
+                return False
+            return True
+        return False
+
     def loop_guard_state(self):
         """
         Returns the loop guard state of this loop (i.e., latch state or begin state for inverted or self loops).

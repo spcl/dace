@@ -595,8 +595,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # This backedge closes a loop that was not annotated, and thus is not a proper for-loop. The states in this
             # cycle are thus unannotated.
             cycle_states = set()
-            cycle_states.add(be.dst)
-            for cycle_state in dfs_conditional(sdfg, [be.dst], lambda p, _: p is not be.src):
+            for cycle_state in dfs_conditional(sdfg, [be.src], lambda p, _: p is not be.dst, reverse=True):
                 cycle_states.add(cycle_state)
             unannotated_cycle_states.append(cycle_states)
 
