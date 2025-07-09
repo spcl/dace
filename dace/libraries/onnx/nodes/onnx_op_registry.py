@@ -70,16 +70,14 @@ def _get_attr_docstring(attr: ONNXAttribute) -> str:
     return param_doc + "\n" + param_type
 
 
-def _get_latest_schemas():
+def _get_all_schemas():
     name_to_schemas = collections.defaultdict(list)
     for schema in onnx.defs.get_all_schemas_with_history():
         name_to_schemas[schema.name].append(schema)
 
     all_schemas = []
     for name, schemas in name_to_schemas.items():
-        # Sort by version and take the latest one
-        schemas = sorted(schemas, key=lambda x: x.since_version)
-        all_schemas.append(schemas[-1])
+        all_schemas.extend(schemas)
 
     return all_schemas
 
@@ -145,10 +143,10 @@ def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str,
         return []
 
 
-_ONNX_OPS_BY_NAME = {}
+_ONNX_OPS = {}
 
 # Generate all of the Op Nodes
-for schema in _get_latest_schemas():
+for schema in _get_all_schemas():
     try:
         dace_schema = ONNXSchema.from_onnx_proto(schema)
         # if the schema has a parameter name that exists as both an input and an output, prepend "in_" and "out_"
@@ -282,8 +280,10 @@ for schema in _get_latest_schemas():
     attrs['schema'] = dace_schema
 
     attrs['__init__'] = __init__
+    
+    cls_name_ver = cls_name + "_" + str(dace_schema.since_version)
 
-    cls = type(cls_name, (onnx_op.ONNXOp, ), attrs)
+    cls = type(cls_name_ver, (onnx_op.ONNXOp, ), attrs)
     cls = dace.library.node(cls)
     cls.__init__.__doc__ = "\n" + init_docstring
 
@@ -351,14 +351,23 @@ for schema in _get_latest_schemas():
     if not registered:
         cls.default_implementation = "onnxruntime"
 
-    # register python frontend replacement
-    #######################################
-    register_op_repo_replacement(cls, cls_name, dace_schema)
+    version = schema.since_version
+    
+    if cls_name not in _ONNX_OPS:
+        _ONNX_OPS[cls_name] = {}
+    _ONNX_OPS[cls_name][version] = cls
 
-    globals()[cls_name] = cls
-    _ONNX_OPS_BY_NAME[cls_name] = cls
 
-    del cls
+for name, ver_to_cls in _ONNX_OPS.items():
+    _ONNX_OPS[name] = dict(sorted(ver_to_cls.items()))
+    for i, (version, cls) in enumerate(_ONNX_OPS[name].items()):
+        if i == len(_ONNX_OPS[name]) - 1:
+            # last version registered as the default
+            globals()[name] = cls
+            # register python frontend replacement
+            register_op_repo_replacement(cls, name, cls.schema)
+        # all other versions are registered with version as a suffix
+        globals()[name + "_" + str(version)] = cls
 
 
 def has_onnx_node(name: str) -> bool:
@@ -366,12 +375,22 @@ def has_onnx_node(name: str) -> bool:
 
         :param name: the operator name.
     """
-    return ("ONNX" + name) in _ONNX_OPS_BY_NAME
+    return ("ONNX" + name) in _ONNX_OPS
 
 
-def get_onnx_node(name: str) -> onnx_op.ONNXOp:
+def get_onnx_node(name: str, version: int = -1) -> onnx_op.ONNXOp:
     """ Get the ONNX Operator node for an operator by name.
 
         :param name: the operator name
     """
-    return _ONNX_OPS_BY_NAME["ONNX" + name]
+    name_to_versions = list(_ONNX_OPS["ONNX" + name].items())
+    
+    if version == -1:
+        # take the latest version
+        return name_to_versions[-1][1]
+    else:
+        # take the latest version which is less than or equal to the given version
+        for ver, cls in reversed(name_to_versions):
+            if ver <= version:
+                return cls
+        raise ValueError(f"No version of {name} found for version {version}")

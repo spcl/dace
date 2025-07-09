@@ -5,5 +5,5 @@ from .schema import onnx_representation, ONNXAttributeType, ONNXAttribute, ONNXT
 from .onnx_importer import ONNXModel
 from .backend import DaCeMLBackend, DaCeMLBackendRep
 
-register_library(__name__, "onnx")
-_DACE_REGISTERED_LIBRARIES["onnx"].default_implementation = "pure"
+register_library(__name__, "dace.libraries.onnx")
+_DACE_REGISTERED_LIBRARIES["dace.libraries.onnx"].default_implementation = "pure"

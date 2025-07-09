@@ -342,8 +342,10 @@ def expand_node(node, state, sdfg):
 
     onnx_model = onnx.ModelProto()
     
+    opset_version = node.schema.since_version
     # ideally this should be fetched from the installed onnxruntime version
-    opset_version = 21
+    if opset_version > 22:
+        opset_version = 22  # latest onnxruntime supports opset up to 22
     ir_version = 10
     
     onnx_model.ir_version = ir_version
@@ -504,19 +506,23 @@ def expand_node(node, state, sdfg):
     # save constructed model
     model_bytes = onnx_model.SerializeToString()
     # save model to file
-    with open(f"{unique_id}.onnx", "wb") as f:
-        f.write(model_bytes)
+    # with open(f"{unique_id}.onnx", "wb") as f:
+    #     f.write(model_bytes)
     # embed model as C byte string
     model_int_values = [str(b) for b in model_bytes]
     model_int_values_str = ", ".join(model_int_values)
     env_init_code += f"""
-    const unsigned char kernel_data_{unique_id}[{len(model_int_values)}] = {{ {model_int_values_str} }};
+    __state->kernel_data_{unique_id} = new unsigned char[{len(model_int_values)}];
     """
+    
+    for i, b in enumerate(model_bytes):
+        env_init_code += f"__state->kernel_data_{unique_id}[{i}] = {b};"
     
     env_init_code += "\n"
 
     env_finalize_code = f"""
         __state->ort_api->ReleaseSession(__state->ort_session_{unique_id});\n
+        delete[] __state->kernel_data_{unique_id};\n
         //__state->ort_api->ReleaseExecutableKernel(__state->ort_kernel_{unique_id});\n
         // __state->ort_api->ReleaseExecutableKernelContext(__state->ort_context_{unique_id});\n
     """
@@ -544,7 +550,7 @@ def expand_node(node, state, sdfg):
 
     env_init_code += f"""
     __ort_check_status(__state->ort_api, __state->ort_api->CreateSessionFromArray(
-        __state->ort_env, kernel_data_{unique_id}, {len(model_int_values)},
+        __state->ort_env, __state->kernel_data_{unique_id}, {len(model_int_values)},
         __state->ort_session_options, &__state->ort_session_{unique_id}
     ));
     """
@@ -560,6 +566,7 @@ def expand_node(node, state, sdfg):
                             # "OrtKernelContext *ort_context_{};\n".format(unique_id),
                             #  "OrtExecutableKernel *ort_kernel_{};\n".format(unique_id),
                              "OrtSession *ort_session_{};\n".format(unique_id),
+                             "unsigned char* kernel_data_{};\n".format(unique_id),
                          ],
                          code_init=env_init_code,
                          code_exit=env_finalize_code,

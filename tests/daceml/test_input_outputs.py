@@ -263,3 +263,9 @@ def test_add(gpu, scalars, simplify, break_opchecker, sdfg_name):
         numpy_result = X + W
 
         assert np.allclose(result, numpy_result)
+
+
+if __name__ == "__main__":
+    donnx.default_implementation = "onnxruntime"
+    test_squeeze(False, True, True, "test_squeeze")
+    

@@ -724,24 +724,47 @@ class PureUnsqueeze(ONNXForward):
 
         # Get input/output descriptors
         data_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "data"))
-        axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
         expanded_desc = copy.deepcopy(
             out_desc_with_name(node, state, sdfg, "expanded"))
 
         # Add data descriptors to SDFG
         nsdfg.add_datadesc("data", data_desc)
-        nsdfg.add_datadesc("axes", axes_desc)
         nsdfg.add_datadesc("expanded", expanded_desc)
         nsdfg.arrays["data"].transient = False
-        nsdfg.arrays["axes"].transient = False
         nsdfg.arrays["expanded"].transient = False
 
         # Add access nodes
         data_read = nstate.add_read("data")
-        axes_read = nstate.add_read("axes")
         expanded_write = nstate.add_write("expanded")
 
-        is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer)
+        # Handle axes based on ONNX version
+        if node.schema.since_version < 13:
+            # axes is attribute - create transient array and initialize it
+            axes_values = node.axes if hasattr(node, 'axes') else []
+            axes_arr_shape = [len(axes_values)]
+            axes_arr_dtype = dace.int64
+            _, axes_desc = nsdfg.add_array("axes", axes_arr_shape, axes_arr_dtype, transient=True)
+            axes_node = nstate.add_access("axes")
+            
+            # Add tasklet to initialize axes array
+            axes_init_tasklet = nstate.add_tasklet(
+                f"init_axes",
+                set(), {"out": dace.pointer(axes_arr_dtype)},
+                "\n".join([
+                    f"out [{idx}] = {val};"
+                    for idx, val in enumerate(axes_values)
+                ]),
+                language=dace.Language.CPP)
+            nstate.add_edge(axes_init_tasklet, "out", axes_node, None,
+                            dace.Memlet(f"axes[0:{len(axes_values)}]"))
+        else:
+            # axes is input - get from input connector
+            axes_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "axes"))
+            nsdfg.add_datadesc("axes", axes_desc)
+            nsdfg.arrays["axes"].transient = False
+            axes_node = nstate.add_read("axes")
+
+        is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer) and data_desc.total_size == 1
         if is_scalar_input:
             data_str = "(&__data)"
         else:
@@ -766,7 +789,7 @@ class PureUnsqueeze(ONNXForward):
         # Connect the tasklet with memlets
         nstate.add_edge(data_read, None, tasklet, "__data",
                         dace.Memlet("data"))
-        nstate.add_edge(axes_read, None, tasklet, "__axes",
+        nstate.add_edge(axes_node, None, tasklet, "__axes",
                         dace.Memlet("axes"))
         nstate.add_edge(tasklet, "__unsqueezed", expanded_write, None,
                         dace.Memlet("expanded"))
@@ -817,7 +840,8 @@ class PureSqueeze(ONNXForward):
             axes_read = nstate.add_read("axes")
             tasklet_inputs["__axes"] = dace.pointer(axes_desc.dtype)
         
-        is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer)
+        is_scalar_input = not isinstance(node.in_connectors['data'], dace.dtypes.pointer) and data_desc.total_size == 1
+        is_scalar_input = False  # TODO: dace decision on passing by reference or pointer is very obscure
         if is_scalar_input:
             data_str = "(&__data)"
         else:
@@ -1259,16 +1283,141 @@ def Tanh(input, output):
     output[:] = dace.elementwise(lambda x: tanh(x), input)
 
 
-softmax_compute = dict(
-    axis=lambda node, input: list(range(len(input.shape)))[node.axis:])
+@op_implementation(op="Softmax", name="pure")
+class PureSoftmax(ONNXForward):
 
+    @staticmethod
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
+                               sdfg: SDFG) -> bool:
+        return True
 
-@python_pure_op_implementation(**softmax_compute)
-def Softmax(input, output):
-    maximum = np.maximum.reduce(input, axis=axis, keepdims=True)
-    exponent = np.exp(input - maximum)
-    sum = np.add.reduce(exponent, axis=axis, keepdims=True)
-    output[:] = exponent / sum
+    @staticmethod
+    def forward(node: 'ONNXOp', state: SDFGState,
+                sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # Create new SDFG
+        nsdfg = dace.SDFG(node.label + "_expansion")
+        nstate = nsdfg.add_state()
+
+        # Get input/output descriptors
+        input_desc = copy.deepcopy(in_desc_with_name(node, state, sdfg, "input"))
+        output_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "output"))
+
+        # Add data descriptors to SDFG
+        nsdfg.add_datadesc("input", input_desc)
+        nsdfg.add_datadesc("output", output_desc)
+        nsdfg.arrays["input"].transient = False
+        nsdfg.arrays["output"].transient = False
+
+        # Add access nodes
+        input_read = nstate.add_read("input")
+        output_write = nstate.add_write("output")
+
+        # Get axis for softmax computation
+        axis = getattr(node, 'axis', -1)
+        if axis < 0:
+            axis = len(input_desc.shape) + axis
+
+        # Create intermediate arrays for the computation
+        uid = state.node_id(node)
+        
+        # max_values: stores the maximum values along the axis
+        max_values_desc = copy.deepcopy(input_desc)
+        max_values_desc.transient = True
+        # Reduce the axis dimension to 1 for max_values
+        max_values_desc_shape = list(max_values_desc.shape)
+        max_values_desc_shape[axis] = 1
+        max_values_desc.shape = max_values_desc_shape
+        nsdfg.add_datadesc(f"max_values_{uid}", max_values_desc)
+        
+        # exp_values: stores exp(input - max_values)
+        exp_values_desc = copy.deepcopy(input_desc)
+        exp_values_desc.transient = True
+        nsdfg.add_datadesc(f"exp_values_{uid}", exp_values_desc)
+        
+        # sum_exp: stores the sum of exp_values along the axis
+        sum_exp_desc = copy.deepcopy(input_desc)
+        sum_exp_desc.transient = True
+        # Reduce the axis dimension to 1 for sum_exp
+        sum_exp_desc_shape = list(sum_exp_desc.shape)
+        sum_exp_desc_shape[axis] = 1
+        sum_exp_desc.shape = sum_exp_desc_shape
+        nsdfg.add_datadesc(f"sum_exp_{uid}", sum_exp_desc)
+
+        # sub_values: stores the result of subtracting max_values from input
+        sub_values_desc = copy.deepcopy(input_desc)
+        sub_values_desc.transient = True
+        nsdfg.add_datadesc(f"sub_values_{uid}", sub_values_desc)
+
+        # Step 1: ReduceMax along the specified axis
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXReduceMax
+        reduce_max_node = ONNXReduceMax(f"reduce_max_{uid}", keepdims=1)
+        nstate.add_node(reduce_max_node)
+        reduce_max_node.add_in_connector("data")
+        reduce_max_node.add_in_connector("axes")
+        reduce_max_node.add_out_connector("reduced")
+        
+        # Create axes array for ReduceMax
+        axes_name, axes_desc = nsdfg.add_array(f"axes_{uid}", [1], dace.int64, transient=True)
+        axes_access = nstate.add_access(axes_name)
+        axes_tasklet = nstate.add_tasklet(f"init_axes_{uid}", {}, {"out"}, f"out = {axis};", language=dace.Language.CPP)
+        nstate.add_edge(axes_tasklet, "out", axes_access, None, dace.Memlet(f"{axes_name}"))
+        
+        max_values_access = nstate.add_access(f"max_values_{uid}")
+        nstate.add_edge(input_read, None, reduce_max_node, "data", nsdfg.make_array_memlet("input"))
+        nstate.add_edge(axes_access, None, reduce_max_node, "axes", nsdfg.make_array_memlet(axes_name))
+        nstate.add_edge(reduce_max_node, "reduced", max_values_access, None, nsdfg.make_array_memlet(f"max_values_{uid}"))
+
+        # Step 2: Subtract max_values from input (input - max_values)
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXSub
+        sub_node = ONNXSub(f"sub_{uid}")
+        nstate.add_node(sub_node)
+        sub_node.add_in_connector("A")
+        sub_node.add_in_connector("B")
+        sub_node.add_out_connector("C")
+        
+        sub_values_access = nstate.add_access(f"sub_values_{uid}")
+        nstate.add_edge(input_read, None, sub_node, "A", nsdfg.make_array_memlet("input"))
+        nstate.add_edge(max_values_access, None, sub_node, "B", nsdfg.make_array_memlet(f"max_values_{uid}"))
+        nstate.add_edge(sub_node, "C", sub_values_access, None, nsdfg.make_array_memlet(f"sub_values_{uid}"))
+
+        # Step 3: Apply exponential (exp(input - max_values))
+        exp_values_access = nstate.add_access(f"exp_values_{uid}")
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXExp
+        exp_node = ONNXExp(f"exp_{uid}")
+        nstate.add_node(exp_node)
+        exp_node.add_in_connector("input")
+        exp_node.add_out_connector("output")
+        
+        nstate.add_edge(sub_values_access, None, exp_node, "input", nsdfg.make_array_memlet(f"sub_values_{uid}"))
+        nstate.add_edge(exp_node, "output", exp_values_access, None, nsdfg.make_array_memlet(f"exp_values_{uid}"))
+
+        # Step 4: ReduceSum along the specified axis to get sum of exponentials
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXReduceSum
+        reduce_sum_node = ONNXReduceSum(f"reduce_sum_{uid}", keepdims=1)
+        nstate.add_node(reduce_sum_node)
+        reduce_sum_node.add_in_connector("data")
+        reduce_sum_node.add_in_connector("axes")
+        reduce_sum_node.add_out_connector("reduced")
+        
+        # Reuse the same axes array
+        sum_exp_access = nstate.add_access(f"sum_exp_{uid}")
+        nstate.add_edge(exp_values_access, None, reduce_sum_node, "data", nsdfg.make_array_memlet(f"exp_values_{uid}"))
+        nstate.add_edge(axes_access, None, reduce_sum_node, "axes", nsdfg.make_array_memlet(axes_name))
+        nstate.add_edge(reduce_sum_node, "reduced", sum_exp_access, None, nsdfg.make_array_memlet(f"sum_exp_{uid}"))
+
+        # Step 5: Divide exp_values by sum_exp (exp_values / sum_exp)
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXDiv
+        div_node = ONNXDiv(f"div_{uid}")
+        nstate.add_node(div_node)
+        div_node.add_in_connector("A")
+        div_node.add_in_connector("B")
+        div_node.add_out_connector("C")
+        
+        nstate.add_edge(exp_values_access, None, div_node, "A", nsdfg.make_array_memlet(f"exp_values_{uid}"))
+        nstate.add_edge(sum_exp_access, None, div_node, "B", nsdfg.make_array_memlet(f"sum_exp_{uid}"))
+        nstate.add_edge(div_node, "C", output_write, None, nsdfg.make_array_memlet("output"))
+
+        return nsdfg
 
 
 @python_pure_op_implementation(
@@ -1618,6 +1767,10 @@ class PureSum(ONNXForward):
             "__sum": out_desc_with_name(node, state, sdfg, "sum").dtype
         }
         return nsdfg
+
+
+softmax_compute = dict(
+    axis=lambda node, input: list(range(len(input.shape)))[node.axis:])
 
 
 @python_pure_op_implementation(**softmax_compute)
