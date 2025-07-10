@@ -556,6 +556,29 @@ def test_constant_propagation():
     assert np.allclose(a, 0)
 
 
+def test_constant_propagation_with_normal_argument():
+
+    @dace.program
+    def conditional_val_with_access(A: dace.float64[20], val: dace.int32):
+        if val % 2 == 0:
+            A[:] = val
+        else:
+            A[:] = val + 1
+
+    a = np.random.rand(20)
+    sdfg = conditional_val_with_access.to_sdfg(a, 3, simplify=True, use_cache=True)
+    from dace.transformation.passes.constant_propagation import ConstantPropagation
+    res = dict()
+    ConstantPropagation().apply_pass(sdfg, res, {'val': 3})
+    sdfg.simplify()
+    assert sdfg.number_of_nodes() == 1
+    conditional_val_with_access(a, 3)
+    assert np.allclose(a, 4)
+    conditional_val_with_access(a, 7)  # correct value of `a` should be 8
+    assert np.allclose(
+        a, 4)  # the value of `a` will be set to 4 again since we've substituted `val` with the 3 in the cached SDFG
+
+
 def test_constant_propagation_pass():
     from dace.transformation.passes import constant_propagation as cprop, dead_state_elimination as dse
 
@@ -712,6 +735,7 @@ if __name__ == '__main__':
     test_constant_list_number()
     test_constant_list_function()
     test_constant_propagation()
+    test_constant_propagation_with_normal_argument()
     test_constant_propagation_pass()
     test_constant_propagation_2()
     test_constant_proper_use()
