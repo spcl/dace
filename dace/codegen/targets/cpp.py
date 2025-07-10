@@ -271,9 +271,20 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
 
+        # Avoid import loop
+        from dace.codegen.targets.cuda import CUDACodeGen
+        from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
+
+        # Check whether we are in kernel/ device code of GPU backend
+        cuda_impl = Config.get('compiler', 'cuda', 'implementation')
+        if cuda_impl == "legacy":
+            in_device_code = CUDACodeGen._in_device_code
+        elif cuda_impl == "experimental":
+            in_device_code = ExperimentalCUDACodeGen._in_kernel_code
+
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
-        elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
+        elif not in_device_code:  # GPU kernels cannot access state
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'
@@ -935,7 +946,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # set the stream to a local variable.
         max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
-                                                              or connected_to_gpu_memory(node, state_dfg, sdfg)):
+                                                              and connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
