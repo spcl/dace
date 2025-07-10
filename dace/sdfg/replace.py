@@ -77,31 +77,40 @@ def replace_dict(subgraph: 'StateSubgraphView',
         state = subgraph
         for node in subgraph.nodes():
             # Make sure to replace only Scalar AccessNodes with no incoming edges
-            if isinstance(node, nodes.AccessNode) and state.in_degree(node) == 0 and isinstance(
-                    node.desc(sdfg), data.Scalar):
-                node_data_symbolic = dace.symbolic.pystr_to_symbolic(node.data)
-                if node_data_symbolic in symrepl:
-                    tasklet = state.add_tasklet(name="constant",
-                                                inputs={},
-                                                outputs={f'{node.data}_cp_val'},
-                                                code=f'{node.data}_cp_val = {symrepl[node_data_symbolic]}')
-                    if f'{node.data}_cp' not in sdfg.arrays:
-                        sdfg.add_array(f'{node.data}_cp', [1],
-                                       type(sympyexpr_to_python(symrepl[node_data_symbolic])),
-                                       transient=True)
-                    tmp_an = state.add_access(f'{node.data}_cp')
-                    state.add_edge(tasklet, f'{node.data}_cp_val', tmp_an, None, Memlet.simple(f'{node.data}_cp', '0'))
-                    # Replace all edges that were passing through the original AccessNode with the new AccessNode which is
-                    # connected to the tasklet. This is done to avoid ConstantPropagation from replacing the edges' data
-                    # with the constant value, which would break the SDFG.
-                    for edge in state.out_edges(node):
-                        for producer_tree in state.memlet_tree(edge).traverse_children(include_self=True):
-                            producer_edge = producer_tree.edge
-                            if producer_edge.data.data == node.data:
-                                producer_edge.data.data = f'{node.data}_cp'
-                        state.add_edge(tmp_an, None, edge.dst, edge.dst_conn, deepcopy(edge.data))
-                        state.remove_edge(edge)
-                    state.remove_node(node)
+            if isinstance(node, nodes.AccessNode):
+                if node.data in state.sdfg.arrays:
+                    desc = node.desc(state)
+                # In case the AccessNode name was replaced in the sdfg.arrays but not in the SDFG itself
+                # then we have to look for the replaced value in the sdfg.arrays
+                elif repl[node.data] in state.sdfg.arrays:
+                    desc = state.sdfg.arrays[repl[node.data]]
+                else:
+                    continue
+                if state.in_degree(node) == 0 and not desc.transient and isinstance(desc, data.Scalar):
+                    node_data_symbolic = dace.symbolic.pystr_to_symbolic(node.data)
+                    if node_data_symbolic in symrepl:
+                        tasklet = state.add_tasklet(name="constant",
+                                                    inputs={},
+                                                    outputs={f'{node.data}_cp_val'},
+                                                    code=f'{node.data}_cp_val = {symrepl[node_data_symbolic]}')
+                        if f'{node.data}_cp' not in sdfg.arrays:
+                            sdfg.add_array(f'{node.data}_cp', [1],
+                                           type(sympyexpr_to_python(symrepl[node_data_symbolic])),
+                                           transient=True)
+                        tmp_an = state.add_access(f'{node.data}_cp')
+                        state.add_edge(tasklet, f'{node.data}_cp_val', tmp_an, None,
+                                       Memlet.simple(f'{node.data}_cp', '0'))
+                        # Replace all edges that were passing through the original AccessNode with the new AccessNode which is
+                        # connected to the tasklet. This is done to avoid ConstantPropagation from replacing the edges' data
+                        # with the constant value, which would break the SDFG.
+                        for edge in state.out_edges(node):
+                            for producer_tree in state.memlet_tree(edge).traverse_children(include_self=True):
+                                producer_edge = producer_tree.edge
+                                if producer_edge.data.data == node.data:
+                                    producer_edge.data.data = f'{node.data}_cp'
+                            state.add_edge(tmp_an, None, edge.dst, edge.dst_conn, deepcopy(edge.data))
+                            state.remove_edge(edge)
+                        state.remove_node(node)
 
     # Replace in node properties
     for node in subgraph.nodes():
