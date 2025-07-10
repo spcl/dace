@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Functionality relating to Memlet propagation (deducing external memlets
 from internal memory accesses and scope ranges).
@@ -575,114 +575,33 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
     """
 
     # We import here to avoid cyclic imports.
-    from dace.sdfg import utils as sdutils
-    from dace.transformation.interstate.loop_detection import find_for_loop
+    from dace.transformation.passes.pattern_matching import match_patterns
+    from dace.transformation.interstate.loop_detection import LoopRangeAnnotator
+    from dace.sdfg.utils import dfs_conditional
+    from dace.sdfg.analysis import cfg as cfg_analysis
 
     condition_edges = {}
+    loop_back_edges = set()
 
-    for cycle in sdfg.find_cycles():
-        # In each cycle, try to identify a valid loop guard state.
-        guard = None
-        begin = None
-        itvar = None
-        for v in cycle:
-            # Try to identify a valid for-loop guard.
-            in_edges = sdfg.in_edges(v)
-            out_edges = sdfg.out_edges(v)
+    for match in match_patterns(sdfg, LoopRangeAnnotator):
+        annotator: LoopRangeAnnotator = match
+        cond_edge = annotator.loop_condition_edge()
+        guard_state = annotator.loop_guard_state()
+        loop_back_edge = annotator.loop_increment_edge()
+        if cond_edge is not None and guard_state is not None:
+            condition_edges[guard_state] = cond_edge
+        if loop_back_edge is not None:
+            loop_back_edges.add(loop_back_edge)
+        annotator.apply(sdfg, sdfg)
 
-            # A for-loop guard has two or more incoming edges (1 increment and
-            # n init, all identical), and exactly two outgoing edges (loop and
-            # exit loop).
-            if len(in_edges) < 2 or len(out_edges) != 2:
-                continue
-
-            # All incoming guard edges must set exactly one variable and it must
-            # be the same for all of them.
-            itvars = set()
-            for iedge in in_edges:
-                if len(iedge.data.assignments) > 0:
-                    if not itvars:
-                        itvars = set(iedge.data.assignments.keys())
-                    else:
-                        itvars &= set(iedge.data.assignments.keys())
-                else:
-                    itvars = None
-                    break
-            if not itvars or len(itvars) > 1:
-                continue
-            itvar = next(iter(itvars))
-            itvarsym = pystr_to_symbolic(itvar)
-
-            # The outgoing edges must be negations of one another.
-            if out_edges[0].data.condition_sympy() != (sympy.Not(out_edges[1].data.condition_sympy())):
-                continue
-
-            # Make sure the last state of the loop (i.e. the state leading back
-            # to the guard via 'increment' edge) is part of this cycle. If not,
-            # we're looking at the guard for a nested cycle, which we ignore for
-            # this cycle.
-            increment_edge = None
-            for iedge in in_edges:
-                if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
-                    increment_edge = iedge
-                    break
-            if increment_edge is None:
-                continue
-            if increment_edge.src not in cycle:
-                continue
-
-            # One of the child states must be in the loop (loop begin), and the
-            # other one must be outside the cycle (loop exit).
-            loop_state = None
-            exit_state = None
-            if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
-                loop_state = out_edges[0].dst
-                exit_state = out_edges[1].dst
-            elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
-                loop_state = out_edges[1].dst
-                exit_state = out_edges[0].dst
-            if loop_state is None or exit_state is None:
-                continue
-
-            # This is a valid guard state candidate.
-            guard = v
-            begin = loop_state
-            break
-
-        if guard is not None and begin is not None and itvar is not None:
-            # A guard state was identified, see if it has valid for-loop ranges
-            # and annotate the loop as such.
-
-            # Ensure that this guard's loop wasn't annotated yet.
-            if itvar in begin.ranges:
-                continue
-
-            res = find_for_loop(sdfg, guard, begin, itervar=itvar)
-            if res is None:
-                # No range detected, mark as unbounded.
-                unannotated_cycle_states.append(cycle)
-            else:
-                itervar, rng, _ = res
-
-                # Make sure the range is flipped in a direction such that the
-                # stride is positive (in order to match subsets.Range).
-                start, stop, stride = rng
-                # This inequality needs to be checked exactly like this due to
-                # constraints in sympy/symbolic expressions, do not simplify!!!
-                if (stride < 0) == True:
-                    rng = (stop, start, -stride)
-
-                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
-                for v in loop_states:
-                    v.ranges[itervar] = subsets.Range([rng])
-                guard.ranges[itervar] = subsets.Range([rng])
-                condition_edges[guard] = sdfg.edges_between(guard, begin)[0]
-                guard.is_loop_guard = True
-                guard.itvar = itervar
-        else:
-            # There's no guard state, so this cycle marks all states in it as
-            # dynamically unbounded.
-            unannotated_cycle_states.append(cycle)
+    for be in cfg_analysis.back_edges(sdfg):
+        if be not in loop_back_edges:
+            # This backedge closes a loop that was not annotated, and thus is not a proper for-loop. The states in this
+            # cycle are thus unannotated.
+            cycle_states = set()
+            for cycle_state in dfs_conditional(sdfg, [be.src], lambda p, _: p is not be.dst, reverse=True):
+                cycle_states.add(cycle_state)
+            unannotated_cycle_states.append(cycle_states)
 
     return condition_edges
 
@@ -1526,7 +1445,7 @@ def propagate_subset(memlets: List[Memlet],
 
 
 def _freesyms(expr) -> Set:
-    """ 
+    """
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.
     """
