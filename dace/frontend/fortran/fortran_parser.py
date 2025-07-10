@@ -12,7 +12,7 @@ import networkx as nx
 from fparser.api import get_reader
 from fparser.two.C99Preprocessor import CPP_CLASS_NAMES
 from fparser.two.Fortran2003 import Program, Module_Stmt, Include_Stmt, Subroutine_Stmt, Function_Stmt, Interface_Stmt, \
-    Execution_Part
+    Execution_Part, Component_Decl
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import Base, walk, FortranSyntaxError
 
@@ -34,7 +34,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     make_practically_constant_arguments_constants, exploit_locally_constant_variables, \
     assign_globally_unique_subprogram_names, convert_data_statements_into_assignments, \
     deconstruct_statement_functions, assign_globally_unique_variable_names, deconstuct_goto_statements, remove_self, \
-    prune_coarsely, consolidate_global_data_into_arg
+    prune_coarsely, consolidate_global_data_into_arg, identifier_specs
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node, Name_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
@@ -2865,7 +2865,8 @@ class ParseConfig:
                  make_noop: Union[None, SPEC, List[SPEC]] = None,
                  ast_checkpoint_dir: Union[None, str, Path] = None,
                  consolidate_global_data: bool = True,
-                 rename_uniquely: bool = True):
+                 rename_uniquely: bool = True,
+                 do_not_prune_type_components: bool = False):
         # Make the configs canonical, by processing the various types upfront.
         if not sources:
             sources: Dict[str, str] = {}
@@ -2904,6 +2905,7 @@ class ParseConfig:
         self.ast_checkpoint_dir = ast_checkpoint_dir
         self.consolidate_global_data = consolidate_global_data
         self.rename_uniquely = rename_uniquely
+        self.do_not_prune_type_components = do_not_prune_type_components
 
     def set_all_possible_entry_points_from(self, ast: Program):
         # Keep all the possible entry points.
@@ -2911,6 +2913,11 @@ class ParseConfig:
                              for c in walk(ast, ENTRY_POINT_OBJECT_CLASSES)
                              if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
         self.do_not_prune = list({x for x in self.entry_points + self.do_not_prune})
+
+    def avoid_pruning_type_components(self, ast: Program):
+        ident_map = identifier_specs(ast)
+        comp_specs = [k for k, v in ident_map.items() if isinstance(v, Component_Decl)]
+        self.do_not_prune = list({x for x in comp_specs + self.do_not_prune})
 
 
 def top_level_objects_map(ast: Program, path: str) -> Dict[str, Base]:
@@ -2978,6 +2985,8 @@ def _checkpoint_ast(cfg: ParseConfig, name: str, ast: Program):
 def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     if not cfg.entry_points:
         cfg.set_all_possible_entry_points_from(ast)
+    if cfg.do_not_prune_type_components:
+        cfg.avoid_pruning_type_components(ast)
     _checkpoint_ast(cfg, 'ast_v0.f90', ast)
 
     if cfg.make_noop:
