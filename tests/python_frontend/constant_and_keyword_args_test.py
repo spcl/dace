@@ -572,6 +572,12 @@ def test_constant_propagation_with_normal_argument():
     ConstantPropagation().apply_pass(sdfg, res, {'val': 3})
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
+    sdfg.view()
+    sdfg_tasklets = [
+        tasklet for tasklet, _ in sdfg.all_nodes_recursive() if isinstance(tasklet, dace.sdfg.nodes.Tasklet)
+    ]
+    assert len(sdfg_tasklets) == 1
+    assert sdfg_tasklets[0].code == '__out = (3 + 1)'
     conditional_val_with_access(a, 3)
     assert np.allclose(a, 4)
     conditional_val_with_access(a, 7)  # correct value of `a` should be 8
