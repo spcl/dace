@@ -182,7 +182,7 @@ class PruneSymbols(pm.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG):
         nsdfg = self.nsdfg
         candidates = PruneSymbols._candidates(nsdfg)
-        unremovable_symbols = self._find_symbols_that_can_not_be_removed(sdfg)
+        unremovable_symbols = self._find_symbols_that_can_not_be_removed(nsdfg.sdfg)
 
         for candidate in candidates:
             del nsdfg.symbol_mapping[candidate]
