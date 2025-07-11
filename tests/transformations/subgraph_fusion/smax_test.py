@@ -53,17 +53,17 @@ def get_partition(sdfg, graph):
     for node in dace.sdfg.utils.dfs_topological_sort(graph):
         if isinstance(node, stdlib.nodes.reduce.Reduce):
             if cnt1 < 2:
-                subgraph1._subgraph_nodes.append(node)
+                subgraph1._subgraph_nodes.update({node: None})
                 cnt1 += 1
             else:
-                subgraph2._subgraph_nodes.append(node)
+                subgraph2._subgraph_nodes.update({node: None})
 
         if isinstance(node, nodes.MapEntry):
             if cnt1 < 2:
-                subgraph1._subgraph_nodes.append(node)
+                subgraph1._subgraph_nodes.update({node: None})
                 cnt1 += 1
             else:
-                subgraph2._subgraph_nodes.append(node)
+                subgraph2._subgraph_nodes.update({node: None})
 
     return [subgraph1, subgraph2]
 
