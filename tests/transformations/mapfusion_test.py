@@ -12,7 +12,7 @@ import uuid
 
 from dace import SDFG, SDFGState, data as dace_data
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusion, MapExpansion
+from dace.transformation.dataflow import MapFusionVertical, MapExpansion
 
 
 def count_nodes(
@@ -127,7 +127,7 @@ def apply_fusion(sdfg: SDFG,
         with dace.config.temporary_config():
             dace.Config.set("optimizer", "match_exception", value=True)
 
-            map_fusion = MapFusion(
+            map_fusion = MapFusionVertical(
                 strict_dataflow=strict_dataflow,
                 **map_fusion_opt,
             )
@@ -1224,7 +1224,7 @@ def _make_inner_conflict_shared_scalar(has_conflict: bool, ) -> dace.SDFG:
     """Generate the SDFG for tests with the inner dependency.
 
     If `has_conflict` is `True` then a transient scalar is used inside both Map bodies.
-    Therefore, `MapFusion` should not be able to fuse them.
+    Therefore, `MapFusionVertical` should not be able to fuse them.
     In case `has_conflict` is `False` then different scalars are used which allows
     fusing the two maps.
     """
@@ -1442,7 +1442,7 @@ def test_fusion_multiple_producers_consumers():
     This test is very similar to the `test_fusion_intermediate_different_access()`
     and `test_fusion_intermediate_different_access_mod_shape()` test, with the
     exception that now full data is used in the second map.
-    However, currently `MapFusion` only supports a single producer, thus this test can
+    However, currently `MapFusionVertical` only supports a single producer, thus this test can
     not run.
     """
 
@@ -1870,7 +1870,7 @@ def test_fusion_intrinsic_memlet_direction():
 def _make_possible_cycle_if_fuesed_sdfg() -> Tuple[dace.SDFG, nodes.MapExit, nodes.AccessNode, nodes.MapEntry]:
     """Generate an SDFG that if two maps would be fused a cycle would be created.
 
-    Essentially tests if the MapFusion detects this special case.
+    Essentially tests if the MapFusionVertical detects this special case.
     """
     sdfg = dace.SDFG(unique_name("possible_cycle_if_fuesed_sdfg"))
     state = sdfg.add_state(is_start_block=True)
@@ -1934,7 +1934,7 @@ def _make_possible_cycle_if_fuesed_sdfg() -> Tuple[dace.SDFG, nodes.MapExit, nod
 def test_possible_cycle_if_fuesed_sdfg():
     sdfg, first_map_exit, array, second_map_entry = _make_possible_cycle_if_fuesed_sdfg()
 
-    would_transformation_apply = MapFusion.can_be_applied_to(
+    would_transformation_apply = MapFusionVertical.can_be_applied_to(
         sdfg,
         first_map_exit=first_map_exit,
         array=array,

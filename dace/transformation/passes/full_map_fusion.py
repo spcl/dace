@@ -5,7 +5,7 @@ import warnings
 
 from dace import SDFG, SDFGState, properties, transformation
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow import MapFusion
+from dace.transformation.dataflow import MapFusionVertical
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 
 
@@ -13,11 +13,11 @@ from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 @transformation.explicit_cf_compatible
 class FullMapFusion(ppl.Pass):
     """
-    Pass that combines `MapFusion` and `FindSingleUseData` into one.
+    Pass that combines `MapFusionVertical` and `FindSingleUseData` into one.
 
-    Essentially, this function runs `FindSingleUseData` before `MapFusion`, this
+    Essentially, this function runs `FindSingleUseData` before `MapFusionVertical`, this
     will speedup the fusion, as the SDFG has to be scanned only once.
-    The pass accepts the same options as `MapFusion`, for a detailed description
+    The pass accepts the same options as `MapFusionVertical`, for a detailed description
     see there.
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
@@ -111,15 +111,15 @@ class FullMapFusion(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
 
-        fusion = MapFusion(only_inner_maps=self.only_inner_maps,
-                           only_toplevel_maps=self.only_toplevel_maps,
-                           strict_dataflow=self.strict_dataflow,
-                           assume_always_shared=self.assume_always_shared)
+        fusion = MapFusionVertical(only_inner_maps=self.only_inner_maps,
+                                   only_toplevel_maps=self.only_toplevel_maps,
+                                   strict_dataflow=self.strict_dataflow,
+                                   assume_always_shared=self.assume_always_shared)
 
         try:
             # The short answer why we do this is because  `fusion._pipeline_results` is
             #  only defined during `apply()` and not during `can_be_applied()`. For more
-            #  information see the note in `MapFusion.is_shared_data()` and/or [issue#1911](https://github.com/spcl/dace/issues/1911).
+            #  information see the note in `MapFusionVertical.is_shared_data()` and/or [issue#1911](https://github.com/spcl/dace/issues/1911).
             assert fusion._single_use_data is None
             fusion._single_use_data = pipeline_results["FindSingleUseData"]
             pazz = pmp.PatternMatchAndApplyRepeated(

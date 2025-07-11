@@ -436,7 +436,8 @@ def can_topologically_be_fused(
     :note: It is invalid to call this function after nodes have been removed from the SDFG.
     """
     if only_inner_maps and only_toplevel_maps:
-        raise ValueError("Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusion instance.")
+        raise ValueError(
+            "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance.")
 
     # Ensure that both have the same schedule
     if first_map_entry.map.schedule != second_map_entry.map.schedule:

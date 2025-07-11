@@ -62,7 +62,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     `FindSingleUseData` analysis pass. If the result of this pass is present then the transformation
     will use it instead to determine if a intermediate can be removed. Note that `assume_always_shared`
     takes precedence. For this pattern the `FullMapFusion` pass is provided, that combines the analysis
-    pass and `MapFusion`.
+    pass and `MapFusionVertical`.
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
@@ -872,7 +872,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     ) -> Tuple[Tuple[int, ...], Tuple[int, ...], List[int]]:
         """Compute the size of the new (reduced) intermediate.
 
-        `MapFusion` does not only fuses Map, but, depending on the situation, also
+        `MapFusionVertical` does not only fuses Map, but, depending on the situation, also
         eliminates intermediate arrays between the two maps. To transmit data between
         the two maps a new, but much smaller intermediate is needed.
 
