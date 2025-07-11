@@ -43,6 +43,7 @@ def _test_for_unchanged_behavior(prog, num_loops, num_eliminations):
 
 
 def test_overwrite_elimination_basic():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -50,7 +51,9 @@ def test_overwrite_elimination_basic():
 
     _test_for_unchanged_behavior(tester, 1, 1)
 
+
 def test_overwrite_elimination_basic2():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -58,7 +61,9 @@ def test_overwrite_elimination_basic2():
 
     _test_for_unchanged_behavior(tester, 1, 0)
 
+
 def test_overwrite_elimination_nonzero():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -68,6 +73,7 @@ def test_overwrite_elimination_nonzero():
 
 
 def test_overwrite_elimination_reverse():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(9, -1, -1):
@@ -77,6 +83,7 @@ def test_overwrite_elimination_reverse():
 
 
 def test_overwrite_elimination_stride():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(0, 10, 2):
@@ -86,6 +93,7 @@ def test_overwrite_elimination_stride():
 
 
 def test_overwrite_elimination_read():
+
     @dace.program
     def tester(A: dace.float32[10]):
         for i in range(10):
@@ -95,6 +103,7 @@ def test_overwrite_elimination_read():
 
 
 def test_overwrite_elimination_nested_loops():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10, 10]):
         for i in range(10):
@@ -105,6 +114,7 @@ def test_overwrite_elimination_nested_loops():
 
 
 def test_overwrite_elimination_nested_loops2():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -116,6 +126,7 @@ def test_overwrite_elimination_nested_loops2():
 
 
 def test_overwrite_elimination_reverse_nested():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[5, 5]):
         for i in range(4, -1, -1):
@@ -126,6 +137,7 @@ def test_overwrite_elimination_reverse_nested():
 
 
 def test_overwrite_elimination_strided_nested():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(0, 10, 2):
@@ -136,6 +148,7 @@ def test_overwrite_elimination_strided_nested():
 
 
 def test_overwrite_elimination_nonlinear_access():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -146,6 +159,7 @@ def test_overwrite_elimination_nonlinear_access():
 
 
 def test_overwrite_elimination_with_break():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -157,17 +171,20 @@ def test_overwrite_elimination_with_break():
 
 
 def test_overwrite_elimination_with_continue():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
             if B[i] < 0.3:
                 continue
             else:
-              A[0] = B[i]
+                A[0] = B[i]
 
     _test_for_unchanged_behavior(tester, 1, 0)
 
+
 def test_overwrite_elimination_with_return():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -177,7 +194,9 @@ def test_overwrite_elimination_with_return():
 
     _test_for_unchanged_behavior(tester, 1, 0)
 
+
 def test_overwrite_elimination_step_changing():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         i = 0
@@ -192,6 +211,7 @@ def test_overwrite_elimination_step_changing():
 
 
 def test_overwrite_elimination_conditional_write():
+
     @dace.program
     def tester(A: dace.float32[20], B: dace.float32[20]):
         for i in range(10):
@@ -202,6 +222,7 @@ def test_overwrite_elimination_conditional_write():
 
 
 def test_overwrite_elimination_multiple_writes():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10], C: dace.float32[10]):
         for i in range(10):
@@ -212,6 +233,7 @@ def test_overwrite_elimination_multiple_writes():
 
 
 def test_overwrite_elimination_conditional_write2():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -222,6 +244,7 @@ def test_overwrite_elimination_conditional_write2():
 
 
 def test_overwrite_elimination_read2():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(1, 10):
@@ -229,7 +252,9 @@ def test_overwrite_elimination_read2():
 
     _test_for_unchanged_behavior(tester, 1, 0)
 
+
 def test_overwrite_elimination_read_reverse():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(9, -1, -1):
@@ -237,7 +262,9 @@ def test_overwrite_elimination_read_reverse():
 
     _test_for_unchanged_behavior(tester, 1, 0)
 
+
 def test_overwrite_elimination_read_crossing():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(1, 10):
@@ -245,7 +272,9 @@ def test_overwrite_elimination_read_crossing():
 
     _test_for_unchanged_behavior(tester, 1, 1)
 
+
 def test_overwrite_elimination_triple_nested():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[5, 5, 5]):
         for i in range(5):
@@ -257,6 +286,7 @@ def test_overwrite_elimination_triple_nested():
 
 
 def test_overwrite_elimination_triple_nested_dependency():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[5, 5, 5]):
         for i in range(5):
@@ -268,6 +298,7 @@ def test_overwrite_elimination_triple_nested_dependency():
 
 
 def test_overwrite_elimination_reverse_strided():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(9, -1, -2):
@@ -277,6 +308,7 @@ def test_overwrite_elimination_reverse_strided():
 
 
 def test_overwrite_elimination_tmp():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
         for i in range(10):
@@ -285,10 +317,12 @@ def test_overwrite_elimination_tmp():
 
     _test_for_unchanged_behavior(tester, 1, 1)
 
+
 def test_overwrite_elimination_tmp2():
+
     @dace.program
     def tester(A: dace.float32[10], B: dace.float32[10]):
-        tmp = dace.ndarray(shape=(2,), dtype=dace.float32)
+        tmp = dace.ndarray(shape=(2, ), dtype=dace.float32)
         for i in range(10):
             tmp[1] = B[i]
             A[0] = tmp[0]
@@ -315,7 +349,7 @@ if __name__ == "__main__":
     test_overwrite_elimination_multiple_writes()
     test_overwrite_elimination_conditional_write2()
     test_overwrite_elimination_read2()
-    test_overwrite_elimination_read_reverse() 
+    test_overwrite_elimination_read_reverse()
     test_overwrite_elimination_read_crossing()
     test_overwrite_elimination_triple_nested()
     test_overwrite_elimination_triple_nested_dependency()

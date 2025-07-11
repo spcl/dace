@@ -92,9 +92,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
                     write_subsets.add(e.data.get_dst_subset(e, state))
-                if any(
-                    not intersects(rs, ws) for rs in read_subsets for ws in write_subsets
-                ):
+                if any(not intersects(rs, ws) for rs in read_subsets for ws in write_subsets):
                     return False
 
         # Every write needs to be independent of the loop index.
@@ -110,9 +108,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
 
                     dst_subset = e.data.get_dst_subset(e, state)
                     for rb, re, _ in dst_subset.ndrange():
-                        str_set = set(
-                            [str(s) for s in rb.free_symbols.union(re.free_symbols)]
-                        )
+                        str_set = set([str(s) for s in rb.free_symbols.union(re.free_symbols)])
                         if itervar_dep_syms.intersection(str_set):
                             return False
 
@@ -133,10 +129,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     src_subset = copy.deepcopy(e.data.get_src_subset(e, state))
                     src_subset.replace({self.loop.loop_variable: end})
                     # None of write_subsets should lie within the new subset
-                    if any(
-                        intersects(ws_ss, src_subset)
-                        for ws_ss in write_subsets[dn.data]
-                    ):
+                    if any(intersects(ws_ss, src_subset) for ws_ss in write_subsets[dn.data]):
                         return False
 
         # No conditional edge may depend on the loop variable.
