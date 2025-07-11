@@ -572,7 +572,6 @@ def test_constant_propagation_with_normal_argument():
     ConstantPropagation().apply_pass(sdfg, res, {'val': 3})
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
-    sdfg.view()
     sdfg_tasklets = [
         tasklet for tasklet, _ in sdfg.all_nodes_recursive() if isinstance(tasklet, dace.sdfg.nodes.Tasklet)
     ]
