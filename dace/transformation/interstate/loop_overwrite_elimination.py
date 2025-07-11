@@ -7,7 +7,9 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
 from dace.transformation import transformation, helpers
 from dace.transformation.passes.analysis import loop_analysis
 from dace.sdfg.sdfg import InterstateEdge
-from dace import symbolic
+from dace import symbolic, nodes
+from dace.subsets import intersects
+import copy
 
 
 @transformation.explicit_cf_compatible
@@ -56,9 +58,51 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     changed = True
         itervar_dep_syms.add(self.loop.loop_variable)
 
-        # Every write needs to be independent of the loop index.
+        # Find Loop's unique data
+        read_set, write_set = self.loop.read_and_write_sets()
+        unique_set = set()
+        for name in read_set | write_set:
+            if not sdfg.arrays[name].transient:
+                continue
+            found = False
+            for state in sdfg.states():
+                if state in self.loop.all_states():
+                    continue
+                for node in state.nodes():
+                    if isinstance(node, nodes.AccessNode) and node.data == name:
+                        found = True
+                        break
+            if not found:
+                unique_set.add(name)
+
+        # All the uniuque data needs to be written and read in the same index, otherwise there might be a loop-carried dependency.
         for state in self.loop.all_states():
             for dn in state.data_nodes():
+                if dn.data not in unique_set:
+                    continue
+                read_subsets = set()
+                write_subsets = set()
+                for e in state.out_edges(dn):
+                    # If pointers are involved or it's not an overwrite, give up
+                    if e.data.dynamic or e.data.wcr is not None:
+                        return False
+                    read_subsets.add(e.data.get_src_subset(e, state))
+                for e in state.in_edges(dn):
+                    # If pointers are involved or it's not an overwrite, give up
+                    if e.data.dynamic or e.data.wcr is not None:
+                        return False
+                    write_subsets.add(e.data.get_dst_subset(e, state))
+                if any(
+                    not intersects(rs, ws) for rs in read_subsets for ws in write_subsets
+                ):
+                    return False
+
+        # Every write needs to be independent of the loop index.
+        write_subsets = {}
+        for state in self.loop.all_states():
+            for dn in state.data_nodes():
+                if dn.data in unique_set:
+                    continue
                 for e in state.in_edges(dn):
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
@@ -72,7 +116,28 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                         if itervar_dep_syms.intersection(str_set):
                             return False
 
-        # If an data container is written and read, the read cannot have the same index as the write.
+                    if dn.data not in write_subsets:
+                        write_subsets[dn.data] = set()
+                    write_subsets[dn.data].add(dst_subset)
+
+        # If an data container is written and read, the last read cannot be the same index as the write, because there is a loop-carried dependency then.
+        for state in self.loop.all_states():
+            for dn in state.data_nodes():
+                if dn.data in unique_set or dn.data not in write_subsets:
+                    continue
+                for e in state.out_edges(dn):
+                    # If pointers are involved or it's not an overwrite, give up
+                    if e.data.dynamic or e.data.wcr is not None:
+                        return False
+
+                    src_subset = copy.deepcopy(e.data.get_src_subset(e, state))
+                    src_subset.replace({self.loop.loop_variable: end})
+                    # None of write_subsets should lie within the new subset
+                    if any(
+                        intersects(ws_ss, src_subset)
+                        for ws_ss in write_subsets[dn.data]
+                    ):
+                        return False
 
         # No conditional edge may depend on the loop variable.
         for edge in self.loop.all_interstate_edges():

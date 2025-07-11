@@ -12,7 +12,6 @@ from copy import deepcopy
 def _test_for_unchanged_behavior(prog, num_loops, num_eliminations):
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.validate()
-    sdfg.save("bruh.sdfg")
 
     # Should have exactly one loop
     loop_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
@@ -31,7 +30,6 @@ def _test_for_unchanged_behavior(prog, num_loops, num_eliminations):
     # Apply the transformation
     sdfg.apply_transformations_repeated(LoopOverwriteElimination)
     sdfg.validate()
-    sdfg.save("bruh2.sdfg")
 
     # Check that the loop has been eliminated
     loop_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
@@ -91,7 +89,7 @@ def test_overwrite_elimination_read():
     @dace.program
     def tester(A: dace.float32[10]):
         for i in range(10):
-            A[0] = A[i]
+            A[0] = A[i] + 1.0
 
     _test_for_unchanged_behavior(tester, 1, 1)
 
@@ -231,6 +229,21 @@ def test_overwrite_elimination_read2():
 
     _test_for_unchanged_behavior(tester, 1, 0)
 
+def test_overwrite_elimination_read_reverse():
+    @dace.program
+    def tester(A: dace.float32[10], B: dace.float32[10]):
+        for i in range(9, -1, -1):
+            A[0] = A[i] + B[i]
+
+    _test_for_unchanged_behavior(tester, 1, 0)
+
+def test_overwrite_elimination_read_crossing():
+    @dace.program
+    def tester(A: dace.float32[10], B: dace.float32[10]):
+        for i in range(1, 10):
+            A[5] = A[i] + B[i]
+
+    _test_for_unchanged_behavior(tester, 1, 1)
 
 def test_overwrite_elimination_triple_nested():
     @dace.program
@@ -263,25 +276,49 @@ def test_overwrite_elimination_reverse_strided():
     _test_for_unchanged_behavior(tester, 1, 1)
 
 
+def test_overwrite_elimination_tmp():
+    @dace.program
+    def tester(A: dace.float32[10], B: dace.float32[10]):
+        for i in range(10):
+            tmp = B[i]
+            A[0] = tmp
+
+    _test_for_unchanged_behavior(tester, 1, 1)
+
+def test_overwrite_elimination_tmp2():
+    @dace.program
+    def tester(A: dace.float32[10], B: dace.float32[10]):
+        tmp = dace.ndarray(shape=(2,), dtype=dace.float32)
+        for i in range(10):
+            tmp[1] = B[i]
+            A[0] = tmp[0]
+
+    _test_for_unchanged_behavior(tester, 1, 0)
+
+
 if __name__ == "__main__":
-    # test_overwrite_elimination_basic()
-    # test_overwrite_elimination_basic2()
-    # test_overwrite_elimination_nonzero()
-    # test_overwrite_elimination_reverse()
-    # test_overwrite_elimination_read()
-    # test_overwrite_elimination_nested_loops()
-    # test_overwrite_elimination_nested_loops2()
-    # test_overwrite_elimination_reverse_nested()
-    # test_overwrite_elimination_strided_nested()
-    # test_overwrite_elimination_nonlinear_access()
-    # test_overwrite_elimination_with_break()
-    # test_overwrite_elimination_with_continue()
-    # test_overwrite_elimination_with_return()
-    # test_overwrite_elimination_step_changing()
-    # test_overwrite_elimination_conditional_write()
-    # test_overwrite_elimination_multiple_writes()
-    # test_overwrite_elimination_conditional_write2()
-    test_overwrite_elimination_read2() ##
-    # test_overwrite_elimination_triple_nested()
-    # test_overwrite_elimination_triple_nested_dependency()
-    # test_overwrite_elimination_reverse_strided()
+    test_overwrite_elimination_basic()
+    test_overwrite_elimination_basic2()
+    test_overwrite_elimination_nonzero()
+    test_overwrite_elimination_reverse()
+    test_overwrite_elimination_read()
+    test_overwrite_elimination_nested_loops()
+    test_overwrite_elimination_nested_loops2()
+    test_overwrite_elimination_reverse_nested()
+    test_overwrite_elimination_strided_nested()
+    test_overwrite_elimination_nonlinear_access()
+    test_overwrite_elimination_with_break()
+    test_overwrite_elimination_with_continue()
+    test_overwrite_elimination_with_return()
+    test_overwrite_elimination_step_changing()
+    test_overwrite_elimination_conditional_write()
+    test_overwrite_elimination_multiple_writes()
+    test_overwrite_elimination_conditional_write2()
+    test_overwrite_elimination_read2()
+    test_overwrite_elimination_read_reverse() 
+    test_overwrite_elimination_read_crossing()
+    test_overwrite_elimination_triple_nested()
+    test_overwrite_elimination_triple_nested_dependency()
+    test_overwrite_elimination_reverse_strided()
+    test_overwrite_elimination_tmp()
+    test_overwrite_elimination_tmp2()
