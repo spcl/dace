@@ -95,14 +95,6 @@ def compile_and_run_sdfg(
     return csdfg
 
 
-def compile_and_run_sdfg(sdfg: SDFG, *args: Any, **kwargs: Any) -> Any:
-    csdfg = sdfg.compile()
-    res = csdfg(*args, **kwargs)
-    del csdfg
-    gc.collect(2)
-    return res
-
-
 def apply_fusion(sdfg: SDFG,
                  removed_maps: Union[int, None] = None,
                  final_maps: Union[int, None] = None,
