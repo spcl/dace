@@ -340,30 +340,6 @@ def expand_node(node, state, sdfg):
     input_copy_required, output_copy_required = check_required_copies(node, state, sdfg, outputs_on_host,
                                                                       inputs_on_host)
 
-    onnx_model = onnx.ModelProto()
-    
-    opset_version = node.schema.since_version
-    # ideally this should be fetched from the installed onnxruntime version
-    if opset_version > 22:
-        opset_version = 22  # latest onnxruntime supports opset up to 22
-    ir_version = 10
-    
-    onnx_model.ir_version = ir_version
-    onnx_model.producer_name = "dace"
-    onnx_model.opset_import.add(domain="", version=opset_version)
-    graph = onnx_model.graph
-    graph.name = unique_id
-    
-
-    # begin codegen
-    ##########################################
-    tasklet_setup_code = ""
-    tasklet_code = ""
-    tasklet_cleanup_code = ""
-    env_init_code = ("""
-    //__ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernelContext("{name}", "{op_type}", &__state->ort_context_{name}));
-    """.format(name=unique_id, op_type=node.schema.name))
-
     # Collect input and output names for the node
     input_names = []
     output_names = []
@@ -375,33 +351,63 @@ def expand_node(node, state, sdfg):
         else:
             output_names.append(parameter_name)
     
-    # Create the ONNX node using helper.make_node
-    node_proto = helper.make_node(node.schema.name, input_names, output_names, name=unique_id + "_node")
-    
-    # Add attributes to the node
+    # Collect attributes for the node
+    node_attrs = {}
     for name, attr in node.schema.attributes.items():
         if hasattr(node, name):
             value = getattr(node, name)
             if value is not None:
-                # Convert the value to the appropriate ONNX attribute format
-                if attr.attribute_type == ONNXAttributeType.Int:
-                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.INT, i=value)
-                elif attr.attribute_type == ONNXAttributeType.Float:
-                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.FLOAT, f=value)
-                elif attr.attribute_type == ONNXAttributeType.String:
-                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.STRING, s=value.encode())
-                elif attr.attribute_type == ONNXAttributeType.Ints:
-                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.INTS, ints=value)
-                elif attr.attribute_type == ONNXAttributeType.Floats:
-                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.FLOATS, floats=value)
-                elif attr.attribute_type == ONNXAttributeType.Strings:
-                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.STRINGS, strings=[s.encode() for s in value])
-                elif attr.attribute_type == ONNXAttributeType.Tensor:
+                # Handle tensor attributes specially since helper.make_node doesn't handle them automatically
+                if attr.attribute_type == ONNXAttributeType.Tensor:
                     # Convert numpy array to ONNX tensor
                     tensor = helper.make_tensor(name, value.dtype.type, value.shape, value.flatten().tolist())
-                    node_proto.attribute.add(name=name, type=onnx.AttributeProto.TENSOR, t=tensor)
+                    node_attrs[name] = tensor
+                else:
+                    node_attrs[name] = value
     
-    graph.node.append(node_proto)
+    # Create the ONNX node using helper.make_node with attributes
+    node_proto = helper.make_node(node.schema.name, input_names, output_names, name=unique_id + "_node", **node_attrs)
+    
+    # Create input and output value infos
+    input_value_infos = []
+    output_value_infos = []
+    
+    for edge, is_input in node.iter_edges(state):
+        parameter_name = edge.dst_conn if is_input else edge.src_conn
+        memlet = edge.data
+        desc = sdfg.arrays[memlet.data]
+        
+        value_info = helper.make_tensor_value_info(
+            parameter_name, 
+            getattr(onnx.TensorProto, typeclass_to_onnx_str(desc.dtype).upper()),
+            _get_onnx_shape_from_desc(desc)
+        )
+        
+        if is_input:
+            input_value_infos.append(value_info)
+        else:
+            output_value_infos.append(value_info)
+    
+    # Create the graph using helper.make_graph
+    graph_def = helper.make_graph(
+        [node_proto],
+        unique_id,
+        input_value_infos,
+        output_value_infos
+    )
+    
+    # Create the model using helper.make_model with opset version from the original node
+    onnx_model = helper.make_model(graph_def, producer_name="dace", opset_imports=[helper.make_opsetid("", node.schema.since_version)])
+    
+
+    # begin codegen
+    ##########################################
+    tasklet_setup_code = ""
+    tasklet_code = ""
+    tasklet_cleanup_code = ""
+    env_init_code = ("""
+    //__ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernelContext("{name}", "{op_type}", &__state->ort_context_{name}));
+    """.format(name=unique_id, op_type=node.schema.name))
 
     env_init_code += f"""
     __state->ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
@@ -426,26 +432,6 @@ def expand_node(node, state, sdfg):
         input_output_string = "input" if is_input else "output"
         memlet = edge.data
         desc = sdfg.arrays[memlet.data]
-        
-        # Create value info for inputs/outputs
-        if is_input:
-            # Add to graph inputs if not already present
-            if not any(vi.name == parameter_name for vi in graph.input):
-                value_info = helper.make_tensor_value_info(
-                    parameter_name, 
-                    getattr(onnx.TensorProto, typeclass_to_onnx_str(desc.dtype).upper()),
-                    _get_onnx_shape_from_desc(desc)
-                )
-                graph.input.append(value_info)
-        else:
-            # Add to graph outputs if not already present
-            if not any(vi.name == parameter_name for vi in graph.output):
-                value_info = helper.make_tensor_value_info(
-                    parameter_name, 
-                    getattr(onnx.TensorProto, typeclass_to_onnx_str(desc.dtype).upper()),
-                    _get_onnx_shape_from_desc(desc)
-                )
-                graph.output.append(value_info)
         
         env_init_code += """
         //__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_Add{input_output_string}(__state->ort_context_{id}, ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_string}));
