@@ -3,8 +3,6 @@ import ast
 from functools import lru_cache
 import sys
 import sympy
-from sympy.core.numbers import Integer, Float, Rational
-from sympy.core.expr import Expr
 import pickle
 import re
 from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
