@@ -90,14 +90,14 @@ def replace_dict(subgraph: 'StateSubgraphView',
                     if node_data_symbolic in symrepl:
                         tasklet = state.add_tasklet(name="constant",
                                                     inputs={},
-                                                    outputs={f'{node.data}_cp_val'},
-                                                    code=f'{node.data}_cp_val = {symrepl[node_data_symbolic]}')
+                                                    outputs={f'{node.data}_cp_value'},
+                                                    code=f'{node.data}_cp_value = {symrepl[node_data_symbolic]}')
                         if f'{node.data}_cp' not in sdfg.arrays:
                             sdfg.add_array(f'{node.data}_cp', [1],
                                            type(symbolic.evaluate(symrepl[node_data_symbolic], symrepl)),
                                            transient=True)
                         tmp_an = state.add_access(f'{node.data}_cp')
-                        state.add_edge(tasklet, f'{node.data}_cp_val', tmp_an, None,
+                        state.add_edge(tasklet, f'{node.data}_cp_value', tmp_an, None,
                                        Memlet.simple(f'{node.data}_cp', '0'))
                         # Replace all edges that were passing through the original AccessNode with the new AccessNode which is
                         # connected to the tasklet. This is done to avoid ConstantPropagation from replacing the edges' data
