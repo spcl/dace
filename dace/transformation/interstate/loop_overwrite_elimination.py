@@ -1,9 +1,9 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Eliminates loop overwriting data containers"""
 
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalBlock, SDFGState
 from dace.transformation import transformation, helpers
 from dace.transformation.passes.analysis import loop_analysis
 from dace.sdfg.sdfg import InterstateEdge
@@ -36,9 +36,14 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         if self.loop.has_break or self.loop.has_continue or self.loop.has_return:
             return False
 
+        # Cached lists
+        cfbs = set(self.loop.all_control_flow_blocks())
+        states = set([s for s in cfbs if isinstance(s, SDFGState)])
+        interstate_edges = set(e for s in cfbs for e in s.parent_graph.in_edges(s) + s.parent_graph.out_edges(s))
+
         # Find symbols depending on the loop variable
         sym_deps = {}
-        for edge in self.loop.all_interstate_edges():
+        for edge in interstate_edges:
             for k, v in edge.data.assignments.items():
                 sym_expr = symbolic.pystr_to_symbolic(v)
                 if k not in sym_deps:
@@ -66,7 +71,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 continue
             found = False
             for state in sdfg.states():
-                if state in self.loop.all_states():
+                if state in states:
                     continue
                 for node in state.nodes():
                     if isinstance(node, nodes.AccessNode) and node.data == name:
@@ -76,7 +81,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 unique_set.add(name)
 
         # All the uniuque data needs to be written and read in the same index, otherwise there might be a loop-carried dependency.
-        for state in self.loop.all_states():
+        for state in states:
             for dn in state.data_nodes():
                 if dn.data not in unique_set:
                     continue
@@ -97,7 +102,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
 
         # Every write needs to be independent of the loop index.
         write_subsets = {}
-        for state in self.loop.all_states():
+        for state in states:
             for dn in state.data_nodes():
                 if dn.data in unique_set:
                     continue
@@ -117,7 +122,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                     write_subsets[dn.data].add(dst_subset)
 
         # If an data container is written and read, the last read cannot be the same index as the write, because there is a loop-carried dependency then.
-        for state in self.loop.all_states():
+        for state in states:
             for dn in state.data_nodes():
                 if dn.data in unique_set or dn.data not in write_subsets:
                     continue
@@ -133,16 +138,20 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                         return False
 
         # No conditional edge may depend on the loop variable.
-        for edge in self.loop.all_interstate_edges():
+        for edge in interstate_edges:
             if itervar_dep_syms.intersection(edge.data.condition.get_free_symbols()):
                 return False
 
-        # No conditional block may depend on the loop variable.
-        for node in self.loop.nodes():
-            if not isinstance(node, ConditionalBlock):
-                continue
-            for cond, _ in node.branches:
-                if itervar_dep_syms.intersection(cond.get_free_symbols()):
+        # No conditional block or loop may depend on the loop variable.
+        for cfb in cfbs:
+            if isinstance(cfb, ConditionalBlock):
+                for cond, _ in cfb.branches:
+                    if itervar_dep_syms.intersection(cond.get_free_symbols()):
+                        return False
+            elif isinstance(cfb, LoopRegion):
+                if (itervar_dep_syms.intersection(cfb.init_statement.get_free_symbols())
+                        or itervar_dep_syms.intersection(cfb.loop_condition.get_free_symbols())
+                        or itervar_dep_syms.intersection(cfb.update_statement.get_free_symbols())):
                     return False
 
         return True

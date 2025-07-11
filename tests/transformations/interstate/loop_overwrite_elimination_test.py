@@ -330,6 +330,28 @@ def test_overwrite_elimination_tmp2():
     _test_for_unchanged_behavior(tester, 1, 0)
 
 
+def test_overwrite_elimination_loop_dep():
+
+    @dace.program
+    def tester(A: dace.float32[10], B: dace.float32[10]):
+        for i in range(10):
+            for j in range(i, 9, 1):
+                A[j] = B[j]
+
+    _test_for_unchanged_behavior(tester, 2, 0)
+
+
+def test_overwrite_elimination_loop_dep2():
+
+    @dace.program
+    def tester(A: dace.float32[10], B: dace.float32[10]):
+        for i in range(10):
+            for j in range(i, 9, 1):
+                A[0] = B[j]
+
+    _test_for_unchanged_behavior(tester, 2, 2)
+
+
 if __name__ == "__main__":
     test_overwrite_elimination_basic()
     test_overwrite_elimination_basic2()
@@ -356,3 +378,5 @@ if __name__ == "__main__":
     test_overwrite_elimination_reverse_strided()
     test_overwrite_elimination_tmp()
     test_overwrite_elimination_tmp2()
+    test_overwrite_elimination_loop_dep()
+    test_overwrite_elimination_loop_dep2()
