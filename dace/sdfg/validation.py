@@ -870,8 +870,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
-                if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
-                    pass
+                # It is also possible that edge leads to a tasklet that has no incoming or outgoing memlet
+                # since the check is to be performed for all edges leading to the dst_node, it is sufficient
+                # to check for the memlets of outgoing edges
+                if e.data.is_empty():
+                    if isinstance(dst_node, nd.ExitNode):
+                        pass
+                    if isinstance(dst_node, nd.Tasklet) and all(
+                        {oe.data.is_empty()
+                         for oe in state.out_edges(dst_node)}):
+                        pass
                 else:
                     raise InvalidSDFGEdgeError(
                         f"Memlet creates an invalid path (sink node {dst_node}"
