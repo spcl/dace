@@ -1083,6 +1083,7 @@ namespace {mod_name} {{
         std::string line;
         assert(std::getline(s, line));
         assert(!line.empty());
+        if (line == "NaN") return;
 
         // Find the position to insert 'E' if needed (looking for exponent sign from
         // right)
@@ -1106,7 +1107,10 @@ namespace {mod_name} {{
         // Parse the (potentially modified) string
         std::istringstream iss(line);
         iss >> x;
-        if(iss.fail()) x = 0;
+        if(iss.fail()) {{
+            std::cerr << "Could not read long double: " << line << std::endl;
+            exit(EXIT_FAILURE);
+        }}
     }}
 
     void read_scalar(float& x, std::istream& s) {{
