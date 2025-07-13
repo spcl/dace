@@ -1033,7 +1033,7 @@ namespace {mod_name} {{
         return {{bin}};
     }}
 
-    std::string read_until(std::istream& s, const std::string>& should_contain) {{
+    std::string read_until(std::istream& s, const std::string& should_contain) {{
         while (!s.eof()) {{
             scroll_space(s);
             char bin[101];
