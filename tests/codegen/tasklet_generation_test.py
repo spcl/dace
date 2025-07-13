@@ -1,18 +1,15 @@
 import dace
 import pytest
 
+
 def _gen_sdfg_with_a_print_tasklet_between_map_exits() -> dace.SDFG:
     sdfg = dace.SDFG('test_sdfg')
     sdfg.add_array('A', [100], dace.float32)
     sdfg.add_array('B', [100], dace.float32)
     state = sdfg.add_state('main')
 
-    outer_map_entry, outer_map_exit = state.add_map(
-        'map1', {'i0': '0:100:10'}, schedule=dace.ScheduleType.Default
-    )
-    inner_map_entry, inner_map_exit = state.add_map(
-        'map1', {'i1': 'i0:i0+10:1'}, schedule=dace.ScheduleType.Default
-    )
+    outer_map_entry, outer_map_exit = state.add_map('map1', {'i0': '0:100:10'}, schedule=dace.ScheduleType.Default)
+    inner_map_entry, inner_map_exit = state.add_map('map1', {'i1': 'i0:i0+10:1'}, schedule=dace.ScheduleType.Default)
     in_A = state.add_read('A')
     in_B = state.add_read('B')
     out_B = state.add_write('B')
@@ -53,10 +50,12 @@ def _gen_sdfg_with_a_print_tasklet_between_map_exits() -> dace.SDFG:
 
     return sdfg
 
+
 def test_print_tasklet_between_map_exits():
     sdfg = _gen_sdfg_with_a_print_tasklet_between_map_exits()
     sdfg.validate()
     sdfg.compile()
+
 
 if __name__ == "__main__":
     test_print_tasklet_between_map_exits()
