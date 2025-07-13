@@ -1015,7 +1015,10 @@ namespace {mod_name} {{
     }}
 
     std::string read_line(std::istream& s, const std::optional<std::string>& should_contain = {{}}) {{
-        if (s.eof()) return "<eof>";
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
         char bin[101];
         s.getline(bin, 100);
@@ -1028,6 +1031,19 @@ namespace {mod_name} {{
             }}
         }}
         return {{bin}};
+    }}
+
+    std::string read_until(std::istream& s, const std::string>& should_contain) {{
+        while (!s.eof()) {{
+            scroll_space(s);
+            char bin[101];
+            s.getline(bin, 100);
+            assert(s.good());
+            bool ok = (std::string(bin).find(should_contain) != std::string::npos);
+            if (ok) return {{bin}};
+        }}
+        std::cerr << "Expected: '" << should_contain << "'; got EOF" << std::endl;
+        exit(EXIT_FAILURE);
     }}
 
     struct array_meta;
@@ -1058,7 +1074,10 @@ namespace {mod_name} {{
     }}
 
     void read_scalar(long double& x, std::istream& s) {{
-        if (s.eof()) return;
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
 
         std::string line;
@@ -1104,7 +1123,10 @@ namespace {mod_name} {{
 
     template<typename T>
     void read_scalar(T& x, std::istream& s) {{
-        if (s.eof()) return;
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
         s >> x;
     }}
