@@ -12,7 +12,7 @@ from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.dataflow.map_fusion import MapFusionVertical
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
 
 @make_properties

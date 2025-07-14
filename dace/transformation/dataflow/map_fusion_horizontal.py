@@ -114,7 +114,9 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
     def can_be_applied(
         self,
         graph: Union[dace.SDFGState, SDFG],
+        expr_index: int,
         sdfg: dace.SDFG,
+        permissive: bool = False,
     ) -> bool:
         # NOTE: The after this point it is not legal to access the matched nodes
         first_map_entry: nodes.MapEntry = self.first_parallel_map_entry

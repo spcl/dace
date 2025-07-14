@@ -152,7 +152,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     def can_be_applied(
         self,
         graph: Union[dace.SDFGState, SDFG],
+        expr_index: int,
         sdfg: dace.SDFG,
+        permissive: bool = False,
     ) -> bool:
         """Tests if the matched Maps can be merged serially.
 

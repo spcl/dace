@@ -1,8 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from warnings import deprecated
 
 import dace
 from dace.transformation import dataflow as dftrans
+
+try:
+    from warnings import deprecated
+except ImportError:
+    deprecated = lambda cls: cls
 
 
 @deprecated

@@ -1263,7 +1263,7 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
         next_scopes = set()
 
 
-def propagate_memlets_map_scope(sdfg: dace.SDFG, state: dace.SDFGState, map_entry: nodes.MapEntry) -> None:
+def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nodes.MapEntry) -> None:
     """Propagate Memlets from the given Map outside.
 
     The main difference to `propagate_memlets_scope()` is that this function operates on Maps
@@ -1283,14 +1283,14 @@ def propagate_memlets_map_scope(sdfg: dace.SDFG, state: dace.SDFGState, map_entr
     nodes_in_scope = list(state.scope_subgraph(map_entry).nodes())
     for node in nodes_in_scope:
         if isinstance(node, nodes.NestedSDFG):
-            propagation.propagate_memlets_sdfg(node.sdfg)
-            propagation.propagate_memlets_nested_sdfg(sdfg, state, node)
+            propagate_memlets_sdfg(node.sdfg)
+            propagate_memlets_nested_sdfg(sdfg, state, node)
 
     # In `propagate_memlet_state()` we would start the propagation from all lowest scopes. Here,
     #  however, we restrict ourselves to the scopes that are enclosed by `map_entry`.
     contained_leaf_scopes = [scope_leaf for scope_leaf in state.scope_leaves() if scope_leaf.entry in nodes_in_scope]
     assert len(contained_leaf_scopes) > 0
-    propagation.propagate_memlets_scope(
+    propagate_memlets_scope(
         sdfg,
         state,
         contained_leaf_scopes,
