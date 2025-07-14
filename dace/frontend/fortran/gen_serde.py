@@ -993,18 +993,18 @@ struct {name} {{
 
 #include <cxxabi.h>
 
-template<typename T>
-std::string type_name() {{
-    int status = 0;
-    std::unique_ptr<char, void(*)(void*)> res {{
-        abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status),
-        std::free
-    }};
-    if (status != 0) throw status; // stub
-    return res.get();
-}}
-
 namespace {mod_name} {{
+    template<typename T>
+    std::string type_name() {{
+        int status = 0;
+        std::unique_ptr<char, void(*)(void*)> res {{
+            abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status),
+            std::free
+        }};
+        if (status != 0) throw status; // stub
+        return res.get();
+    }}
+
     std::vector<std::string_view> split(std::string_view s, char delim) {{
         std::vector<std::string_view> parts;
         for (int start_pos = 0, next_pos; start_pos < s.length(); start_pos = next_pos + 1) {{
