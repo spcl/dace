@@ -458,35 +458,3 @@ def can_topologically_be_fused(
     #  match the one of the first Map.
     param_repl = find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
     return param_repl
-
-
-def propagate_memlets_map_scope(sdfg: dace.SDFG, state: dace.SDFGState, map_entry: nodes.MapEntry) -> None:
-    """Restrict propagation into a Map scope.
-
-    It is the same as DaCe's `propagate_memlets_scope()` function, but instead of a
-    `ScopeTree` object to select propagation, the function takes a Map entry node.
-
-    Todo:
-        Port this function to DaCe.
-    """
-    assert isinstance(map_entry, nodes.MapEntry)
-
-    # This code is an adapted version of `propagate_memlet_scope()` and as there we
-    #  propagate the Memlets of nested SDFGs, but we restrict ourselves to the
-    #  ones that are inside the scope we are in.
-    nodes_in_scope = list(state.scope_subgraph(map_entry).nodes())
-    for node in nodes_in_scope:
-        if isinstance(node, nodes.NestedSDFG):
-            propagation.propagate_memlets_sdfg(node.sdfg)
-            propagation.propagate_memlets_nested_sdfg(sdfg, state, node)
-
-    # Now perform propagation starting at the lowest scope. The main difference to the
-    #  DaCe function is that we restrict ourselves to the ones that are contained
-    #  within us.
-    contained_leaf_scopes = [scope_leaf for scope_leaf in state.scope_leaves() if scope_leaf.entry in nodes_in_scope]
-    assert len(contained_leaf_scopes) > 0
-    propagation.propagate_memlets_scope(
-        sdfg,
-        state,
-        contained_leaf_scopes,
-    )

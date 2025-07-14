@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Set, Union
 
 import dace
 from dace import properties, transformation
-from dace.sdfg import SDFG, nodes
+from dace.sdfg import SDFG, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
 
@@ -211,4 +211,4 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  in case we never consolidated, i.e. all edges were preserved, then we
         #  can skip that step.
         if not self.never_consolidate_edges:
-            mfhelper.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
+            propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
