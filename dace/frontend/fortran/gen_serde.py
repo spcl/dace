@@ -991,6 +991,19 @@ struct {name} {{
 #include <string_view>
 #include <numeric>
 
+#include <cxxabi.h>
+
+template<typename T>
+std::string type_name() {{
+    int status = 0;
+    std::unique_ptr<char, void(*)(void*)> res {{
+        abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status),
+        std::free
+    }};
+    if (status != 0) throw status; // stub
+    return res.get();
+}}
+
 namespace {mod_name} {{
     std::vector<std::string_view> split(std::string_view s, char delim) {{
         std::vector<std::string_view> parts;
@@ -1065,12 +1078,12 @@ namespace {mod_name} {{
     }}
     template <typename T>
     const array_meta& ARRAY_META_DICT_AT(T* a) {{
-        if constexpr (std::is_pointer_v<T>) {{
-            return ARRAY_META_DICT_AT(*a);
-        }} else {{
-            auto [M, lock] = ARRAY_META_DICT();
-            return M->at(a);
+        auto [M, lock] = ARRAY_META_DICT();
+        if (M->find(a) == M->end()) {{
+          std::cerr << "Array meta not found for: " << type_name<T>() << std::endl;
+          exit(EXIT_FAILURE);
         }}
+        return M->at(a);
     }}
 
     void read_scalar(long double& x, std::istream& s) {{
