@@ -928,6 +928,10 @@ class MapEntry(EntryNode):
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(parent_sdfg.constants.keys()))
+
+        # Update with the symbols needed by the map
+        free_symbols |= self.free_symbols
+
         return free_symbols - new_symbols
 
 

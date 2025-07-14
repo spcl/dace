@@ -2265,9 +2265,11 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
 
     def _get_assignments(cfg: Union[ControlFlowRegion, SDFG]) -> Set[str]:
         written_symbols = set()
-        for edge in cfg.all_edges(*list(cfg.all_control_flow_blocks())):
-            if edge.data is not None and isinstance(edge.data, dace.InterstateEdge):
-                written_symbols = written_symbols.union(edge.data.assignments.keys())
+        for node in cfg.all_control_flow_regions():
+            if node.parent_graph is not None:
+                for edge in list(node.parent_graph.in_edges(node)) + list(node.parent_graph.out_edges(node)):
+                    if edge.data is not None and isinstance(edge.data, dace.InterstateEdge):
+                        written_symbols = written_symbols.union(edge.data.assignments.keys())
         return written_symbols
 
     offset_symbols = set()
