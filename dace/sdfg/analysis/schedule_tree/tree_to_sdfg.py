@@ -91,7 +91,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
         self._ctx = tn.Context(root=node, access_cache={}, current_scope=None)
-        with node.scope(self._ctx):
+        with node.scope(self._current_state, self._ctx):
             self.visit(node.children, sdfg=sdfg)
 
         # -- to be torched --
@@ -300,10 +300,8 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = start_state
 
         # visit children
-        with node.scope(self._ctx):
+        with node.scope(self._current_state, self._ctx):
             self.visit(node.children, sdfg=inner_sdfg)
-        # for child in node.children:
-        #     self.visit(child, sdfg=inner_sdfg)
 
         # restore current state and stacks
         self._current_state = self._pop_state(old_state_label)
@@ -343,17 +341,13 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
+        cache_state = self._current_state
 
         # map entry
         # ---------
         map_entry = nodes.MapEntry(node.node.map)
         self._current_state.add_node(map_entry)
         self._dataflow_stack.append((map_entry, dict()))
-
-        # Set a new access_cache before visiting children such that they have their
-        # own access cache (per map scope).
-        # access_cache = self._ensure_access_cache(self._current_state)
-        # self._access_cache[self._current_state] = {}
 
         # visit children inside the map
         type_of_children = [type(child) for child in node.children]
@@ -362,18 +356,21 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         if last_child_is_MapScope and all_others_are_Boundaries:
             # skip weirdly added StateBoundaryNode
             # tmp: use this - for now - to "backprop-insert" extra state boundaries for nested SDFGs
-            with node.scope(self._ctx):
+            with node.scope(self._current_state, self._ctx):
                 self.visit(node.children[-1], sdfg=sdfg)
         elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
             self._insert_nestedSDFG(node, sdfg)
         else:
-            with node.scope(self._ctx):
+            with node.scope(self._current_state, self._ctx):
                 self.visit(node.children, sdfg=sdfg)
 
-        # # reset the access_cache
-        # self._access_cache[self._current_state] = access_cache
+        if cache_state != self._current_state:
+            breakpoint
 
-        access_cache = self._ctx.access_cache[id(self._ctx.current_scope)]
+        cache_key = (cache_state, id(self._ctx.current_scope))
+        if cache_key not in self._ctx.access_cache:
+            self._ctx.access_cache[cache_key] = {}
+        access_cache = self._ctx.access_cache[cache_key]
 
         # dataflow stack management
         _, to_connect = self._dataflow_stack.pop()
@@ -497,14 +494,16 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
                 outer_to_connect["outputs"].add(name)
 
             # connect "outside the map"
-            access_node = self._current_state.add_write(name)
+            if name not in access_cache:
+                # cache write access into access_cache
+                write_access_node = self._current_state.add_write(name)
+                access_cache[name] = write_access_node
+
+            access_node = access_cache[name]
             self._current_state.add_memlet_path(map_exit,
                                                 access_node,
                                                 src_conn=out_connector_name,
                                                 memlet=Memlet.from_array(name, sdfg.arrays[name]))
-
-            # cache write access into access_cache
-            access_cache[name] = access_node
 
             if isinstance(outer_map_entry, nodes.EntryNode):
                 outer_to_connect[name] = (access_node, Memlet.from_array(name, sdfg.arrays[name]))
@@ -529,8 +528,10 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         tasklet = node.node
         self._current_state.add_node(tasklet)
 
-        cache = self._ctx.access_cache[id(self._ctx.current_scope)]
-        assert cache is not None
+        cache_key = (self._current_state, id(self._ctx.current_scope))
+        if cache_key not in self._ctx.access_cache:
+            self._ctx.access_cache[cache_key] = {}
+        cache = self._ctx.access_cache[cache_key]
         scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
 
         # Connect input memlets
@@ -590,12 +591,24 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Connect output memlets
         for name, memlet in node.out_memlets.items():
-            # we always write to a new access_node
-            access_node = self._current_state.add_write(memlet.data)
-            self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
+            # don't use cached access node, if it was an input, e.g.
+            # A[1] = tasklet()
+            # A[1] = tasklet(A[1])
+            # TODO / Question: Do I need port to "port this up" to the MapScope level? I guess so?
+            cached_node_is_input = False
+            if memlet.data in cache:
+                for _name, in_memlet in node.in_memlets.items():
+                    if memlet.data == in_memlet.data:
+                        cached_node_is_input = True
+                        break
 
-            # cache write access node (or update an existing one) for read after write cases
-            cache[memlet.data] = access_node
+            if memlet.data not in cache or cached_node_is_input:
+                # cache write access node
+                write_access_node = self._current_state.add_write(memlet.data)
+                cache[memlet.data] = write_access_node
+
+            access_node = cache[memlet.data]
+            self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
 
             if isinstance(scope_node, nodes.MapEntry):
                 # copy the memlet since we already used it in the memlet path above

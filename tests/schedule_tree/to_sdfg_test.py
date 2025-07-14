@@ -515,6 +515,39 @@ def test_map_with_state_boundary_inside():
     sdfg.validate()
 
 
+def test_map_calculate_temporary_in_two_loops():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={
+            "A": dace.data.Array(dace.float64, [20]),
+            "tmp": dace.data.Array(dace.float64, [20], transient=True)
+        },
+        children=[
+            tn.MapScope(node=nodes.MapEntry(nodes.Map("first_half", "i", sbs.Range.from_string("0:10"))),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("beginning", {}, {'out'}, 'out = i'), {},
+                                           {'out': dace.Memlet("tmp[i]")})
+                        ]),
+            tn.MapScope(node=nodes.MapEntry(nodes.Map("second_half", "i", sbs.Range.from_string("10:20"))),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("end", {}, {'out'}, 'out = i'), {},
+                                           {'out': dace.Memlet("tmp[i]")})
+                        ]),
+            tn.MapScope(node=nodes.MapEntry(nodes.Map("read_tmp", "i", sbs.Range.from_string("0:20"))),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("read_temp", {"tmp"}, {"out"}, "out = tmp + 1"),
+                                           {"tmp": dace.Memlet("tmp[i]")}, {"out": dace.Memlet("A[i]")})
+                        ])
+        ])
+
+    sdfg = stree.as_sdfg(simplify=True)
+    sdfg.validate()
+
+    assert [node.name for node, _ in sdfg.all_nodes_recursive()
+            if isinstance(node, nodes.Tasklet)] == ["beginning", "end", "read_temp"]
+
+
 def test_edge_assignment_read_after_write():
     stree = tn.ScheduleTreeRoot(name="tester",
                                 containers={},
