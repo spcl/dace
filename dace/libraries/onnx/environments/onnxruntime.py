@@ -82,9 +82,6 @@ class ONNXRuntime:
     state_fields = [
         "const OrtApi* ort_api;",
         "OrtEnv* ort_env;",
-        # "OrtKernelSession* ort_session;",
-        "OrtSessionOptions* ort_session_options;",
-        "OrtMemoryInfo* ort_cpu_mem_info;"
     ]
     dependencies = []
     headers = [
@@ -95,16 +92,9 @@ class ONNXRuntime:
     headers = {'frame': headers, 'cuda': headers}
     init_code = """
     __state->ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-    __ort_check_status(__state->ort_api, __state->ort_api->CreateCpuMemoryInfo(OrtDeviceAllocator, /*type=*/OrtMemTypeDefault, &__state->ort_cpu_mem_info));
     __ort_check_status(__state->ort_api, __state->ort_api->CreateEnv(/*default_logging_level=*/ORT_LOGGING_LEVEL_WARNING, /*logid=*/"dace_graph", &__state->ort_env));
-    __ort_check_status(__state->ort_api, __state->ort_api->CreateSessionOptions(&__state->ort_session_options));
-    __ort_check_status(__state->ort_api, OrtSessionOptionsAppendExecutionProvider_CPU(__state->ort_session_options, /*use_arena=*/0));
-    // __ort_check_status(__state->ort_api, __state->ort_api->CreateKernelSession(__state->ort_session_options, &__state->ort_session, /*opset_version=*/12));
     """
     finalize_code = """
-    __state->ort_api->ReleaseMemoryInfo(__state->ort_cpu_mem_info);
-    //__state->ort_api->ReleaseKernelSession(__state->ort_session);
-    __state->ort_api->ReleaseSessionOptions(__state->ort_session_options);
     __state->ort_api->ReleaseEnv(__state->ort_env);
     """
 

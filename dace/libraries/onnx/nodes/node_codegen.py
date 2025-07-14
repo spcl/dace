@@ -48,104 +48,6 @@ def _get_onnx_shape_from_desc(desc: dt.Data) -> Optional[List]:
         return list(desc.shape) if desc.shape else None
 
 
-def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
-    """ Get the code to setup an attribute on an onnx::NodeProto
-
-        :param kernel_context: the variable name of the kernel context
-        :param attr: the attribute to setup
-    """
-    if value is None:
-        return ""
-
-    def assert_type(val, expected_type):
-        if not isinstance(val, expected_type):
-            raise ValueError("Expected value of attribute '{}' to have type {}, got {} (type {})".format(
-                attr.name, expected_type, val, type(val)))
-
-    init_code = "{\n"
-
-    def value_to_str(value):
-        return '"{}"'.format(value) if attr.attribute_type == ONNXAttributeType.String else str(value)
-
-    if attr.attribute_type in [ONNXAttributeType.Int, ONNXAttributeType.Float, ONNXAttributeType.String]:
-        assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type])
-
-        init_code += """
-        __ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_AddAttribute{type_str}({kernel_context}, "{name}", {value}));
-        """.format(type_str=attr.attribute_type.name,
-                   kernel_context=kernel_context,
-                   name=attr.name,
-                   value=value_to_str(value))
-    elif attr.attribute_type in [ONNXAttributeType.Ints, ONNXAttributeType.Floats, ONNXAttributeType.Strings]:
-        if not isinstance(value, Iterable):
-            raise ValueError("Expected iterable value for attribute '{}', got {}".format(attr.name, value))
-
-        values = list(value)
-        if attr.attribute_type == ONNXAttributeType.Ints:
-            c_type = "int64_t"
-        elif attr.attribute_type == ONNXAttributeType.Floats:
-            c_type = "float"
-        elif attr.attribute_type == ONNXAttributeType.String:
-            c_type = "char*"
-
-        init_code += "{type} values[{length}];\n".format(type=c_type, length=len(values))
-
-        for i, values_elem in enumerate(values):
-            assert_type(i, _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type])
-            init_code += "values[{i}] = {value};\n".format(i=i, value=value_to_str(values_elem))
-
-        init_code += """
-        __ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_AddAttribute{type_str}({kernel_context}, "{name}", values, {length}));
-        """.format(type_str=attr.attribute_type.name, kernel_context=kernel_context, name=attr.name, length=len(values))
-
-    elif attr.attribute_type == ONNXAttributeType.Tensor:
-        assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type])
-
-        dace_typeclass = dtypes.DTYPE_TO_TYPECLASS[value.dtype.type]
-
-        supported_types = {
-            dace.float16: dace.float32,
-            dace.float32: dace.float32,
-            dace.float64: dace.float64,
-            dace.int8: dace.int8,
-            dace.int16: dace.int16,
-            dace.int32: dace.int32,
-            dace.int64: dace.int64,
-            dace.uint8: dace.uint8,
-            dace.uint16: dace.uint16,
-            dace.uint32: dace.uint32,
-            dace.uint64: dace.uint64
-        }
-
-        if dace_typeclass not in supported_types:
-            raise NotImplementedError(
-                "ONNX support for type {} has not been implemented for ONNX Tensor attributes (at attribute with name {})"
-                .format(value.dtype.type, attr.name))
-
-        type_to_generate = supported_types[dace_typeclass]
-
-        init_code += """
-        ONNXTensorElementDataType element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_{};
-        """.format(typeclass_to_onnx_str(type_to_generate).upper())
-        init_code += "int64_t shape[{}];\n".format(len(value.shape))
-        for i, dim in enumerate(value.shape):
-            init_code += "shape[{}] = {};\n".format(i, dim)
-
-        init_code += "{} p_data[{}];\n".format(type_to_generate.ctype, value.size)
-        for i, data_val in enumerate(np.nditer(value)):
-            data_val = data_val.item()
-            init_code += "p_data[{}] = {};\n".format(i, data_val)
-
-        init_code += """
-        __ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_AddAttributeTensor({kernel_context}, "{name}", static_cast<void*>(p_data), {data_length}, shape, {shape_length}, element_type));
-        """.format(kernel_context=kernel_context, name=attr.name, data_length=value.size, shape_length=len(value.shape))
-
-    else:
-        raise NotImplementedError("Got unsupported attribute type {} for '{}'".format(attr.dtype, attr.name))
-    init_code += "}\n"
-    return init_code
-
-
 def check_required_copies(
         node: nd.Node, state: SDFGState, sdfg: SDFG, outputs_on_host: List[bool],
         inputs_on_host: List[bool]) -> Tuple[Dict[str, dtypes.StorageType], Dict[str, dtypes.StorageType]]:
@@ -225,11 +127,11 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str, edge_co
         storage = desc.storage
 
     if storage in [dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap]:
-        mem_info = "__state->ort_cpu_mem_info"
+        mem_info = "ort_cpu_mem_info"
     elif storage is dtypes.StorageType.GPU_Global:
-        mem_info = "__state->ort_cuda_mem_info"
+        mem_info = "ort_cuda_mem_info"
     elif storage is dtypes.StorageType.CPU_Pinned:
-        mem_info = "__state->ort_cuda_pinned_mem_info"
+        mem_info = "ort_cuda_pinned_mem_info"
     else:
         raise ValueError("Unsupported storage type {} for input to ONNX node".format(desc.storage))
 
@@ -405,15 +307,31 @@ def expand_node(node, state, sdfg):
     tasklet_setup_code = ""
     tasklet_code = ""
     tasklet_cleanup_code = ""
-    env_init_code = ("""
-    //__ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernelContext("{name}", "{op_type}", &__state->ort_context_{name}));
-    """.format(name=unique_id, op_type=node.schema.name))
 
-    env_init_code += f"""
-    __state->ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-    //__ort_check_status(__state->ort_api, __state->ort_api->CreateExecutableKernel(
-    //    __state->ort_session, __state->ort_context_{unique_id}, /*provider_index=*/{provider_index},
-    //    &__state->ort_kernel_{unique_id}));
+    env_init_code = ""
+
+    # save constructed model
+    model_bytes = onnx_model.SerializeToString()
+    # save model to file
+    # with open(f"{unique_id}.onnx", "wb") as f:
+    #     f.write(model_bytes)
+    # embed model as C byte string
+    model_int_values = [str(b) for b in model_bytes]
+    model_int_values_str = ", ".join(model_int_values)
+    tasklet_setup_code += f"""
+    unsigned char kernel_data_{unique_id}[{len(model_int_values)}] = {{ {model_int_values_str} }};
+    """
+    
+    tasklet_setup_code += f"""
+        OrtMemoryInfo* ort_cpu_mem_info;
+        __ort_check_status(__state->ort_api, __state->ort_api->CreateCpuMemoryInfo(OrtDeviceAllocator, /*type=*/OrtMemTypeDefault, &ort_cpu_mem_info));
+        OrtSessionOptions* ort_session_options;
+        __ort_check_status(__state->ort_api, __state->ort_api->CreateSessionOptions(&ort_session_options));
+        OrtSession* ort_session;
+        __ort_check_status(__state->ort_api, __state->ort_api->CreateSessionFromArray(
+            __state->ort_env, kernel_data_{unique_id}, {len(model_int_values)},
+            ort_session_options, &ort_session
+        ));
     """
 
     # emit code for inputs and outputs
@@ -432,13 +350,6 @@ def expand_node(node, state, sdfg):
         input_output_string = "input" if is_input else "output"
         memlet = edge.data
         desc = sdfg.arrays[memlet.data]
-        
-        env_init_code += """
-        //__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_Add{input_output_string}(__state->ort_context_{id}, ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_string}));
-        """.format(id=unique_id,
-                   type_string=typeclass_to_onnx_str(desc.dtype).upper(),
-                   parameter_name=parameter_name,
-                   input_output_string=input_output_string.capitalize())
 
         if is_input:
             input_names.append(parameter_name)
@@ -469,64 +380,29 @@ def expand_node(node, state, sdfg):
                                                            ort_value_name=ort_value_name,
                                                            connector_dict=in_connectors if is_input else out_connectors)
 
-        # tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Set" \
-        #                 "{input_output_string_capital}(" \
-        #                 "__state->ort_kernel_{unique_id}, {position}, {ort_value_name}));\n".format(
-        #     input_output_string_capital=input_output_string.
-        #         capitalize(),
-        #     ort_value_name=ort_value_name,
-        #     unique_id=unique_id,
-        #     position=get_position(node.schema, is_input,
-        #                           parameter_name))
-
         tasklet_cleanup_code += "__state->ort_api->ReleaseValue(" \
                                 "ort_value_{input_output_string}_{parameter_name});\n".format(
             input_output_string=input_output_string,
             parameter_name=parameter_name)
-
-    # for name, attr in node.schema.attributes.items():
-    #     if hasattr(node, name):
-    #         env_init_code += _gen_attr_init_code("__state->ort_context_{}".format(unique_id),
-    #                                              node.schema.attributes[name], getattr(node, name))
-
-    # save constructed model
-    model_bytes = onnx_model.SerializeToString()
-    # save model to file
-    # with open(f"{unique_id}.onnx", "wb") as f:
-    #     f.write(model_bytes)
-    # embed model as C byte string
-    model_int_values = [str(b) for b in model_bytes]
-    model_int_values_str = ", ".join(model_int_values)
-    env_init_code += f"""
-    __state->kernel_data_{unique_id} = new unsigned char[{len(model_int_values)}];
-    """
     
-    for i, b in enumerate(model_bytes):
-        env_init_code += f"__state->kernel_data_{unique_id}[{i}] = {b};"
-    
-    env_init_code += "\n"
-
-    env_finalize_code = f"""
-        __state->ort_api->ReleaseSession(__state->ort_session_{unique_id});\n
-        delete[] __state->kernel_data_{unique_id};\n
-        //__state->ort_api->ReleaseExecutableKernel(__state->ort_kernel_{unique_id});\n
-        // __state->ort_api->ReleaseExecutableKernelContext(__state->ort_context_{unique_id});\n
-    """
+    env_finalize_code = ""
 
     if logging.root.level <= logging.DEBUG:
         tasklet_code += 'fprintf(stderr, "Launching {}\\n");\n'.format(unique_id)
 
-    # tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Compute(__state->ort_kernel_{}));\n".format(unique_id)
     tasklet_code += f"""
-    __ort_check_status(__state->ort_api, __state->ort_api->Run(
-        __state->ort_session_{unique_id}, NULL, input_names, input_values, {len(input_values)}, output_names, {len(output_values)}, output_values));
-    """
-    
-    tasklet_setup_code += f"""
     const char* input_names[] = {{{", ".join(f'"{name}"' for name in input_names)}}};
     const char* output_names[] = {{{", ".join(f'"{name}"' for name in output_names)}}};
     OrtValue* input_values[] = {{{", ".join(input_values)}}};
     OrtValue* output_values[] = {{{", ".join(output_values)}}};
+    __ort_check_status(__state->ort_api, __state->ort_api->Run(
+        ort_session, NULL, input_names, input_values, {len(input_values)}, output_names, {len(output_values)}, output_values));
+    """
+
+    tasklet_cleanup_code += f"""
+    __state->ort_api->ReleaseSession(ort_session);
+    __state->ort_api->ReleaseSessionOptions(ort_session_options);
+    __state->ort_api->ReleaseMemoryInfo(ort_cpu_mem_info);
     """
 
     tasklet_code = tasklet_setup_code + tasklet_code + tasklet_cleanup_code
@@ -534,26 +410,15 @@ def expand_node(node, state, sdfg):
     if ONNXRuntimeCUDA.use_streams:
         raise ValueError("Currently not supported anymore.")
 
-    env_init_code += f"""
-    __ort_check_status(__state->ort_api, __state->ort_api->CreateSessionFromArray(
-        __state->ort_env, __state->kernel_data_{unique_id}, {len(model_int_values)},
-        __state->ort_session_options, &__state->ort_session_{unique_id}
-    ));
-    """
-
-    env_init_code = "{\n" + env_init_code + "\n}"
-    env_finalize_code = "{\n" + env_finalize_code + "\n}"
+    if env_init_code:
+        env_init_code = "{\n" + env_init_code + "\n}"
+    if env_finalize_code:
+        env_finalize_code = "{\n" + env_finalize_code + "\n}"
 
     tasklet = nd.Tasklet(unique_id + '_onnx_code',
                          in_connectors,
                          out_connectors,
                          tasklet_code,
-                         state_fields=[
-                            # "OrtKernelContext *ort_context_{};\n".format(unique_id),
-                            #  "OrtExecutableKernel *ort_kernel_{};\n".format(unique_id),
-                             "OrtSession *ort_session_{};\n".format(unique_id),
-                             "unsigned char* kernel_data_{};\n".format(unique_id),
-                         ],
                          code_init=env_init_code,
                          code_exit=env_finalize_code,
                          language=dace.dtypes.Language.CPP)
