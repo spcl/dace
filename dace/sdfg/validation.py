@@ -207,6 +207,9 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'Trying to read an inaccessible data container "{container}" '
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
+    # Check for interstate edges that there are no write to scalars or arrays
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
@@ -374,6 +377,17 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         sdfg.save(fpath, exception=ex, compress=True)
         ex.path = fpath
         raise
+
+
+def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: 'dace.ControlFlowRegion'):
+    from dace.sdfg import InterstateEdge
+    for edge in cfg.edges():
+        if edge.data is not None and isinstance(edge.data, InterstateEdge):
+            # sdfg.arrays return arrays and scalars, it is invalid to write to them
+            if any([key in cfg.sdfg.arrays for key in edge.data.assignments]):
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', cfg.sdfg,
+                    cfg.edge_id(edge))
 
 
 def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]):
