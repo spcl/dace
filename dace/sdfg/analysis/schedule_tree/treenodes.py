@@ -9,6 +9,7 @@ from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
 from dace.sdfg.state import SDFGState
 from dace.memlet import Memlet
+from types import TracebackType
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 INDENTATION = '  '
@@ -16,6 +17,48 @@ INDENTATION = '  '
 
 class UnsupportedScopeException(Exception):
     pass
+
+
+@dataclass
+class Context:
+    root: 'ScheduleTreeRoot'
+    current_scope: Optional['ScheduleTreeScope']
+
+    access_cache: Dict[str, Dict[str, nodes.AccessNode]]
+    """Per scope (hashed by id(scope_node) access_cache."""
+
+
+class ContextPushPop:
+    """Append the given node to the scope, then push/pop the scope."""
+
+    def __init__(self, ctx: Context, node: 'ScheduleTreeScope') -> None:
+        if ctx.current_scope is None and not isinstance(node, ScheduleTreeRoot):
+            raise ValueError("ctx.current_scope is only allowed to be 'None' when node it tree root.")
+
+        self._ctx = ctx
+        self._parent_scope = ctx.current_scope
+        self._node = node
+
+        assert id(node) not in self._ctx.access_cache
+        self._ctx.access_cache[id(node)] = {}
+
+    def __enter__(self) -> None:
+        assert not self._ctx.access_cache[id(self._node)], "Expecting an empty access_cache when entering the context."
+        # self._node.parent = self._parent_scope
+        # if self._parent_scope is not None: # Exception for ScheduleTreeRoot
+        #     self._parent_scope.children.append(self._node)
+        self._ctx.current_scope = self._node
+
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        assert id(self._node) in self._ctx.access_cache
+        self._ctx.access_cache[id(self._node)].clear()
+
+        self._ctx.current_scope = self._parent_scope
 
 
 @dataclass
@@ -225,6 +268,9 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     def get_root(self) -> 'ScheduleTreeRoot':
         return self
 
+    def scope(self, ctx: Context) -> ContextPushPop:
+        return ContextPushPop(ctx, self)
+
 
 @dataclass
 class ControlFlowScope(ScheduleTreeScope):
@@ -234,6 +280,9 @@ class ControlFlowScope(ScheduleTreeScope):
 @dataclass
 class DataflowScope(ScheduleTreeScope):
     node: nodes.EntryNode
+
+    def scope(self, ctx: Context) -> ContextPushPop:
+        return ContextPushPop(ctx, self)
 
 
 @dataclass

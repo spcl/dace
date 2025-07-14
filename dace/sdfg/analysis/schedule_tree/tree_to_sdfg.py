@@ -25,20 +25,27 @@ MAX_NESTED_SDFGS: Final[int] = 1000
 class StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def __init__(self, start_state: Optional[SDFGState] = None) -> None:
+        self._ctx: tn.Context
+        """Context information like tree root and current scope."""
+
+        self._current_state = start_state
+        """Current SDFGState in the SDFG that we are building."""
+
+        self._interstate_symbols: List[tn.AssignNode] = []
+        """Interstate symbol assignments. Will be assigned with the next state transition."""
+
         # state management
         self._state_stack: List[SDFGState] = []
-        self._current_state = start_state
-
-        # inter-state symbol assignments
-        self._interstate_symbols: List[tn.AssignNode] = []
 
         # dataflow scopes
         # List[ (MapEntryNode, ToConnect) | (SDFG, {"inputs": set(), "outputs": set()}) ]
         self._dataflow_stack: List[Tuple[nodes.EntryNode, Dict[str, Tuple[nodes.AccessNode, Memlet]]]
                                    | Tuple[SDFG, Dict[str, Set[str]]]] = []
 
+        # -- to be torched --
         # caches
-        self._access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
+        # self._access_cache: Dict[SDFGState, Dict[str, nodes.AccessNode]] = {}
+        # end -- to be torched --
 
     def _pop_state(self, label: Optional[str] = None) -> SDFGState:
         """Pops the last state from the state stack.
@@ -56,32 +63,42 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         return popped
 
-    def _ensure_access_cache(self, state: SDFGState) -> Dict[str, nodes.AccessNode]:
-        """Ensure an access_cache entry for the given state.
+    # def _ensure_access_cache(self, state: SDFGState) -> Dict[str, nodes.AccessNode]:
+    #     """Ensure an access_cache entry for the given state.
 
-        Checks if there exists an access_cache for `state`. Creates an empty one if it doesn't exist yet.
 
-        :param SDFGState state: The state to check.
-
-        :return: The state's access_cache.
-        """
-        if state not in self._access_cache:
-            self._access_cache[state] = {}
-
-        return self._access_cache[state]
+#
+#     Checks if there exists an access_cache for `state`. Creates an empty one if it doesn't exist yet.
+#
+#     :param SDFGState state: The state to check.
+#
+#     :return: The state's access_cache.
+#     """
+#     # -- to be torched
+#     raise RuntimeError("We shouldn't end up here anymore.")
+#     if state not in self._access_cache:
+#         self._access_cache[state] = {}
+#
+#     return self._access_cache[state]
 
     def visit_ScheduleTreeRoot(self, node: tn.ScheduleTreeRoot, sdfg: SDFG) -> None:
+        # -- to be torched --
         assert self._current_state is None, "Expected no 'current_state' at root."
         assert not self._state_stack, "Expected empty state stack at root."
         assert not self._dataflow_stack, "Expected empty dataflow stack at root."
         assert not self._interstate_symbols, "Expected empty list of symbols at root."
+        # end -- to be torched --
 
         self._current_state = sdfg.add_state(label="tree_root", is_start_block=True)
-        self.visit(node.children, sdfg=sdfg)
+        self._ctx = tn.Context(root=node, access_cache={}, current_scope=None)
+        with node.scope(self._ctx):
+            self.visit(node.children, sdfg=sdfg)
 
+        # -- to be torched --
         assert not self._state_stack, "Expected empty state stack."
         assert not self._dataflow_stack, "Expected empty dataflow stack."
         assert not self._interstate_symbols, "Expected empty list of symbols to add."
+        # end -- to be torched --
 
     def visit_GBlock(self, node: tn.GBlock, sdfg: SDFG) -> None:
         # Let's see if we need this for the first prototype ...
@@ -283,8 +300,10 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = start_state
 
         # visit children
-        for child in node.children:
-            self.visit(child, sdfg=inner_sdfg)
+        with node.scope(self._ctx):
+            self.visit(node.children, sdfg=inner_sdfg)
+        # for child in node.children:
+        #     self.visit(child, sdfg=inner_sdfg)
 
         # restore current state and stacks
         self._current_state = self._pop_state(old_state_label)
@@ -333,8 +352,8 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Set a new access_cache before visiting children such that they have their
         # own access cache (per map scope).
-        access_cache = self._ensure_access_cache(self._current_state)
-        self._access_cache[self._current_state] = {}
+        # access_cache = self._ensure_access_cache(self._current_state)
+        # self._access_cache[self._current_state] = {}
 
         # visit children inside the map
         type_of_children = [type(child) for child in node.children]
@@ -343,14 +362,18 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         if last_child_is_MapScope and all_others_are_Boundaries:
             # skip weirdly added StateBoundaryNode
             # tmp: use this - for now - to "backprop-insert" extra state boundaries for nested SDFGs
-            self.visit(node.children[-1], sdfg=sdfg)
+            with node.scope(self._ctx):
+                self.visit(node.children[-1], sdfg=sdfg)
         elif any([isinstance(child, tn.StateBoundaryNode) for child in node.children]):
             self._insert_nestedSDFG(node, sdfg)
         else:
-            self.visit(node.children, sdfg=sdfg)
+            with node.scope(self._ctx):
+                self.visit(node.children, sdfg=sdfg)
 
-        # reset the access_cache
-        self._access_cache[self._current_state] = access_cache
+        # # reset the access_cache
+        # self._access_cache[self._current_state] = access_cache
+
+        access_cache = self._ctx.access_cache[id(self._ctx.current_scope)]
 
         # dataflow stack management
         _, to_connect = self._dataflow_stack.pop()
@@ -506,7 +529,8 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         tasklet = node.node
         self._current_state.add_node(tasklet)
 
-        cache = self._ensure_access_cache(self._current_state)
+        cache = self._ctx.access_cache[id(self._ctx.current_scope)]
+        assert cache is not None
         scope_node, to_connect = self._dataflow_stack[-1] if self._dataflow_stack else (None, None)
 
         # Connect input memlets
@@ -603,6 +627,8 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         raise NotImplementedError(f"{type(node)} not implemented")
 
     def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
+        raise NotImplementedError("Not yet ported to new stree bridge")
+
         # apparently we need this for the first prototype
         self._ensure_access_cache(self._current_state)
         access_cache = self._access_cache[self._current_state]
@@ -837,7 +863,7 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 # SDFG content creation functions
 
 
-def create_state_boundary(bnode: tn.StateBoundaryNode,
+def create_state_boundary(boundary_node: tn.StateBoundaryNode,
                           sdfg_region: ControlFlowRegion,
                           state: SDFGState,
                           behavior: StateBoundaryBehavior,
@@ -845,7 +871,7 @@ def create_state_boundary(bnode: tn.StateBoundaryNode,
     """
     Creates a boundary between two states
 
-    :param bnode: The state boundary node to generate.
+    :param boundary_node: The state boundary node to generate.
     :param sdfg_region: The control flow block in which to generate the boundary (e.g., SDFG).
     :param state: The last state prior to this boundary.
     :param behavior: The state boundary behavior with which to create the boundary.
@@ -858,7 +884,8 @@ def create_state_boundary(bnode: tn.StateBoundaryNode,
     # TODO: Some boundaries (control flow, state labels with goto) could not be fulfilled with every
     #       behavior. Fall back to state transition in that case.
 
-    label = "cf_state_boundary" if bnode.due_to_control_flow else "state_boundary"
+    label = "cf_state_boundary" if boundary_node.due_to_control_flow else "state_boundary"
+    assignments = assignments if assignments is not None else {}
     return _insert_and_split_assignments(sdfg_region, state, label=label, assignments=assignments)
 
 

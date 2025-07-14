@@ -174,7 +174,9 @@ def test_state_boundaries_state_transition():
     )
 
     stree = t2s.insert_state_boundaries_to_tree(stree)
-    assert [tn.AssignNode, tn.TaskletNode, tn.StateBoundaryNode, tn.AssignNode] == [type(n) for n in stree.children]
+    assert [
+        tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode, tn.StateBoundaryNode, tn.AssignNode, tn.StateBoundaryNode
+    ] == [type(n) for n in stree.children]
 
 
 @pytest.mark.parametrize('boundary', (False, True))
