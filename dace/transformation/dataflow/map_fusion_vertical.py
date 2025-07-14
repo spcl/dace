@@ -188,6 +188,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
         #  We have put it here to postpone this rather expensive function calls as much as
         #  possible, but now we have to look at the Memlets.
+        # NOTE: Technically we would have to rerun this also in the `apply()` method, but
+        #   we do not do it, because we assume that it was called directly after
+        #   `can_be_applied()` has been called.
+        # TODO(phimuell): Once [PR#2081](https://github.com/spcl/dace/pull/2081) is merged
+        #   restrict it to the subgraph and the edges of the scope nodes.
         for edge in graph.edges():
             edge.data.try_initialize(sdfg, graph, edge)
 

@@ -173,6 +173,8 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
         #  Because we do not need to look at them, we were able to skip them in the
         #  `can_be_applied()` function, but now we have to do it.
+        # TODO(phimuell): Once [PR#2081](https://github.com/spcl/dace/pull/2081) is merged
+        #   restrict it to the subgraph and the edges of the scope nodes.
         for edge in graph.edges():
             edge.data.try_initialize(sdfg, graph, edge)
 
