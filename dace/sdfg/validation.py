@@ -465,6 +465,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
+            print(node, node)
             raise InvalidSDFGNodeError("Node validation failed: " + str(ex), sdfg, state_id, nid) from ex
 
         # Isolated nodes
@@ -728,6 +729,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
                 and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
                 and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
+            print(name, src_node, dst_node, e.src_conn, e.dst_conn)
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",

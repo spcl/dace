@@ -92,7 +92,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             ostrides = [1]
 
         if len(ostrides) != len(istrides):
-            print("Strides do not match: {} vs {}".format(istrides, ostrides))
+            #print("Strides do not match: {} vs {}".format(istrides, ostrides))
             return False
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))

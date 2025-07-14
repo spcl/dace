@@ -718,8 +718,7 @@ class StructToContainerGroups(ppl.Pass):
                 elif prev_type == "CA":
                     if isinstance(current_member, ContainerArray) and shallow_copy:
                         raise Exception("Not implemented on shallow copy yet.")
-                    else:
-                        raise Exception("Should not happen")
+                    src_access += f"->{name}"
                 elif prev_type == "m":
                     raise Exception("Should not happen")
                 else:
