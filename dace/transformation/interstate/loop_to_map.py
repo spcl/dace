@@ -89,6 +89,8 @@ class LoopToMap(xf.MultiStateTransformation):
     """
 
     loop = xf.PatternNode(LoopRegion)
+    ballin = properties.Property(bool, default=False,
+                                                desc="We ballin")
 
     @classmethod
     def expressions(cls):
@@ -118,9 +120,10 @@ class LoopToMap(xf.MultiStateTransformation):
                 return False
 
         # We cannot handle symbols read from data containers unless they are scalar.
-        for expr in (start, end, step):
-            if symbolic.contains_sympy_functions(expr):
-                return False
+        if not self.ballin:
+          for expr in (start, end, step):
+              if symbolic.contains_sympy_functions(expr):
+                  return False
 
         _, write_set = self.loop.read_and_write_sets()
         loop_states = set(self.loop.all_states())
