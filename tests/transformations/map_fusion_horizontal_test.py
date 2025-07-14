@@ -2,23 +2,19 @@
 from typing import Any, Union, Tuple, Type, Optional, List
 
 import numpy as np
-import os
-import dace
-import copy
-import uuid
-import pytest
-import gc
 
+import dace
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.transformation import dataflow as dftrans
 
 from .map_fusion_vertical_test import count_nodes, unique_name
 
+# NOTE: MapFusionHorizontal is essentially implemented in terms of `relocate_node()` which is
+#   also used by `MapFusionVertical` thus the majority of tests if included there and not here.
 
-def _make_parallel_sdfg(common_ancestor: bool, ) -> dace.SDFG:
-    """Creates maps that are parallel and can only be handled by parallel map fusion.
-    """
+
+def _make_horizontal_map_sdfg(common_ancestor: bool):
     sdfg = dace.SDFG(unique_name("parallel_maps_sdfg"))
     state = sdfg.add_state(is_start_block=True)
 
@@ -66,83 +62,149 @@ def _make_parallel_sdfg(common_ancestor: bool, ) -> dace.SDFG:
     )
 
     sdfg.validate()
+    return sdfg, state
+
+
+def _make_vertical_map_sdfg() -> dace.SDFG:
+    sdfg = dace.SDFG(unique_name("serial_maps_sdfg"))
+    state = sdfg.add_state(is_start_block=True)
+
+    names = ["a", "t", "b"]
+    for name in names:
+        sdfg.add_array(
+            name,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=(name == "t"),
+        )
+
+    t = state.add_access("t")
+    state.add_mapped_tasklet(
+        "comp1",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("a[__i]")},
+        code="__out = __in + 10.",
+        outputs={"__out": dace.Memlet("t[__i]")},
+        output_nodes={t},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "comp2",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("t[__i]")},
+        code="__out = __in + 44.",
+        outputs={"__out": dace.Memlet("b[__i]")},
+        input_nodes={t},
+        external_edges=True,
+    )
+    sdfg.validate()
     return sdfg
 
 
-def _make_parallel_sdfg_args():
-    args_ref = {
-        "A": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "B": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "C": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "D": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "out": np.array(np.random.rand(10, 4), dtype=np.float64, copy=True),
-    }
-    args_res = copy.deepcopy(args_ref)
-    return args_ref, args_res
+def test_vertical_map_fusion_common_ancestor_is_required():
+    sdfg, _ = _make_horizontal_map_sdfg(common_ancestor=False)
+    assert count_nodes(sdfg, nodes.AccessNode) == 6
+    assert count_nodes(sdfg, nodes.MapExit) == 4
 
-
-def test_vertical_map_fusion_does_not_apply():
-    sdfg = _make_parallel_sdfg(common_ancestor=False)
-
-    # There is no vertical/serial dependency thus MapFusionVertical will not apply.
     count = sdfg.apply_transformations_repeated(
-        [dftrans.MapFusionVertical()],
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True)],
         validate=True,
         validate_all=True,
     )
     assert count == 0
 
 
-def test_horizontal_no_comon_ancestor():
-    sdfg = _make_parallel_sdfg(common_ancestor=False)
-    assert count_nodes(sdfg, nodes.AccessNode) == 6
+def test_vertical_map_fusion_no_common_ancestor_not_required():
+    sdfg, _ = _make_horizontal_map_sdfg(common_ancestor=False)
     assert count_nodes(sdfg, nodes.MapExit) == 4
 
+    ac_nodes_before = count_nodes(sdfg, nodes.AccessNode, True)
+    assert len(ac_nodes_before) == 6
+    assert {ac.data for ac in ac_nodes_before} == {"A", "B", "C", "D", "out"}
+    assert len([ac for ac in ac_nodes_before if ac.data == "A"]) == 2
 
-def test_parallel_map_fusion_simple():
-    sdfg = _make_parallel_sdfg()
-    args_ref = {
-        "A": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "B": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "C": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "D": np.array(np.random.rand(10), dtype=np.float64, copy=True),
-        "out": np.array(np.random.rand(10, 4), dtype=np.float64, copy=True),
-    }
-    args_res = copy.deepcopy(args_ref)
-
-    run_sdfg(sdfg, **args_ref)
-
-    # In serial map fusion nothing will be done.
-    sdfg = apply_fusion(
-        sdfg,
-        removed_maps=0,
-        allow_serial_map_fusion=True,
-        allow_parallel_map_fusion=False,
+    count = sdfg.apply_transformations_repeated(
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=False)],
+        validate=True,
+        validate_all=True,
     )
+    assert count == 3
+    assert count_nodes(sdfg, nodes.AccessNode) == 5
+    assert count_nodes(sdfg, nodes.MapExit) == 1
 
-    # Because there is no common ancestor the transformation will not apply.
-    sdfg = apply_fusion(
-        sdfg,
-        removed_maps=0,
-        allow_serial_map_fusion=False,
-        allow_parallel_map_fusion=True,
-        only_if_common_ancestor=True,
+
+def test_vertical_map_fusion_with_common_ancestor_is_required():
+    sdfg, state = _make_horizontal_map_sdfg(common_ancestor=True)
+    assert count_nodes(sdfg, nodes.MapExit) == 4
+
+    ac_nodes_before = count_nodes(sdfg, nodes.AccessNode, True)
+    assert len(ac_nodes_before) == 5
+    assert {ac.data for ac in ac_nodes_before} == {"A", "B", "C", "D", "out"}
+    ac_A_node = next(iter(ac for ac in ac_nodes_before if ac.data == "A"))
+    assert state.out_degree(ac_A_node) == 2
+
+    count = sdfg.apply_transformations_repeated(
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True)],
+        validate=True,
+        validate_all=True,
     )
+    assert count == 1
+    assert count_nodes(sdfg, nodes.AccessNode) == 5
+    assert count_nodes(sdfg, nodes.MapExit) == 3
 
-    # In parallel map fusion it will be fused away.
-    sdfg = apply_fusion(
-        sdfg,
-        final_maps=1,
-        allow_serial_map_fusion=False,
-        allow_parallel_map_fusion=True,
-        only_if_common_ancestor=False,
+    # Because of the consolidation it was reduced to 1 node.
+    assert state.out_degree(ac_A_node) == 1
+
+
+def test_vertical_map_fusion_with_common_ancestor_is_required_no_consolidation():
+    sdfg, state = _make_horizontal_map_sdfg(common_ancestor=True)
+    assert count_nodes(sdfg, nodes.MapExit) == 4
+
+    ac_nodes_before = count_nodes(sdfg, nodes.AccessNode, True)
+    assert len(ac_nodes_before) == 5
+    assert {ac.data for ac in ac_nodes_before} == {"A", "B", "C", "D", "out"}
+    ac_A_node = next(iter(ac for ac in ac_nodes_before if ac.data == "A"))
+    assert state.out_degree(ac_A_node) == 2
+
+    count = sdfg.apply_transformations_repeated(
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True, never_consolidate_edges=True)],
+        validate=True,
+        validate_all=True,
     )
+    assert count == 1
+    assert count_nodes(sdfg, nodes.AccessNode) == 5
+    assert count_nodes(sdfg, nodes.MapExit) == 3
 
-    # Now look if the code is the same.
-    run_sdfg(sdfg, **args_res)
+    # Because consolidation is disabled, there are two edges to the same Map.
+    ac_A_node_oedges = list(state.out_edges(ac_A_node))
+    assert len(ac_A_node_oedges) == 2
+    assert all(isinstance(e.dst, nodes.MapEntry) for e in ac_A_node_oedges)
+    assert len({e.dst for e in ac_A_node_oedges}) == 1
 
-    assert all(np.allclose(args_ref[arg], args_res[arg]) for arg in args_ref.keys())
+    # Now look at the Map that was fused. It has 3 inputs, two from `A` and one from `D`.
+    fused_map = ac_A_node_oedges[0].dst
+    fused_map_iedges = list(state.in_edges(fused_map))
+    assert len(fused_map_iedges) == 3
+    assert all(isinstance(e.src, nodes.AccessNode) for e in fused_map_iedges)
+    assert {e.src.data for e in fused_map_iedges} == {"A", "D"}
+
+
+def test_vertical_maps_are_not_fused_horizontally():
+    sdfg = _make_vertical_map_sdfg()
+    assert count_nodes(sdfg, nodes.MapExit) == 2
+    assert count_nodes(sdfg, nodes.AccessNode) == 3
+
+    count = sdfg.apply_transformations_repeated(
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=False, never_consolidate_edges=True)],
+        validate=True,
+        validate_all=True,
+    )
+    assert count == 0
 
 
 if __name__ == '__main__':
-    pass
+    test_vertical_map_fusion_common_ancestor_is_required()
+    test_vertical_map_fusion_no_common_ancestor_not_required()
+    test_vertical_map_fusion_with_common_ancestor_is_required()
+    test_vertical_map_fusion_with_common_ancestor_is_required_no_consolidation()
+    test_vertical_maps_are_not_fused_horizontally()
