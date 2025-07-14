@@ -1,15 +1,19 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+import warnings
 from dace.transformation import dataflow as dftrans
 
 try:
     from warnings import deprecated
 except ImportError:
-    deprecated = lambda cls: cls
+
+    def deprecated(msg):
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        return lambda cls: cls
 
 
-@deprecated
+@deprecated('MapFusion is deprecated please use MapFusionVertical instead.')
 class MapFusion(dftrans.MapFusionVertical):
     """Compatibility layer for deprecated `MapFusion` name.
 
