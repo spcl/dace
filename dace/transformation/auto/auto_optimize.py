@@ -82,10 +82,13 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            # Apply MapFusionVertical for the more trivial cases
+            # Apply MapFusionVertical for the more trivial cases.
+            #  For backwards compatibility we only perform vertical map fusion.
             full_map_fusion_pass = FullMapFusion(
                 strict_dataflow=True,
                 validate_all=validate_all,
+                perform_horizontal_map_fusion=False,
+                perform_vertical_map_fusion=True,
             )
             full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
             full_map_fusion_pileline.apply_pass(sdfg, {})
