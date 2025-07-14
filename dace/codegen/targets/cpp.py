@@ -236,14 +236,22 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
 
 def is_cuda_codegen_in_device(framecode) -> bool:
     """
-    Check the state of the CUDA code generator, whether it is inside device code.
+    Check the state of the (Experimental) CUDA code generator, whether it is inside device code.
     """
     from dace.codegen.targets.cuda import CUDACodeGen
+    from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
+
+    cuda_impl = Config.get('compiler', 'cuda', 'implementation')
+    if cuda_impl == 'legacy':
+        cudaClass = CUDACodeGen
+    elif cuda_impl == 'experimental':
+        cudaClass = ExperimentalCUDACodeGen
+
     if framecode is None:
         cuda_codegen_in_device = False
     else:
         for codegen in framecode.targets:
-            if isinstance(codegen, CUDACodeGen):
+            if isinstance(codegen, cudaClass):
                 cuda_codegen_in_device = codegen._in_device_code
                 break
         else:
@@ -266,25 +274,12 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
         root = name.split('.')[0]
         if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
             name = name.replace('.', '->')
-
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
-
-        # Avoid import loop
-        from dace.codegen.targets.cuda import CUDACodeGen
-        from dace.codegen.targets.experimental_cuda import ExperimentalCUDACodeGen
-
-        # Check whether we are in kernel/ device code of GPU backend
-        cuda_impl = Config.get('compiler', 'cuda', 'implementation')
-        if cuda_impl == "legacy":
-            in_device_code = CUDACodeGen._in_device_code
-        elif cuda_impl == "experimental":
-            in_device_code = ExperimentalCUDACodeGen._in_kernel_code
-
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
-        elif not in_device_code:  # GPU kernels cannot access state
+        elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
             return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
             return f'__{sdfg.cfg_id}_{name}'

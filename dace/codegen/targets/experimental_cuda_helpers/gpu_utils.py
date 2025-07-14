@@ -1,11 +1,13 @@
 import functools
+
 import sympy
 from typing import List
 
-from dace import Config, symbolic
-from dace.codegen import cppunparse
-from dace.codegen.prettycode import CodeIOStream
+from dace import Config, symbolic, data as dt
 from dace.sdfg import nodes
+from dace.codegen import cppunparse
+from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
 
 
 def symbolic_to_cpp(arr):
@@ -108,3 +110,12 @@ def emit_sync_debug_checks(backend: str, codestream: CodeIOStream):
     if Config.get_bool('compiler', 'cuda', 'syncdebug'):
         codestream.write(f"DACE_GPU_CHECK({backend}GetLastError());\n"
                          f"DACE_GPU_CHECK({backend}DeviceSynchronize());\n")
+
+def get_defined_type(data: dt.Data) -> DefinedType:
+    if isinstance(data, dt.Scalar):
+        return DefinedType.Scalar
+    elif isinstance(data, dt.Array):
+        return DefinedType.Pointer
+    else:
+        raise NotImplementedError(f"Data type '{type(data).__name__}' is not supported for defined type inference."
+                                  "Only Scalars and Arrays are expected for Kernels.")

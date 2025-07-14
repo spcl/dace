@@ -87,7 +87,7 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
             # ----------------- Retrieve kernel configuration -----------------------
 
             kernel_spec = self._current_kernel_spec
-            kernel_entry_node = kernel_spec._kernel_entry_node  # == dfg_scope.source_nodes()[0]
+            kernel_entry_node = kernel_spec._kernel_map_entry  # == dfg_scope.source_nodes()[0]
             kernel_map = kernel_spec.kernel_map
 
             # ----------------- Kernel/Map Range Preprocessing -----------------------

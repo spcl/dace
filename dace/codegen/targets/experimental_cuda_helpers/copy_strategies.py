@@ -201,7 +201,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         # TODO: I don't understand why all of these conditions are needed, look into it
 
         cpu_storage_types = [StorageType.CPU_Heap, StorageType.CPU_ThreadLocal, StorageType.CPU_Pinned]
-        not_in_kernel_code = not ExperimentalCUDACodeGen._in_kernel_code
+        not_in_device_code = not copy_context.codegen._in_device_code
 
         is_between_access_nodes = (isinstance(copy_context.src_node, nodes.AccessNode)
                                    and isinstance(copy_context.dst_node, nodes.AccessNode))
@@ -212,7 +212,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         is_not_cpu_to_cpu = not (copy_context.src_storage in cpu_storage_types
                                  and copy_context.dst_storage in cpu_storage_types)
 
-        is_gpu_host_copy = (not_in_kernel_code and is_between_access_nodes and involves_gpu_or_pinned
+        is_gpu_host_copy = (not_in_device_code and is_between_access_nodes and involves_gpu_or_pinned
                             and is_not_cpu_to_cpu)
 
         return is_gpu_host_copy
@@ -456,7 +456,7 @@ class SyncCollaboritveGPUCopyStrategy(CopyStrategy):
             if reduction_type != dtypes.ReductionType.Custom:
                 # Use predefined reduction
                 reduction_type_str = str(reduction_type).split('.')[-1]  # e.g., "Sum"
-                reduction_template = f"<{reduction_type_str}>"
+                reduction_template = f"<dace::ReductionType::{reduction_type_str}>"
             else:
                 custom_reduction = [unparse_cr(sdfg, wcr, dtype)]
                 reduction_template = ""

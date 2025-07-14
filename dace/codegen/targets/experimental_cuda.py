@@ -27,7 +27,6 @@ from dace.codegen.targets.cpp import (codeblock_to_cpp, memlet_copy_to_absolute_
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
 
 # DaCe transformation imports
-from dace.transformation import helpers
 from dace.transformation.passes import analysis as ap
 from dace.transformation.passes.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
@@ -36,7 +35,7 @@ from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import In
 
 # Experimental CUDA helper imports
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
-from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp, product, emit_sync_debug_checks
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp, emit_sync_debug_checks, get_defined_type
 
 # Type checking imports (conditional)
 if TYPE_CHECKING:
@@ -44,9 +43,6 @@ if TYPE_CHECKING:
     from dace.codegen.targets.cpu import CPUCodeGen
 
 # add symbolic_to_cpp !
-
-# TODO's harder:
-# 1. Include constant expressions
 
 
 @registry.autoregister_params(name='experimental_cuda')
@@ -63,7 +59,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._frame: DaCeCodeGenerator = frame_codegen  # creates the frame code, orchestrates the code generation for targets
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher  # responsible for dispatching code generation to the appropriate target
 
-        ExperimentalCUDACodeGen._in_kernel_code = False
+        self._in_device_code = False
         self._cpu_codegen: Optional['CPUCodeGen'] = None
 
         # NOTE: Moved from preprossessing to here
@@ -335,23 +331,43 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                                                                      KernelScopeGenerator,
                                                                                      ThreadBlockScopeGenerator,
                                                                                      WarpScopeGenerator)
+        # Entry Node of the scope
+        scope_entry = dfg_scope.source_nodes()[0]
 
         #--------------- Start of Kernel Function Code Generation --------------------
 
-        if not ExperimentalCUDACodeGen._in_kernel_code:
-
-            # Prepare and cache kernel metadata (name, dimensions, arguments, etc.)
-            self._current_kernel_spec = KernelSpec(cudaCodeGen=self,
-                                                   sdfg=sdfg,
-                                                   cfg=cfg,
-                                                   dfg_scope=dfg_scope,
-                                                   state_id=state_id)
-
-            # Generate wrapper function
-            self._generate_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+        if not self._in_device_code:
 
             # Enter kernel context and recursively generate device code
-            ExperimentalCUDACodeGen._in_kernel_code = True
+            self._in_device_code = True
+
+            # New scope for defined variables (kernel functions scope)
+            self._dispatcher.defined_vars.enter_scope(scope_entry)
+
+            # Store kernel metadata (name, dimensions, arguments, etc.) in a KernelSpec object 
+            # and save it as an attribute
+            kernel_spec =  KernelSpec(cudaCodeGen=self,
+                                      sdfg=sdfg,
+                                      cfg=cfg,
+                                      dfg_scope=dfg_scope,
+                                      state_id=state_id)
+            
+            self._current_kernel_spec = kernel_spec
+
+            # Update types of constant variables in the current scope
+            for dname, data_desc in kernel_spec.arglist.items():
+                ptr_name = ptr(dname, data_desc, sdfg, self._frame)
+                defined_type, ctype = self._dispatcher.defined_vars.get(ptr_name)
+
+                if dname in kernel_spec.kernel_constants:
+                    ctype = f"const {ctype}"
+                
+                self._dispatcher.defined_vars.add(ptr_name, defined_type, ctype, allow_shadowing=True)
+
+            # declare and call kernel wrapper function (in the CPU-side code)
+            self._declare_and_invoke_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+
+            # Recursively generate GPU code into the kernel_stream (will be in a .cu file)
             kernel_stream = CodeIOStream()
             kernel_function_stream = self._globalcode
 
@@ -366,15 +382,17 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             self._localcode.write(kernel_stream.getvalue() + '\n')
 
             # Exit kernel context
-            ExperimentalCUDACodeGen._in_kernel_code = False
+            self._in_device_code = False
 
-            # Generate kernel launch
-            self._generate_kernel_launch(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+            # Generate kernel wrapper, i.e. function which will launch the kernel
+            self._generate_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+
+            # Exit scope for defined variables 
+            self._dispatcher.defined_vars.exit_scope(scope_entry)
 
             return
 
         #--------------- Nested GPU Scope --------------------
-
         supported_strategies: List[ScopeGenerationStrategy] = [
             ThreadBlockScopeGenerator(codegen=self),
             WarpScopeGenerator(codegen=self)
@@ -388,8 +406,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         #--------------- Unsupported Cases --------------------
         # Note: We are inside a nested GPU scope at this point.
 
-        node = dfg_scope.source_nodes()[0]
-        schedule_type = node.map.schedule
+        schedule_type = scope_entry.map.schedule
 
         if schedule_type == dace.ScheduleType.GPU_Device:
             raise NotImplementedError("Dynamic parallelism (nested GPU_Device schedules) is not supported.")
@@ -398,8 +415,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             f"Scope generation for schedule type '{schedule_type}' is not implemented in ExperimentalCUDACodeGen. "
             "Please check for supported schedule types or implement the corresponding strategy.")
 
-    def _generate_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+    def _declare_and_invoke_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                            function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
         scope_entry = dfg_scope.source_nodes()[0]
 
@@ -408,21 +425,17 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         kernel_wrapper_args_as_input = kernel_spec.kernel_wrapper_args_as_input
         kernel_wrapper_args_typed = kernel_spec.kernel_wrapper_args_typed
 
-        # Declaration of the function which launches the kernel (C++ code)
+        # Declaration of the kernel wrapper function (in the CPU-side code)
         function_stream.write(
             'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(kernel_wrapper_args_typed)), cfg,
             state_id, scope_entry)
 
-        # Calling the function which launches the kernel (C++ code)
+        # Calling the kernel wrapper function (in the CPU-side code)
         callsite_stream.write('__dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(kernel_wrapper_args_as_input)),
                               cfg, state_id, scope_entry)
 
-    def _generate_kernel_launch(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
-                                function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-
-        # NOTE: This generates the function that launches the kernel.
-        # Do not confuse it with CUDA's internal "LaunchKernel" API —
-        # the generated function *calls* that API, but we also refer to it as a "launch function".
+    def _generate_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
+                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
         scope_entry = dfg_scope.source_nodes()[0]
 
@@ -441,11 +454,14 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         gpu_stream = self._gpu_stream_manager.get_stream_node(scope_entry)
 
         # ----------------- Kernel Launch Function Declaration -----------------------
+
         self._localcode.write(
-            """
-                DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
-                void __dace_runkernel_{fname}({fargs})
-                """.format(fname=kernel_name, fargs=', '.join(kernel_launch_args_typed)), cfg, state_id, scope_entry)
+            f"""
+            DACE_EXPORTED void __dace_runkernel_{kernel_name}({', '.join(kernel_launch_args_typed)});
+            void __dace_runkernel_{kernel_name}({', '.join(kernel_launch_args_typed)})
+            """,
+            cfg, state_id, scope_entry
+        )
 
         # Open bracket
         self._localcode.write('{', cfg, state_id, scope_entry)
@@ -475,18 +491,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     }}''', cfg, state_id, scope_entry)
 
         # ----------------- Kernel Launch Invocation -----------------------
+        kargs = ', '.join(['(void *)&' + arg for arg in kernel_args_as_input])
+
         self._localcode.write(
-            '''
-                void  *{kname}_args[] = {{ {kargs} }};
-                gpuError_t __err = {backend}LaunchKernel( (void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream}
-                );
-                '''.format(kname=kernel_name,
-                           kargs=', '.join(['(void *)&' + arg for arg in kernel_args_as_input]),
-                           gdims=gdims,
-                           bdims=bdims,
-                           dynsmem='0',
-                           stream=gpu_stream,
-                           backend=self.backend), cfg, state_id, scope_entry)
+            f'''
+            void  *{kernel_name}_args[] = {{ {kargs} }};
+            gpuError_t __err = {self.backend}LaunchKernel(
+                (void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {0}, {gpu_stream}
+            );
+            ''', cfg, state_id, scope_entry)
 
         self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
         emit_sync_debug_checks(self.backend, self._localcode)
@@ -536,7 +549,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         Returns True if the generator is currently generating kernel code.
         """
-        return ExperimentalCUDACodeGen._in_kernel_code
+        return self._in_device_code
 
     def node_dispatch_predicate(self, sdfg, state, node):
         """
@@ -552,7 +565,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             return True
 
-        if ExperimentalCUDACodeGen._in_kernel_code:
+        if self._in_device_code:
             return True
 
         return False
@@ -572,7 +585,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
 
         # Special: Release of pooled memory if not in device code that need to be released her
-        if not ExperimentalCUDACodeGen._in_kernel_code:
+        if not self._in_device_code:
 
             handled_keys = set()
             backend = self.backend
@@ -630,9 +643,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                                                      state_struct=False)
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
-        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state, node)
-        return result
-
+        args = self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state, node)
+        return args
+    
     def _generate_NestedSDFG(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
@@ -640,8 +653,34 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._toplevel_schedule = node.schedule
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
+        
+        # Determine and update ctype of new constant data and symbols within the NSDFG
+        parent_state: SDFGState = cfg.state(state_id)
+        nsdfg = node.sdfg
 
+        dispatcher: TargetDispatcher = self._dispatcher
+        dispatcher.defined_vars.enter_scope(node)
+
+        # update const data
+        new_const_data = sdutil.get_constant_data(node, parent_state) - self._current_kernel_spec.kernel_constants
+        for name in new_const_data:
+            desc = nsdfg.arrays[name]
+            ptr_name = ptr(name, desc, nsdfg, self._frame)
+            defined_type= get_defined_type(desc)
+            ctype = f"const {desc.ctype}"
+            dispatcher.defined_vars.add(ptr_name, defined_type, ctype, allow_shadowing=True)
+
+        # update const symbols
+        new_const_symbols = sdutil.get_constant_symbols(node, parent_state) - self._current_kernel_spec.kernel_constants
+        for name in new_const_symbols:
+            defined_type = DefinedType.Scalar
+            ctype = f"const {nsdfg.symbols[name].ctype}"
+            dispatcher.defined_vars.add(name, defined_type, ctype, allow_shadowing=True)
+        
         self._cpu_codegen._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+        # Exit scope
+        dispatcher.defined_vars.exit_scope(node)
 
         self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
@@ -1104,38 +1143,36 @@ class KernelSpec:
                  dfg_scope: ScopeSubgraphView, state_id: int):
 
         # Get kernel entry/exit nodes and current state
-        kernel_entry_node = dfg_scope.source_nodes()[0]
-        kernel_exit_node = dfg_scope.sink_nodes()[0]
-        state: SDFGState = cfg.state(state_id)
+        kernel_map_entry = dfg_scope.source_nodes()[0]
+        kernel_parent_state: SDFGState = cfg.state(state_id)
 
-        self._kernel_entry_node: nodes.MapEntry = kernel_entry_node
+        self._kernel_map_entry: nodes.MapEntry = kernel_map_entry
+        self._kernels_state: SDFGState = kernel_parent_state
 
         # Kernel name
-        self._kernel_name: str = f'{kernel_entry_node.map.label}_{cfg.cfg_id}_{state.block_id}_{state.node_id(kernel_entry_node)}'
+        self._kernel_name: str = f'{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}'
 
-        # Kernel arguments
-        arglist: Dict[str, Any] = {}
-        for state_, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
-            if node is kernel_entry_node:
-                shared_transients = state_.parent.shared_transients()
-                arglist = state_.scope_subgraph(node).arglist(defined_syms, shared_transients)
-                break
+        # Get and store kernel constants — needed for applying 'const' and updating defined 
+        # constant variable types in the dispatcher (handled at GPU codegen)
+        kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
+        kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
 
-        self._args: Dict[str, Any] = arglist
+        kernel_constants = kernel_const_data | kernel_const_symbols
+        self._kernel_constants: Set[str] = kernel_constants
 
-        # Typed arguments and argument access as input
-        self._args_typed: list[str] = [adata.as_arg(name=aname) for aname, adata in self._args.items()]
-        self._args_as_input: list[str] = [
-            ptr(aname, adata, sdfg, cudaCodeGen._frame) for aname, adata in self._args.items()
-        ]
+        # Retrieve arguments required for the kernels subgraph
+        arglist: Dict[str, dt.Data] = kernel_parent_state.scope_subgraph(kernel_map_entry).arglist()
+        self._arglist = arglist
 
-        # Used for the kernel wrapper function, be careful: a change in the name __state will probably lead to compilation errors
-        state_param: list[str] = [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state']
-        self._kernel_wrapper_args_as_input: list[str] = ['__state'] + self._args_as_input
-        self._kernel_wrapper_args_typed: list[str] = state_param + self._args_typed
+        # Format arguments for input passing and function signatures (kernel and kernel wrapper)
+        self._args_as_input = [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in arglist.items()]
+        self._args_typed = [('const ' if name in kernel_constants else '') + data.as_arg(name=name) for name, data in arglist.items()]
+
+        self._kernel_wrapper_args_as_input = ['__state'] + self._args_as_input
+        self._kernel_wrapper_args_typed = [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] + self._args_typed
 
         # The kernel's grid and block dimensions
-        self._grid_dims, self._block_dims = cudaCodeGen._kernel_dimensions_map[kernel_entry_node]
+        self._grid_dims, self._block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
 
         # C type of block, thread, and warp indices (as a string)
         self._gpu_index_ctype: str = self.get_gpu_index_ctype()
@@ -1171,22 +1208,35 @@ class KernelSpec:
         return dtype.ctype
 
     @property
+    def kernel_constants(self) -> Set[str]:
+        """Returns the kernel's constant data and symbols."""
+        return self._kernel_constants
+    
+    @property
     def kernel_name(self) -> list[str]:
         """Returns the kernel (function's) name."""
         return self._kernel_name
 
     @property
-    def kernel_entry_node(self) -> nodes.MapEntry:
+    def kernel_map_entry(self) -> nodes.MapEntry:
         """
         Returns the entry node of the kernel, which is a MapEntry node
         scheduled with dace.dtypes.ScheduleType.GPU_Device.
         """
-        return self._kernel_entry_node
+        return self._kernel_map_entry
 
     @property
     def kernel_map(self) -> nodes.Map:
         """Returns the kernel's map node."""
-        return self._kernel_entry_node.map
+        return self._kernel_map_entry.map
+    
+    @property
+    def arglist(self) -> Dict[str, dt.Data]:
+        """
+        Returns a dictionary of arguments for the kernel's subgraph,  
+        mapping each data name to its corresponding data descriptor.
+        """
+        return self._arglist
 
     @property
     def args_as_input(self) -> list[str]:
