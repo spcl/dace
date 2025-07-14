@@ -89,7 +89,7 @@ class LoopToMap(xf.MultiStateTransformation):
     """
 
     loop = xf.PatternNode(LoopRegion)
-    ballin = properties.Property(bool, default=False,
+    ballin = properties.Property(dtype=bool, allow_none=False ,default=False,
                                                 desc="We ballin")
 
     @classmethod
