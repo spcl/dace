@@ -2229,7 +2229,7 @@ def get_used_symbols(
     :return: A set of symbol names.
     """
     return _get_used_symbols_impl(scope=scope,
-                                  constant_syms_only=True,
+                                  constant_syms_only=False,
                                   parent_state=parent_state,
                                   include_symbols_for_offset_calculations=include_symbols_for_offset_calculations)
 
@@ -2263,13 +2263,11 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
     :return: A set of constant symbol names.
     """
 
-    def _get_assignments(cfg: Union[ControlFlowRegion, SDFG]) -> Set[str]:
+    def _get_assignments(cfg: ControlFlowRegion) -> Set[str]:
         written_symbols = set()
-        for node in cfg.all_control_flow_regions():
-            if node.parent_graph is not None:
-                for edge in list(node.parent_graph.in_edges(node)) + list(node.parent_graph.out_edges(node)):
-                    if edge.data is not None and isinstance(edge.data, dace.InterstateEdge):
-                        written_symbols = written_symbols.union(edge.data.assignments.keys())
+        for edge in cfg.all_interstate_edges():
+            if edge.data is not None and isinstance(edge.data, dace.InterstateEdge):
+                written_symbols = written_symbols.union(edge.data.assignments.keys())
         return written_symbols
 
     offset_symbols = set()
@@ -2298,6 +2296,8 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         used_symbols = scope.sdfg.used_symbols(all_symbols=True)
         # Can't pass them as const if they are written to in the nested SDFG
         written_symbols = _get_assignments(scope.sdfg)
+        print(used_symbols)
+        print(written_symbols)
         if constant_syms_only:
             return (offset_symbols | used_symbols) - written_symbols
         else:
