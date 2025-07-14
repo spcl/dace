@@ -147,6 +147,7 @@ class FullMapFusion(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
 
+        fusion_transforms = []
         if self.perform_vertical_map_fusion:
             # We have to pass the single use data at construction. This is because that
             #  `fusion._pipeline_results` is only defined, i.e. not `None` during `apply()`
@@ -176,7 +177,7 @@ class FullMapFusion(ppl.Pass):
 
         try:
             pazz = pmp.PatternMatchAndApplyRepeated(
-                [fusion_transforms],
+                fusion_transforms,
                 permissive=False,
                 validate=False,
                 validate_all=self.validate_all,
