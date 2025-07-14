@@ -207,6 +207,9 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'Trying to read an inaccessible data container "{container}" '
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
+    # Check for interstate edges that write to scalars or arrays
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
@@ -352,9 +355,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                         raise InvalidSDFGError(
                             "Arrays that use a multibank access pattern must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}", sdfg, None)
-
-        # Check for interstate edges that write to scalars or arrays
-        _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
 
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
@@ -1169,12 +1169,12 @@ def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
     return mem_root == access_data
 
 
-def _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg: 'dace.sdfg.SDFG'):
+def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: 'dace.ControlFlowRegion'):
     from dace.sdfg import InterstateEdge
-    for edge, graph in sdfg.all_edges_recursive():
+    for edge in cfg.edges():
         if edge.data is not None and isinstance(edge.data, InterstateEdge):
             # sdfg.arrays return arrays and scalars, it is invalid to write to them
-            if any([key in graph.sdfg.arrays for key in edge.data.assignments]):
+            if any([key in cfg.sdfg.arrays for key in edge.data.assignments]):
                 raise InvalidSDFGInterstateEdgeError(
-                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', graph.sdfg,
-                    graph.edge_id(edge))
+                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', cfg.sdfg,
+                    cfg.edge_id(edge))
