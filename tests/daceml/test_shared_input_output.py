@@ -26,8 +26,8 @@ def test_bn_standalone():
         donnx.ONNXBatchNormalization(X=X,
                                      scale=scale,
                                      B=B,
-                                     in_mean=mean,
-                                     in_var=var,
+                                     input_mean=mean,
+                                     input_var=var,
                                      Y=Y)
         return Y
 
@@ -47,13 +47,15 @@ def test_bn_in_import():
     class Module(torch.nn.Module):
         def __init__(self):
             super(Module, self).__init__()
-            self.bn = nn.BatchNorm2d(3, track_running_stats=False)
+            self.bn = nn.BatchNorm2d(3, track_running_stats=True)
 
         def forward(self, x):
             return self.bn(x)
 
     pt_module = Module()
+    pt_module.eval()
     dace_module = Module()
+    dace_module.eval()
 
     dace_module.load_state_dict(pt_module.state_dict())
 
