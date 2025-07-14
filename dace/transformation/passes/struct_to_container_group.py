@@ -695,6 +695,7 @@ class StructToContainerGroups(ppl.Pass):
             arr: dace.data.Data,
             name_hierarchy: List[str],
             name_hierarchy_types: List[str],
+            shallow_copy: bool,
         ):
 
             _cstr = ""
@@ -715,7 +716,7 @@ class StructToContainerGroups(ppl.Pass):
                         assert _type == "m" or _type == "CG"
                         src_access += f"->{name}"
                 elif prev_type == "CA":
-                    if isinstance(current_member, ContainerArray):
+                    if isinstance(current_member, ContainerArray) and shallow_copy:
                         raise Exception("Not implemented on shallow copy yet.")
                     else:
                         raise Exception("Should not happen")
@@ -769,6 +770,7 @@ class StructToContainerGroups(ppl.Pass):
                 arr_name,
                 arr_desc,
                 *_get_name_hierarchy_from_name(arr_name),
+                self._shallow_copy
             )
             for (arr_name, arr_desc) in registered_members
             if _get_name_hierarchy_from_name(arr_name)[0][0] == name
