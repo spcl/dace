@@ -147,8 +147,6 @@ class FullMapFusion(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
 
-        xforms = []
-
         if self.perform_vertical_map_fusion:
             # We have to pass the single use data at construction. This is because that
             #  `fusion._pipeline_results` is only defined, i.e. not `None` during `apply()`
@@ -164,6 +162,9 @@ class FullMapFusion(ppl.Pass):
                     single_use_data=pipeline_results["FindSingleUseData"],
                 ))
         if self.perform_horizontal_map_fusion:
+            # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
+            #   Map fusion. The reason is that it has to check any possible Map pair. Thus, the
+            #   number of Maps should be as small as possible.
             fusion_transforms.append(
                 dftrans.MapFusionHorizontal(
                     only_inner_maps=self.only_inner_maps,
