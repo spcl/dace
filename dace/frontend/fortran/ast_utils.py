@@ -1,5 +1,5 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
-from collections import Counter
+from collections import Counter, defaultdict
 from itertools import chain
 from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, Optional
 
@@ -133,6 +133,9 @@ class TaskletWriter:
     :param name_mapping: mapping of names in the code to names in the sdfg
     :return: python code for a tasklet, as a string
     """
+
+    # store all tasklets generated for quick retrieval of assignments
+    TASKLETS_CREATED: Dict[SDFG, Dict[str, Tuple[str, ast_internal_classes.FNode]]] = defaultdict(lambda: defaultdict())
 
     def __init__(self,
                  outputs: List[str],
@@ -420,6 +423,8 @@ class TaskletWriter:
         if op != "=":
             return "(" + left + op + right + ")"
         else:
+            if isinstance(node.lval, ast_internal_classes.Name_Node):
+                TaskletWriter.TASKLETS_CREATED[self.sdfg][node.lval.name] = (right, node.rval)
             return left + op + right
 
 

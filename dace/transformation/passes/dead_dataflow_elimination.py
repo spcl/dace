@@ -45,7 +45,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.CFG)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.ControlFlowBlockReachability, ap.AccessSets}
+        return {ap.ControlFlowBlockReachability, ap.DetailedAccessSets}
 
     def apply(self, region, pipeline_results):
         """
@@ -64,7 +64,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
             ap.ControlFlowBlockReachability.__name__
         ][region.cfg_id]
-        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__]
+        detailed_access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str], Set[str]]] = pipeline_results[ap.DetailedAccessSets.__name__]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse region backwards
@@ -79,9 +79,13 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             #############################################
 
             # Compute states where memory will no longer be read
-            writes = access_sets[state][1]
+            # Only consider state-level writes, not interstate edge reads
+            writes = detailed_access_sets[state][1]  # state writes
             descendants = reachable[state]
-            descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
+            # Check both state-level reads and interstate edge reads in descendants
+            descendant_state_reads = set().union(*(detailed_access_sets[succ][0] for succ in descendants))
+            descendant_interstate_reads = set().union(*(detailed_access_sets[succ][2] for succ in descendants))
+            descendant_reads = descendant_state_reads | descendant_interstate_reads
             no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
 
             # Compute dead nodes
@@ -89,7 +93,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
             # Propagate deadness backwards within a state
             for node in sdutil.dfs_topological_sort(state, reverse=True):
-                if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, access_sets[state]):
+                if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, (detailed_access_sets[state][0], detailed_access_sets[state][1])):
                     dead_nodes.append(node)
 
             # Scope exit nodes are only dead if their corresponding entry nodes are
@@ -197,7 +201,12 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
             removed_data_containers = set(n.data for n in result[state]
                                           if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes)
-            access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
+            # Update detailed access sets after removal
+            detailed_access_sets[state] = (
+                detailed_access_sets[state][0] - removed_data_containers,  # state reads
+                detailed_access_sets[state][1],  # state writes (unchanged)
+                detailed_access_sets[state][2]   # interstate reads (unchanged)
+            )
 
         return result or None
 

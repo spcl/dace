@@ -590,6 +590,21 @@ def generate_serde_code(ast: Program, g: SDFG, mod_name: str = 'serde') -> Serde
         v.stype.name: v.stype for k, v in g.arrays.items()
         if isinstance(v, dace.data.ContainerArray) and isinstance(v.stype, dace.data.Structure)}
     sdfg_structs.update(sdfg_structs_from_arrays)
+
+    while True:
+        new_sdfg_structs: Dict[str, dace.data.Structure] = {
+            m.name: m for _, v in sdfg_structs.items() for _, m in v.members.items()
+            if isinstance(m, dace.data.Structure) and m.name not in sdfg_structs}
+        new_sdfg_structs_from_arrays: Dict[str, dace.data.Structure] = {
+            m.stype.name: m.stype for _, v in sdfg_structs.items() for _, m in v.members.items()
+            if isinstance(m, dace.data.ContainerArray) and
+               isinstance(m.stype, dace.data.Structure) and
+               m.stype.name not in sdfg_structs}
+        new_sdfg_structs.update(new_sdfg_structs_from_arrays)
+        if not new_sdfg_structs:
+            break
+        sdfg_structs.update(new_sdfg_structs)
+
     sdfg_structs: Dict[str, List[Tuple[str, dace.data.Data]]] = {k: [(kk, vv) for kk, vv in v.members.items()]
                                                                  for k, v in sdfg_structs.items()}
 
@@ -959,8 +974,8 @@ struct {name} {{
     cpp_serializer_fns: str = '\n'.join(cpp_serializer_fns)
 
     cpp_code = f"""
-#ifndef __DACE_SERDE__
-#define __DACE_SERDE__
+#ifndef __DACE_{mod_name.upper()}_SERDE__
+#define __DACE_{mod_name.upper()}_SERDE__
 
 #include <cassert>
 #include <istream>
@@ -969,16 +984,27 @@ struct {name} {{
 #include <sstream>
 #include <optional>
 #include <algorithm>
-#include <format>
 #include <vector>
 #include <map>
 #include <set>
 #include <ranges>
 #include <string_view>
+#include <numeric>
 
-#include "{g.name}.h"
+#include <cxxabi.h>
 
-namespace serde {{
+namespace {mod_name} {{
+    template<typename T>
+    std::string type_name() {{
+        int status = 0;
+        std::unique_ptr<char, void(*)(void*)> res {{
+            abi::__cxa_demangle(typeid(T).name(), NULL, NULL, &status),
+            std::free
+        }};
+        if (status != 0) throw status; // stub
+        return res.get();
+    }}
+
     std::vector<std::string_view> split(std::string_view s, char delim) {{
         std::vector<std::string_view> parts;
         for (int start_pos = 0, next_pos; start_pos < s.length(); start_pos = next_pos + 1) {{
@@ -1002,7 +1028,10 @@ namespace serde {{
     }}
 
     std::string read_line(std::istream& s, const std::optional<std::string>& should_contain = {{}}) {{
-        if (s.eof()) return "<eof>";
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
         char bin[101];
         s.getline(bin, 100);
@@ -1017,8 +1046,21 @@ namespace serde {{
         return {{bin}};
     }}
 
+    std::string read_until(std::istream& s, const std::string& should_contain) {{
+        while (!s.eof()) {{
+            scroll_space(s);
+            char bin[101];
+            s.getline(bin, 100);
+            assert(s.good());
+            bool ok = (std::string(bin).find(should_contain) != std::string::npos);
+            if (ok) return {{bin}};
+        }}
+        std::cerr << "Expected: '" << should_contain << "'; got EOF" << std::endl;
+        exit(EXIT_FAILURE);
+    }}
+
     struct array_meta;
-    std::map<void*, array_meta>* ARRAY_META_DICT();
+    std::pair<std::map<void *, array_meta>*, std::unique_lock<std::mutex>> ARRAY_META_DICT();
 
     struct array_meta {{
         int rank = 0;
@@ -1028,40 +1070,82 @@ namespace serde {{
 
         template<typename T> T* read(std::istream& s) const;
     }};
-    std::map<void*, array_meta>* ARRAY_META_DICT() {{
-        static auto* M = new std::map<void*, array_meta>();
-        return M;
+    std::pair<std::map<void *, array_meta>*, std::unique_lock<std::mutex>> ARRAY_META_DICT() {{
+      static auto *M = new std::map<void *, array_meta>();
+      static std::mutex mu;
+      std::unique_lock<std::mutex> lock(mu);
+      return std::make_pair(M, std::move(lock));
     }}
     template <typename T>
     const array_meta& ARRAY_META_DICT_AT(T* a) {{
-        if constexpr (std::is_pointer_v<T>) {{
-            return ARRAY_META_DICT_AT(*a);
-        }} else {{
-            return ARRAY_META_DICT()->at(a);
+        auto [M, lock] = ARRAY_META_DICT();
+        if (M->find(a) == M->end()) {{
+          std::cerr << "Array meta not found for: " << type_name<T>() << std::endl;
+          exit(EXIT_FAILURE);
         }}
+        return M->at(a);
+    }}
+
+    void read_scalar(long double& x, std::istream& s) {{
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
+        scroll_space(s);
+
+        std::string line;
+        assert(std::getline(s, line));
+        assert(!line.empty());
+        if (line == "NaN") return;
+
+        // Find the position to insert 'E' if needed (looking for exponent sign from
+        // right)
+        for (int i = line.length() - 1; i >= 0; --i) {{
+            char current_char = line[i];
+            if (current_char == '+' || current_char == '-') {{
+                // Found a potential exponent sign. Check preceding character.
+                if (i > 0 && (std::isdigit(line[i - 1]) || line[i - 1] == '.') &&
+                    !(line[i - 1] == 'E' || line[i - 1] == 'e' || line[i - 1] == 'D' ||
+                    line[i - 1] == 'd')) {{
+                line.insert(i, "E"); // Insert 'E' and break
+                break;
+              }}
+            }} else if (current_char == 'E' || current_char == 'e' ||
+                        current_char == 'D' || current_char == 'd') {{
+              // Already standard scientific notation, no insertion needed.
+              break; // Exit loop
+            }}
+        }}
+
+        // Parse the (potentially modified) string
+        std::istringstream iss(line);
+        iss >> x;
+        if(iss.fail()) {{
+            std::cerr << "Could not read long double: " << line << std::endl;
+            exit(EXIT_FAILURE);
+        }}
+    }}
+
+    void read_scalar(float& x, std::istream& s) {{
+        long double xx;
+        read_scalar(xx, s);
+        x = static_cast<float>(xx);
+    }}
+
+    void read_scalar(double& x, std::istream& s) {{
+        long double xx;
+        read_scalar(xx, s);
+        x = static_cast<double>(xx);
     }}
 
     template<typename T>
     void read_scalar(T& x, std::istream& s) {{
-        if (s.eof()) return;
+        if (s.eof()) {{
+            std::cerr << "Got unexpected EOF" << std::endl;
+            exit(EXIT_FAILURE);
+        }}
         scroll_space(s);
         s >> x;
-    }}
-
-    void read_scalar(float& x, std::istream& s) {{
-        if (s.eof()) return;
-        scroll_space(s);
-        long double y;
-        s >> y;
-        x = y;
-    }}
-
-    void read_scalar(double& x, std::istream& s) {{
-        if (s.eof()) return;
-        scroll_space(s);
-        long double y;
-        s >> y;
-        x = y;
     }}
 
     void read_scalar(bool& x, std::istream& s) {{
@@ -1090,7 +1174,7 @@ namespace serde {{
 
     template<typename T>
     std::pair<array_meta, T*> read_array(std::istream& s) {{
-        auto m = serde::read_array_meta(s);
+        auto m = read_array_meta(s);
         auto* y = m.read<T>(s);
         return {{m, y}};
     }}
@@ -1122,8 +1206,9 @@ namespace serde {{
             for (int i = 0; i < volume(); ++i) {{
                 deserialize(&buf[i], s);
             }}
-            (*ARRAY_META_DICT())[buf] = *this;
         }}
+        auto [M, lock] = ARRAY_META_DICT();
+        (*M)[buf] = *this;
         return buf;
     }}
 
@@ -1143,9 +1228,9 @@ namespace serde {{
     }}
 
     {gdata.cpp_serde}
-}}  // namesepace serde
+}}  // namesepace {mod_name}
 
-#endif // __DACE_SERDE__
+#endif // __DACE_{mod_name.upper()}_SERDE__
 """
     result = subprocess.run(['clang-format'], input=cpp_code.strip(), text=True, capture_output=True)
     if not (result.returncode or result.stderr):

@@ -1712,6 +1712,50 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
+def test_constant_expression_replacement():
+    sources, main = SourceCodeBuilder().add_file("""
+module main
+  implicit none
+  private
+  real, parameter :: &
+    three = 3.0
+contains
+  subroutine foo
+    implicit none
+    real :: res1, res2, res3, unk
+    real, parameter :: &
+        x = -(three + 4.0), &
+        y = -4.0, &
+        z = 3.0
+    res1 = unk ** x
+    res2 = unk ** y
+    res3 = unk ** z
+  end subroutine foo
+end module main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = const_eval_nodes(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE main
+  IMPLICIT NONE
+  PRIVATE
+  REAL, PARAMETER :: three = 3.0
+  CONTAINS
+  SUBROUTINE foo
+    IMPLICIT NONE
+    REAL :: res1, res2, res3, unk
+    REAL, PARAMETER :: x = - (7.0), y = - 4.0, z = 3.0
+    res1 = unk ** (- 7.0)
+    res2 = unk ** (- 4.0)
+    res3 = unk ** 3.0
+  END SUBROUTINE foo
+END MODULE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
 
 def test_constant_resolving_non_expressions():
     sources, main = SourceCodeBuilder().add_file("""
@@ -2958,6 +3002,58 @@ SUBROUTINE main(a)
   TYPE(T) :: z
   z % x => a
   a = SUM(z % x)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_replace_case_selector_consts():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  integer, parameter :: a = 1
+
+contains
+  subroutine foo(b)
+    integer, intent(inout) :: b
+
+    select case(b)
+    case(a)
+      b = 5
+    end select
+  end subroutine foo
+end module lib
+
+subroutine main()
+  use lib
+  implicit none
+  integer :: b
+  call foo(b)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = const_eval_nodes(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: a = 1
+  CONTAINS
+  SUBROUTINE foo(b)
+    INTEGER, INTENT(INOUT) :: b
+    SELECT CASE (b)
+    CASE (1)
+      b = 5
+    END SELECT
+  END SUBROUTINE foo
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  INTEGER :: b
+  CALL foo(b)
 END SUBROUTINE main
 """.strip()
     assert got == want

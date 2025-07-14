@@ -29,7 +29,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Deallocate_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part, \
     Private_Components_Stmt, Generic_Spec, Language_Binding_Spec, Type_Attr_Spec, Suffix, Proc_Component_Def_Stmt, \
     Proc_Decl, End_Type_Stmt, End_Interface_Stmt, Procedure_Declaration_Stmt, Pointer_Assignment_Stmt, Cycle_Stmt, \
-    Equiv_Operand
+    Equiv_Operand, Case_Value_Range_List
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, NumberBase, BlockBase
 
@@ -522,14 +522,43 @@ BINARY_OPS = {
     '/': _cdiv,
     '.OR.': np.logical_or,
     '.AND.': np.logical_and,
+    '.XOR.': np.logical_xor,
     '**': operator.pow,
 }
 
-TRIG_FNS = {
-    'ATAN': np.arctan,
-    'ASIN': np.arcsin,
+# TODO: Bessel, Complex constructors, DiM, ErF, ErFC
+INTR_FNS = {
+    'ABS': np.fabs,
     'ACOS': np.arccos,
+    'AIMAG': np.imag,
+    'AINT': np.trunc,
+    'AND': np.logical_and,
+    'ANINT': np.round,
+    'ASIN': np.arcsin,
+    'ATAN': np.arctan,
     'ATAN2': np.arctan2,
+    'CONJ': np.conj,
+    'COS': np.cos,
+    'COSH': np.cosh,
+    'EXP': np.exp,
+    'IMAG': np.imag,
+    'IMAGPART': np.imag,
+    'LOG': np.log,
+    'LOG10': np.log10,
+    'MAX': np.max,
+    'MIN': np.min,
+    'MOD': np.fmod,
+    'NOT': np.logical_not,
+    'OR': np.logical_or,
+    'REAL': np.real,
+    'REALPART': np.real,
+    'SIGN': np.copysign,
+    'SIN': np.sin,
+    'SINH': np.sinh,
+    'SQRT': np.sqrt,
+    'TAN': np.tan,
+    'TANH': np.tanh,
+    'XOR': np.logical_xor,
 }
 
 NUMPY_INTS_TYPES = Union[np.int8, np.int16, np.int32, np.int64]
@@ -657,7 +686,7 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
             a = _const_eval_basic_type(a, alias_map)
             if isinstance(a, (np.float32, np.float64)):
                 return type(a)(sys.float_info.epsilon)
-        elif intr.string in TRIG_FNS:
+        elif intr.string in INTR_FNS:
             avals = tuple(_const_eval_basic_type(a, alias_map) for a in args)
             if all(isinstance(a, (np.float32, np.float64)) for a in avals):
                 return np.arctan(*avals)
@@ -3137,6 +3166,8 @@ def const_eval_nodes(ast: Program) -> Program:
             return False
         assert not np.isnan(val)
         val = numpy_type_to_literal(val)
+        if val.tostr().startswith('-'):
+            val = Parenthesis(f'({val})')
         replace_node(n, val)
         return True
 
@@ -3144,6 +3175,16 @@ def const_eval_nodes(ast: Program) -> Program:
         lv, op, rv = asgn.children
         assert op == '='
         _const_eval_node(rv)
+    for rngl in reversed(walk(ast, Case_Value_Range_List)):
+        rng = len(rngl.children)
+        assert rng <= 2
+        # We currently do not yet support two children in Case_Value_Range,
+        # but this implementation should be future-proof.
+        for v in rngl.children:
+            if _const_eval_node(v):
+                continue
+            for nm in reversed(walk(rngl, Name)):
+                _const_eval_node(nm)
     for expr in reversed(walk(ast, EXPRESSION_CLASSES)):
         # Try to const-eval the expression.
         if _const_eval_node(expr):
