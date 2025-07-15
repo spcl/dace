@@ -47,10 +47,7 @@ def test_module():
     expected = torch_fn(x)
     result = train_step(x)
     tensors_close('loss', expected, result)
-
-    assert all(
-        hasattr(p, 'grad') and p.grad is not None
-        for p in dace_module.parameters())
+    assert all(hasattr(p, 'grad') and p.grad is not None for p in dace_module.parameters())
 
     for d, t in zip(dace_module.parameters(), torch_module.parameters()):
         torch_tensors_close("param", t.grad, d.grad)
@@ -58,11 +55,11 @@ def test_module():
 
 @pytest.mark.pure
 def test_parse_backward_simple():
-    x = torch.randn(10, 5)
-    dy = torch.randn(10)
+    x = torch.randn(10, 5, dtype=torch.float64)
+    dy = torch.randn(10, dtype=torch.float64)
 
     @dace.program
-    def train_step(x: dace.float32[10, 5], dy: dace.float32[10]):
+    def train_step(x: dace.float64[10, 5], dy: dace.float64[10]):
         x.requires_grad_()
         red = np.add.reduce(x, axis=1)
         torch.autograd.backward(red, dy)
@@ -77,10 +74,10 @@ def test_parse_backward_simple():
 
 
 def test_parse_backward_scalar():
-    x = torch.randn(10, 5)
+    x = torch.randn(10, 5, dtype=torch.float64)
 
     @dace.program
-    def train_step(x: dace.float32[10, 5]):
+    def train_step(x: dace.float64[10, 5]):
         x.requires_grad_()
         red = np.add.reduce(x, axis=[0, 1])
         torch.autograd.backward(red)
@@ -96,11 +93,11 @@ def test_parse_backward_scalar():
 
 @pytest.mark.pure
 def test_parse_backward_with_forwarding():
-    x = torch.randn(10, 5)
-    dy = torch.randn(10)
+    x = torch.randn(10, 5, dtype=torch.float64)
+    dy = torch.randn(10, dtype=torch.float64)
 
     @dace.program
-    def train_step(x: dace.float32[10, 5]):
+    def train_step(x: dace.float64[10, 5]):
         x.requires_grad_()
         y = x + 1
         red = np.add.reduce(x, axis=1, keepdims=True)
@@ -122,7 +119,7 @@ def test_parse_backward_with_forwarding():
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    result = train_step(x.clone(), dy.clone())
+    result = train_step(x.clone())
     expected = torch_fn(x.clone())
     tensors_close('x.grad', expected, result)
 
@@ -131,8 +128,7 @@ def test_parse_backward_with_forwarding():
 def test_two_backward_passes():
 
     @dace.program
-    def train_step(x1: dace.float32[10, 5], x2: dace.float32[5],
-                   dy: dace.float32[10]):
+    def train_step(x1: dace.float64[10, 5], x2: dace.float64[5], dy: dace.float64[10]):
         x1.requires_grad_()
         x2.requires_grad_()
 
@@ -165,9 +161,9 @@ def test_two_backward_passes():
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    x1 = torch.randn(10, 5)
-    x2 = torch.randn(5)
-    dy = torch.randn(10)
+    x1 = torch.randn(10, 5, dtype=torch.float64)
+    x2 = torch.randn(5, dtype=torch.float64)
+    dy = torch.randn(10, dtype=torch.float64)
 
     r1, r2 = train_step(x1.clone(), x2.clone(), dy.clone())
     ex_1, ex_2 = torch_fn(x1.clone(), x2.clone(), dy.clone())
@@ -179,7 +175,7 @@ def test_two_backward_passes():
 def test_two_backward_passes_accumulate():
 
     @dace.program
-    def train_step(x: dace.float32[10, 5], dy: dace.float32[10]):
+    def train_step(x: dace.float64[10, 5], dy: dace.float64[10]):
         x.requires_grad_()
 
         z1 = x + 1
@@ -210,8 +206,8 @@ def test_two_backward_passes_accumulate():
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    x1 = torch.randn(10, 5)
-    dy = torch.randn(10)
+    x1 = torch.randn(10, 5, dtype=torch.float64)
+    dy = torch.randn(10, dtype=torch.float64)
 
     result = train_step(x1.clone(), dy.clone())
     expected = torch_fn(x1.clone(), dy.clone())
@@ -220,9 +216,9 @@ def test_two_backward_passes_accumulate():
 
 
 if __name__ == "__main__":
-    test_two_backward_passes_accumulate()
-    test_two_backward_passes()
-    test_parse_backward_with_forwarding()
-    test_parse_backward_scalar()
-    test_parse_backward_simple()
+    # test_two_backward_passes_accumulate()
+    # test_two_backward_passes()
+    # test_parse_backward_with_forwarding()
+    # test_parse_backward_scalar()
+    # test_parse_backward_simple()
     test_module()
