@@ -594,18 +594,20 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
             # don't use cached access node, if it was an input, e.g.
             # A[1] = tasklet()
             # A[1] = tasklet(A[1])
+            # TODO: is this really necessary?
+            # TODO: this extends more generally to all "parents"
             # TODO / Question: Do I need port to "port this up" to the MapScope level? I guess so?
-            cached_node_is_input = False
-            if memlet.data in cache:
-                for _name, in_memlet in node.in_memlets.items():
-                    if memlet.data == in_memlet.data:
-                        cached_node_is_input = True
-                        break
+            # cached_node_is_input = False
+            # if memlet.data in cache:
+            #     for _name, in_memlet in node.in_memlets.items():
+            #         if memlet.data == in_memlet.data:
+            #             cached_node_is_input = True
+            #             break
 
-            if memlet.data not in cache or cached_node_is_input:
-                # cache write access node
-                write_access_node = self._current_state.add_write(memlet.data)
-                cache[memlet.data] = write_access_node
+            # if memlet.data not in cache or cached_node_is_input:
+            # cache write access node
+            write_access_node = self._current_state.add_write(memlet.data)
+            cache[memlet.data] = write_access_node
 
             access_node = cache[memlet.data]
             self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)

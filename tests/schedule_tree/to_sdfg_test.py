@@ -223,6 +223,7 @@ def test_create_state_boundary_state_transition(control_flow):
 
 
 @pytest.mark.xfail(reason="Not yet implemented")
+@pytest.mark.parametrize("control_flow", (True, False))
 def test_create_state_boundary_empty_memlet(control_flow):
     sdfg = dace.SDFG("tester")
     state = sdfg.add_state("start", is_start_block=True)
@@ -707,7 +708,8 @@ if __name__ == '__main__':
     test_state_boundaries_propagation(boundary=True)
     test_create_state_boundary_state_transition(control_flow=True)
     test_create_state_boundary_state_transition(control_flow=False)
-    test_create_state_boundary_empty_memlet()
+    # test_create_state_boundary_empty_memlet(control_flow=True)
+    # test_create_state_boundary_empty_memlet(control_flow=False)
     test_create_tasklet_raw()
     test_create_tasklet_waw()
     test_create_for_loop()
