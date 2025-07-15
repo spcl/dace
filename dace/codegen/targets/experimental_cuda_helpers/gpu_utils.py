@@ -1,13 +1,15 @@
 import functools
 
 import sympy
-from typing import List
+from typing import Set, List, Optional
 
-from dace import Config, symbolic, data as dt
-from dace.sdfg import nodes
+import dace
+from dace import Config, symbolic, data as dt, dtypes
+from dace.sdfg import nodes, SDFGState
 from dace.codegen import cppunparse
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
+from dace.transformation.helpers import get_parent_map
 
 
 def symbolic_to_cpp(arr):
@@ -119,3 +121,28 @@ def get_defined_type(data: dt.Data) -> DefinedType:
     else:
         raise NotImplementedError(f"Data type '{type(data).__name__}' is not supported for defined type inference."
                                   "Only Scalars and Arrays are expected for Kernels.")
+    
+def is_within_schedule_types(state: SDFGState, node: nodes.Node, schedules: Set[dtypes.ScheduleType]) -> bool:
+    """
+    Checks if the given node is enclosed within a Map whose schedule type
+    matches any in the `schedules` set.
+
+    Args:
+        state (SDFGState): The State where the node resides
+        node (nodes.Node): The node to check.
+        schedules (set[dtypes.ScheduleType]): A set of schedule types to match (e.g., {dtypes.ScheduleType.GPU_Device}).
+
+    Returns:
+        True if the node is enclosed by a Map with a schedule type in `schedules`, False otherwise.
+    """
+    current = node
+
+    while current is not None:
+        if isinstance(current, nodes.MapEntry):
+            if current.map.schedule in schedules:
+                return True
+
+        parent = get_parent_map(state, current)
+        if parent is None:
+            return False
+        current, state = parent

@@ -4,6 +4,7 @@ import dace
 from dace import SDFG, properties, SDFGState
 from dace import dtypes
 from dace.codegen import common
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import is_within_schedule_types
 from dace.config import Config
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.sdfg import nodes
@@ -269,6 +270,7 @@ class NaiveGPUStreamScheduler(ppl.Pass):
         Synchronization is needed:
         - At the end of a state, if we copy to/from GPU AccessNodes.
         - Immediately after a node, if data leaves GPU memory and is further used.
+        - Furthermore, never within the kernel code.
 
         Returns:
             - sync_state: Maps each SDFGState to a set of stream IDs to sync at the end of the state.
@@ -290,6 +292,12 @@ class NaiveGPUStreamScheduler(ppl.Pass):
 
         def is_sink_node(node, state):
             return state.out_degree(node) == 0
+        
+        def edge_within_kernel(state, src, dst):
+            gpu_schedules = dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN
+            src_in_kernel = is_within_schedule_types(state, src, gpu_schedules)
+            dst_in_kernel = is_within_schedule_types(state, dst, gpu_schedules)
+            return src_in_kernel and dst_in_kernel
 
         # ------------------ Sync detection logic -----------------------------
 
@@ -304,17 +312,21 @@ class NaiveGPUStreamScheduler(ppl.Pass):
                 sync_state[state] = set()
 
             # --- Heuristics for when to sync ---
-            if is_gpu_accessnode(src, state) and is_nongpu_accessnode(dst, state) and is_sink_node(dst, state):
+            if (is_gpu_accessnode(src, state) and is_nongpu_accessnode(dst, state) and
+                is_sink_node(dst, state) and not edge_within_kernel(state, src, dst)):
                 sync_state[state].add(assigned_nodes[dst])
 
-            elif is_gpu_accessnode(src, state) and is_nongpu_accessnode(dst, state) and not is_sink_node(dst, state):
+            elif (is_gpu_accessnode(src, state) and is_nongpu_accessnode(dst, state) and
+                not is_sink_node(dst, state) and not edge_within_kernel(state, src, dst)):
                 sync_state[state].add(assigned_nodes[dst])
                 sync_node[dst] = state
 
-            elif is_nongpu_accessnode(src, state) and is_gpu_accessnode(dst, state):
+            elif (is_nongpu_accessnode(src, state) and is_gpu_accessnode(dst, state) and
+                not edge_within_kernel(state, src, dst)):
                 sync_state[state].add(assigned_nodes[dst])
 
-            elif is_kernel_exit(src) and is_gpu_accessnode(dst, state) and is_sink_node(dst, state):
+            elif (is_kernel_exit(src) and is_gpu_accessnode(dst, state) and
+                is_sink_node(dst, state)):
                 sync_state[state].add(assigned_nodes[dst])
 
             else:
