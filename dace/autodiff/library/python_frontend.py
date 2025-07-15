@@ -16,7 +16,7 @@ from dace.transformation import optimizer
 from dace.frontend.python import common
 from dace.frontend.common import op_repository
 from dace.frontend.python import newast
-
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 from dace.util import all_equal, find_str_not_in_set, expand_nodes
 from dace.autodiff import analysis as autodiff_analysis
 
@@ -34,9 +34,19 @@ def backward(pv: newast.ProgramVisitor,
     """
     Adds a backward pass node to the SDFG.
 
-    This function analyses the the dependency tree of the tensors and computes
+    This function analyses the dependency tree of the tensors and computes
     gradients for each Parameter that was used to compute the tensors.
     """
+
+    # First, remove function call regions
+    transformation = InlineControlFlowRegions()
+    transformation.set_opts({
+        'no_inline_function_call_regions': False,
+        'no_inline_named_regions': False,
+        'no_inline_loops': True,
+        'no_inline_conditional': True
+    })
+    transformation.apply_pass(sdfg, {})
 
     if isinstance(tensors, str):
         tensors = [tensors]
@@ -100,8 +110,9 @@ def backward(pv: newast.ProgramVisitor,
         conn_name = find_str_not_in_set(bwd_node.out_connectors, grad_name)
         bwd_node.required_gradients[param] = conn_name
         bwd_node.add_out_connector(conn_name)
-
-        state.add_edge(bwd_node, conn_name, state.add_write(grad_name), None, sdfg.make_array_memlet(grad_name))
+        write_an = state.add_write(grad_name)
+        write_an.setzero = True
+        state.add_edge(bwd_node, conn_name, write_an, None, sdfg.make_array_memlet(grad_name))
 
 
 @op_repository.replaces_attribute('ParameterArray', 'grad')
