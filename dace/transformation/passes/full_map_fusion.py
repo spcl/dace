@@ -160,8 +160,10 @@ class FullMapFusion(ppl.Pass):
                     assume_always_shared=self.assume_always_shared,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
-                    single_use_data=pipeline_results["FindSingleUseData"],
                 ))
+            # TODO: Remove once issue#1911 has been solved.
+            fusion_transforms[-1]._single_use_data = single_use_data = pipeline_results["FindSingleUseData"]
+
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
             #   Map fusion. The reason is that it has to check any possible Map pair. Thus, the
