@@ -15,8 +15,7 @@ def get_data_file(url, directory_name=None) -> str:
         :returns: the path of the downloaded file.
     """
 
-    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' /
-                      'data')
+    data_directory = (pathlib.Path(dace.__file__).parent.parent / 'tests' / 'data')
 
     if directory_name is not None:
         data_directory /= directory_name
@@ -44,11 +43,7 @@ def tensors_close(name, expected, result, rtol=1e-5, atol=1e-5):
 
     expected = to_numpy(expected)
     result = to_numpy(result)
-    np.testing.assert_allclose(expected,
-                               result,
-                               rtol=rtol,
-                               atol=atol,
-                               err_msg=f'{name} not close')
+    np.testing.assert_allclose(result, expected, rtol=rtol, atol=atol, err_msg=f'{name} not close')
 
 
 def torch_tensors_close(name, torch_v, dace_v, rtol=1e-5, atol=1e-4):
@@ -60,11 +55,7 @@ def torch_tensors_close(name, torch_v, dace_v, rtol=1e-5, atol=1e-4):
 
     torch_v = torch_v.detach().cpu().numpy()
     dace_v = dace_v.detach().cpu().numpy()
-    np.testing.assert_allclose(dace_v,
-                               torch_v,
-                               rtol=rtol,
-                               atol=atol,
-                               err_msg=f'{name} not close')
+    np.testing.assert_allclose(dace_v, torch_v, rtol=rtol, atol=atol, err_msg=f'{name} not close')
 
 
 T = typing.TypeVar("T")
