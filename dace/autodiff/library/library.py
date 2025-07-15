@@ -142,9 +142,7 @@ class ExpandBackwardPass(pm.ExpandTransformation):
 
         access_sets = AccessSets().apply_pass(sdfg, {})
 
-        forward_state = node.determine_forward_state(sdfg, state, access_sets=access_sets)
-        nsdfg = SDFG("backward_" + forward_state.label)
-        nstate = nsdfg.add_state()
+        nsdfg = SDFG("backward_" + sdfg.label)
 
         # Check for other BackwardPasses that also compute the same gradients as us
         node.propagate_conflicts(sdfg, state)
@@ -166,11 +164,9 @@ class ExpandBackwardPass(pm.ExpandTransformation):
             node.remove_in_connector(forward_non_grad_conn_name)
 
         gen = engine.BackwardPassGenerator(sdfg=sdfg,
-                                           state=forward_state,
                                            given_gradients=given_gradients,
                                            required_gradients=node.required_gradients.keys(),
                                            backward_sdfg=nsdfg,
-                                           backward_state=nstate,
                                            array_grad_map=array_grad_map,
                                            conflicted_gradient_buffers=node._conflicted_gradients)
 
@@ -278,41 +274,8 @@ class BackwardPass(nodes.LibraryNode):
                         self._conflicted_gradients |= conflicts
                         node._conflicted_gradients |= conflicts
 
-    def determine_forward_state(self,
-                                sdfg: SDFG,
-                                state: SDFGState,
-                                access_sets: Optional[autodiff_analysis.AccessSets] = None) -> SDFGState:
-        """
-        Determine what the forward pass state for this backward node is.
-
-        This is the state containing the whole subgraph that will be differentiated.
-        This can be different from the state that the node is in, for example
-        when there are multiple Backward Passes parsed in the python frontend.
-
-        :param sdfg: The SDFG containing the node.
-        :param state: The state containing the node.
-        :param access_sets: optionally precomupted access_sets
-        :return: The state containing the forward pass that will be differentiated.
-        """
-        # We need to find the state that where all given_gradients are written.
-        given_gradients = self.outer_names_given_gradients(state)
-
-        if access_sets is None:
-            access_sets = AccessSets().apply_pass(sdfg, {})
-
-        candidate_states = []
-        for cand in sdfg.states():
-            _, write_set = access_sets[sdfg.cfg_id][cand]
-            if given_gradients.issubset(write_set):
-                candidate_states.append(cand)
-
-        if len(candidate_states) != 1:
-            raise ValueError("Could not find a state where all outputs are written. The "
-                             "DaCe autodiff currently only supports differentiating single dataflow states.")
-        return candidate_states[0]
-
     def validate(self, sdfg, state):
-        # check that there is a correspondence between given gradients and inputs
+        # Check that there is a correspondence between given gradients and inputs
         all_inputs = set(self.in_connectors)
         for given_grad, tensor_name in self.given_gradients.items():
             if given_grad not in all_inputs:
@@ -324,9 +287,7 @@ class BackwardPass(nodes.LibraryNode):
         if all_inputs:
             raise ValueError("The following in connectors were not included in given_gradients: {}".format(
                 ', '.join(all_inputs)))
-        # check that the forward state can be determined
-        self.determine_forward_state(sdfg, state)
 
-        # check that we are computing at least one gradient
+        # Check that we are computing at least one gradient
         if len(self.out_connectors) == 0:
             raise ValueError("BackwardPass node '{}' does not compute any gradients".format(self.name))
