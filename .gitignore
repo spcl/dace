@@ -195,3 +195,7 @@ _build/
 
 # Ignoring the test junk
 _all_tests/
+
+
+# Ignore my python environment
+dace_env/

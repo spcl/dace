@@ -1548,7 +1548,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         from dace.sdfg import SDFG
         arrays = set(n.data for n in self.data_nodes())
         sdfg = SDFG(self.label)
-        sdfg._arrays = {k: self.sdfg.arrays[k] for k in arrays}
+        sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
+        #sdfg._arrays = {k: self.sdfg.arrays[k] for k in arrays}
         sdfg.add_node(self)
 
         return sdfg._repr_html_()
