@@ -1070,7 +1070,8 @@ def prepend_children(par: Base, children: Union[Base, List[Base]]):
 def remove_children(par: Base, children: Union[Base, List[Base]]):
     if isinstance(children, Base):
         children = [children]
-    repl = [c for c in par.children if c not in children]
+    cids = {id(c) for c in children}
+    repl = [c for c in par.children if id(c) not in cids]
     set_children(par, repl)
 
 
