@@ -494,7 +494,10 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
                 outer_to_connect["outputs"].add(name)
 
             # connect "outside the map"
-            if name not in access_cache:
+            # only re-use cached write-only nodes, e.g. don't create a cycle for
+            # map i=0:20:
+            #  A[i] = tasklet(A[i])
+            if name not in access_cache or self._current_state.out_degree(access_cache[name]) > 0:
                 # cache write access into access_cache
                 write_access_node = self._current_state.add_write(name)
                 access_cache[name] = write_access_node
@@ -591,23 +594,12 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Connect output memlets
         for name, memlet in node.out_memlets.items():
-            # don't use cached access node, if it was an input, e.g.
-            # A[1] = tasklet()
+            # only re-use cached write-only nodes, e.g. don't create a cycle for
             # A[1] = tasklet(A[1])
-            # TODO: is this really necessary?
-            # TODO: this extends more generally to all "parents"
-            # TODO / Question: Do I need port to "port this up" to the MapScope level? I guess so?
-            # cached_node_is_input = False
-            # if memlet.data in cache:
-            #     for _name, in_memlet in node.in_memlets.items():
-            #         if memlet.data == in_memlet.data:
-            #             cached_node_is_input = True
-            #             break
-
-            # if memlet.data not in cache or cached_node_is_input:
-            # cache write access node
-            write_access_node = self._current_state.add_write(memlet.data)
-            cache[memlet.data] = write_access_node
+            if memlet.data not in cache or self._current_state.out_degree(cache[memlet.data]) > 0:
+                # cache write access node
+                write_access_node = self._current_state.add_write(memlet.data)
+                cache[memlet.data] = write_access_node
 
             access_node = cache[memlet.data]
             self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)

@@ -287,6 +287,32 @@ def test_create_tasklet_waw():
     assert [(s2_tasklet, s2_anode)] == [(edge.src, edge.dst) for edge in s2.edges()]
 
 
+def test_create_tasklet_war():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={"A": dace.data.Array(dace.float64, [20])},
+        children=[
+            tn.TaskletNode(
+                nodes.Tasklet("read_write", {"read"}, {"write"}, "write = read + 1"),
+                {"read": dace.Memlet("A[1]")},
+                {"write": dace.Memlet("A[1]")},
+            )
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+
+    sdfg_states = list(sdfg.states())
+    assert len(sdfg_states) == 1
+
+    state_nodes = list(sdfg_states[0].nodes())
+    assert [node.name for node in state_nodes
+            if isinstance(node, nodes.Tasklet)] == ["read_write"], "Expect one Tasklet node."
+    assert [node.data for node in state_nodes
+            if isinstance(node, nodes.AccessNode)] == ["A", "A"], "Expect two AccessNodes for A."
+
+
 def test_create_for_loop():
     # yapf: disable
     loop=tn.ForScope(
@@ -401,6 +427,23 @@ def test_create_map_scope_read_after_write():
                                            {"out": dace.Memlet("B[i]")}),
                             tn.TaskletNode(nodes.Tasklet("read", {"in_field"}, {"out_field"}, "out_field = in_field"),
                                            {"in_field": dace.Memlet("B[i]")}, {"out_field": dace.Memlet("A[i]")})
+                        ])
+        ])
+
+    sdfg = stree.as_sdfg()
+    sdfg.validate()
+
+
+def test_create_map_scope_write_after_read():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name="tester",
+        containers={"A": dace.data.Array(dace.float64, [20])},
+        children=[
+            tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
+                        children=[
+                            tn.TaskletNode(nodes.Tasklet("read_write", {"read"}, {"write"}, "write = read+1"),
+                                           {"read": dace.Memlet("A[i]")}, {"write": dace.Memlet("A[i]")})
                         ])
         ])
 
