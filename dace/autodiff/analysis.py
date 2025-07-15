@@ -82,7 +82,7 @@ def is_previously_written(sdfg: SDFG,
 
     # check other states
     for predecessor in reachable[state]:
-        _, write_set = access_sets[sdfg.cfg_id][predecessor]
+        _, write_set = access_sets[predecessor]
         if array_name in write_set:
             return True
     return False
