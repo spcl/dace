@@ -39,7 +39,7 @@ def test_conv2d(default_implementation, sdfg_name, use_cpp_dispatcher):
 
     torch_output = ptmodel(x)
 
-    assert np.allclose(torch_output.detach().numpy(), dace_output, atol=1e-06)
+    assert np.allclose(torch_output.detach().numpy(), dace_output.detach().numpy(), atol=1e-06)
 
 
 @pytest.mark.gpu

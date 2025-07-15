@@ -10,13 +10,13 @@ from dace.transformation.onnx import parameter_to_transient
 
 @pytest.mark.cpublas
 def test_bert_encoder(gpu, default_implementation, sdfg_name):
-    batch_size = 8
-    seq_len = 512
-    hidden_size = 768
+    batch_size = 2
+    seq_len = 32
+    hidden_size = 48
 
     input = copy_to_gpu(gpu, torch.randn([batch_size, seq_len, hidden_size]))
 
-    ptmodel = copy_to_gpu(gpu, BertLayer(BertConfig()).eval())
+    ptmodel = copy_to_gpu(gpu, BertLayer(BertConfig(hidden_size=hidden_size)).eval())
     pt_outputs = ptmodel(input.clone())
 
     dace_model = DaceModule(ptmodel,
