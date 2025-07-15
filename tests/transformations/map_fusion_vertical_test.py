@@ -908,7 +908,7 @@ def test_different_offsets():
 
     def _make_sdfg(N: int, M: int) -> dace.SDFG:
         sdfg = dace.SDFG(unique_name("test_different_access"))
-        names = ["A", "B", "__tmp", "__return"]
+        names = ["A", "B", "__tmp", "ret"]
         def_shape = (N, M)
         sshape = {"B": (N + 1, M + 2), "__tmp": (N + 1, M + 1)}
         for name in names:
@@ -947,7 +947,7 @@ def test_different_offsets():
                 "__in2": dace.Memlet("B[__i0 + 1, __i1 + 2]"),
             },
             code="__out = __in1 + __in2",
-            outputs={"__out": dace.Memlet("__return[__i0, __i1]")},
+            outputs={"__out": dace.Memlet("ret[__i0, __i1]")},
             input_nodes={_tmp, B},
             output_nodes={_return},
             external_edges=True,
@@ -962,9 +962,10 @@ def test_different_offsets():
 
     A = np.array(np.random.rand(N, M), dtype=np.float64, copy=True)
     B = np.array(np.random.rand(N + 1, M + 2), dtype=np.float64, copy=True)
+    res = np.array(np.random.rand(N, M), dtype=np.float64, copy=True)
 
     ref = reference(A, B)
-    res = compile_and_run_sdfg(sdfg, A=A, B=B)
+    compile_and_run_sdfg(sdfg, A=A, B=B, ret=res)
     assert np.allclose(ref, res)
 
 

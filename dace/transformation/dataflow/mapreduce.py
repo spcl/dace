@@ -219,6 +219,7 @@ class MapWCRFusion(pm.SingleStateTransformation):
         map_fusion.setup_match(
             sdfg, self.cfg_id, self.state_id, {
                 MapFusionVertical.first_map_exit: graph.node_id(self.tmap_exit),
+                MapFusionVertical.array: graph.node_id(self.in_array),
                 MapFusionVertical.second_map_entry: graph.node_id(map_entry),
             }, 0)
         map_fusion.apply(graph, sdfg)
