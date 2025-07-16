@@ -723,6 +723,13 @@ def isolate_nested_sdfg(
         that it can be performed by returning either `True` or `False`.
     """
 
+    # We can only isolate the nested SDFG if it is on global scope, for example
+    #  inside a Map it is impossible to split the state.
+    if state.scope_dict()[nsdfg_node] is not None:
+        if test_if_applicable:
+            return False
+        raise ValueError(f'Cannot isolate NestedSDFG "{nsdfg_node}" because it is within a scope.')
+
     # These are the nodes that will be moved to the Pre State, they are found through
     #  a backwards search starting from the nodes that serves as input to the nested
     #  SDFG. It is important that these nodes, that serves as input to the nested
@@ -1287,22 +1294,31 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
     :param state: The state that contains the root of the scope tree.
     :param entry: A scope entry node to set as root, otherwise the state is
                   the root if None is given.
+
+    :note: This function adds a `state` attribute to the `ScopeTree` objects, it refers to
+        the state to which the scope was found.
     """
-    stree = state.scope_tree()[entry]
+    # We have to make a copy because we modify the `ScopeTree` objects that are returned and they
+    #  are cached. We can not use `deepcopy()` here because this would also copy scope nodes,
+    #  which we do not want. Thus we call `ScopeTree.copy()` which only copies the `ScopeTree`s
+    #  inside `children` but everything else is just assigned.
+    stree = copy.copy(state.scope_tree()[entry])
     stree.state = state  # Annotate state in tree
 
     # Add nested SDFGs as children
     def traverse(state: SDFGState, treenode: ScopeTree):
-        snodes = state.scope_children()[treenode.entry]
+        snodes = copy.copy(state.scope_children()[treenode.entry])  # See above why.
+
         for node in snodes:
             if isinstance(node, nodes.NestedSDFG):
                 for nstate in node.sdfg.states():
-                    ntree = nstate.scope_tree()[None]
+                    ntree = copy.copy(nstate.scope_tree()[None])  # See above why.
                     ntree.state = nstate
                     treenode.children.append(ntree)
+
         for child in treenode.children:
             if hasattr(child, 'state') and child.state != state:
-                traverse(getattr(child, 'state', state), child)
+                traverse(child.state, child)
 
     traverse(state, stree)
     return stree
@@ -1310,17 +1326,21 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
 
 def get_internal_scopes(state: SDFGState,
                         entry: nodes.EntryNode,
-                        immediate: bool = False) -> List[Tuple[SDFGState, nodes.EntryNode]]:
+                        immediate: bool = False,
+                        recursive_scope_tree: Optional[ScopeTree] = None) -> List[Tuple[SDFGState, nodes.EntryNode]]:
     """
     Returns all internal scopes within a given scope, including if they
     reside in nested SDFGs.
 
     :param state: State in which entry node resides.
     :param entry: The entry node to start from.
-    :param immediate: If True, only returns the scopes that are immediately
-                      nested in the map.
+    :param immediate: If True, only returns the scopes that are immediately nested in the map.
+    :param recursive_scope_tree: The recursive scope tree, see `scope_tree_recursive()` for more.
     """
-    stree = scope_tree_recursive(state, entry)
+
+    if recursive_scope_tree is None:
+        recursive_scope_tree = scope_tree_recursive(state, entry)
+
     result = []
 
     def traverse(state: SDFGState, treenode: ScopeTree):
@@ -1332,7 +1352,7 @@ def get_internal_scopes(state: SDFGState,
             else:  # Nested SDFG
                 traverse(child.state, child)
 
-    traverse(state, stree)
+    traverse(state, recursive_scope_tree)
     return result
 
 
@@ -1340,11 +1360,13 @@ def gpu_map_has_explicit_threadblocks(state: SDFGState, entry: nodes.EntryNode) 
     """
     Returns True if GPU_Device map has explicit thread-block maps nested within.
     """
-    internal_maps = get_internal_scopes(state, entry)
+    rstree = scope_tree_recursive(state, entry)
+    internal_maps = get_internal_scopes(state, entry, recursive_scope_tree=rstree)
     if any(m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
            for _, m in internal_maps):
         return True
-    imm_maps = get_internal_scopes(state, entry, immediate=True)
+
+    imm_maps = get_internal_scopes(state, entry, immediate=True, recursive_scope_tree=rstree)
     if any(m.schedule == dtypes.ScheduleType.Default for _, m in imm_maps):
         return True
 

@@ -338,6 +338,7 @@ class BlockGraphView(object):
 class DataflowGraphView(BlockGraphView, abc.ABC):
 
     def __init__(self, *args, **kwargs):
+        # Ensure that the cache for the scope related function exists.
         self._clear_scopedict_cache()
 
     ###################################################################
@@ -540,10 +541,15 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_tree_cached = None
         self._scope_leaves_cached = None
 
-    def scope_tree(self) -> 'dace.sdfg.scope.ScopeTree':
+    def scope_tree(self) -> Dict[Union[None, nd.Node], 'dace.sdfg.scope.ScopeTree']:
+        """Get the scope trees.
+
+        :note: That the result is cached inside the state, thus it is not allowed to modify the returned value.
+            However, the `ScopeTree` can be safely shallow copied.
+        """
         from dace.sdfg.scope import ScopeTree
 
-        if (hasattr(self, '_scope_tree_cached') and self._scope_tree_cached is not None):
+        if self._scope_tree_cached is not None:
             return copy.copy(self._scope_tree_cached)
 
         sdp = self.scope_dict()
@@ -571,15 +577,28 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         return copy.copy(self._scope_tree_cached)
 
     def scope_leaves(self) -> List['dace.sdfg.scope.ScopeTree']:
-        if (hasattr(self, '_scope_leaves_cached') and self._scope_leaves_cached is not None):
+        """Return the list of scope leaves.
+
+        :note: That the result is cached inside the state, thus it is not allowed to modify the returned value.
+            However, the `ScopeTree` can be safely shallow copied.
+        """
+        if self._scope_leaves_cached is not None:
             return copy.copy(self._scope_leaves_cached)
+
         st = self.scope_tree()
         self._scope_leaves_cached = [scope for scope in st.values() if len(scope.children) == 0]
         return copy.copy(self._scope_leaves_cached)
 
-    def scope_dict(self, return_ids: bool = False, validate: bool = True) -> Dict[nd.Node, Union['SDFGState', nd.Node]]:
+    def scope_dict(self,
+                   return_ids: bool = False,
+                   validate: bool = True) -> Dict[nd.Node, Union['SDFGState', nd.Node, None]]:
+        """
+        Return the scope dict, i.e. map every node inside the state to its enclosing scope or `None` if at global scope.
+
+        :note: The result is cached inside the state, but the returned `dict` is only shallow copied.
+        """
         from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
-        result = None
+
         result = copy.copy(self._scope_dict_toparent_cached)
 
         if result is None:
@@ -611,10 +630,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
     def scope_children(self,
                        return_ids: bool = False,
-                       validate: bool = True) -> Dict[Union[nd.Node, 'SDFGState'], List[nd.Node]]:
+                       validate: bool = True) -> Dict[Union[nd.Node, 'SDFGState', None], List[nd.Node]]:
+        """For every scope node returns the list of nodes that are inside that scope.
+
+        The global scope is denoted by `None`. It is essentially the inversion of `scope_dict`.
+
+        :note: The result is cached inside the state thus it is not allowed to modify the returned values.
+        """
         from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
+
         result = None
         if self._scope_dict_tochildren_cached is not None:
+            # NOTE: Why do we shallow copy the `dict` but not the lists?
             result = copy.copy(self._scope_dict_tochildren_cached)
 
         if result is None:
@@ -624,16 +651,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             # Sanity checks
             if validate and len(eq) != 0:
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             entry_nodes = set(n for n in self.nodes() if isinstance(n, nd.EntryNode)) | {None}
             if (validate and len(result) != len(entry_nodes)):
-                cycles = self.find_cycles()
+                cycles = list(self.find_cycles())
                 if cycles:
-                    raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
+                    raise ValueError('Found cycles in state %s: %s' % (self.label, cycles))
                 raise RuntimeError("Some nodes were not processed: {}".format(entry_nodes - result.keys()))
 
             # Cache result
@@ -1521,7 +1548,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         from dace.sdfg import SDFG
         arrays = set(n.data for n in self.data_nodes())
         sdfg = SDFG(self.label)
-        sdfg._arrays = {k: self.sdfg.arrays[k] for k in arrays}
+        sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
         sdfg.add_node(self)
 
         return sdfg._repr_html_()
@@ -3624,7 +3651,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
 
-    def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
+    def add_branch(self, condition: Optional[Union[CodeBlock, str]], branch: ControlFlowRegion):
+        if condition is not None and not isinstance(condition, CodeBlock):
+            condition = CodeBlock(condition)
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
@@ -3810,6 +3839,14 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def all_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
+
+
+@make_properties
+class UnstructuredControlFlow(ControlFlowRegion):
+    """ Special control flow region to represent a region of unstructured control flow. """
+
+    def __repr__(self):
+        return f'UnstructuredCF ({self.label})'
 
 
 @make_properties
