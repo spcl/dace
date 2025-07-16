@@ -263,6 +263,13 @@ class DeadDataflowElimination(ppl.Pass):
                             and any(ie.data.data == node.data for ie in state.in_edges(l.src))):
                         return False
 
+                    # If data is connected to a Tasklet
+                    if isinstance(l.src, nodes.Tasklet):
+                        # We can't inline connected data that is a pointer
+                        ctype = infer_types.infer_out_connector_type(sdfg, state, l.src, l.src_conn)
+                        if l.src.language == dtypes.Language.Python and isinstance(ctype, dtypes.pointer):
+                            return False
+
             # If it is a stream and is read somewhere in the state, it may be popped after pushing
             if isinstance(desc, data.Stream) and node.data in access_set[0]:
                 return False
