@@ -1938,7 +1938,7 @@ class BackwardPassGenerator:
         Expand all library nodes in the sdfg to pure implementations. Returns whether something was expanded
         """
         expanded_something = False
-        for state, state_view in self.loop_states_view_map.values():
+        for state_view in self.states_view_map.values():
             for node, parent_graph in state_view.all_nodes_recursive():
                 if isinstance(parent_graph, dstate.StateSubgraphView):
                     parent_graph = parent_graph.graph
