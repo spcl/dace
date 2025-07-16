@@ -1,5 +1,6 @@
 import re
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass
 from itertools import chain, combinations
 from pathlib import Path
@@ -424,7 +425,7 @@ def _get_global_data_serde_code(ast: Program, g: SDFG) -> SerdeCode:
                 renamed: re.Match = re.match(r'^([a-zA-Z0-9_]+)_var_[0-9]+$', vname)
                 ogvname = renamed.group(1) if renamed else vname
 
-                uses.append(f"""use {mname}, only : {vname} => {ogvname}""")
+                uses.append(f"use {mname}, only : {vname} => {ogvname}")
                 ser_ops.append(f"""
 call serialize(io, "# {vname}", cleanup=.false.)
 call serialize(io, {vname}, cleanup=.false.)
@@ -804,6 +805,8 @@ deserialize(&yep, s);
                     sa_vars = '\n'.join([f"x->{v} = m.size.at({dim});" for dim, v in enumerate(sa_vars)])
                     soa_vars = [all_soa_vars[f"__f2dace_SOA_{z.name}_d_{dim}_s"] for dim in range(z.rank)]
                     soa_vars = '\n'.join([f"x->{v} = m.lbound.at({dim});" for dim, v in enumerate(soa_vars)])
+                else:
+                    sa_vars, soa_vars = [], []
                 cpp_deser_ops.append(f"""
 if (yep) {{
     auto [m, arr] = read_pointer<std::remove_pointer<decltype(x ->{z.name})>::type>(s);
@@ -950,7 +953,127 @@ void deserialize({dt.name}* x, std::istream& s) {{
     set_children(iface, iface.children[:-1] + [proc_names] + iface.children[-1:])
     # Global data.
     append_children(impls, Subroutine_Subprogram(get_reader(gdata.f90_serializer)))
-    f90_code = f90_mod.tofortran()
+
+    # Conclude the F90:C++ glue code.
+    glue_uses = []
+    ident_map = identifier_specs(ast)
+    for dt in iterate_over_derived_types(ident_map):
+        if dt.name not in sdfg_structs:
+            # The type is not present in the final SDFG, so we don't care for it.
+            continue
+        use = f"use {dt.spec[0]}, only: {dt.name}"
+        if use not in glue_uses:
+            glue_uses.append(use)
+        for z in iterate_over_public_components(dt):
+            if z.name not in sdfg_structs[dt.name]:
+                # The component is not present in the final SDFG, so we don't care for it.
+                continue
+            if z.rank:
+                if isinstance(z.type, Declaration_Type_Spec):
+                    _, ctyp = z.type.children
+                    ctyp = f"{ctyp}"
+                    # TODO: Don't rely on unique names.
+                    if (dt.spec[0], ctyp) in ident_map:
+                        use = f"use {dt.spec[0]}, only: {ctyp}"
+                    else:
+                        mod = singular(k[0] for k in ident_map.keys() if len(k) == 2 and k[-1] == ctyp)
+                        use = f"use {mod}, only: {ctyp}"
+                    if use not in glue_uses:
+                        glue_uses.append(use)
+    glue_uses = '\n'.join(glue_uses)
+
+    def f90_type(tx: str):
+        if tx == 'int':
+            return f'INTEGER(c_int)'
+        elif tx == 'float':
+            return f'REAL(c_float)'
+        elif tx == 'double':
+            return f'REAL(c_double)'
+        elif tx.endswith('*'):
+            return f'TYPE(c_ptr)'
+        else:
+            return f'TYPE({tx})'
+    f90_struct_defs: Dict[str, str] = {
+        k: '\n'.join(f"{f90_type(typ)} :: m_{comp}" for comp, typ in sorted(v.items())) for k, v in sdfg_structs.items()}
+    f90_struct_defs: str = '\n'.join(f"""
+type, bind(C) :: glue_{name}
+{comps}
+end type glue_{name}
+""" for name, comps in f90_struct_defs.items())
+
+    def f90_to_c_glue(tx: str, nx: str, dtname: str):
+        if nx.startswith('__f2dace_'):
+            return '', ''
+        elif tx in {'int', 'float', 'double'}:
+            return f"out % m_{nx} = inp % {nx}", ''
+        elif tx.endswith('*'):
+            nx_sas: Dict[str, str] = {
+                strip_last_int(z).removesuffix('_s').removeprefix('__f2dace_SA_'): z
+                for z in sdfg_structs[dtname].keys() if z.startswith("__f2dace_SA_")}
+            nx_soas: Dict[str, str] = {
+                strip_last_int(z).removesuffix('_s').removeprefix('__f2dace_SOA_'): z
+                for z in sdfg_structs[dtname].keys() if z.startswith("__f2dace_SOA_")}
+            nx_sas: Dict[tuple, str] = {
+                tuple(k.split('_d_')): v for k, v in nx_sas.items() if k.split('_d_')[0] == nx}
+            nx_soas: Dict[tuple, str] = {
+                tuple(k.split('_d_')): v for k, v in nx_soas.items() if k.split('_d_')[0] == nx}
+            basetx = tx.removesuffix('*')
+            if basetx in sdfg_structs:
+                declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}"
+                initx = [f"allocate(a_{nx})"]
+            elif nx_sas:
+                declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}({','.join([':']*len(nx_sas))})"
+                initx = [f"allocate(a_{nx}({','.join(f'size(inp % {nx}, {i+1})' for i in range(len(nx_sas)))}))"]
+            else:
+                declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}(:)"
+                initx = [f"allocate(a_{nx}(size(inp % {nx}))"]
+            initx.append(f"out % m_{nx} = c_loc(a_{nx})")
+            for k, v in nx_sas.items():
+                initx.append(f"out % m_{v} = size(inp % {nx}, {int(k[1])+1})")
+            for k, v in nx_soas.items():
+                initx.append(f"out % m_{v} = lbound(inp % {nx}, {int(k[1])+1})")
+            initx = '\n'.join(initx)
+            return initx, declx
+        else:
+            raise ValueError(f"Unknown type: {tx}")
+
+    f90_struct_glue: Dict[str, list[tuple[str, str]]] = {
+        k: [f90_to_c_glue(typ, comp, k) for comp, typ in sorted(v.items())]
+        for k, v in sdfg_structs.items()}
+    f90_struct_glue: Dict[str, str] = {
+        k: f"""
+{'\n'.join(x[1] for x in v)}
+{'\n'.join(x[0] for x in v)}
+""" for k, v in f90_struct_glue.items()
+    }
+    f90_glue_ctor_ifcs: str = '\n'.join(
+        f"module procedure :: ctor_{name}" for name in f90_struct_glue.keys() if name != 'global_data_type'
+    )
+    f90_glue_ctor_defs: str = '\n'.join(f"""
+subroutine ctor_{name}(inp, out)
+type({name}), intent(in) :: inp
+type(glue_{name}), intent(inout) :: out
+{code}
+end subroutine ctor_{name}
+""" for name, code in f90_struct_glue.items() if name != 'global_data_type')
+
+    f90_glue_mod = Module(get_reader(f"""
+module f90_glue
+use, intrinsic :: iso_c_binding
+{glue_uses}
+implicit none
+{f90_struct_defs}
+interface ctor
+{f90_glue_ctor_ifcs}
+end interface ctor
+contains
+{f90_glue_ctor_defs}
+end module f90_glue
+"""))
+    f90_code = f"""
+{f90_glue_mod.tofortran()}
+{f90_mod.tofortran()}
+"""
 
     # Conclude the C++ serde code.
     forward_decls: str = '\n'.join(f"struct {k};" for k in sdfg_structs.keys())
