@@ -1019,7 +1019,7 @@ end type glue_{name}
                 tuple(k.split('_d_')): v for k, v in nx_soas.items() if k.split('_d_')[0] == nx}
             basetx = tx.removesuffix('*')
             if basetx in sdfg_structs:
-                declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}"
+                declx = f"{f90_type('glue_'+basetx)}, allocatable, target :: a_{nx}"
                 initx = [f"allocate(a_{nx})"]
             elif nx_sas:
                 declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}({','.join([':']*len(nx_sas))})"
@@ -1028,6 +1028,33 @@ end type glue_{name}
                 declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}(:)"
                 initx = [f"allocate(a_{nx}(size(inp % {nx}))"]
             initx.append(f"out % m_{nx} = c_loc(a_{nx})")
+            if basetx.endswith('*'):
+                basetx = basetx.removesuffix('*')
+                assert basetx in sdfg_structs, f"We assume only `T**` for now, got {basetx}"
+                assert len(nx_sas) == 3, f"We assume 3D only for now, got {basetx} / {len(nx_sas)}"
+                declx = f"""
+{declx}
+{f90_type(basetx)}, pointer :: pt_{nx}
+integer :: i_{nx}, j_{nx}, k_{nx}
+"""
+                initx.append(f"""
+do i_{nx}=lbound(a_{nx}, 1), ubound(a_{nx}, 1)
+do j_{nx}=lbound(a_{nx}, 1), ubound(a_{nx}, 1)
+do k_{nx}=lbound(a_{nx}, 1), ubound(a_{nx}, 1)
+allocate(pt_{nx})
+call c_tor{basetx}(inp % {nx}(i_{nx}, j_{nx}, k_{nx}), a_{nx}(i_{nx}, j_{nx}, k_{nx}))
+end do
+end do
+end do
+""")
+                pass
+            elif basetx in sdfg_structs:
+                initx.append(f"call ctor_{basetx}(inp % {nx}, a_{nx})")
+            elif nx_sas:
+                idx = ','.join([':']*len(nx_sas))
+                initx.append(f"a_{nx}({idx}) = inp % {nx}({idx})")
+            else:
+                initx.append(f"a_{nx}(:) = inp % {nx}(:)")
             for k, v in nx_sas.items():
                 initx.append(f"out % m_{v} = size(inp % {nx}, {int(k[1])+1})")
             for k, v in nx_soas.items():
@@ -1058,7 +1085,7 @@ end subroutine ctor_{name}
 """ for name, code in f90_struct_glue.items() if name != 'global_data_type')
 
     f90_glue_mod = Module(get_reader(f"""
-module f90_glue
+module f90_glue_{mod_name}
 use, intrinsic :: iso_c_binding
 {glue_uses}
 implicit none
@@ -1068,7 +1095,7 @@ interface ctor
 end interface ctor
 contains
 {f90_glue_ctor_defs}
-end module f90_glue
+end module f90_glue_{mod_name}
 """))
     f90_code = f"""
 {f90_glue_mod.tofortran()}
