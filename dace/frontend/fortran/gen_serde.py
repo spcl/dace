@@ -1020,13 +1020,13 @@ end type glue_{name}
             basetx = tx.removesuffix('*')
             if basetx in sdfg_structs:
                 declx = f"{f90_type('glue_'+basetx)}, allocatable, target :: a_{nx}"
-                initx = [f"allocate(a_{nx})"]
+                initx = [f"if (initalloc) allocate(a_{nx})"]
             elif nx_sas:
                 declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}({','.join([':']*len(nx_sas))})"
-                initx = [f"allocate(a_{nx}({','.join(f'size(inp % {nx}, {i+1})' for i in range(len(nx_sas)))}))"]
+                initx = [f"if (initalloc) allocate(a_{nx}({','.join(f'size(inp % {nx}, {i+1})' for i in range(len(nx_sas)))}))"]
             else:
                 declx = f"{f90_type(basetx)}, allocatable, target :: a_{nx}(:)"
-                initx = [f"allocate(a_{nx}(size(inp % {nx}))"]
+                initx = [f"if (initalloc) allocate(a_{nx}(size(inp % {nx}))"]
             initx.append(f"out % m_{nx} = c_loc(a_{nx})")
             if basetx.endswith('*'):
                 basetx = basetx.removesuffix('*')
@@ -1041,7 +1041,7 @@ integer :: i_{nx}, j_{nx}, k_{nx}
 do i_{nx}=lbound(a_{nx}, 1), ubound(a_{nx}, 1)
 do j_{nx}=lbound(a_{nx}, 1), ubound(a_{nx}, 1)
 do k_{nx}=lbound(a_{nx}, 1), ubound(a_{nx}, 1)
-allocate(pt_{nx})
+if (initalloc) allocate(pt_{nx})
 call c_tor{basetx}(inp % {nx}(i_{nx}, j_{nx}, k_{nx}), a_{nx}(i_{nx}, j_{nx}, k_{nx}))
 end do
 end do
@@ -1049,7 +1049,7 @@ end do
 """)
                 pass
             elif basetx in sdfg_structs:
-                initx.append(f"call ctor_{basetx}(inp % {nx}, a_{nx})")
+                initx.append(f"call ctor_{basetx}(inp % {nx}, a_{nx}, initalloc)")
             elif nx_sas:
                 idx = ','.join([':']*len(nx_sas))
                 initx.append(f"a_{nx}({idx}) = inp % {nx}({idx})")
@@ -1077,9 +1077,10 @@ end do
         f"module procedure :: ctor_{name}" for name in f90_struct_glue.keys() if name != 'global_data_type'
     )
     f90_glue_ctor_defs: str = '\n'.join(f"""
-subroutine ctor_{name}(inp, out)
+subroutine ctor_{name}(inp, out, initalloc)
 type({name}), intent(in) :: inp
 type(glue_{name}), intent(inout) :: out
+logical, intent(in) :: initalloc
 {code}
 end subroutine ctor_{name}
 """ for name, code in f90_struct_glue.items() if name != 'global_data_type')
