@@ -1,5 +1,6 @@
 import dace
 import typing
+import pytest
 
 
 def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
@@ -31,7 +32,6 @@ def _get_sdfg() -> typing.Tuple[dace.SDFG, dace.InterstateEdge]:
         sym3_name: f"{array1_name}[1]",
     }
     e = sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=interstate_assignments))
-    sdfg.validate()
     return sdfg, e
 
 
@@ -78,6 +78,15 @@ def test_all_used_arrays():
     assert e.data.used_arrays(arrays=sdfg.arrays, union_lhs_symbols=True) == {"scalar2", "scalar1", "array1"}
 
 
+def test_writing_to_scalar_on_iedge_is_invalid():
+    # SDFG can't write to scalars on interstate edges catch for validity
+    with pytest.raises(dace.sdfg.validation.InvalidSDFGInterstateEdgeError,
+                       match="Assignment to a scalar or an array detected in an interstate edge"):
+        sdfg_and_edge: typing.Tuple[dace.SDFG, dace.InterstateEdge] = _get_sdfg()
+        sdfg: dace.SDFG = sdfg_and_edge[0]
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_read_symbols()
     test_used_symbols()
@@ -85,4 +94,4 @@ if __name__ == "__main__":
     test_all_read_sdfg_symbols()
     test_all_read_arrays()
     test_all_used_arrays()
-    print("All tests passed!")
+    test_writing_to_scalar_on_iedge_is_invalid()
