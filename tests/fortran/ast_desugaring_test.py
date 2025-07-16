@@ -1475,15 +1475,22 @@ def test_branch_pruning():
 subroutine main
   implicit none
   integer, parameter :: k = 4
-  integer :: a = -1, b = -1
+  integer :: a = -1, b = -1, c = -1
 
+  c = 5
   if (k < 2) then
     a = k
+    c = 1  ! identical `c = 1` lines
+    b = c + 1
   else if (k < 5) then
     b = k
+    c = 1  ! identical `c = 1` lines, but this one must not be dropped.
+    b = c + 1
   else
     a = k
     b = k
+    c = 1  ! identical `c = 1` lines
+    b = c + 1
   end if
   if (k < 5) a = 70 + k
   if (k > 5) a = 70 - k
@@ -1497,8 +1504,11 @@ end subroutine main
 SUBROUTINE main
   IMPLICIT NONE
   INTEGER, PARAMETER :: k = 4
-  INTEGER :: a = - 1, b = - 1
+  INTEGER :: a = - 1, b = - 1, c = - 1
+  c = 5
   b = k
+  c = 1
+  b = c + 1
   a = 70 + k
 END SUBROUTINE main
 """.strip()
