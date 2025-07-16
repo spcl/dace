@@ -52,9 +52,9 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
 
 
 def infer_connector_types(sdfg: SDFG):
-    """ 
+    """
     Infers connector types throughout an SDFG and its nested SDFGs in-place.
-    
+
     :param sdfg: The SDFG to infer.
     """
     # Loop over states, and in a topological sort over each state's nodes
@@ -125,13 +125,13 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
                                            use_parent_schedule: bool = False,
                                            state: SDFGState = None,
                                            child_nodes: Dict[nodes.Node, List[nodes.Node]] = None):
-    """ 
+    """
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces ``ScheduleType.Default`` and ``StorageType.Default``
-    with the corresponding types according to the parent scope's schedule. 
-    
+    with the corresponding types according to the parent scope's schedule.
+
     The defaults for storage types are determined by the
-    ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device 
+    ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device
     schedule, by default, will allocate containers on the shared memory).
     Following storage type inference for a scope, nested scopes (e.g., map entry, nested SDFG)
     are evaluated using the ``dtypes.STORAGEDEFAULT_SCHEDULE`` dictionary (for example, a
@@ -273,7 +273,7 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
         raise validation.InvalidSDFGNodeError(
             f'Cannot determine default schedule for node {node}. '
             'Multiple arrays that point to it say that it should be the following schedules: '
-            f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
+            f'{constraints}', state.parent_graph, state.parent_graph.node_id(state), state.node_id(node))
     else:
         child_schedule = next(iter(constraints))
 

@@ -1505,7 +1505,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
-            kernel_args[str(e.src)] = e.src.desc(sdfg)
+            #print(e, e.src)
+            assert e.data is not None, "Dynamic map input edge must have a memlet attribute"
+            assert e.data.data is not None, "Dynamic map input edge must have a data.data attribute"
+            e_data = e.data.data
+            kernel_args[e_data] = sdfg.arrays[e_data]
 
         # Add data from nested SDFGs to kernel arguments
         extra_call_args = []

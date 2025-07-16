@@ -20,7 +20,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
-    
+
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
@@ -189,7 +189,7 @@ class TargetDispatcher(object):
     @property
     def declared_arrays(self) -> DefinedMemlets:
         """ Returns a list of declared variables.
-        
+
             This is used for variables that must have their declaration and
             allocation separate. It includes all such variables that have been
             declared by the dispatcher.
@@ -199,7 +199,7 @@ class TargetDispatcher(object):
     @property
     def defined_vars(self) -> DefinedMemlets:
         """ Returns a list of defined variables.
-        
+
             This includes all variables defined by the dispatcher.
         """
         return self._defined_vars
@@ -628,4 +628,7 @@ class TargetDispatcher(object):
 
         # Dispatch
         self._used_targets.add(target)
+        if not hasattr(target, 'define_out_memlet'):
+            #print(src_node, dst_node, edge)
+            raise cgx.CodegenError(f'Target {type(target).__name__} does not implement define_out_memlet')
         target.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
