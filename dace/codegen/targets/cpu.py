@@ -1039,8 +1039,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if node == dst_node:
                 continue
 
-            # Tasklet -> array
-            if isinstance(node, nodes.CodeNode):
+            # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
+            if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
                     raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
                         str(edge.src), str(edge.dst)))

@@ -3086,13 +3086,13 @@ class ProgramVisitor(ExtNodeVisitor):
         parent_array = self.scope_arrays[parent_name]
 
         has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
+        strides = list(parent_array.strides)
         if has_indirection:
             # squeezed_rng = list(range(len(rng)))
             shape = parent_array.shape
-            # strides = [parent_array.strides[d] for d in squeezed_rng]
             # # TODO: Why is squeezed_rng an index in the first place?
             # squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
-            squeezed_rng = subsets.Range.from_array(parent_array)
+            nested_rng = subsets.Range.from_array(parent_array)
             non_squeezed = list(range(len(rng)))
         else:
             ignore_indices = []
@@ -3148,6 +3148,14 @@ class ProgramVisitor(ExtNodeVisitor):
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
             # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
+            nested_rng = subsets.Range([(0, s - 1, 1) for s in shape])
+            for i, r in enumerate(rng.ranges):
+                if i in ignore_indices:
+                    continue
+                _, _, step = r
+                if (step < 0) == True:
+                    step = -step
+                strides[i] *= step
             for i, sr in zip(ignore_indices, sym_rng):
                 iMin, iMax, step = sr.ranges[0]
                 if (step < 0) == True:
@@ -3157,6 +3165,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
                                                      (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
                                                     (step.approx if isinstance(step, symbolic.SymExpr) else step))
+                nested_rng.ranges[sqz_idx] = squeezed_rng[sqz_idx]
         dtype = parent_array.dtype
 
         if arr_type is None:
@@ -3168,7 +3177,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_scalar(var_name, dtype)
         elif issubclass(arr_type, data.Array):
             if non_squeezed:
-                strides = [parent_array.strides[d] for d in non_squeezed]
+                strides = [strides[d] for d in non_squeezed]
             else:
                 strides = [1]
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
@@ -3179,7 +3188,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
-        self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+        self.accesses[(name, rng, access_type)] = (var_name, nested_rng)
 
         inner_indices = set(non_squeezed)
 
@@ -3205,7 +3214,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.outputs[var_name] = (state, new_memlet, inner_indices)
 
         self.variables[var_name] = var_name
-        return (var_name, squeezed_rng)
+        return (var_name, nested_rng)
 
     def _add_read_access(self,
                          name: str,
@@ -5165,6 +5174,24 @@ class ProgramVisitor(ExtNodeVisitor):
                 tmp = self.sdfg.temp_data_name()
                 tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
             else:
+                for i in range(len(other_subset.ranges)):
+                    rb, re, rs = other_subset.ranges[i]
+                    if (rs < 0) == True:
+                        raise DaceSyntaxError(
+                            self, node, 'Negative strides are not supported in subscripts. '
+                            'Please use a Map scope to express this operation.')
+                    re = re - rb
+                    rb = 0
+                    if rs != 1:
+                        # NOTE: We use the identity floor(A/B) = ceiling((A + 1) / B) - 1
+                        # because Range.size() uses the ceiling method and that way we avoid
+                        # false negatives when testing the equality of data shapes.
+                        # re = re // rs
+                        re = sympy.ceiling((re + 1) / rs) - 1
+                        strides[i] *= rs
+                        rs = 1
+                    other_subset.ranges[i] = (rb, re, rs)
+
                 tmp, tmparr = self.sdfg.add_view(array,
                                                  other_subset.size(),
                                                  arrobj.dtype,
