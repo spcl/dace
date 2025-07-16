@@ -340,6 +340,8 @@ class PureBatchNormalization(ONNXForward):
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState,
                 sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXAdd, ONNXSub, ONNXMul, ONNXDiv, ONNXSqrt, ONNXReduceMean, ONNXUnsqueeze
+        
         # Create new SDFG
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()
@@ -366,14 +368,6 @@ class PureBatchNormalization(ONNXForward):
         nsdfg.arrays["input_var"].transient = False
         nsdfg.arrays["Y"].transient = False
 
-        # Add access nodes
-        X_read = nstate.add_read("X")
-        scale_read = nstate.add_read("scale")
-        B_read = nstate.add_read("B")
-        input_mean_read = nstate.add_read("input_mean")
-        input_var_read = nstate.add_read("input_var")
-        Y_write = nstate.add_write("Y")
-
         # Check if we're in training mode
         training_mode = getattr(node, 'training_mode', 0)
         epsilon = getattr(node, 'epsilon', 1e-5)
@@ -382,129 +376,598 @@ class PureBatchNormalization(ONNXForward):
         # Check if optional outputs exist
         has_running_mean = len(list(state.out_edges_by_connector(node, "running_mean"))) > 0
         has_running_var = len(list(state.out_edges_by_connector(node, "running_var"))) > 0
-        running_mean_write = None
-        running_var_write = None
 
         if has_running_mean:
             running_mean_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "running_mean"))
             nsdfg.add_datadesc("running_mean", running_mean_desc)
             nsdfg.arrays["running_mean"].transient = False
-            running_mean_write = nstate.add_write("running_mean")
 
         if has_running_var:
             running_var_desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, "running_var"))
             nsdfg.add_datadesc("running_var", running_var_desc)
             nsdfg.arrays["running_var"].transient = False
-            running_var_write = nstate.add_write("running_var")
 
-        # Create tasklet inputs and outputs
-        tasklet_inputs = {
-            "__X": dace.pointer(X_desc.dtype),
-            "__scale": dace.pointer(scale_desc.dtype),
-            "__B": dace.pointer(B_desc.dtype),
-            "__input_mean": dace.pointer(input_mean_desc.dtype),
-            "__input_var": dace.pointer(input_var_desc.dtype),
-        }
-        tasklet_outputs = {
-            "__Y": dace.pointer(Y_desc.dtype),
-        }
-        if has_running_mean:
-            tasklet_outputs["__running_mean"] = dace.pointer(running_mean_desc.dtype)
-        if has_running_var:
-            tasklet_outputs["__running_var"] = dace.pointer(running_var_desc.dtype)
-
-        # Generate code for the tasklet
-        code = []
-        
         # Get dimensions
         rank = len(X_desc.shape)
         channel_dim = 1  # C is typically the second dimension (N x C x D1 x D2 ...)
         
-        # Calculate size of dimensions to reduce over (all except channel)
-        reduce_size = 1
-        for i in range(rank):
-            if i != channel_dim:
-                reduce_size *= X_desc.shape[i]
+        # Create axes for reduction (all dimensions except channel dimension)
+        reduce_axes = [i for i in range(rank) if i != channel_dim]
         
-        # Generate loops for all dimensions
-        for i in range(rank):
-            code.append(f"for (int i{i} = 0; i{i} < {X_desc.shape[i]}; i{i}++) {{")
+        # Create axes array for reduction operations
+        axes_name = "reduce_axes"
+        axes_shape = [len(reduce_axes)]
+        axes_dtype = dace.int64
+        nsdfg.add_array(axes_name, axes_shape, axes_dtype, transient=True)
+        axes_access = nstate.add_access(axes_name)
         
-        # Calculate indices
-        x_idx = " + ".join([f"i{i} * {X_desc.strides[i]}" for i in range(rank)])
-        y_idx = " + ".join([f"i{i} * {Y_desc.strides[i]}" for i in range(rank)])
-        channel_idx = f"i{channel_dim}"
-        
-        if training_mode:
-            # Training mode
-            code.append(f"""
-            // Calculate current mean and variance
-            float bn_sum = 0.0f;
-            float bn_sq_sum = 0.0f;
-            for (int i = 0; i < {reduce_size}; i++) {{
-                float bn_val = __X[{x_idx}];
-                bn_sum += bn_val;
-                bn_sq_sum += bn_val * bn_val;
-            }}
-            float bn_current_mean = bn_sum / {reduce_size};
-            float bn_current_var = (bn_sq_sum / {reduce_size}) - (bn_current_mean * bn_current_mean);
-            
-            // Update running statistics
-            float bn_running_mean_val = __input_mean[{channel_idx}] * {momentum} + bn_current_mean * (1 - {momentum});
-            float bn_running_var_val = __input_var[{channel_idx}] * {momentum} + bn_current_var * (1 - {momentum});
-            """)
-            
-            if has_running_mean:
-                code.append(f"__running_mean[{channel_idx}] = bn_running_mean_val;")
-            if has_running_var:
-                code.append(f"__running_var[{channel_idx}] = bn_running_var_val;")
-                
-            code.append(f"""
-            // Normalize using current statistics
-            float bn_normalized = (__X[{x_idx}] - bn_current_mean) / sqrt(bn_current_var + {epsilon});
-            __Y[{y_idx}] = bn_normalized * __scale[{channel_idx}] + __B[{channel_idx}];
-            """)
-        else:
-            # Inference mode
-            code.append(f"""
-            // Normalize using input statistics
-            float bn_normalized = (__X[{x_idx}] - __input_mean[{channel_idx}]) / sqrt(__input_var[{channel_idx}] + {epsilon});
-            __Y[{y_idx}] = bn_normalized * __scale[{channel_idx}] + __B[{channel_idx}];
-            """)
-        
-        # Close dimension loops
-        for _ in range(rank):
-            code.append("}")
-
-        # Create tasklet
-        tasklet = nstate.add_tasklet(
-            name=node.label + "_tasklet",
-            inputs=tasklet_inputs,
-            outputs=tasklet_outputs,
-            code="\n".join(code),
+        # Initialize axes array
+        axes_init_tasklet = nstate.add_tasklet(
+            "init_axes",
+            set(),
+            {"out": dace.pointer(axes_dtype)},
+            "\n".join([f"out[{i}] = {reduce_axes[i]};" for i in range(len(reduce_axes))]),
             language=dace.Language.CPP
         )
+        nstate.add_edge(axes_init_tasklet, "out", axes_access, None, 
+                       dace.Memlet(f"{axes_name}[0:{len(reduce_axes)}]"))
 
-        # Connect the tasklet with memlets
-        nstate.add_edge(X_read, None, tasklet, "__X", 
-                       dace.Memlet.from_array("X", X_desc))
-        nstate.add_edge(scale_read, None, tasklet, "__scale",
-                       dace.Memlet.from_array("scale", scale_desc))
-        nstate.add_edge(B_read, None, tasklet, "__B",
-                       dace.Memlet.from_array("B", B_desc))
-        nstate.add_edge(input_mean_read, None, tasklet, "__input_mean",
-                       dace.Memlet.from_array("input_mean", input_mean_desc))
-        nstate.add_edge(input_var_read, None, tasklet, "__input_var",
-                       dace.Memlet.from_array("input_var", input_var_desc))
-        nstate.add_edge(tasklet, "__Y", Y_write, None,
-                       dace.Memlet.from_array("Y", Y_desc))
-        if has_running_mean:
-            nstate.add_edge(tasklet, "__running_mean", running_mean_write, None,
-                           dace.Memlet.from_array("running_mean", running_mean_desc))
-        if has_running_var:
-            nstate.add_edge(tasklet, "__running_var", running_var_write, None,
-                           dace.Memlet.from_array("running_var", running_var_desc))
+        # Add access nodes for inputs
+        X_read = nstate.add_read("X")
+        scale_read = nstate.add_read("scale")
+        B_read = nstate.add_read("B")
+        input_mean_read = nstate.add_read("input_mean")
+        input_var_read = nstate.add_read("input_var")
+        Y_write = nstate.add_write("Y")
 
+        if training_mode:
+            # Training mode - compute statistics and normalize
+            
+            # Step 1: Compute mean across batch and spatial dimensions
+            mean_name = "current_mean"
+            mean_shape = [X_desc.shape[channel_dim]]
+            mean_desc = dace.data.Array(X_desc.dtype, mean_shape)
+            mean_desc.transient = True
+            nsdfg.add_datadesc(mean_name, mean_desc)
+            mean_access = nstate.add_access(mean_name)
+            
+            mean_op = ONNXReduceMean("compute_mean", keepdims=0)
+            nstate.add_node(mean_op)
+            mean_op.add_in_connector("data")
+            mean_op.add_in_connector("axes")
+            mean_op.add_out_connector("reduced")
+            
+            nstate.add_edge(X_read, None, mean_op, "data", 
+                           nsdfg.make_array_memlet("X"))
+            nstate.add_edge(axes_access, None, mean_op, "axes", 
+                           nsdfg.make_array_memlet(axes_name))
+            nstate.add_edge(mean_op, "reduced", mean_access, None, 
+                           nsdfg.make_array_memlet(mean_name))
+            
+            # Step 2: Compute variance
+            # First, unsqueeze mean to match input shape for proper broadcasting
+            mean_unsqueezed_name = "mean_unsqueezed"
+            mean_unsqueezed_shape = [1 for _ in range(rank)]
+            mean_unsqueezed_shape[channel_dim] = X_desc.shape[channel_dim]  # Keep original channel dimension
+            mean_unsqueezed_desc = dace.data.Array(X_desc.dtype, mean_unsqueezed_shape, transient=True)
+            nsdfg.add_datadesc(mean_unsqueezed_name, mean_unsqueezed_desc)
+            mean_unsqueezed_access = nstate.add_access(mean_unsqueezed_name)
+            
+            # Create axes for unsqueezing mean (add dimensions for batch and spatial dims)
+            mean_axes_name = "mean_unsqueeze_axes"
+            mean_axes_shape = [rank - 1]  # All dimensions except channel
+            mean_axes_dtype = dace.int64
+            nsdfg.add_array(mean_axes_name, mean_axes_shape, mean_axes_dtype, transient=True)
+            mean_axes_access = nstate.add_access(mean_axes_name)
+            
+            # Initialize mean unsqueeze axes (0, 2, 3, ... for NCHW format)
+            mean_axes_init_tasklet = nstate.add_tasklet(
+                "init_mean_axes",
+                set(),
+                {"out": dace.pointer(mean_axes_dtype)},
+                "\n".join([f"out[{i}] = {i if i < channel_dim else i + 1};" for i in range(rank - 1)]),
+                language=dace.Language.CPP
+            )
+            nstate.add_edge(mean_axes_init_tasklet, "out", mean_axes_access, None, 
+                           dace.Memlet(f"{mean_axes_name}[0:{rank - 1}]"))
+            
+            from dace.libraries.onnx.nodes.onnx_op_registry import ONNXUnsqueeze
+            mean_unsqueeze_op = ONNXUnsqueeze("unsqueeze_mean")
+            nstate.add_node(mean_unsqueeze_op)
+            mean_unsqueeze_op.add_in_connector("data")
+            mean_unsqueeze_op.add_in_connector("axes")
+            mean_unsqueeze_op.add_out_connector("expanded")
+            
+            nstate.add_edge(mean_access, None, mean_unsqueeze_op, "data", 
+                           nsdfg.make_array_memlet(mean_name))
+            nstate.add_edge(mean_axes_access, None, mean_unsqueeze_op, "axes", 
+                           nsdfg.make_array_memlet(mean_axes_name))
+            nstate.add_edge(mean_unsqueeze_op, "expanded", mean_unsqueezed_access, None, 
+                           nsdfg.make_array_memlet(mean_unsqueezed_name))
+            
+            # Now subtract unsqueezed mean from input
+            centered_name = "centered"
+            centered_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            centered_desc.transient = True
+            nsdfg.add_datadesc(centered_name, centered_desc)
+            centered_access = nstate.add_access(centered_name)
+            
+            sub_op = ONNXSub("subtract_mean")
+            nstate.add_node(sub_op)
+            sub_op.add_in_connector("A")
+            sub_op.add_in_connector("B")
+            sub_op.add_out_connector("C")
+            
+            nstate.add_edge(X_read, None, sub_op, "A", 
+                           nsdfg.make_array_memlet("X"))
+            nstate.add_edge(mean_unsqueezed_access, None, sub_op, "B", 
+                           nsdfg.make_array_memlet(mean_unsqueezed_name))
+            nstate.add_edge(sub_op, "C", centered_access, None, 
+                           nsdfg.make_array_memlet(centered_name))
+            
+            # Square the centered values
+            squared_name = "squared"
+            squared_desc = dace.data.Array(X_desc.dtype, X_desc.shape, transient=True)
+            nsdfg.add_datadesc(squared_name, squared_desc)
+            squared_access = nstate.add_access(squared_name)
+            
+            square_op = ONNXMul("square")
+            nstate.add_node(square_op)
+            square_op.add_in_connector("A")
+            square_op.add_in_connector("B")
+            square_op.add_out_connector("C")
+            
+            nstate.add_edge(centered_access, None, square_op, "A", 
+                           nsdfg.make_array_memlet(centered_name))
+            nstate.add_edge(centered_access, None, square_op, "B", 
+                           nsdfg.make_array_memlet(centered_name))
+            nstate.add_edge(square_op, "C", squared_access, None, 
+                           nsdfg.make_array_memlet(squared_name))
+            
+            # Compute variance
+            var_name = "current_var"
+            var_shape = [X_desc.shape[channel_dim]]
+            var_desc = dace.data.Array(X_desc.dtype, var_shape, transient=True)
+            nsdfg.add_datadesc(var_name, var_desc)
+            var_access = nstate.add_access(var_name)
+            
+            var_op = ONNXReduceMean("compute_var", keepdims=0)
+            nstate.add_node(var_op)
+            var_op.add_in_connector("data")
+            var_op.add_in_connector("axes")
+            var_op.add_out_connector("reduced")
+            
+            nstate.add_edge(squared_access, None, var_op, "data", 
+                           nsdfg.make_array_memlet(squared_name))
+            nstate.add_edge(axes_access, None, var_op, "axes", 
+                           nsdfg.make_array_memlet(axes_name))
+            nstate.add_edge(var_op, "reduced", var_access, None, 
+                           nsdfg.make_array_memlet(var_name))
+            
+            # Update running statistics if needed
+            if has_running_mean:
+                running_mean_write = nstate.add_write("running_mean")
+                # running_mean = momentum * input_mean + (1 - momentum) * current_mean
+                running_mean_op = ONNXAdd("update_running_mean")
+                nstate.add_node(running_mean_op)
+                running_mean_op.add_in_connector("A")
+                running_mean_op.add_in_connector("B")
+                running_mean_op.add_out_connector("C")
+                
+                # Create momentum * input_mean
+                momentum_mean_name = "momentum_mean"
+                momentum_mean_desc = dace.data.Array(X_desc.dtype, mean_shape, transient=True)
+                nsdfg.add_datadesc(momentum_mean_name, momentum_mean_desc)
+                momentum_mean_access = nstate.add_access(momentum_mean_name)
+                
+                momentum_op = ONNXMul("scale_momentum")
+                nstate.add_node(momentum_op)
+                momentum_op.add_in_connector("A")
+                momentum_op.add_in_connector("B")
+                momentum_op.add_out_connector("C")
+                
+                nstate.add_edge(input_mean_read, None, momentum_op, "A", nsdfg.make_array_memlet("input_mean"))
+                # Create momentum constant
+                momentum_const_name = "momentum_const"
+                momentum_const_desc = dace.data.Scalar(X_desc.dtype)
+                momentum_const_desc.transient = True
+                nsdfg.add_datadesc(momentum_const_name, momentum_const_desc)
+                momentum_const_access = nstate.add_access(momentum_const_name)
+                
+                momentum_const_init = nstate.add_tasklet(
+                    "init_momentum",
+                    set(),
+                    {"out": dace.pointer(X_desc.dtype)},
+                    f"out[0] = {momentum};",
+                    language=dace.Language.CPP
+                )
+                nstate.add_edge(momentum_const_init, "out", momentum_const_access, None, dace.Memlet(f"{momentum_const_name}[0]"))
+                
+                nstate.add_edge(momentum_const_access, None, momentum_op, "B", nsdfg.make_array_memlet(momentum_const_name))
+                nstate.add_edge(momentum_op, "C", momentum_mean_access, None, nsdfg.make_array_memlet(momentum_mean_name))
+                
+                # Create (1 - momentum) * current_mean
+                one_minus_momentum_mean_name = "one_minus_momentum_mean"
+                one_minus_momentum_mean_desc = dace.data.Array(X_desc.dtype, mean_shape, transient=True)
+                nsdfg.add_datadesc(one_minus_momentum_mean_name, one_minus_momentum_mean_desc)
+                one_minus_momentum_mean_access = nstate.add_access(one_minus_momentum_mean_name)
+                
+                one_minus_momentum_op = ONNXMul("scale_one_minus_momentum")
+                nstate.add_node(one_minus_momentum_op)
+                one_minus_momentum_op.add_in_connector("A")
+                one_minus_momentum_op.add_in_connector("B")
+                one_minus_momentum_op.add_out_connector("C")
+                
+                nstate.add_edge(mean_access, None, one_minus_momentum_op, "A", nsdfg.make_array_memlet(mean_name))
+                
+                # Create (1 - momentum) constant
+                one_minus_momentum_const_name = "one_minus_momentum_const"
+                one_minus_momentum_const_desc = dace.data.Scalar(X_desc.dtype)
+                one_minus_momentum_const_desc.transient = True
+                nsdfg.add_datadesc(one_minus_momentum_const_name, one_minus_momentum_const_desc)
+                one_minus_momentum_const_access = nstate.add_access(one_minus_momentum_const_name)
+                
+                one_minus_momentum_const_init = nstate.add_tasklet(
+                    "init_one_minus_momentum",
+                    set(),
+                    {"out": dace.pointer(X_desc.dtype)},
+                    f"out[0] = {1 - momentum};",
+                    language=dace.Language.CPP
+                )
+                nstate.add_edge(one_minus_momentum_const_init, "out", one_minus_momentum_const_access, None, dace.Memlet(f"{one_minus_momentum_const_name}[0]"))
+                
+                nstate.add_edge(one_minus_momentum_const_access, None, one_minus_momentum_op, "B", nsdfg.make_array_memlet(one_minus_momentum_const_name))
+                nstate.add_edge(one_minus_momentum_op, "C", one_minus_momentum_mean_access, None, nsdfg.make_array_memlet(one_minus_momentum_mean_name))
+                
+                # Add them together
+                nstate.add_edge(momentum_mean_access, None, running_mean_op, "A", nsdfg.make_array_memlet(momentum_mean_name))
+                nstate.add_edge(one_minus_momentum_mean_access, None, running_mean_op, "B", nsdfg.make_array_memlet(one_minus_momentum_mean_name))
+                nstate.add_edge(running_mean_op, "C", running_mean_write, None, nsdfg.make_array_memlet("running_mean"))
+            
+            if has_running_var:
+                running_var_write = nstate.add_write("running_var")
+                # Similar logic for running variance
+                running_var_op = ONNXAdd("update_running_var")
+                nstate.add_node(running_var_op)
+                running_var_op.add_in_connector("A")
+                running_var_op.add_in_connector("B")
+                running_var_op.add_out_connector("C")
+                
+                # Create momentum * input_var
+                momentum_var_name = "momentum_var"
+                momentum_var_desc = dace.data.Array(X_desc.dtype, var_shape)
+                momentum_var_desc.transient = True
+                nsdfg.add_datadesc(momentum_var_name, momentum_var_desc)
+                momentum_var_access = nstate.add_access(momentum_var_name)
+                
+                momentum_var_op = ONNXMul("scale_momentum_var")
+                nstate.add_node(momentum_var_op)
+                momentum_var_op.add_in_connector("A")
+                momentum_var_op.add_in_connector("B")
+                momentum_var_op.add_out_connector("C")
+                
+                nstate.add_edge(input_var_read, None, momentum_var_op, "A", 
+                               nsdfg.make_array_memlet("input_var"))
+                nstate.add_edge(momentum_const_access, None, momentum_var_op, "B", 
+                               nsdfg.make_array_memlet(momentum_const_name))
+                nstate.add_edge(momentum_var_op, "C", momentum_var_access, None, 
+                               nsdfg.make_array_memlet(momentum_var_name))
+                
+                # Create (1 - momentum) * current_var
+                one_minus_momentum_var_name = "one_minus_momentum_var"
+                one_minus_momentum_var_desc = dace.data.Array(X_desc.dtype, var_shape)
+                one_minus_momentum_var_desc.transient = True
+                nsdfg.add_datadesc(one_minus_momentum_var_name, one_minus_momentum_var_desc)
+                one_minus_momentum_var_access = nstate.add_access(one_minus_momentum_var_name)
+                
+                one_minus_momentum_var_op = ONNXMul("scale_one_minus_momentum_var")
+                nstate.add_node(one_minus_momentum_var_op)
+                one_minus_momentum_var_op.add_in_connector("A")
+                one_minus_momentum_var_op.add_in_connector("B")
+                one_minus_momentum_var_op.add_out_connector("C")
+                
+                nstate.add_edge(var_access, None, one_minus_momentum_var_op, "A", 
+                               nsdfg.make_array_memlet(var_name))
+                nstate.add_edge(one_minus_momentum_const_access, None, one_minus_momentum_var_op, "B", 
+                               nsdfg.make_array_memlet(one_minus_momentum_const_name))
+                nstate.add_edge(one_minus_momentum_var_op, "C", one_minus_momentum_var_access, None, 
+                               nsdfg.make_array_memlet(one_minus_momentum_var_name))
+                
+                # Add them together
+                nstate.add_edge(momentum_var_access, None, running_var_op, "A", 
+                               nsdfg.make_array_memlet(momentum_var_name))
+                nstate.add_edge(one_minus_momentum_var_access, None, running_var_op, "B", 
+                               nsdfg.make_array_memlet(one_minus_momentum_var_name))
+                nstate.add_edge(running_var_op, "C", running_var_write, None, 
+                               nsdfg.make_array_memlet("running_var"))
+            
+            # Use current mean and variance for normalization
+            mean_for_norm = mean_access
+            var_for_norm = var_access
+            
+        else:
+            # Inference mode - use pre-computed statistics
+            mean_for_norm = input_mean_read
+            var_for_norm = input_var_read
+        
+        # Step 3: Normalize
+        # For inference mode, we need to subtract mean from input first
+        if not training_mode:
+            # Unsqueeze mean to match input shape for proper broadcasting in inference mode
+            mean_unsqueezed_name = "mean_unsqueezed_inference"
+            mean_unsqueezed_shape = [1 for _ in range(rank)]
+            mean_unsqueezed_shape[channel_dim] = X_desc.shape[channel_dim]  # Keep original channel dimension
+            mean_unsqueezed_desc = dace.data.Array(X_desc.dtype, mean_unsqueezed_shape, transient=True)
+            nsdfg.add_datadesc(mean_unsqueezed_name, mean_unsqueezed_desc)
+            mean_unsqueezed_access = nstate.add_access(mean_unsqueezed_name)
+            
+            # Create axes for unsqueezing mean (add dimensions for batch and spatial dims)
+            mean_axes_name = "mean_unsqueeze_axes_inference"
+            mean_axes_shape = [rank - 1]  # All dimensions except channel
+            mean_axes_dtype = dace.int64
+            nsdfg.add_array(mean_axes_name, mean_axes_shape, mean_axes_dtype, transient=True)
+            mean_axes_access = nstate.add_access(mean_axes_name)
+            
+            # Initialize mean unsqueeze axes (0, 2, 3, ... for NCHW format)
+            mean_axes_init_tasklet = nstate.add_tasklet(
+                "init_mean_axes_inference",
+                set(),
+                {"out": dace.pointer(mean_axes_dtype)},
+                "\n".join([f"out[{i}] = {i if i < channel_dim else i + 1};" for i in range(rank - 1)]),
+                language=dace.Language.CPP
+            )
+            nstate.add_edge(mean_axes_init_tasklet, "out", mean_axes_access, None, 
+                           dace.Memlet(f"{mean_axes_name}[0:{rank - 1}]"))
+            
+            mean_unsqueeze_op = ONNXUnsqueeze("unsqueeze_mean_inference")
+            nstate.add_node(mean_unsqueeze_op)
+            mean_unsqueeze_op.add_in_connector("data")
+            mean_unsqueeze_op.add_in_connector("axes")
+            mean_unsqueeze_op.add_out_connector("expanded")
+            
+            nstate.add_edge(mean_for_norm, None, mean_unsqueeze_op, "data", 
+                           nsdfg.make_array_memlet(mean_for_norm.desc.name))
+            nstate.add_edge(mean_axes_access, None, mean_unsqueeze_op, "axes", 
+                           nsdfg.make_array_memlet(mean_axes_name))
+            nstate.add_edge(mean_unsqueeze_op, "expanded", mean_unsqueezed_access, None, 
+                           nsdfg.make_array_memlet(mean_unsqueezed_name))
+            
+            # Subtract unsqueezed mean from input for inference mode
+            centered_name = "centered"
+            centered_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+            centered_desc.transient = True
+            nsdfg.add_datadesc(centered_name, centered_desc)
+            centered_access = nstate.add_access(centered_name)
+            
+            sub_op = ONNXSub("subtract_mean_inference")
+            nstate.add_node(sub_op)
+            sub_op.add_in_connector("A")
+            sub_op.add_in_connector("B")
+            sub_op.add_out_connector("C")
+            
+            nstate.add_edge(X_read, None, sub_op, "A", 
+                           nsdfg.make_array_memlet("X"))
+            nstate.add_edge(mean_unsqueezed_access, None, sub_op, "B", 
+                           nsdfg.make_array_memlet(mean_unsqueezed_name))
+            nstate.add_edge(sub_op, "C", centered_access, None, 
+                           nsdfg.make_array_memlet(centered_name))
+        
+        # Add epsilon to variance
+        var_plus_epsilon_name = "var_plus_epsilon"
+        var_plus_epsilon_desc = dace.data.Array(X_desc.dtype, var_for_norm.desc(nsdfg).shape, transient=True)
+        nsdfg.add_datadesc(var_plus_epsilon_name, var_plus_epsilon_desc)
+        var_plus_epsilon_access = nstate.add_access(var_plus_epsilon_name)
+        
+        epsilon_add_op = ONNXAdd("add_epsilon")
+        nstate.add_node(epsilon_add_op)
+        epsilon_add_op.add_in_connector("A")
+        epsilon_add_op.add_in_connector("B")
+        epsilon_add_op.add_out_connector("C")
+        
+        nstate.add_edge(var_for_norm, None, epsilon_add_op, "A", nsdfg.make_array_memlet(var_for_norm.data))
+        
+        # Create epsilon constant
+        epsilon_const_name = "epsilon_const"
+        epsilon_const_desc = dace.data.Scalar(X_desc.dtype, transient=True)
+        nsdfg.add_datadesc(epsilon_const_name, epsilon_const_desc)
+        epsilon_const_access = nstate.add_access(epsilon_const_name)
+        
+        epsilon_const_init = nstate.add_tasklet(
+            "init_epsilon",
+            set(),
+            {"out": dace.pointer(X_desc.dtype)},
+            f"out[0] = {epsilon};",
+            language=dace.Language.CPP
+        )
+        nstate.add_edge(epsilon_const_init, "out", epsilon_const_access, None, 
+                       dace.Memlet(f"{epsilon_const_name}[0]"))
+        
+        nstate.add_edge(epsilon_const_access, None, epsilon_add_op, "B", 
+                       nsdfg.make_array_memlet(epsilon_const_name))
+        nstate.add_edge(epsilon_add_op, "C", var_plus_epsilon_access, None, 
+                       nsdfg.make_array_memlet(var_plus_epsilon_name))
+        
+        # Compute sqrt(var + epsilon)
+        std_name = "std"
+        std_desc = dace.data.Array(X_desc.dtype, var_plus_epsilon_desc.shape)
+        std_desc.transient = True
+        nsdfg.add_datadesc(std_name, std_desc)
+        std_access = nstate.add_access(std_name)
+        
+        sqrt_op = ONNXSqrt("compute_std")
+        nstate.add_node(sqrt_op)
+        sqrt_op.add_in_connector("X")
+        sqrt_op.add_out_connector("Y")
+        
+        nstate.add_edge(var_plus_epsilon_access, None, sqrt_op, "X", 
+                       nsdfg.make_array_memlet(var_plus_epsilon_name))
+        nstate.add_edge(sqrt_op, "Y", std_access, None, 
+                       nsdfg.make_array_memlet(std_name))
+        
+        # Unsqueeze std to match input shape for proper broadcasting
+        std_unsqueezed_name = "std_unsqueezed"
+        std_unsqueezed_shape = [1 for _ in range(rank)]
+        std_unsqueezed_shape[channel_dim] = X_desc.shape[channel_dim]  # Keep original channel dimension
+        std_unsqueezed_desc = dace.data.Array(X_desc.dtype, std_unsqueezed_shape, transient=True)
+        nsdfg.add_datadesc(std_unsqueezed_name, std_unsqueezed_desc)
+        std_unsqueezed_access = nstate.add_access(std_unsqueezed_name)
+        
+        # Create axes for unsqueezing std (add dimensions for batch and spatial dims)
+        std_axes_name = "std_unsqueeze_axes"
+        std_axes_shape = [rank - 1]  # All dimensions except channel
+        std_axes_dtype = dace.int64
+        nsdfg.add_array(std_axes_name, std_axes_shape, std_axes_dtype, transient=True)
+        std_axes_access = nstate.add_access(std_axes_name)
+        
+        # Initialize std unsqueeze axes (0, 2, 3, ... for NCHW format)
+        std_axes_init_tasklet = nstate.add_tasklet(
+            "init_std_axes",
+            set(),
+            {"out": dace.pointer(std_axes_dtype)},
+            "\n".join([f"out[{i}] = {i if i < channel_dim else i + 1};" for i in range(rank - 1)]),
+            language=dace.Language.CPP
+        )
+        nstate.add_edge(std_axes_init_tasklet, "out", std_axes_access, None, 
+                       dace.Memlet(f"{std_axes_name}[0:{rank - 1}]"))
+        
+        std_unsqueeze_op = ONNXUnsqueeze("unsqueeze_std")
+        nstate.add_node(std_unsqueeze_op)
+        std_unsqueeze_op.add_in_connector("data")
+        std_unsqueeze_op.add_in_connector("axes")
+        std_unsqueeze_op.add_out_connector("expanded")
+        
+        nstate.add_edge(std_access, None, std_unsqueeze_op, "data", 
+                       nsdfg.make_array_memlet(std_name))
+        nstate.add_edge(std_axes_access, None, std_unsqueeze_op, "axes", 
+                       nsdfg.make_array_memlet(std_axes_name))
+        nstate.add_edge(std_unsqueeze_op, "expanded", std_unsqueezed_access, None, 
+                       nsdfg.make_array_memlet(std_unsqueezed_name))
+        
+        # Normalize: (X - mean) / std
+        normalized_name = "normalized"
+        normalized_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+        normalized_desc.transient = True
+        nsdfg.add_datadesc(normalized_name, normalized_desc)
+        normalized_access = nstate.add_access(normalized_name)
+        
+        div_op = ONNXDiv("normalize")
+        nstate.add_node(div_op)
+        div_op.add_in_connector("A")
+        div_op.add_in_connector("B")
+        div_op.add_out_connector("C")
+        
+        # Use centered data (either from training or inference)
+        centered_data = centered_access if training_mode else centered_access
+        centered_name_to_use = centered_name
+        
+        nstate.add_edge(centered_data, None, div_op, "A", 
+                       nsdfg.make_array_memlet(centered_name_to_use))
+        nstate.add_edge(std_unsqueezed_access, None, div_op, "B", 
+                       nsdfg.make_array_memlet(std_unsqueezed_name))
+        nstate.add_edge(div_op, "C", normalized_access, None, 
+                       nsdfg.make_array_memlet(normalized_name))
+        
+        # Apply scale and bias: scale * normalized + bias
+        # First, unsqueeze scale and bias to match input dimensions for proper broadcasting
+        from dace.libraries.onnx.nodes.onnx_op_registry import ONNXUnsqueeze
+        
+        # Unsqueeze scale to match input dimensions
+        scale_unsqueezed_name = "scale_unsqueezed"
+        # Create shape with 1s in newly added dimensions
+        scale_unsqueezed_shape = [1 for _ in range(rank)]
+        scale_unsqueezed_shape[channel_dim] = X_desc.shape[channel_dim]  # Keep original channel dimension
+        scale_unsqueezed_desc = dace.data.Array(X_desc.dtype, scale_unsqueezed_shape, transient=True)
+        nsdfg.add_datadesc(scale_unsqueezed_name, scale_unsqueezed_desc)
+        scale_unsqueezed_access = nstate.add_access(scale_unsqueezed_name)
+        
+        # Create axes for unsqueezing scale (add dimensions for batch and spatial dims)
+        scale_axes_name = "scale_unsqueeze_axes"
+        scale_axes_shape = [rank - 1]  # All dimensions except channel
+        scale_axes_dtype = dace.int64
+        nsdfg.add_array(scale_axes_name, scale_axes_shape, scale_axes_dtype, transient=True)
+        scale_axes_access = nstate.add_access(scale_axes_name)
+        
+        # Initialize scale unsqueeze axes (0, 2, 3, ... for NCHW format)
+        scale_axes_init_tasklet = nstate.add_tasklet(
+            "init_scale_axes",
+            set(),
+            {"out": dace.pointer(scale_axes_dtype)},
+            "\n".join([f"out[{i}] = {i if i < channel_dim else i + 1};" for i in range(rank - 1)]),
+            language=dace.Language.CPP
+        )
+        nstate.add_edge(scale_axes_init_tasklet, "out", scale_axes_access, None, 
+                       dace.Memlet(f"{scale_axes_name}[0:{rank - 1}]"))
+        
+        scale_unsqueeze_op = ONNXUnsqueeze("unsqueeze_scale")
+        nstate.add_node(scale_unsqueeze_op)
+        scale_unsqueeze_op.add_in_connector("data")
+        scale_unsqueeze_op.add_in_connector("axes")
+        scale_unsqueeze_op.add_out_connector("expanded")
+        
+        nstate.add_edge(scale_read, None, scale_unsqueeze_op, "data", 
+                       nsdfg.make_array_memlet("scale"))
+        nstate.add_edge(scale_axes_access, None, scale_unsqueeze_op, "axes", 
+                       nsdfg.make_array_memlet(scale_axes_name))
+        nstate.add_edge(scale_unsqueeze_op, "expanded", scale_unsqueezed_access, None, 
+                       nsdfg.make_array_memlet(scale_unsqueezed_name))
+        
+        # Unsqueeze bias to match input dimensions
+        bias_unsqueezed_name = "bias_unsqueezed"
+        # Create shape with 1s in newly added dimensions
+        bias_unsqueezed_shape = [1 for _ in range(rank)]
+        bias_unsqueezed_shape[channel_dim] = X_desc.shape[channel_dim]  # Keep original channel dimension
+        bias_unsqueezed_desc = dace.data.Array(X_desc.dtype, bias_unsqueezed_shape, transient=True)
+        nsdfg.add_datadesc(bias_unsqueezed_name, bias_unsqueezed_desc)
+        bias_unsqueezed_access = nstate.add_access(bias_unsqueezed_name)
+        
+        bias_unsqueeze_op = ONNXUnsqueeze("unsqueeze_bias")
+        nstate.add_node(bias_unsqueeze_op)
+        bias_unsqueeze_op.add_in_connector("data")
+        bias_unsqueeze_op.add_in_connector("axes")
+        bias_unsqueeze_op.add_out_connector("expanded")
+        
+        nstate.add_edge(B_read, None, bias_unsqueeze_op, "data", 
+                       nsdfg.make_array_memlet("B"))
+        nstate.add_edge(scale_axes_access, None, bias_unsqueeze_op, "axes", 
+                       nsdfg.make_array_memlet(scale_axes_name))
+        nstate.add_edge(bias_unsqueeze_op, "expanded", bias_unsqueezed_access, None, 
+                       nsdfg.make_array_memlet(bias_unsqueezed_name))
+        
+        # Apply scale
+        scaled_name = "scaled"
+        scaled_desc = dace.data.Array(X_desc.dtype, X_desc.shape)
+        scaled_desc.transient = True
+        nsdfg.add_datadesc(scaled_name, scaled_desc)
+        scaled_access = nstate.add_access(scaled_name)
+        
+        scale_op = ONNXMul("apply_scale")
+        nstate.add_node(scale_op)
+        scale_op.add_in_connector("A")
+        scale_op.add_in_connector("B")
+        scale_op.add_out_connector("C")
+        
+        nstate.add_edge(normalized_access, None, scale_op, "A", 
+                       nsdfg.make_array_memlet(normalized_name))
+        nstate.add_edge(scale_unsqueezed_access, None, scale_op, "B", 
+                       nsdfg.make_array_memlet(scale_unsqueezed_name))
+        nstate.add_edge(scale_op, "C", scaled_access, None, 
+                       nsdfg.make_array_memlet(scaled_name))
+        
+        # Add bias
+        bias_op = ONNXAdd("add_bias")
+        nstate.add_node(bias_op)
+        bias_op.add_in_connector("A")
+        bias_op.add_in_connector("B")
+        bias_op.add_out_connector("C")
+        
+        nstate.add_edge(scaled_access, None, bias_op, "A", 
+                       nsdfg.make_array_memlet(scaled_name))
+        nstate.add_edge(bias_unsqueezed_access, None, bias_op, "B", 
+                       nsdfg.make_array_memlet(bias_unsqueezed_name))
+        nstate.add_edge(bias_op, "C", Y_write, None, 
+                       nsdfg.make_array_memlet("Y"))
+
+        nsdfg.save("bn_expansion.sdfg")
         return nsdfg
 
 
