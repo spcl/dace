@@ -5,40 +5,13 @@ import numpy as np
 import os
 import dace
 import copy
-import uuid
 import pytest
-import gc
-import uuid
 
 from dace import SDFG, SDFGState, data as dace_data
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusion, MapExpansion
 
-
-def count_nodes(
-    graph: Union[SDFG, SDFGState],
-    node_type: Union[Tuple[Type, ...], Type],
-    return_nodes: bool = False,
-) -> Union[int, List[nodes.Node]]:
-    """Counts the number of nodes of a particular type in `graph`.
-
-    If `graph` is an SDFGState then only count the nodes inside this state,
-    but if `graph` is an SDFG count in all states.
-
-    Args:
-        graph: The graph to scan.
-        node_type: The type or sequence of types of nodes to look for.
-    """
-
-    states = graph.states() if isinstance(graph, dace.SDFG) else [graph]
-    found_nodes: list[nodes.Node] = []
-    for state_nodes in states:
-        for node in state_nodes.nodes():
-            if isinstance(node, node_type):
-                found_nodes.append(node)
-    if return_nodes:
-        return found_nodes
-    return len(found_nodes)
+from .utility import count_nodes, unique_name, make_sdfg_args, compile_and_run_sdfg
 
 
 def safe_view(sdfg: SDFG):
@@ -50,57 +23,6 @@ def safe_view(sdfg: SDFG):
         sdfg.view()
     except Exception:
         pass
-
-
-def unique_name(name: str) -> str:
-    """Adds a unique string to `name`."""
-    maximal_length = 200
-    unique_sufix = str(uuid.uuid1()).replace("-", "_")
-    if len(name) > (maximal_length - len(unique_sufix)):
-        name = name[:(maximal_length - len(unique_sufix) - 1)]
-    return f"{name}_{unique_sufix}"
-
-
-def make_sdfg_args(sdfg: dace.SDFG, ) -> tuple[dict[str, Any], dict[str, Any]]:
-    ref = {
-        name: (np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype()) if isinstance(
-            desc, dace_data.Array) else np.array(np.random.rand(1), copy=True, dtype=desc.dtype.as_numpy_dtype())[0])
-        for name, desc in sdfg.arrays.items() if not desc.transient
-    }
-    res = copy.deepcopy(ref)
-    return ref, res
-
-
-def compile_and_run_sdfg(
-    sdfg: dace.SDFG,
-    *args: Any,
-    **kwargs: Any,
-) -> dace.codegen.CompiledSDFG:
-    """This function guarantees that the SDFG is compiled and run.
-
-    This function will modify the name of the SDFG to ensure that the code is
-    regenerated and recompiled properly. It will also suppress warnings about
-    shared objects that are loaded multiple times.
-    """
-
-    with dace.config.set_temporary("compiler.use_cache", value=False):
-        sdfg_clone = copy.deepcopy(sdfg)
-
-        sdfg_clone.name = unique_name(sdfg_clone.name)
-        sdfg_clone._recompile = True
-        sdfg_clone._regenerate_code = True  # TODO(phimuell): Find out if it has an effect.
-        csdfg = sdfg_clone.compile()
-        csdfg(*args, **kwargs)
-
-    return csdfg
-
-
-def compile_and_run_sdfg(sdfg: SDFG, *args: Any, **kwargs: Any) -> Any:
-    csdfg = sdfg.compile()
-    res = csdfg(*args, **kwargs)
-    del csdfg
-    gc.collect(2)
-    return res
 
 
 def apply_fusion(sdfg: SDFG,
@@ -916,7 +838,7 @@ def test_different_offsets():
 
     def _make_sdfg(N: int, M: int) -> dace.SDFG:
         sdfg = dace.SDFG(unique_name("test_different_access"))
-        names = ["A", "B", "__tmp", "__return"]
+        names = ["A", "B", "__tmp", "res"]
         def_shape = (N, M)
         sshape = {"B": (N + 1, M + 2), "__tmp": (N + 1, M + 1)}
         for name in names:
@@ -929,7 +851,7 @@ def test_different_offsets():
         sdfg.arrays["__tmp"].transient = True
 
         state = sdfg.add_state(is_start_block=True)
-        A, B, _tmp, _return = (state.add_access(name) for name in names)
+        A, B, _tmp, res = (state.add_access(name) for name in names)
 
         state.add_mapped_tasklet(
             "comp1",
@@ -955,9 +877,9 @@ def test_different_offsets():
                 "__in2": dace.Memlet("B[__i0 + 1, __i1 + 2]"),
             },
             code="__out = __in1 + __in2",
-            outputs={"__out": dace.Memlet("__return[__i0, __i1]")},
+            outputs={"__out": dace.Memlet("res[__i0, __i1]")},
             input_nodes={_tmp, B},
-            output_nodes={_return},
+            output_nodes={res},
             external_edges=True,
         )
 
@@ -970,9 +892,10 @@ def test_different_offsets():
 
     A = np.array(np.random.rand(N, M), dtype=np.float64, copy=True)
     B = np.array(np.random.rand(N + 1, M + 2), dtype=np.float64, copy=True)
+    res = np.array(np.random.rand(N, M), dtype=np.float64, copy=True)
 
     ref = reference(A, B)
-    res = compile_and_run_sdfg(sdfg, A=A, B=B)
+    compile_and_run_sdfg(sdfg, A=A, B=B, res=res)
     assert np.allclose(ref, res)
 
 
