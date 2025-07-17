@@ -2,6 +2,7 @@
 from copy import deepcopy
 import dace
 from dace import subsets as sbs
+from dace.sdfg import utils as sdutil
 
 
 def test_read_write_set():
@@ -218,6 +219,75 @@ def test_add_mapped_tasklet():
     sdfg.validate()
     assert all(out_edge.dst is B for out_edge in state.out_edges(mx))
     assert all(in_edge.src is A for in_edge in state.in_edges(me))
+
+
+def _make_find_upstream_and_downstream_node_test_sdfg():
+    sdfg = dace.SDFG("find_u_d_stream_node_test_sdfg")
+    state = sdfg.add_state()
+
+    for name in "ab":
+        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=True)
+    a, b = (state.add_access(name) for name in "ab")
+
+    tlet, me, mx = state.add_mapped_tasklet(
+        "computation",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("a[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("b[__i]")},
+        external_edges=True,
+        input_nodes={a},
+        output_nodes={b},
+    )
+    sdfg.validate()
+
+    return sdfg, state, a, me, tlet, mx, b
+
+
+def test_find_upstream_nodes():
+    sdfg, state, a, me, tlet, _, _ = _make_find_upstream_and_downstream_node_test_sdfg()
+
+    found = sdutil.find_upstream_nodes(
+        node_to_start=tlet,
+        state=state,
+    )
+    assert found == {a, me, tlet}
+
+
+def test_find_upstream_nodes_bloking():
+    sdfg, state, a, me, tlet, _, _ = _make_find_upstream_and_downstream_node_test_sdfg()
+
+    seen = {me}
+    found = sdutil.find_upstream_nodes(
+        node_to_start=tlet,
+        state=state,
+        seen=seen,
+    )
+    assert found is seen
+    assert found == {me, tlet}
+
+
+def test_find_downstream_nodes():
+    sdfg, state, _, _, tlet, mx, b = _make_find_upstream_and_downstream_node_test_sdfg()
+
+    found = sdutil.find_downstream_nodes(
+        node_to_start=tlet,
+        state=state,
+    )
+    assert found == {tlet, mx, b}
+
+
+def test_find_downstream_nodes_bloking():
+    sdfg, state, _, _, tlet, mx, b = _make_find_upstream_and_downstream_node_test_sdfg()
+
+    seen = {mx}
+    found = sdutil.find_downstream_nodes(
+        node_to_start=tlet,
+        state=state,
+        seen=seen,
+    )
+    assert found is seen
+    assert found == {mx, tlet}
 
 
 if __name__ == '__main__':
