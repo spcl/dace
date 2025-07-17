@@ -1568,7 +1568,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 data_name = e.data.data
                 assert isinstance(e.data.data, str)
                 data_desc = state.sdfg.arrays[data_name]
-            kernel_args[data_name] = data_desc.desc(sdfg)
+            kernel_args[data_name] = data_desc
 
         # Add data from nested SDFGs to kernel arguments
         extra_call_args = []
