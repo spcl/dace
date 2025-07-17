@@ -243,7 +243,7 @@ def test_deeply_nested_sdfg():
 
 def test_scalars():
     """
-    Tests that SymbolPropagation handles indirect access correctly.
+    Tests that SymbolPropagation handles scalars correctly.
     """
     sdfg = dace.SDFG("tester")
     sdfg.add_symbol("num", dace.int32)
