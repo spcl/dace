@@ -162,7 +162,7 @@ def argument_codegen(sdfg: dace.SDFG,
         if name not in clean_weights:
             raise ValueError(f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
                              f" of the PyTorch Module, and not a constant.")
-        if arglist[name].total_size > 1000:
+        if arglist[name].total_size > 1024:
             raise ValueError(f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
                              f" of the PyTorch Module, and is too large.")
 
@@ -214,6 +214,10 @@ def constant_initializer_code(name: str, desc: data.Data, value) -> str:
         {gpu_copy_code if gpu_storage else ""}
         """
     elif isinstance(desc, data.Scalar):
+        if str(value.item()) == "-inf":
+            return f"{desc.dtype.ctype} {name}_ptr = -std::numeric_limits<{desc.dtype.ctype}>::infinity();"
+        elif str(value.item()) == "inf":
+            return f"{desc.dtype.ctype} {name}_ptr = std::numeric_limits<{desc.dtype.ctype}>::infinity();"
         return f"{desc.dtype.ctype} {name}_ptr = {str(value.item())};"
     else:
         raise ValueError("Unsupported data descriptor")
@@ -498,10 +502,8 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
     onnxruntime_lib_name = []
     ort_release_path = os.getenv('ORT_RELEASE')
     if ort_release_path:
-        onnxruntime_include_path.append(os.path.abspath(
-            os.path.join(ort_release_path, "include")))
-        onnxruntime_lib_path.append(os.path.abspath(
-            os.path.join(ort_release_path, "lib")))
+        onnxruntime_include_path.append(os.path.abspath(os.path.join(ort_release_path, "include")))
+        onnxruntime_lib_path.append(os.path.abspath(os.path.join(ort_release_path, "lib")))
         onnxruntime_lib_name.append("onnxruntime")
     dace_include_path_blas = os.path.abspath(
         os.path.join(os.path.dirname(dace.__file__), "libraries", "blas", "include"))
@@ -510,7 +512,10 @@ def register_and_compile_torch_extension(module: 'dace.frontend.python.module.Da
         name=libname,
         sources=sources,
         extra_cflags=["-g"],
-        extra_include_paths=[include_path, include_path_bwd, dace_include_path, dace_include_path_blas, dace_include_path_onnx, *onnxruntime_include_path],
+        extra_include_paths=[
+            include_path, include_path_bwd, dace_include_path, dace_include_path_blas, dace_include_path_onnx,
+            *onnxruntime_include_path
+        ],
         extra_ldflags=[
             f'-L{conda_lib_path}',
             *[f'-L{lib_path}' for lib_path in onnxruntime_lib_path],
