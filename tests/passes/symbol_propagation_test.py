@@ -240,6 +240,38 @@ def test_deeply_nested_sdfg():
     assert edge1.data.assignments["v"] == "a"
     assert edge4.data.assignments["c"] == "v+1"
 
+def test_scalars():
+    """
+    Tests that SymbolPropagation handles indirect access correctly.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_symbol("num", dace.int32)
+    sdfg.add_array("A", [64], dace.int32)
+    sdfg.add_scalar("B", dace.int32)
+
+    s1 = sdfg.add_state(is_start_block=True)
+    s2 = sdfg.add_state()
+    edge1 = sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={"num": "B"}))
+
+    task1 = s2.add_tasklet("init", {}, {"out"}, "out = -1")
+    access1 = s2.add_access("B")
+    s2.add_edge(task1, "out", access1, None, dace.Memlet("B[0]"))
+
+    task2 = s2.add_tasklet("init", {}, {"out"}, "out = num")
+    access2 = s2.add_access("A")
+    s2.add_edge(task2, "out", access2, None, dace.Memlet("A[0]"))
+  
+    # Apply SymbolPropagation
+    sdfg.validate()
+    SymbolPropagation().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # Validate correctness
+    A = dace.ndarray([10], dtype=dace.int32)
+    A[:] = np.random.randint(0, 100, size=10).astype(dace.int32.type)
+    sdfg(A=A, B=5)
+    assert A[0] == 5
+
 
 if __name__ == "__main__":
     test_loop_carried_symbol()
@@ -248,3 +280,4 @@ if __name__ == "__main__":
     test_multiple_sources()
     test_multiple_edge_assignments()
     test_deeply_nested_sdfg()
+    test_scalars()

@@ -98,6 +98,16 @@ class SymbolPropagation(ppl.Pass):
                 ])
             }
 
+            # Also skip scalars
+            sym_table = {
+                k: v
+                for k, v in sym_table.items() if v is None or not any([
+                    str(s) in sdfg.arrays and isinstance(sdfg.arrays[str(s)], dt.Scalar)
+                    for s in pystr_to_symbolic(v).free_symbols
+                ])
+            }
+
+
             # Combine the symbols
             if i == 0:
                 new_in_syms = sym_table
