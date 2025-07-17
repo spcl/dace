@@ -1275,7 +1275,10 @@ def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nod
     :param state: The SDFG state in which the scopes reside.
     :param map_entry: Defining the Map scope to which propagation should be restricted.
     """
-    assert isinstance(map_entry, nodes.MapEntry)
+    if not isinstance(map_entry, nodes.MapEntry):
+        raise TypeError(
+            f'A MapEntry node must be passed to the `propagate_memlets_map_scope()` function not a `{type(map_entry).__name__}`.'
+        )
 
     # This code is an adapted version of `propagate_memlet_state()` and as there we
     #  propagate the Memlets of nested SDFGs, but we restrict ourselves to the
