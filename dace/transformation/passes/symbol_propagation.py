@@ -107,7 +107,6 @@ class SymbolPropagation(ppl.Pass):
                 ])
             }
 
-
             # Combine the symbols
             if i == 0:
                 new_in_syms = sym_table

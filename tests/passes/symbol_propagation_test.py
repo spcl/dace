@@ -240,6 +240,7 @@ def test_deeply_nested_sdfg():
     assert edge1.data.assignments["v"] == "a"
     assert edge4.data.assignments["c"] == "v+1"
 
+
 def test_scalars():
     """
     Tests that SymbolPropagation handles indirect access correctly.
@@ -260,7 +261,7 @@ def test_scalars():
     task2 = s2.add_tasklet("init", {}, {"out"}, "out = num")
     access2 = s2.add_access("A")
     s2.add_edge(task2, "out", access2, None, dace.Memlet("A[0]"))
-  
+
     # Apply SymbolPropagation
     sdfg.validate()
     SymbolPropagation().apply_pass(sdfg, {})
