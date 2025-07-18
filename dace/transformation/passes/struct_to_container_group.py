@@ -839,7 +839,7 @@ class StructToContainerGroups(ppl.Pass):
                 ]
             )
             current_member = struct
-            current_stride = 1
+            #current_stride = 1
             src_access = f"{name_hierarchy[0]}"
             remaining_letters = copy.deepcopy(used_letters)
             for i, (name, _type) in enumerate(
@@ -858,13 +858,12 @@ class StructToContainerGroups(ppl.Pass):
                     if isinstance(current_member, ContainerArray):
                         src_access += "["
                         first= True
-                        for i in range(len(current_member.shape)):
+                        for _i in range(len(current_member.shape)):
                             if first:
                                 first = False
                             else:
                                 src_access += " + "
-                            src_access += f"{remaining_letters.pop(0)} * {current_stride}"
-                            current_stride *= current_member.strides[i]
+                            src_access += f"({remaining_letters.pop(0)} * ({cpp.sym2cpp(current_member.strides[_i])}))"
                         src_access += "]"
                     else:
                         raise Exception("Should not happen")
@@ -880,6 +879,7 @@ class StructToContainerGroups(ppl.Pass):
 
             # assert len(remaining_letters) == len(arr.shape)
             member_arr = struct
+            has_ca = False
             for member_name, prev_type, member_type in zip(
                 name_hierarchy[1:], name_hierarchy_types[:-1], name_hierarchy_types[1:]
             ):
@@ -888,13 +888,17 @@ class StructToContainerGroups(ppl.Pass):
                         member_arr = member_arr.members[member_name]
                     elif prev_type == "CA":
                         member_arr = member_arr.stype
+                        has_ca = True
                 else:
                     if prev_type == "CG":
                         member_arr = member_arr.members[member_name]
                     elif prev_type == "CA":
                         member_arr = member_arr.stype
+                        has_ca = True
 
-            if not isinstance(member_arr, dace.data.Scalar):
+            # if scalar, don't do it, but if has_ca then do it
+            # if has_ca or (not scalar and not has_ca)
+            if has_ca or (not isinstance(member_arr, dace.data.Scalar) and not has_ca):
                 if len(arr.shape) > 2:
                     ompfor = f"#pragma omp taskloop\n" if taskloop else '#pragma omp parallel for\n'
                 elif len(arr.shape) == 2:
@@ -958,6 +962,21 @@ class StructToContainerGroups(ppl.Pass):
             for (arr_name, arr_desc) in registered_members
             if _get_name_hierarchy_from_name(arr_name)[0][0] == name
         ]
+        """
+        for (arr_name, arr_desc) in registered_members:
+            if "primal_normal_cell" in arr_name and "tangent_vector" in arr_name:
+                if _get_name_hierarchy_from_name(arr_name)[0][0] == name:
+                    ll1 = _gen_loop(
+                            sdfg,
+                            name,
+                            desc,
+                            arr_name,
+                            arr_desc,
+                            *_get_name_hierarchy_from_name(arr_name),
+                            self._shallow_copy
+                        )
+                    raise Exception(ll1)
+        """
 
         copy_strs_list, copy_strs_reverse_list = zip(*ll) if ll != [] else ([], [])
         copy_strs = "\n".join(copy_strs_list)
