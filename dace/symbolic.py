@@ -10,6 +10,8 @@ import numpy
 
 import sympy.abc
 import sympy.printing.str
+from sympy.core.numbers import Integer, Float, Rational
+from sympy.core.expr import Expr
 
 import packaging.version as packaging_version
 
@@ -1675,3 +1677,36 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ig
     if symbols_to_ignore is None:
         return tokens
     return tokens - symbols_to_ignore
+
+
+def sympyexpr_to_python(val: Union[Integer, Float, Rational, Expr, int, float, complex]) -> Union[int, float, complex]:
+    """
+    Convert a SymPy number or expression to the equivalent native Python type.
+    Args:
+        val: A SymPy numeric type (Integer, Float, Rational, or symbolic Expr)
+             or a native Python number (int, float, complex).
+    Returns:
+        The equivalent native Python int, float, or complex number.
+    Raises:
+        TypeError: If the input cannot be converted to a native Python numeric type.
+    """
+    # Handle SymPy Integer
+    if isinstance(val, Integer):
+        return int(val)
+    # Handle SymPy Float
+    elif isinstance(val, Float):
+        return float(val)
+    # Handle SymPy Rational
+    elif isinstance(val, Rational):
+        return float(val)
+    # Handle SymPy complex numbers (symbolic expressions with complex value)
+    elif hasattr(val, 'is_complex') and val.is_complex and val.is_number:
+        return complex(val)
+    # If it's already a Python int, float, or complex, return as is
+    elif isinstance(val, (int, float, complex)):
+        return val
+    # Try to numerically evaluate and convert to float
+    try:
+        return float(val.evalf())
+    except Exception:
+        raise TypeError(f"Cannot convert {val!r} to a native Python type.")
