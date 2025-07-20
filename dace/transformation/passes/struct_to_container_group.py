@@ -621,6 +621,7 @@ class StructToContainerGroups(ppl.Pass):
         shallow_copy_to_gpu: bool = False,
         taskloop: bool = False,
         clean_structs: bool = True,
+        dont_prune_unused_containers: bool = False,
     ):
         if shallow_copy:
             assert shallow_copy_to_gpu is False and interface_to_gpu is False and interface_with_struct_copy is True
@@ -649,6 +650,7 @@ class StructToContainerGroups(ppl.Pass):
         self._shallow_copy_to_gpu = shallow_copy_to_gpu
         self._taskloop = taskloop
         self._clean_structs = clean_structs
+        self._dont_prune_unused_containers = dont_prune_unused_containers
 
     def modifies(self) -> ppl.Modifies:
         return (
@@ -1132,7 +1134,16 @@ class StructToContainerGroups(ppl.Pass):
 
         collect_used_containers(sdfg)
 
-        unused_containers = set(registered_names) - used_containers
+        # Just assume we use everything.
+        if self._dont_prune_unused_containers:
+            # Can always remove the `__f2dace_` scalars
+            unused_containers = set()
+            for name in registered_names:
+                if "m___f2dace" in name:
+                    unused_containers.add(name)
+        else:
+            unused_containers = set(registered_names) - used_containers
+        #unused_containers = set(registered_names)
 
         for container in unused_containers:
             desc = sdfg.arrays[container]
