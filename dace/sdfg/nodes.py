@@ -1433,17 +1433,16 @@ class LibraryNode(CodeNode):
             dace.serialize.set_properties_from_json(ret, json_obj, context=context)
             return ret
 
-    def expand(self, state_or_sdfg, state_or_impl=None, *args, **kwargs) -> str:
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
         """ Create and perform the expansion transformation for this library
             node.
 
             This method supports two interfaces:
             1. New interface: expand(state, implementation=None, **kwargs)
-            2. Old interface: expand(sdfg, state, *args, **kwargs) [for backward compatibility]
+            2. Old interface: expand(sdfg, state, **kwargs) [for backward compatibility]
 
             :param state_or_sdfg: Either a ControlFlowBlock (new interface) or SDFG (old interface)
             :param state_or_impl: Either implementation name (new interface) or SDFGState (old interface)
-            :param args: Additional positional arguments (old interface)
             :param kwargs: Additional expansion arguments
             :return: the name of the expanded implementation
 
@@ -1455,6 +1454,7 @@ class LibraryNode(CodeNode):
                 result = node.expand(sdfg, state)
         """
         from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
+        import warnings
 
         # Handle both old and new signatures for backward compatibility
         from dace.sdfg.state import SDFGState
@@ -1466,7 +1466,10 @@ class LibraryNode(CodeNode):
             implementation = state_or_impl
             expansion_kwargs = kwargs
         else:
-            # Old interface: expand(sdfg, state, *args, **kwargs)
+            # Old interface: expand(sdfg, state, **kwargs)
+            warnings.warn("The expand(sdfg, state) interface is deprecated. Use expand(state, implementation) instead.",
+                          DeprecationWarning,
+                          stacklevel=2)
             sdfg = state_or_sdfg
             actual_state = state_or_impl
             expansion_kwargs = kwargs

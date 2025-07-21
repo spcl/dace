@@ -139,6 +139,53 @@ def test_implementation_override():
     assert result == 'pure'
 
 
+def test_gemm_expansion_with_arguments():
+    """Test expanding Gemm library node with alpha and beta arguments."""
+    import dace
+    from dace.libraries.blas import Gemm
+    import numpy as np
+
+    # Create SDFG with a Gemm node
+    sdfg = dace.SDFG('test_gemm_expansion')
+    state = sdfg.add_state('s0')
+
+    # Add arrays
+    M, N, K = 64, 32, 128
+    sdfg.add_array('A', [M, K], dace.float32)
+    sdfg.add_array('B', [K, N], dace.float32)
+    sdfg.add_array('C', [M, N], dace.float32)
+    sdfg.add_array('result', [M, N], dace.float32)
+
+    # Create Gemm node with specific alpha and beta values
+    gemm_node = Gemm('gemm', alpha=2.5, beta=1.5)
+
+    # Add nodes to state
+    a_read = state.add_read('A')
+    b_read = state.add_read('B')
+    c_read = state.add_read('C')
+    result_write = state.add_write('result')
+
+    # Add the Gemm node to state
+    state.add_node(gemm_node)
+
+    # Connect nodes
+    state.add_edge(a_read, None, gemm_node, '_a', dace.Memlet('A[0:M, 0:K]'))
+    state.add_edge(b_read, None, gemm_node, '_b', dace.Memlet('B[0:K, 0:N]'))
+    state.add_edge(c_read, None, gemm_node, '_cin', dace.Memlet('C[0:M, 0:N]'))
+    state.add_edge(gemm_node, '_c', result_write, None, dace.Memlet('result[0:M, 0:N]'))
+
+    # Test new interface with implementation specification
+    result = gemm_node.expand(state, 'pure')
+    assert result == 'pure'
+
+    # Verify that the alpha and beta values are preserved
+    assert gemm_node.alpha == 2.5
+    assert gemm_node.beta == 1.5
+
+    # Test that the expansion worked by checking SDFG is valid
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_new_library_node_expand_interface()
     test_old_library_node_expand_interface()
@@ -148,4 +195,5 @@ if __name__ == '__main__':
     test_compatibility_with_existing_expand_library_nodes()
     test_functional_correctness()
     test_implementation_override()
+    test_gemm_expansion_with_arguments()
     print("All tests passed!")
