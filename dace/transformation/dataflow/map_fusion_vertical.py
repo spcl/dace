@@ -1345,10 +1345,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # If we are here, then we were unable to locate a previous result of `FindSingelUseData`.
         #  However, before we perform a scan, we check if the shortcuts, i.e. `assume_always_*`
         #  was specified and use them.
-        if self.assume_always_single_use_data:
-            return False
-        elif self.assume_always_shared:
+        if self.assume_always_shared:
             return True
+        elif self.assume_always_single_use_data:
+            return False
 
         # Perform the real scan.
         return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
