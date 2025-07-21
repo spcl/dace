@@ -196,4 +196,3 @@ if __name__ == '__main__':
     test_functional_correctness()
     test_implementation_override()
     test_gemm_expansion_with_arguments()
-    print("All tests passed!")
