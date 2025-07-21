@@ -33,15 +33,22 @@ class FullMapFusion(ppl.Pass):
         default=False,
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
+
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
+
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
         desc="If `True` then all intermediates will be classified as shared.",
+    )
+    assume_always_single_use_data = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If `True` then all intermediates are classified as single use data.",
     )
 
     perform_vertical_map_fusion = properties.Property(
@@ -87,6 +94,7 @@ class FullMapFusion(ppl.Pass):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
+        assume_always_single_use_data: Optional[bool] = None,
         perform_vertical_map_fusion: Optional[bool] = None,
         perform_horizontal_map_fusion: Optional[bool] = None,
         only_if_common_ancestor: Optional[bool] = None,
@@ -105,6 +113,8 @@ class FullMapFusion(ppl.Pass):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
+        if assume_always_single_use_data is not None:
+            self.assume_always_single_use_data = assume_always_single_use_data
         if perform_vertical_map_fusion is not None:
             self.perform_vertical_map_fusion = perform_vertical_map_fusion
         if perform_horizontal_map_fusion is not None:
@@ -120,8 +130,13 @@ class FullMapFusion(ppl.Pass):
         if consolidate_edges_only_if_not_extending is not None:
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
+        # TODO(phimuell): Raise an error if a flag was specified and the component that
+        #   needs it is disabled.
+
         if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
             raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
+        if self.assume_always_shared and self.assume_always_single_use_data:
+            raise ValueError('Specified both `assume_always_single_use_data` and `assume_always_shared`.')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -158,6 +173,7 @@ class FullMapFusion(ppl.Pass):
                     only_toplevel_maps=self.only_toplevel_maps,
                     strict_dataflow=self.strict_dataflow,
                     assume_always_shared=self.assume_always_shared,
+                    assume_always_single_use_data=self.assume_always_single_use_data,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
                 ))
