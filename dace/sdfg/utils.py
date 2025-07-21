@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -172,6 +172,64 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
                         stack.append((child, iter(neighbors(child))))
             except StopIteration:
                 stack.pop()
+
+
+def _find_nodes_impl(
+    node_to_start: Node,
+    state: SDFGState,
+    forward: bool,
+    seen: Optional[Set[Node]],
+) -> Set[Node]:
+    to_scan: List[Node] = [node_to_start]
+    scanned_nodes: Set[Node] = set() if seen is None else seen
+    if forward:
+        get_edges = state.out_edges
+        get_node = lambda e: e.dst
+    else:
+        get_edges = state.in_edges
+        get_node = lambda e: e.src
+    while len(to_scan) != 0:
+        node_to_scan = to_scan.pop()
+        if node_to_scan in scanned_nodes:
+            continue
+        to_scan.extend(get_node(edge) for edge in get_edges(node_to_scan) if get_node(edge) not in scanned_nodes)
+        scanned_nodes.add(node_to_scan)
+    return scanned_nodes
+
+
+def find_downstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+    """Find all downstream nodes of `node_to_start`.
+
+    The function will explore the state, similar to a BFS, just that the order in which the nodes of
+    the dataflow is explored is unspecific. It is possible to pass a `set` of nodes that should be
+    considered as already visited. It is important that the function will return the set of found
+    nodes. In case `seen` was passed that `set` will be updated in place and be returned.
+
+    :param node_to_start: Where to start the exploration of the state.
+    :param state: The state on which we operate on.
+    :param seen: The set of already seen nodes.
+
+    :note: See also `find_upstream_nodes()` in case the dataflow should be explored in the reverse direction.
+    """
+    return _find_nodes_impl(node_to_start=node_to_start, state=state, seen=seen, forward=True)
+
+
+def find_upstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+    """Find all upstream nodes of `node_to_start`.
+
+    The function will explore the state, similar to a BFS, just that the order in which the nodes of
+    the dataflow is explored is unspecific. It is possible to pass a `set` of nodes that should be
+    considered as already visited. It is important that the function will return the set of found
+    nodes. In case `seen` was passed that `set` will be updated in place and be returned.
+
+    The main difference to `find_downstream_nodes()` is that the dataflow is traversed in reverse
+    order or "against the flow".
+
+    :param node_to_start: Where to start the exploration of the state.
+    :param state: The state on which we operate on.
+    :param seen: The set of already seen nodes.
+    """
+    return _find_nodes_impl(node_to_start=node_to_start, state=state, seen=seen, forward=False)
 
 
 class StopTraversal(Exception):
@@ -807,24 +865,32 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     if existent, else None
     """
     sdfg = state.parent
-    node = view
-    desc = sdfg.arrays[node.data]
+    previous_node = view
     result = []
+
+    desc = sdfg.arrays[previous_node.data]
+    forward = None
     while isinstance(desc, dt.View):
-        edge = get_view_edge(state, node)
+        edge = get_view_edge(state, previous_node)
         if edge is None:
             break
-        old_node = node
-        if edge.dst is view:
-            node = edge.src
+
+        if forward is None:
+            forward = edge.src is previous_node
+
+        if forward:
+            next_node = edge.dst
         else:
-            node = edge.dst
-        if node is old_node:
+            next_node = edge.src
+
+        if previous_node is next_node:
             break
-        if not isinstance(node, nd.AccessNode):
+        if not isinstance(next_node, nd.AccessNode):
             break
-        desc = sdfg.arrays[node.data]
+        desc = sdfg.arrays[next_node.data]
         result.append(edge)
+        previous_node = next_node
+
     return result
 
 
@@ -1582,7 +1648,7 @@ def _tswds_cf_region(
             if edge.src not in visited:
                 visited.add(edge.src)
                 if isinstance(edge.src, SDFGState):
-                    yield from _tswds_state(sdfg, edge.src, {}, recursive)
+                    yield from _tswds_state(sdfg, edge.src, symbols, recursive)
                 elif isinstance(edge.src, AbstractControlFlowRegion):
                     yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
@@ -2007,13 +2073,15 @@ def get_control_flow_block_dominators(sdfg: SDFG,
             idom = {}
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
             if isinstance(cfg, ConditionalBlock):
-                continue
-            sinks = cfg.sink_nodes()
-            if len(sinks) > 1:
-                added_sinks[cfg] = cfg.add_state()
-                for s in sinks:
-                    cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
-            idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
+                for _, b in cfg.branches:
+                    idom[b] = cfg
+            else:
+                sinks = cfg.sink_nodes()
+                if len(sinks) > 1:
+                    added_sinks[cfg] = cfg.add_state()
+                    for s in sinks:
+                        cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
+                idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
         # Compute the transitive relationship of immediate dominators:
         # - For every start state in a control flow region, the immediate dominator is the immediate dominator of the
         #   parent control flow region.
@@ -2056,28 +2124,33 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
             if isinstance(cfg, ConditionalBlock):
-                continue
-            # Get immediate post-dominators
-            sink_nodes = cfg.sink_nodes()
-            if len(sink_nodes) > 1:
-                sink = cfg.add_state()
-                added_sinks[cfg] = sink
-                sinks_per_cfg[cfg] = sink
-                for snode in sink_nodes:
-                    cfg.add_edge(snode, sink, dace.InterstateEdge())
-            elif len(sink_nodes) == 0:
-                return None
+                sinks_per_cfg[cfg] = cfg
+                for _, b in cfg.branches:
+                    ipostdom[b] = cfg
             else:
-                sink = sink_nodes[0]
-                sinks_per_cfg[cfg] = sink
-            ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
+                # Get immediate post-dominators
+                sink_nodes = cfg.sink_nodes()
+                if len(sink_nodes) > 1:
+                    sink = cfg.add_state()
+                    added_sinks[cfg] = sink
+                    sinks_per_cfg[cfg] = sink
+                    for snode in sink_nodes:
+                        cfg.add_edge(snode, sink, dace.InterstateEdge())
+                elif len(sink_nodes) == 0:
+                    return None
+                else:
+                    sink = sink_nodes[0]
+                    sinks_per_cfg[cfg] = sink
+                ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
 
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
         for k, _ in ipostdom.items():
-            if k.parent_graph is not sdfg and k is sinks_per_cfg[k.parent_graph]:
+            if k.parent_graph is not sdfg and (k is sinks_per_cfg[k.parent_graph]
+                                               or isinstance(k.parent_graph, ConditionalBlock)):
                 next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and next_pdom is sinks_per_cfg[next_pdom.parent_graph]:
+                while next_pdom.parent_graph is not sdfg and (next_pdom is sinks_per_cfg[next_pdom.parent_graph]
+                                                              or isinstance(next_pdom.parent_graph, ConditionalBlock)):
                     next_pdom = ipostdom[next_pdom.parent_graph]
                 ipostdom[k] = next_pdom
         changed = True

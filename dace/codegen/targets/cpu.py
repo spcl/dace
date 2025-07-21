@@ -177,9 +177,16 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
-    def allocate_view(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
-                      global_stream: CodeIOStream, declaration_stream: CodeIOStream,
-                      allocation_stream: CodeIOStream) -> None:
+    def allocate_view(self,
+                      sdfg: SDFG,
+                      cfg: ControlFlowRegion,
+                      dfg: SDFGState,
+                      state_id: int,
+                      node: nodes.AccessNode,
+                      global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream,
+                      allocation_stream: CodeIOStream,
+                      decouple_array_interfaces: bool = False) -> None:
         """
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
@@ -222,7 +229,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
                                                         is_write=is_write,
-                                                        use_offset=True)
+                                                        use_offset=True,
+                                                        decouple_array_interfaces=decouple_array_interfaces)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -969,7 +977,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return (f'dace::wcr_custom<{dtype.ctype}>:: template {func}({custom_reduction}, {ptr}, {inname})')
+        return (
+            f'const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})'
+        )
 
     def process_out_memlets(self,
                             sdfg: SDFG,
@@ -1032,8 +1042,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if node == dst_node:
                 continue
 
-            # Tasklet -> array
-            if isinstance(node, nodes.CodeNode):
+            # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
+            if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
                     raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
                         str(edge.src), str(edge.dst)))

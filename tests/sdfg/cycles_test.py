@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 
 import dace
@@ -6,7 +6,7 @@ from dace.sdfg.validation import InvalidSDFGError
 
 
 def test_cycles():
-    with pytest.raises(ValueError, match="Found cycles.*"):
+    with pytest.raises(InvalidSDFGError, match="State should be acyclic but contains cycles"):
         sdfg = dace.SDFG("hello")
         state = sdfg.add_state()
 

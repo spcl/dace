@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace
@@ -523,7 +523,7 @@ def test_dependency_change():
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_array('a', [1], dace.int64)
-    init = sdfg.add_state()
+    init = sdfg.add_state(is_start_block=True)
     entry = sdfg.add_state('entry')
     body = sdfg.add_state('body')
     body2 = sdfg.add_state('body2')

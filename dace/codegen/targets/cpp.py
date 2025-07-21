@@ -308,7 +308,7 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset) if use_offset else '0'
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer)
+    is_scalar = not isinstance(conntype, dtypes.pointer) and not fpga.is_fpga_array(desc)
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 

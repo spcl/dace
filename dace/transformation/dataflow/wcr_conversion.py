@@ -4,7 +4,7 @@ import ast
 import copy
 import re
 import copy
-from dace import nodes, dtypes, Memlet
+from dace import nodes, dtypes, Memlet, data
 from dace.frontend.python import astutils
 from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
@@ -151,7 +151,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # If state fission is necessary to keep semantics, do it first
         if state.in_degree(input) > 0:
-            new_state = helpers.state_fission_after(state, tasklet)
+            new_state = self.isolate_tasklet(state)
         else:
             new_state = state
 
@@ -269,6 +269,87 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     outedge.data.wcr = f'lambda a,b: a {op} b'
             # At this point we are leading to an access node again and can
             # traverse further up
+
+    def isolate_tasklet(
+        self,
+        state: SDFGState,
+    ) -> SDFGState:
+        tlet: nodes.Tasklet = self.tasklet
+        newstate = state.parent_graph.add_state_after(state)
+
+        # Bookkeeping
+        nodes_to_move = set([tlet])
+        boundary_nodes = set()
+        orig_edges = set()
+
+        for edge in state.in_edges(tlet):
+            for e in state.memlet_path(edge):
+                nodes_to_move.add(e.src)
+                orig_edges.add(e)
+            if isinstance(e.src, nodes.AccessNode) and isinstance(e.src.desc(sdfg), data.View):
+                assert state.in_degree(e.src) > 0
+                view_edges = sdutil.get_all_view_edges(state, e.src)
+                for edge in view_edges:
+                    nodes_to_move.add(edge.src)
+                    orig_edges.add(edge)
+
+        # Find all consumer nodes of `tlet`.
+        for edge in state.edge_bfs(tlet):
+            nodes_to_move.add(edge.dst)
+            orig_edges.add(edge)
+
+            # If a consumer is not an AccessNode we also have to relocate its dependencies.
+            if not isinstance(edge.dst, nodes.AccessNode):
+                for iedge in state.in_edges(edge.dst):
+                    if iedge == edge:
+                        continue
+                    for e in state.memlet_path(iedge):
+                        nodes_to_move.add(e.src)
+                        orig_edges.add(e)
+
+        # Define boundary nodes
+        for node in nodes_to_move:
+            if isinstance(node, nodes.AccessNode):
+                for iedge in state.in_edges(node):
+                    if iedge.src not in nodes_to_move:
+                        boundary_nodes.add(node)
+                        break
+                if node in boundary_nodes:
+                    continue
+                for oedge in state.out_edges(node):
+                    if oedge.dst not in nodes_to_move:
+                        boundary_nodes.add(node)
+                        break
+
+        # Duplicate boundary nodes
+        new_nodes = {}
+        for node in boundary_nodes:
+            node_ = copy.deepcopy(node)
+            state.add_node(node_)
+            new_nodes[node] = node_
+
+        for edge in state.edges():
+            if edge.src in boundary_nodes and edge.dst in boundary_nodes:
+                state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
+                               copy.deepcopy(edge.data))
+            elif edge.src in boundary_nodes:
+                state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
+            elif edge.dst in boundary_nodes:
+                state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
+
+        state.remove_nodes_from(nodes_to_move)
+
+        # Set the new parent state
+        # TODO: Note sure if `add_node()` does it on its own?
+        for node in nodes_to_move:
+            if isinstance(node, nodes.NestedSDFG):
+                node.sdfg.parent = newstate
+
+        newstate.add_nodes_from(nodes_to_move)
+        for e in orig_edges:
+            newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+
+        return newstate
 
 
 class WCRToAugAssign(transformation.SingleStateTransformation):
