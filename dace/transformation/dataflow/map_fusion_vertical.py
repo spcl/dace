@@ -78,16 +78,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         goes to the same AccessNode.
 
     :note: This transformation modifies more nodes than it matches.
+    :note: While it is always "safe" to specify the `assume_always_shared`, this is not true
+        for `assume_always_single_use_data`. Specifying it when the data is used somewhere
+        else will lead to invalid behaviour. Thus only specify it if you know what you are doing.
     :note: The flags `assume_always_shared` and `assume_always_single_use_data` are intended
-        to speed up the operation in cases where it is clear that the intermediate is single
-        use or if it is shared. These flags instruct the transformation to skip the scan of
-        SDFG. Instead they instruct the transformation to assume that the intermediate is
-        shared, i.e. must be recreated or that it is single use data, i.e. does not need to
-        be preserved. Such situations mostly happens if `can_be_applied_to()` or `apply_to()`
-        is used.
+        when it is clear from the usage context what should happen to the intermediate. This is
+        most often, but not always the case if `can_be_applied_to()` or `apply_to()` are used.
     :note: Because of [issue#1911](https://github.com/spcl/dace/issues/1911) the `can_be_applied()`
-            can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
-            pass is not affected by this.
+        can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
+        pass is not affected by this.
     """
 
     first_map_exit = transformation.transformation.PatternNode(nodes.MapExit)
