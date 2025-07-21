@@ -120,7 +120,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     )
     assume_always_single_use_data = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc="If `True` then all intermediates are classified as single use data.",
     )
 
