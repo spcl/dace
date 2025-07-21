@@ -175,10 +175,14 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
         #  Because we do not need to look at them, we were able to skip them in the
         #  `can_be_applied()` function, but now we have to do it.
-        # TODO(phimuell): Once [PR#2081](https://github.com/spcl/dace/pull/2081) is merged
-        #   restrict it to the subgraph and the edges of the scope nodes.
-        for edge in graph.edges():
-            edge.data.try_initialize(sdfg, graph, edge)
+        for map_entry, map_exit in [(first_map_entry, first_map_exit), (second_map_entry, second_map_exit)]:
+            inner_subgraph = graph.scope_subgraph(map_entry)
+            for edge in inner_subgraph.edges():
+                edge.data.try_initialize(sdfg, graph, edge)
+            for iedge in graph.in_edges(map_entry):
+                iedge.data.try_initialize(sdfg, graph, iedge)
+            for oedge in graph.out_edges(map_exit):
+                oedge.data.try_initialize(sdfg, graph, oedge)
 
         # We have to get the scope_dict before we start mutating the graph.
         scope_dict: Dict = graph.scope_dict().copy()
