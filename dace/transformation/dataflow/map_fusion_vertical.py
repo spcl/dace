@@ -1313,6 +1313,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # This means the data is consumed by multiple Maps, through the same AccessNode, in this state
         #  Note currently multiple incoming edges are not handled, but in the spirit of this function
         #  we consider such AccessNodes as shared, because we can not remove the intermediate.
+        # TODO(phimuell): If one of the two Maps has multiple connections to the intermediate,
+        #   then this detection will fail here. This is not a problem because this is currently
+        #   not supported. But still.
         if state.out_degree(data) > 1:
             return True
         if state.in_degree(data) > 1:
