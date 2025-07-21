@@ -5,10 +5,49 @@ import dace
 import sys
 import os
 import numpy as np
+import copy
+from dace import SDFGState, SDFG, library, dtypes
+from dace.transformation.transformation import ExpandTransformation
 
 # Add the test library to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'library'))
 import addlib
+
+
+# Create a tiled expansion for testing keyword arguments
+@library.register_expansion(addlib.AddNode, 'tiled')
+class ExpandAddTiled(ExpandTransformation):
+    """Test expansion that accepts tile_size keyword argument"""
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state: SDFGState, parent_sdfg: SDFG, tile_size=8, **kwargs):
+        in_edge = parent_state.in_edges(node)[0]
+        out_edge = parent_state.out_edges(node)[0]
+
+        sdfg = dace.SDFG("nested_tiled")
+        sdfg.add_datadesc("_a", copy.deepcopy(parent_sdfg.arrays[in_edge.data.data]))
+        sdfg.add_datadesc("_b", copy.deepcopy(parent_sdfg.arrays[out_edge.data.data]))
+        sdfg.arrays["_a"].transient = False
+        sdfg.arrays["_b"].transient = False
+        state = sdfg.add_state()
+
+        inp = state.add_access("_a")
+        outp = state.add_access("_b")
+
+        # Create a map with the specified tile_size - use the tile_size in the range
+        me, mx = state.add_map("tiled_map", {"i": f"0:{tile_size}"})
+
+        tasklet = state.add_tasklet("add_tiled", {"inp"}, {"outp"}, "outp = inp + 1")
+
+        state.add_edge(inp, None, me, None, sdfg.make_array_memlet("_a"))
+        state.add_edge(me, None, tasklet, "inp", sdfg.make_array_memlet("_a"))
+
+        state.add_edge(tasklet, "outp", mx, None, dace.Memlet("_b[0]"))
+        state.add_edge(mx, None, outp, None, dace.Memlet("_b[0]"))
+        sdfg.fill_scope_connectors()
+
+        return sdfg
 
 
 def create_test_sdfg():
@@ -139,51 +178,49 @@ def test_implementation_override():
     assert result == 'pure'
 
 
-def test_gemm_expansion_with_arguments():
-    """Test expanding Gemm library node with alpha and beta arguments."""
-    import dace
-    from dace.libraries.blas import Gemm
-    import numpy as np
+def test_expansion_with_keyword_arguments():
+    """Test expanding library node with keyword arguments passed to expansion method."""
+    sdfg, state, addnode = create_test_sdfg()
 
-    # Create SDFG with a Gemm node
-    sdfg = dace.SDFG('test_gemm_expansion')
-    state = sdfg.add_state('s0')
+    # Test expansion with tile_size keyword argument
+    result = addnode.expand(state, 'tiled', tile_size=16)
+    assert result == 'tiled'
 
-    # Add arrays
-    M, N, K = 64, 32, 128
-    sdfg.add_array('A', [M, K], dace.float32)
-    sdfg.add_array('B', [K, N], dace.float32)
-    sdfg.add_array('C', [M, N], dace.float32)
-    sdfg.add_array('result', [M, N], dace.float32)
+    # Find the nested SDFG that was created by the expansion
+    nested_sdfg_nodes = [n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert len(nested_sdfg_nodes) == 1
 
-    # Create Gemm node with specific alpha and beta values
-    gemm_node = Gemm('gemm', alpha=2.5, beta=1.5)
+    nested_sdfg = nested_sdfg_nodes[0].sdfg
 
-    # Add nodes to state
-    a_read = state.add_read('A')
-    b_read = state.add_read('B')
-    c_read = state.add_read('C')
-    result_write = state.add_write('result')
+    # Verify the map range uses the correct tile_size
+    found_tiled_map = False
+    for sdfg_state in nested_sdfg.nodes():
+        for node in sdfg_state.nodes():
+            if isinstance(node, dace.nodes.MapEntry) and node.label == 'tiled_map':
+                # Check that the map range is "0:16" (range end is tile_size-1 since ranges are inclusive)
+                assert node.map.range.ranges[0] == (0, 15, 1)  # 0:16 becomes (0, 15, 1)
+                found_tiled_map = True
+                break
 
-    # Add the Gemm node to state
-    state.add_node(gemm_node)
+    assert found_tiled_map, "Could not find the tiled_map in the expanded SDFG"
 
-    # Connect nodes
-    state.add_edge(a_read, None, gemm_node, '_a', dace.Memlet('A[0:M, 0:K]'))
-    state.add_edge(b_read, None, gemm_node, '_b', dace.Memlet('B[0:K, 0:N]'))
-    state.add_edge(c_read, None, gemm_node, '_cin', dace.Memlet('C[0:M, 0:N]'))
-    state.add_edge(gemm_node, '_c', result_write, None, dace.Memlet('result[0:M, 0:N]'))
+    # Test with different tile_size
+    sdfg2, state2, addnode2 = create_test_sdfg()
+    result2 = addnode2.expand(state2, 'tiled', tile_size=32)
+    assert result2 == 'tiled'
 
-    # Test new interface with implementation specification
-    result = gemm_node.expand(state, 'pure')
-    assert result == 'pure'
+    nested_sdfg_nodes2 = [n for n in state2.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    nested_sdfg2 = nested_sdfg_nodes2[0].sdfg
 
-    # Verify that the alpha and beta values are preserved
-    assert gemm_node.alpha == 2.5
-    assert gemm_node.beta == 1.5
+    found_tiled_map2 = False
+    for sdfg_state in nested_sdfg2.nodes():
+        for node in sdfg_state.nodes():
+            if isinstance(node, dace.nodes.MapEntry) and node.label == 'tiled_map':
+                assert node.map.range.ranges[0] == (0, 31, 1)  # 0:32 becomes (0, 31, 1)
+                found_tiled_map2 = True
+                break
 
-    # Test that the expansion worked by checking SDFG is valid
-    sdfg.validate()
+    assert found_tiled_map2, "Could not find the tiled_map in the second expanded SDFG"
 
 
 if __name__ == '__main__':
@@ -195,4 +232,4 @@ if __name__ == '__main__':
     test_compatibility_with_existing_expand_library_nodes()
     test_functional_correctness()
     test_implementation_override()
-    test_gemm_expansion_with_arguments()
+    test_expansion_with_keyword_arguments()
