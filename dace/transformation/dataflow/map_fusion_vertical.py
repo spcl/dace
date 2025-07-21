@@ -1336,7 +1336,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             single_use_data = self._pipeline_results["FindSingelUseData"]
         elif self._single_use_data is not None:
             single_use_data = self._single_use_data
-
         # The single use data was present so scan it.
         if single_use_data is not None:
             assert sdfg in single_use_data
