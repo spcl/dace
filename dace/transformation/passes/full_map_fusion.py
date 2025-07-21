@@ -4,30 +4,20 @@ from typing import Any, Dict, Optional, Set
 import warnings
 
 from dace import SDFG, SDFGState, properties, transformation
-from dace.transformation import pass_pipeline as ppl
-from dace.transformation.dataflow import MapFusion
+from dace.transformation import pass_pipeline as ppl, dataflow as dftrans
 from dace.transformation.passes import analysis as ap, pattern_matching as pmp
 
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class FullMapFusion(ppl.Pass):
-    """
-    Pass that combines `MapFusion` and `FindSingleUseData` into one.
+    """Pass that combines `MapFusionVertical`, `MapFusionHorizonatl` and `FindSingleUseData` into one.
 
     Essentially, this function runs `FindSingleUseData` before `MapFusion`, this
-    will speedup the fusion, as the SDFG has to be scanned only once.
-    The pass accepts the same options as `MapFusion`, for a detailed description
-    see there.
-
-    :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
-    :param only_toplevel_maps: Only consider Maps that are at the top.
-    :param strict_dataflow: Which dataflow mode should be used, see above.
-    :param assume_always_shared: Assume that all intermediates are shared.
-    :param validate: Validate the SDFG after the pass as finished.
-    :param validate_all: Validate the SDFG after every transformation.
-
-    :todo: Implement a faster matcher as the pattern is constant.
+    will speedup vertical fusion, as the SDFG has to be scanned only once.
+    The pass accepts the combined options of `MapFusionVertical` and `MapFusionHorizontal`.
+    In addition it also accepts `perform_vertical_map_fusion` and `perform_horizontal_map_fusion`
+    flags, both default to `True`. They allow to enable disable the two fusion components.
     """
 
     CATEGORY: str = 'Simplification'
@@ -36,22 +26,50 @@ class FullMapFusion(ppl.Pass):
     only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
-        desc='Only perform fusing if the Maps are in the top level.',
+        desc="Only perform fusing if the Maps are in the top level.",
     )
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
-        desc='Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.',
+        desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
-        desc='If `True` then the transformation will ensure a more stricter data flow.',
+        desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
-        desc='If `True` then all intermediates will be classified as shared.',
+        desc="If `True` then all intermediates will be classified as shared.",
+    )
+
+    perform_vertical_map_fusion = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If `True`, the default, then allow vertical Map fusion, see `MapFusionVertical`.",
+    )
+    perform_horizontal_map_fusion = properties.Property(
+        dtype=bool,
+        default=True,
+        desc="If `True`, the default, then also perform horizontal Map fusion, see `MapFusionHorizontal`.",
+    )
+
+    only_if_common_ancestor = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` restrict parallel map fusion to maps that have a direct common ancestor.",
+    )
+
+    never_consolidate_edges = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True`, always create a new connector, instead of reusing one that referring to the same data.",
+    )
+    consolidate_edges_only_if_not_extending = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Only consolidate if this does not lead to an extension of the subset.",
     )
 
     validate = properties.Property(
@@ -69,6 +87,11 @@ class FullMapFusion(ppl.Pass):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
+        perform_vertical_map_fusion: Optional[bool] = None,
+        perform_horizontal_map_fusion: Optional[bool] = None,
+        only_if_common_ancestor: Optional[bool] = None,
+        consolidate_edges_only_if_not_extending: Optional[bool] = None,
+        never_consolidate_edges: Optional[bool] = None,
         validate: Optional[bool] = None,
         validate_all: Optional[bool] = None,
         **kwargs: Any,
@@ -82,10 +105,23 @@ class FullMapFusion(ppl.Pass):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
+        if perform_vertical_map_fusion is not None:
+            self.perform_vertical_map_fusion = perform_vertical_map_fusion
+        if perform_horizontal_map_fusion is not None:
+            self.perform_horizontal_map_fusion = perform_horizontal_map_fusion
+        if only_if_common_ancestor is not None:
+            self.only_if_common_ancestor = only_if_common_ancestor
         if validate is not None:
             self.validate = validate
         if validate_all is not None:
             self.validate_all = validate_all
+        if never_consolidate_edges is not None:
+            self.never_consolidate_edges = never_consolidate_edges
+        if consolidate_edges_only_if_not_extending is not None:
+            self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
+
+        if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
+            raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -111,19 +147,39 @@ class FullMapFusion(ppl.Pass):
         if ap.FindSingleUseData.__name__ not in pipeline_results:
             raise ValueError(f'Expected to find `FindSingleUseData` in `pipeline_results`.')
 
-        fusion = MapFusion(only_inner_maps=self.only_inner_maps,
-                           only_toplevel_maps=self.only_toplevel_maps,
-                           strict_dataflow=self.strict_dataflow,
-                           assume_always_shared=self.assume_always_shared)
+        fusion_transforms = []
+        if self.perform_vertical_map_fusion:
+            # We have to pass the single use data at construction. This is because that
+            #  `fusion._pipeline_results` is only defined, i.e. not `None` during `apply()`
+            #  but during `can_be_applied()` it is not available. Thus we have to set it here.
+            fusion_transforms.append(
+                dftrans.MapFusionVertical(
+                    only_inner_maps=self.only_inner_maps,
+                    only_toplevel_maps=self.only_toplevel_maps,
+                    strict_dataflow=self.strict_dataflow,
+                    assume_always_shared=self.assume_always_shared,
+                    consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
+                    never_consolidate_edges=self.never_consolidate_edges,
+                ))
+            # TODO: Remove once issue#1911 has been solved.
+            fusion_transforms[-1]._single_use_data = single_use_data = pipeline_results["FindSingleUseData"]
+
+        if self.perform_horizontal_map_fusion:
+            # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
+            #   Map fusion. The reason is that it has to check any possible Map pair. Thus, the
+            #   number of Maps should be as small as possible.
+            fusion_transforms.append(
+                dftrans.MapFusionHorizontal(
+                    only_inner_maps=self.only_inner_maps,
+                    only_toplevel_maps=self.only_toplevel_maps,
+                    only_if_common_ancestor=self.only_if_common_ancestor,
+                    consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
+                    never_consolidate_edges=self.never_consolidate_edges,
+                ))
 
         try:
-            # The short answer why we do this is because  `fusion._pipeline_results` is
-            #  only defined during `apply()` and not during `can_be_applied()`. For more
-            #  information see the note in `MapFusion.is_shared_data()` and/or [issue#1911](https://github.com/spcl/dace/issues/1911).
-            assert fusion._single_use_data is None
-            fusion._single_use_data = pipeline_results["FindSingleUseData"]
             pazz = pmp.PatternMatchAndApplyRepeated(
-                [fusion],
+                fusion_transforms,
                 permissive=False,
                 validate=False,
                 validate_all=self.validate_all,
@@ -131,7 +187,8 @@ class FullMapFusion(ppl.Pass):
             result = pazz.apply_pass(sdfg, pipeline_results)
 
         finally:
-            fusion._single_use_data = None
+            if self.perform_vertical_map_fusion:
+                fusion_transforms[0]._single_use_data = None
 
         if self.validate:
             sdfg.validate()
