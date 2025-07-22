@@ -75,6 +75,9 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
     covering check under the assumption that all symbols are positive,
     which is the main difference to `bounding_box_cover_exact()`.
 
+    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
+    and `False` otherwise.
+
     :param subset_a: The first subset, the one that should cover.
     :param subset_b: The second subset, the one that should be convered.
     :param approximation: If `True` then use the approximated bounds.
