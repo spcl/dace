@@ -18,11 +18,6 @@ def nng(expr):
     return expr
 
 
-def _no_simplify(expr):
-    """Returns the expression unmodified."""
-    return expr
-
-
 def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
     """Test if `subset_a` covers `subset_b`.
 
@@ -154,35 +149,10 @@ class Subset(object):
                 f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
             )
 
-        if not Config.get('optimizer', 'symbolic_positive'):
-
-            # Just doing the comparison first is faster than running simplify which is very slow.
-            # TODO: Figuring out why `nng()` is used here. The very check of the containing `if`
-            #   indicates that this is an error.
-            simplify = lambda expr: symbolic.simplify_ext(nng(expr))
-            no_simplify = lambda expr: expr
-
-            rb_all = self.min_element_approx()
-            re_all = self.max_element_approx()
-            orb_all = other.min_element_approx()
-            ore_all = other.max_element_approx()
-
-            for simp_fun in [no_simplify, simplify]:
-                try:
-                    if all((simp_fun(rb) <= simp_fun(orb)) == True and (simp_fun(re) >= simp_fun(ore)) == True
-                           for rb, re, orb, ore in zip(rb_all, re_all, orb_all, ore_all)):
-                        return True
-                except TypeError:
-                    continue
-            return False
+        if Config.get('optimizer', 'symbolic_positive'):
+            return bounding_box_symbolic_positive(self, other, approximation=True)
         else:
-            try:
-                if not bounding_box_symbolic_positive(self, other, True):
-                    return False
-            except TypeError:
-                return False
-
-            return True
+            return bounding_box_cover_exact(self, other, approximation=True)
 
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
@@ -195,19 +165,20 @@ class Subset(object):
 
         # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
-        try:
-            if symbolic_positive and (not bounding_box_cover_exact(self, othr)):
-                return False
-            elif not bounding_box_symbolic_positive(self, other):
-                return False
-        except TypeError:
+        if symbolic_positive and (not bounding_box_cover_exact(self, othr)):
+            return False
+        elif not bounding_box_symbolic_positive(self, other):
             return False
 
-        # It is cheaper to just try to make the comparison, without calling simplify first
+        # TODO: The original implementation always called `nnz()` on the argument before passing
+        #   it into the simplify function. This looks like an error, calling it should depend
+        #   on the value of `symbolic_positive`.
+        simplify = lambda expr: symbolic.simplify_ext(nnz(expr))
+        no_simplify = lambda expr: expr
 
-        # Just doing the comparison first is faster than running simplify which is very slow.
-        # TODO: Figuring out why `nng()` is used here. The very check of the containing `if`
-        #   indicates that this is an error.
+        # In the following we will first perform the check as is, and if that fails try it again
+        #   with simplify. We do it because simplify is a very expensive operation and we try to
+        #   avoid calling it.
         try:
             # if self is an index no further distinction is needed
             if isinstance(self, Indices):
@@ -217,37 +188,46 @@ class Subset(object):
                 # other is an index so we need to check if the step of self is such that other is covered
                 # self.start % self.step == other.index % self.step
                 if isinstance(other, Indices):
-                    try:
+                    # TODO: Think if inverting the order is simpler.
+                    for simp_fun in [no_simplify, simplify]:
                         for (start, _, step), i in zip(self.ranges, other.indices):
-                            simplified_step = symbolic.simplify_ext(nng(step))
-                            if not (((symbolic.simplify_ext(nng(start)) % simplified_step)
-                                     == (symbolic.simplify_ext(nng(i)) % simplified_step)) == True):
+                            simp_step = simp_fun(step)
+                            simp_start = simp_fun(start)
+                            simp_i = simp_fun(i)
+                            if not (((simp_start % simp_step) == (simp_i % simp_step)) == True):
                                 return False
-                        return True
-                    except:
-                        return False
-                if isinstance(other, Range):
+                    return True
+
+                else:
+                    assert isinstance(other, Range)
                     # other is a range so in every dimension self.step has to divide other.step and
                     # self.start % self.step = other.start % other.step
-                    try:
-                        self_steps = [r[2] for r in self.ranges]
-                        other_steps = [r[2] for r in other.ranges]
-                        for start, step, ostart, ostep in zip(self.min_element(), self_steps, other.min_element(),
-                                                              other_steps):
-                            simplified_start = symbolic.simplify_ext(nng(start))
-                            simplified_ostart = symbolic.simplify_ext(nng(ostart))
+                    self_steps = [r[2] for r in self.ranges]
+                    other_steps = [r[2] for r in other.ranges]
+                    starts = self.min_element()
+                    ostarts = other.min_element()
 
-                            if not (ostep % step == 0 and
-                                    ((simplified_start == simplified_ostart) or
-                                     (simplified_start % symbolic.simplify_ext(nng(step))
-                                      == simplified_ostart % symbolic.simplify_ext(nng(ostep))) == True)):
-                                return False
-                    except:
-                        return False
+                    for i, simp_fun in enumerate([no_simplify, simplify]):
+                        try:
+                            for start, step, ostart, ostep in zip(starts, self_steps, ostarts, other_steps):
+                                simp_start = simp_fun(start)
+                                simp_ostart = simp_fun(ostart)
+                                if not (ostep % step == 0 and
+                                        ((simp_start == simp_ostart) or
+                                         (simp_start % simp_fun(step) == simp_ostart % simp_fun(ostep)) == True)):
+                                    return False
+                        except TypeError:
+                            # If a `TypeError happens during the "no simplify" phase, we immediately
+                            #   go to the simplify phase, in the hope that it might be possible to
+                            #   simplify the expression more. If we are already using simplify, then
+                            #   we return `False`.
+                            if i == 0:
+                                continue
+                            return False
                     return True
-        # unknown type
             else:
-                raise TypeError
+                raise ValueError(
+                    f'Does not know how to compare a `{type(self).__name__}` with a `{type(other).__name__}`.')
 
         except TypeError:
             return False
