@@ -23,26 +23,30 @@ def _no_simplify(expr):
     return expr
 
 
-def bounding_box_cover_exact(subset_a, subset_b) -> bool:
+def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
     """Test if `subset_a` covers `subset_b`.
 
-    Essentially the function computes the bounding box of each subset and checks if
-    the box from `subset_a` is at least as big as `subset_b`. The main difference to
-    `bounding_box_symbolic_positive()` is that it is not possible to use approximative
-    bounds and that this function does not assumes positive symbols, see note.
+    The function uses a bounding box to test if `subset_a` covers `subset_b`,
+    i.e. that `subset_a` is at least as big as `subset_b`. By default the
+    box is constructed using `{min, max}_element()` or if `approximation` is
+    `True` `{min, max}_element_approx()`. The most important difference compared
+    to `bounding_box_cover_exact()` is that this function does not assume
+    that the symbols are positive.
 
     The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
     and `False` otherwise.
 
     :param subset_a: The first subset, the one that should cover.
     :param subset_b: The second subset, the one that should be convered.
+    :param approximation: If `True` then use the approximated bounds.
 
-    :note: The function might assume positive symbols.
+    :note: Although the function claims that it does not assumes positivity,
+        this is not guaranteed. This might be a bug.
     """
-    min_elements_a = subset_a.min_element()
-    max_elements_a = subset_a.max_element()
-    min_elements_b = subset_b.min_element()
-    max_elements_b = subset_b.max_element()
+    min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
+    max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
+    min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
+    max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
 
     # Covering only make sense if the two subsets have the same number of dimensions.
     if len(min_elements_a) != len(min_elements_b):
