@@ -93,8 +93,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
                                                     outputs={f'{node.data}_value'},
                                                     code=f'{node.data}_value = {symrepl[node_data_symbolic]}')
                         access_node_name, _ = sdfg.add_transient(f'{node.data}', [1],
-                                                                 dtypes.typeclass(type(
-                                                                     symrepl[node_data_symbolic])).dtype,
+                                                                 dtypes.typeclass(type(symrepl[node_data_symbolic])),
                                                                  find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,

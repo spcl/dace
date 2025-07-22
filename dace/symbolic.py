@@ -10,8 +10,6 @@ import numpy
 
 import sympy.abc
 import sympy.printing.str
-from sympy.core.numbers import Integer, Float, Rational
-from sympy.core.expr import Expr
 
 import packaging.version as packaging_version
 
