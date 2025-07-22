@@ -95,21 +95,21 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    # NOTE: `nnz()` is applied inside the loop.
+    # NOTE: `nng()` is applied inside the loop.
     simplify = lambda expr: symbolic.simplify_ext(expr)
     no_simplify = lambda expr: expr
 
     for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
         # NOTE: Applying simplify takes a lot of time, thus we try to avoid it and try to do the test
         #   first with the symbols we get and if we are unable to figuring out something, we run
-        #   simplify. Furthermore, we also try to postpone `nnz()` as long as we can.
+        #   simplify. Furthermore, we also try to postpone `nng()` as long as we can.
         # NOTE: We have to use the `== True` test because of SymPy's behaviour. Otherwise we would
         #   get an expression resulting in a `TypeError`.
         # TODO: Figuring out why we use this two stage version, instead of `(y <= x) == True`.
 
         # lower bound: first check whether symbolic positive condition applies
         if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-            rb, orb = nnz(rb), nnz(orb)
+            rb, orb = nng(rb), nng(orb)
             for simp_fun in [no_simplify, simplify]:
                 simp_rb, simp_orb = simp_fun(rb), simp_fun(orb)
                 if (simp_rb == simp_orb) == True:
@@ -123,7 +123,7 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
 
         # upper bound: first check whether symbolic positive condition applies
         if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-            re, ore = nnz(re), nnz(ore)
+            re, ore = nng(re), nng(ore)
             for simp_fun in [no_simplify]:
                 simp_re, simp_ore = simp_fun(re), simp_fun(ore)
                 if (simp_re == simp_ore) == True:
@@ -170,10 +170,10 @@ class Subset(object):
         elif not bounding_box_symbolic_positive(self, other):
             return False
 
-        # TODO: The original implementation always called `nnz()` on the argument before passing
+        # TODO: The original implementation always called `nng()` on the argument before passing
         #   it into the simplify function. This looks like an error, calling it should depend
         #   on the value of `symbolic_positive`.
-        simplify = lambda expr: symbolic.simplify_ext(nnz(expr))
+        simplify = lambda expr: symbolic.simplify_ext(nng(expr))
         no_simplify = lambda expr: expr
 
         # In the following we will first perform the check as is, and if that fails try it again
