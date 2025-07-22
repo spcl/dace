@@ -175,7 +175,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
     def can_be_applied(
         self,
-        graph: Union[dace.SDFGState, SDFG],
+        graph: dace.SDFGState,
         expr_index: int,
         sdfg: dace.SDFG,
         permissive: bool = False,
@@ -188,9 +188,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         * Tests if the decomposition exists.
         """
         # NOTE: The after this point it is not legal to access the matched nodes
-        first_map_entry: nodes.MapEntry = graph.entry_node(self.first_map_exit)
         first_map_exit: nodes.MapExit = self.first_map_exit
+        first_map_entry: nodes.MapEntry = graph.entry_node(first_map_exit)
         second_map_entry: nodes.MapEntry = self.second_map_entry
+        second_map_exit: nodes.MapExit = graph.exit_node(second_map_entry)
 
         assert isinstance(first_map_exit, nodes.MapExit)
         assert isinstance(second_map_entry, nodes.MapEntry)
@@ -217,10 +218,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # NOTE: Technically we would have to rerun this also in the `apply()` method, but
         #   we do not do it, because we assume that it was called directly after
         #   `can_be_applied()` has been called.
-        # TODO(phimuell): Once [PR#2081](https://github.com/spcl/dace/pull/2081) is merged
-        #   restrict it to the subgraph and the edges of the scope nodes.
-        for edge in graph.edges():
-            edge.data.try_initialize(sdfg, graph, edge)
+        for map_entry, map_exit in [(first_map_entry, first_map_exit), (second_map_entry, second_map_exit)]:
+            inner_subgraph = graph.scope_subgraph(map_entry)
+            for edge in inner_subgraph.edges():
+                edge.data.try_initialize(sdfg, graph, edge)
+            for iedge in graph.in_edges(map_entry):
+                iedge.data.try_initialize(sdfg, graph, iedge)
+            for oedge in graph.out_edges(map_exit):
+                oedge.data.try_initialize(sdfg, graph, oedge)
 
         # Tests if there are read write dependencies that are caused by the bodies
         #  of the Maps, such as referring to the same data. Note that this tests are
