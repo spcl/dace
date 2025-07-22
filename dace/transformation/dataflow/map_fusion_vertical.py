@@ -1302,12 +1302,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         The function returns `True` is `data` refers to shared data and `False` otherwise.
         The process to determine this is as follows:
-        1) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
+        1) If `assume_always_shared` is `True` the function will return `False`.
+        2) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
             it is classified as shared.
-        2) If `data` refers to non transient memory, the function returns `False`.
-        3) If `FindSingleUseData` is in the pipeline it will be used. I.e. it will check if `data`
+        3) If `data` refers to non transient memory, the function returns `False`.
+        4) If `FindSingleUseData` is in the pipeline it will be used. I.e. it will check if `data`
             is in the set and return `True` or `False` otherwise.
-        4) If `assume_always_shared` is `True` the function will return `False`.
         5) The function will perform a scan of the SDFG.
 
         This order means that if a pipeline is present, then it will take precedence.
@@ -1316,6 +1316,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param state: The state in which the fusion is performed.
         :param sdfg: The SDFG in which we want to perform the fusing.
         """
+
+        # Do not perform a scan just pretend that it is shared.
+        if self.assume_always_shared:
+            return True
 
         # This means the data is consumed by multiple Maps, through the same AccessNode, in this state
         #  Note currently multiple incoming edges are not handled, but in the spirit of this function
@@ -1350,12 +1354,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if single_use_data is not None:
             assert sdfg in single_use_data
             return data.data not in single_use_data[sdfg]
-
-        # If we are here, then we were unable to locate a previous result of `FindSingelUseData`.
-        #  However, before we perform a scan, we check if the shortcuts, i.e. `assume_always_*`
-        #  was specified and use them.
-        if self.assume_always_shared:
-            return True
 
         # Perform the real scan.
         return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
