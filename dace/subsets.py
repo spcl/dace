@@ -21,6 +21,11 @@ def nng(expr):
         return expr
 
 
+def _no_simplify(expr):
+    """Returns the expression unmodified."""
+    return expr
+
+
 def bounding_box_cover_exact(subset_a, subset_b) -> bool:
     min_elements_a = subset_a.min_element()
     max_elements_a = subset_a.max_element()
@@ -32,9 +37,18 @@ def bounding_box_cover_exact(subset_a, subset_b) -> bool:
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
-                and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)])
+    # TODO: Figuring out why here `nng` is used, the name and the very existence of `bounding_box_symbolic_positive`
+    #   should indicate that it is an error.
+    simplify = lambda expr: symbolic.simplify_ext(nng(expr))
+    no_simplify = lambda expr: expr
+
+    # NOTE: Just doing the check is very fast, compared to simplify. Thus we first try to do the
+    #   matching without running if this does not work, then we try again with simplify.
+    for simp_fun in [no_simplify, simplify]:
+        if all([(simp_fun(rb) <= simp_fun(orb)) == True and (simp_fun(re) >= simp_fun(ore)) == True
+                for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)]):
+            return True
+    return False
 
 
 def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> bool:
@@ -81,13 +95,26 @@ class Subset(object):
             )
 
         if not Config.get('optimizer', 'symbolic_positive'):
-            try:
-                return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
-                            and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                            for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
-                                                        other.min_element_approx(), other.max_element_approx())])
-            except TypeError:
-                return False
+
+            # Just doing the comparison first is faster than running simplify which is very slow.
+            # TODO: Figuring out why `nng()` is used here. The very check of the containing `if`
+            #   indicates that this is an error.
+            simplify = lambda expr: symbolic.simplify_ext(nng(expr))
+            no_simplify = lambda expr: expr
+
+            rb_all = self.min_element_approx()
+            re_all = self.max_element_approx()
+            orb_all = other.min_element_approx()
+            ore_all = other.max_element_approx()
+
+            for simp_fun in [no_simplify, simplify]:
+                try:
+                    if all((simp_fun(rb) <= simp_fun(orb)) == True and (simp_fun(re) >= simp_fun(ore)) == True
+                           for rb, re, orb, ore in zip(rb_all, re_all, orb_all, ore_all)):
+                        return True
+                except TypeError:
+                    continue
+            return False
         else:
             try:
                 if not bounding_box_symbolic_positive(self, other, True):
@@ -109,13 +136,18 @@ class Subset(object):
         # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
         try:
-            bounding_box_cover = bounding_box_cover_exact(
-                self, other) if symbolic_positive else bounding_box_symbolic_positive(self, other)
-            if not bounding_box_cover:
+            if symbolic_positive and (not bounding_box_cover_exact(self, othr)):
+                return False
+            elif not bounding_box_symbolic_positive(self, other):
                 return False
         except TypeError:
             return False
 
+        # It is cheaper to just try to make the comparison, without calling simplify first
+
+        # Just doing the comparison first is faster than running simplify which is very slow.
+        # TODO: Figuring out why `nng()` is used here. The very check of the containing `if`
+        #   indicates that this is an error.
         try:
             # if self is an index no further distinction is needed
             if isinstance(self, Indices):
