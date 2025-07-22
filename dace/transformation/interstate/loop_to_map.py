@@ -134,6 +134,9 @@ class LoopToMap(xf.MultiStateTransformation):
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
                 return False
 
+        if self.ballin:
+            return True
+
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
                                                                              ignore_nonstate_blocks=False))
