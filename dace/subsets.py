@@ -24,6 +24,21 @@ def _no_simplify(expr):
 
 
 def bounding_box_cover_exact(subset_a, subset_b) -> bool:
+    """Test if `subset_a` covers `subset_b`.
+
+    Essentially the function computes the bounding box of each subset and checks if
+    the box from `subset_a` is at least as big as `subset_b`. The main difference to
+    `bounding_box_symbolic_positive()` is that it is not possible to use approximative
+    bounds and that this function does not assumes positive symbols, see note.
+
+    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
+    and `False` otherwise.
+
+    :param subset_a: The first subset, the one that should cover.
+    :param subset_b: The second subset, the one that should be convered.
+
+    :note: The function might assume positive symbols.
+    """
     min_elements_a = subset_a.min_element()
     max_elements_a = subset_a.max_element()
     min_elements_b = subset_b.min_element()
@@ -34,16 +49,18 @@ def bounding_box_cover_exact(subset_a, subset_b) -> bool:
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    # TODO: Figuring out why here `nng` is used, the name and the very existence of `bounding_box_symbolic_positive`
-    #   should indicate that it is an error.
+    # TODO: Although the function description and the very existence of
+    #   `bounding_box_symbolic_positive()` indicate that the function does not assume
+    #   positive symbols, the original function called `nng()` on the symbols.
+    #   This is most likely an error, but kept for compatibility.
     simplify = lambda expr: symbolic.simplify_ext(nng(expr))
     no_simplify = lambda expr: expr
 
     # NOTE: Just doing the check is very fast, compared to simplify. Thus we first try to do the
     #   matching without running if this does not work, then we try again with simplify.
     for simp_fun in [no_simplify, simplify]:
-        if all([(simp_fun(rb) <= simp_fun(orb)) == True and (simp_fun(re) >= simp_fun(ore)) == True
-                for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)]):
+        if all((simp_fun(rb) <= simp_fun(orb)) == True and (simp_fun(re) >= simp_fun(ore)) == True
+               for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)):
             return True
     return False
 
