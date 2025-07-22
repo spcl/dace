@@ -1086,7 +1086,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def entry_node(self, node: nd.Node) -> Optional[nd.EntryNode]:
         for block in self.nodes():
             if node in block.nodes():
-                return block.exit_node(node)
+                return block.entry_node(node)
         return None
 
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
@@ -1548,7 +1548,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         from dace.sdfg import SDFG
         arrays = set(n.data for n in self.data_nodes())
         sdfg = SDFG(self.label)
-        sdfg._arrays = {k: self.sdfg.arrays[k] for k in arrays}
+        sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
         sdfg.add_node(self)
 
         return sdfg._repr_html_()
