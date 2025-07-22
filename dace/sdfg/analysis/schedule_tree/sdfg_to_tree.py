@@ -580,6 +580,12 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
             result.extend(nested_stree.children)
+
+            if generated_nviews:
+                # Insert matching NViewEnd nodes to define the scope NView nodes.
+                for target in generated_nviews:
+                    result.append(tn.NViewEnd(target=target))
+
         elif isinstance(node, dace.nodes.Tasklet):
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}

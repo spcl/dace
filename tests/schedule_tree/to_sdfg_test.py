@@ -3,7 +3,7 @@
 Tests components in conversion of schedule trees to SDFGs.
 """
 import dace
-from dace import subsets as sbs
+from dace import data, subsets as sbs
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -16,7 +16,7 @@ def test_state_boundaries_none():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
@@ -34,7 +34,7 @@ def test_state_boundaries_waw():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
@@ -53,7 +53,7 @@ def test_state_boundaries_waw_ranges(overlap):
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         symbols={'N': N},
         children=[
@@ -75,8 +75,8 @@ def test_state_boundaries_war():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
-            'B': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
@@ -94,8 +94,8 @@ def test_state_boundaries_read_write_chain():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
-            'B': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla1', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
@@ -116,8 +116,8 @@ def test_state_boundaries_data_race():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
-            'B': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla1', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
@@ -141,7 +141,7 @@ def test_state_boundaries_cfg():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla1', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
@@ -160,7 +160,7 @@ def test_state_boundaries_state_transition():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         symbols={
             'N': dace.symbol('N'),
@@ -186,7 +186,7 @@ def test_state_boundaries_propagation(boundary):
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         symbols={
             'N': N,
@@ -237,7 +237,7 @@ def test_create_tasklet_raw():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
@@ -268,7 +268,7 @@ def test_create_tasklet_waw():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 1'), {}, {'out': dace.Memlet('A[1]')}),
@@ -291,7 +291,7 @@ def test_create_tasklet_war():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name="tester",
-        containers={"A": dace.data.Array(dace.float64, [20])},
+        containers={"A": data.Array(dace.float64, [20])},
         children=[
             tn.TaskletNode(
                 nodes.Tasklet("read_write", {"read"}, {"write"}, "write = read + 1"),
@@ -328,7 +328,7 @@ def test_create_for_loop():
     # yapf: enable
 
     # Manually create a schedule tree
-    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': dace.data.Array(dace.float64, [20])}, children=[loop])
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[loop])
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -353,7 +353,7 @@ def test_create_while_loop():
     # yapf: enable
 
     # Manually create a schedule tree
-    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': dace.data.Array(dace.float64, [20])}, children=[loop])
+    stree = tn.ScheduleTreeRoot(name='tester', containers={'A': data.Array(dace.float64, [20])}, children=[loop])
 
     sdfg = stree.as_sdfg()
     sdfg.validate()
@@ -362,7 +362,7 @@ def test_create_while_loop():
 def test_create_if_else():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': dace.data.Array(dace.float64, [20])},
+                                containers={'A': data.Array(dace.float64, [20])},
                                 children=[
                                     tn.IfScope(condition=CodeBlock("A[0] > 0"),
                                                children=[
@@ -382,7 +382,7 @@ def test_create_if_else():
 def test_create_if_without_else():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': dace.data.Array(dace.float64, [20])},
+                                containers={'A': data.Array(dace.float64, [20])},
                                 children=[
                                     tn.IfScope(condition=CodeBlock("A[0] > 0"),
                                                children=[
@@ -398,7 +398,7 @@ def test_create_if_without_else():
 def test_create_map_scope_write():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': dace.data.Array(dace.float64, [20])},
+                                containers={'A': data.Array(dace.float64, [20])},
                                 children=[
                                     tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
                                                                               sbs.Range.from_string("0:20"))),
@@ -417,8 +417,8 @@ def test_create_map_scope_read_after_write():
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
-            'B': dace.data.Array(dace.float64, [20], transient=True),
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20], transient=True),
         },
         children=[
             tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
@@ -438,7 +438,7 @@ def test_create_map_scope_write_after_read():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name="tester",
-        containers={"A": dace.data.Array(dace.float64, [20])},
+        containers={"A": data.Array(dace.float64, [20])},
         children=[
             tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:20"))),
                         children=[
@@ -455,8 +455,8 @@ def test_create_map_scope_copy():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
                                 containers={
-                                    'A': dace.data.Array(dace.float64, [20]),
-                                    'B': dace.data.Array(dace.float64, [20]),
+                                    'A': data.Array(dace.float64, [20]),
+                                    'B': data.Array(dace.float64, [20]),
                                 },
                                 children=[
                                     tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
@@ -477,8 +477,8 @@ def test_create_map_scope_double_memlet():
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
-            'B': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [20]),
         },
         children=[
             tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:10"))),
@@ -498,7 +498,7 @@ def test_create_nested_map_scope():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
         name="tester",
-        containers={'A': dace.data.Array(dace.float64, [20])},
+        containers={'A': data.Array(dace.float64, [20])},
         children=[
             tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
                         children=[
@@ -519,8 +519,8 @@ def test_create_nested_map_scope_multi_read():
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
-            'B': dace.data.Array(dace.float64, [10])
+            'A': data.Array(dace.float64, [20]),
+            'B': data.Array(dace.float64, [10])
         },
         children=[
             tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i", sbs.Range.from_string("0:2"))),
@@ -543,7 +543,7 @@ def test_create_nested_map_scope_multi_read():
 def test_map_with_state_boundary_inside():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(name="tester",
-                                containers={'A': dace.data.Array(dace.float64, [20])},
+                                containers={'A': data.Array(dace.float64, [20])},
                                 children=[
                                     tn.MapScope(node=nodes.MapEntry(nodes.Map("bla", "i",
                                                                               sbs.Range.from_string("0:20"))),
@@ -564,8 +564,8 @@ def test_map_calculate_temporary_in_two_loops():
     stree = tn.ScheduleTreeRoot(
         name="tester",
         containers={
-            "A": dace.data.Array(dace.float64, [20]),
-            "tmp": dace.data.Array(dace.float64, [20], transient=True)
+            "A": data.Array(dace.float64, [20]),
+            "tmp": data.Array(dace.float64, [20], transient=True)
         },
         children=[
             tn.MapScope(node=nodes.MapEntry(nodes.Map("first_half", "i", sbs.Range.from_string("0:10"))),
@@ -612,7 +612,7 @@ def test_assign_nodes_force_state_transition():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
@@ -629,7 +629,7 @@ def test_assign_nodes_multiple_force_one_transition():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),
@@ -649,7 +649,7 @@ def test_assign_nodes_avoid_duplicate_boundaries():
     stree = tn.ScheduleTreeRoot(
         name='tester',
         containers={
-            'A': dace.data.Array(dace.float64, [20]),
+            'A': data.Array(dace.float64, [20]),
         },
         children=[
             tn.AssignNode("mySymbol", CodeBlock("1"), dace.InterstateEdge()),

@@ -80,7 +80,7 @@ class Subset(object):
         # Subsets of different dimensionality can never cover each other.
         if self.dims() != other.dims():
             return ValueError(
-                    f"A subset of dimensionality {self.dim()} cannot test covering a subset of dimensionality {other.dims()}"
+                    f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
             )
 
         if not Config.get('optimizer', 'symbolic_positive'):
