@@ -79,8 +79,8 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
                     return False
             # upper bound: first check whether symbolic positive condition applies
             if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                re_simplified = symbolic.simplify_ext(nng(re))
-                ore_simplified = symbolic.simplify_ext(nng(ore))
+                re_simplified = simp_fun(re)
+                ore_simplified = simp_fun(ore)
                 if not (re_simplified == ore_simplified or re_simplified >= ore_simplified):
                     return False
     return True
