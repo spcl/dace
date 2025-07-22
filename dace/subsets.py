@@ -49,6 +49,23 @@ def bounding_box_cover_exact(subset_a, subset_b) -> bool:
 
 
 def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> bool:
+    """Checks if `subset_a` covers `subset_b` using positivity assumption.
+
+    The function uses a bounding box to test if `subset_a` covers `subset_b`,
+    i.e. that `subset_a` is at least as big as `subset_b`. By default the
+    box is constructed using `{min, max}_element()` or if `approximation` is
+    `True` `{min, max}_element_approx()`. The function will perform the
+    covering check under the assumption that all symbols are positive,
+    which is the main difference to `bounding_box_cover_exact()`.
+
+    :param subset_a: The first subset, the one that should cover.
+    :param subset_b: The second subset, the one that should be convered.
+    :param approximation: If `True` then use the approximated bounds.
+
+    :note: In previous versions this function raised `TypeError` in some cases
+        when a truth value could not be determined. This behaviour was removed,
+        since the `bounding_box_cover_exact()` does not show this behaviour.
+    """
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
     min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
@@ -59,30 +76,44 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    # Just doing the comparison first is faster than running simplify which is very slow.
-    # Here `nng()` is needed.
-    simplify = lambda expr: symbolic.simplify_ext(nng(expr))
+    # NOTE: `nnz()` is applied inside the loop.
+    simplify = lambda expr: symbolic.simplify_ext(expr)
     no_simplify = lambda expr: expr
 
-    for simp_fun in [no_simplify, simplify]:
-        for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
-            # NOTE: We first test for equality, which always returns True or False. If the equality test returns
-            # False, then we test for less-equal and greater-equal, which may return an expression, leading to
-            # TypeError. This is a workaround for the case where two expressions are the same or equal and
-            # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+    for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
+        # NOTE: Applying simplify takes a lot of time, thus we try to avoid it and try to do the test
+        #   first with the symbols we get and if we are unable to figuring out something, we run
+        #   simplify. Furthermore, we also try to postpone `nnz()` as long as we can.
+        # NOTE: We have to use the `== True` test because of SymPy's behaviour. Otherwise we would
+        #   get an expression resulting in a `TypeError`.
+        # TODO: Figuring out why we use this two stage version, instead of `(y <= x) == True`.
 
-            # lower bound: first check whether symbolic positive condition applies
-            if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                rb_simplified = simp_fun(rb)
-                orb_simplified = simp_fun(orb)
-                if not (rb_simplified == orb_simplified or rb_simplified <= orb_simplified):
-                    return False
-            # upper bound: first check whether symbolic positive condition applies
-            if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                re_simplified = simp_fun(re)
-                ore_simplified = simp_fun(ore)
-                if not (re_simplified == ore_simplified or re_simplified >= ore_simplified):
-                    return False
+        # lower bound: first check whether symbolic positive condition applies
+        if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+            rb, orb = nnz(rb), nnz(orb)
+            for simp_fun in [no_simplify, simplify]:
+                simp_rb, simp_orb = simp_fun(rb), simp_fun(orb)
+                if (simp_rb == simp_orb) == True:
+                    break
+                elif (simp_rb <= simp_orb) == True:
+                    break
+            else:
+                # We were unable to determine covering for that dimension.
+                #  Thus we assume that there is no covering.
+                return False
+
+        # upper bound: first check whether symbolic positive condition applies
+        if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+            re, ore = nnz(re), nnz(ore)
+            for simp_fun in [no_simplify]:
+                simp_re, simp_ore = simp_fun(re), simp_fun(ore)
+                if (simp_re == simp_ore) == True:
+                    break
+                elif (simp_re >= simp_ore) == True:
+                    break
+            else:
+                return False
+
     return True
 
 
