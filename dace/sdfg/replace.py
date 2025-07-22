@@ -14,7 +14,6 @@ from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.memlet import Memlet
 from dace.sdfg import nodes
-from dace.symbolic import sympyexpr_to_python
 
 if TYPE_CHECKING:
     from dace.sdfg.state import StateSubgraphView
@@ -94,7 +93,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
                                                     outputs={f'{node.data}_value'},
                                                     code=f'{node.data}_value = {symrepl[node_data_symbolic]}')
                         access_node_name, _ = sdfg.add_transient(f'{node.data}', [1],
-                                                                 type(sympyexpr_to_python(symrepl[node_data_symbolic])),
+                                                                 dtypes.typeclass(type(symrepl[node_data_symbolic])).dtype,
                                                                  find_new_name=True)
                         tmp_an = state.add_access(access_node_name)
                         state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,
