@@ -165,7 +165,7 @@ class Subset(object):
 
         # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
-        if symbolic_positive and (not bounding_box_cover_exact(self, othr)):
+        if symbolic_positive and (not bounding_box_cover_exact(self, other)):
             return False
         elif not bounding_box_symbolic_positive(self, other):
             return False
