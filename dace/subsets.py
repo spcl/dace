@@ -62,22 +62,26 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
-        # NOTE: We first test for equality, which always returns True or False. If the equality test returns
-        # False, then we test for less-equal and greater-equal, which may return an expression, leading to
-        # TypeError. This is a workaround for the case where two expressions are the same or equal and
-        # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+    # Just doing the comparison first is faster than running simplify which is very slow.
+    # Here `nng()` is needed.
+    simplify = lambda expr: symbolic.simplify_ext(nng(expr))
+    no_simplify = lambda expr: expr
 
-        # lower bound: first check whether symbolic positive condition applies
-        if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-            if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb))
-                    or symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
-                return False
-        # upper bound: first check whether symbolic positive condition applies
-        if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-            if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore))
-                    or symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
-                return False
+    for simp_fun in [no_simplify, simplify]:
+        for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
+            # NOTE: We first test for equality, which always returns True or False. If the equality test returns
+            # False, then we test for less-equal and greater-equal, which may return an expression, leading to
+            # TypeError. This is a workaround for the case where two expressions are the same or equal and
+            # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+
+            # lower bound: first check whether symbolic positive condition applies
+            if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+                if not (simp_fun(rb) == simp_fun(orb) or simp_fun(rb) <= simp_fun(orb)):
+                    return False
+            # upper bound: first check whether symbolic positive condition applies
+            if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+                if not (simp_fun(re) == simp_fun(ore) or simp_fun(re) >= simp_fun(ore)):
+                    return False
     return True
 
 
