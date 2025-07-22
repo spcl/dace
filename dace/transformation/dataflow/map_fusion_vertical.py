@@ -72,6 +72,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     :param assume_always_shared: Assume that all intermediates are shared.
     :param assume_always_single_use_data: Assume that all intermediates are single use data,
         i.e. are no longer needed.
+    :param require_exclusive_intermediates: If `True` then the transformation will only apply if
+        all intermediates can be removed.
     :param consolidate_edges_only_if_not_extending: If `True`, the default is `False`,
         the transformation will only consolidate edges if this does not lead to an
         extension of the subset.
@@ -89,6 +91,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     :note: Because of [issue#1911](https://github.com/spcl/dace/issues/1911) the `can_be_applied()`
         can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
         pass is not affected by this.
+    :note: `require_exclusive_intermediates` means that all intermediates, i.e. AccessNodes
+        connecting the first and second Maps, can be removed, outputs of the first Map that
+        are not consumed by the first Map are not considered. However, it means that also
+        non-transients are also affected. See `partition_first_outputs()`.
     """
 
     first_map_exit = transformation.transformation.PatternNode(nodes.MapExit)
@@ -123,6 +129,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         default=False,
         desc="If `True` then all intermediates are classified as single use data.",
     )
+    require_exclusive_intermediates = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` then all intermediates need to be 'exclusive', i.e. can be removed.",
+    )
 
     never_consolidate_edges = properties.Property(
         dtype=bool,
@@ -142,6 +153,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
         assume_always_single_use_data: Optional[bool] = None,
+        require_exclusive_intermediates: Optional[bool] = None,
         consolidate_edges_only_if_not_extending: Optional[bool] = None,
         never_consolidate_edges: Optional[bool] = None,
         **kwargs: Any,
@@ -157,6 +169,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             self.assume_always_shared = assume_always_shared
         if assume_always_single_use_data is not None:
             self.assume_always_single_use_data = assume_always_single_use_data
+        if require_exclusive_intermediates is not None:
+            self.require_exclusive_intermediates = require_exclusive_intermediates
         if never_consolidate_edges is not None:
             self.never_consolidate_edges = never_consolidate_edges
         if consolidate_edges_only_if_not_extending is not None:
@@ -260,6 +274,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             first_map_exit=first_map_exit,
             second_map_entry=second_map_entry,
             param_repl=param_repl,
+            require_exclusive_intermediates=self.require_exclusive_intermediates,
         )
         if output_partition is None:
             return False
@@ -308,9 +323,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             first_map_exit=first_map_exit,
             second_map_entry=second_map_entry,
             param_repl=dict(),
+            require_exclusive_intermediates=self.require_exclusive_intermediates,
         )
         assert output_partition is not None  # Make MyPy happy.
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
+        assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
 
         # Now perform the actual rewiring, we handle each partition separately.
         if len(exclusive_outputs) != 0:
@@ -382,6 +399,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         first_map_exit: nodes.MapExit,
         second_map_entry: nodes.MapEntry,
         param_repl: Dict[str, str],
+        require_exclusive_intermediates: bool,
     ) -> Union[
             Tuple[
                 Set[graph.MultiConnectorEdge[dace.Memlet]],
@@ -421,6 +439,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param second_map_entry: The entry node of the second Map.
         :param param_repl: Use this Map to rename the parameter of the second Map, such
             that they match the one of the first Map.
+        :param require_exclusive_intermediates: If `True` and a shared intermediate is
+            found immediately return with `None`.
         """
         # The three outputs set.
         pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
@@ -597,6 +617,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  Note that "removed" here means that it is reconstructed by a new
             #  output of the second Map.
             if self.is_shared_data(data=intermediate_node, state=state, sdfg=sdfg):
+
+                # We found a non exclusive intermediate, but we only exclusive ones were
+                #  requested. Thus the decomposition does not exist.
+                if require_exclusive_intermediates:
+                    return None
+
                 # The intermediate data is used somewhere else, either in this or another state.
                 # NOTE: If the intermediate is shared, then we will turn it into a
                 #   sink node attached to the combined MapExit. Technically this
