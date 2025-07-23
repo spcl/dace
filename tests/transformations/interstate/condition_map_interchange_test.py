@@ -11,6 +11,7 @@ from copy import deepcopy
 
 def _test_for_unchanged_behavior(prog, num_apps):
     sdfg: dace.SDFG = prog.to_sdfg(simplify=True)
+    sdfg.save("original.sdfg")
     sdfg.validate()
 
     # Get ground truth values if we expect eliminations
@@ -58,6 +59,19 @@ def test_condition_map_interchange_nested():
     _test_for_unchanged_behavior(tester, 1)
 
 
+def test_condition_map_interchange_nested_dep():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10]):
+        for i in dace.map[0:10]:
+            if A[i, 0] * A[i, 0] >= 0:
+                for j in dace.map[0:10]:
+                    A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
 if __name__ == "__main__":
     test_condition_map_interchange_basic()
     test_condition_map_interchange_nested()
+    test_condition_map_interchange_nested_dep()

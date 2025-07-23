@@ -8,7 +8,7 @@ from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
 from dace.memlet import Memlet
 from dace.transformation import transformation
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.utils import set_nested_sdfg_parent_references, propagation
+from dace.sdfg.utils import set_nested_sdfg_parent_references
 import copy
 
 
@@ -69,16 +69,14 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                 map_exit = state.exit_node(node)
                 inputs = set()
                 outputs = set()
-                for conn in node.out_connectors.keys():
-                    edge = list(state.out_edges_by_connector(node, conn))[0]
+                for edge in state.out_edges(node):
                     inputs.add(edge.data.data)
-                for conn in map_exit.in_connectors.keys():
-                    edge = list(state.in_edges_by_connector(node, conn))[0]
+                for edge in state.in_edges(map_exit):
                     outputs.add(edge.data.data)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {
-                    s: s for s in list(graph.sdfg.symbols.keys()) + node.map.params
+                    s: s for s in list(state.sdfg.symbols.keys()) + node.map.params
                 }
                 nsdfg = state.add_nested_sdfg(
                     sd.SDFG("map_body", parent=state),
@@ -87,7 +85,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     parent=state,
                     symbol_mapping=sym_mapping,
                 )
-                for a, desc in graph.sdfg.arrays.items():
+                for a, desc in state.sdfg.arrays.items():
                     if a in inputs or a in outputs or desc.transient:
                         nsdfg.sdfg.add_datadesc(a, desc)
 
@@ -128,7 +126,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         nsdfg,
                         edge.data.data,
                         Memlet.from_array(
-                            edge.data.data, graph.sdfg.arrays[edge.data.data]
+                            edge.data.data, state.sdfg.arrays[edge.data.data]
                         ),
                     )
                 for edge in state.in_edges(state.exit_node(node)):
@@ -137,7 +135,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         edge.data.data,
                         edge.dst,
                         edge.dst_conn,
-                        Memlet(edge.data.data, graph.sdfg.arrays[edge.data.data]),
+                        Memlet(edge.data.data, state.sdfg.arrays[edge.data.data]),
                     )
 
                 state.remove_nodes_from(body)
@@ -150,6 +148,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                 nsdfg: NestedSDFG = list(
                     state.all_nodes_between(node, state.exit_node(node))
                 )[0]
+                assert isinstance(nsdfg, NestedSDFG)
                 new_cond_branch = ControlFlowRegion()
                 new_cond_branch.add_nodes_from(nsdfg.sdfg.all_control_flow_blocks())
 
@@ -161,7 +160,29 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                 # Pass the symbols used in the condition
                 for sym in cond_syms:
-                    nsdfg.symbol_mapping[sym] = sym
+                    if sym in state.sdfg.arrays:
+                        nsdfg.sdfg.add_datadesc(sym, state.sdfg.arrays[sym])
+                        nsdfg.add_in_connector(sym)
+                        sym_access = state.add_access(sym)
+                        node.add_in_connector(f"IN_{sym}")
+                        node.add_out_connector(f"OUT_{sym}")
+                        state.add_edge(
+                            sym_access,
+                            None,
+                            node,
+                            f"IN_{sym}",
+                            Memlet.from_array(sym, state.sdfg.arrays[sym]),
+                        )
+                        state.add_edge(
+                            node,
+                            f"OUT_{sym}",
+                            nsdfg,
+                            sym,
+                            Memlet.from_array(sym, state.sdfg.arrays[sym]),
+                        )
+
+                    else:
+                        nsdfg.symbol_mapping[sym] = sym
 
         # Move all states in the branch before the conditional block
         src_state = graph.add_state_before(self.cond_block)
