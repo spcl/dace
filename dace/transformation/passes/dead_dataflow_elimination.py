@@ -273,9 +273,6 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                             except ValueError:
                                 is_larger = True
                             if is_larger:
-                                # If the connector type is a pointer and more than 1 element is accessed,
-                                # we cannot eliminate the connector, as it may require dataflow analysis
-                                # inside the tasklet code.
                                 return False
 
                     # If data is connected to a nested SDFG or library node as an input/output, do not remove
