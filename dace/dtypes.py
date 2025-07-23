@@ -5,6 +5,7 @@ import aenum
 import inspect
 import numpy
 import re
+from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
 from typing import Any
@@ -425,6 +426,10 @@ class typeclass(object):
             typename = 'bool'
         elif wrapped_type is type(None):
             wrapped_type = None
+        elif wrapped_type is Float:
+            wrapped_type = float
+        elif wrapped_type is Integer:
+            wrapped_type = int
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
