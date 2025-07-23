@@ -95,6 +95,10 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     new_n = copy.deepcopy(n)
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
+                
+                param_lb_map = {}
+                for i in range(len(node.map.params)):
+                    param_lb_map[node.map.params[i]] = node.map.range[i][0]
                 for n in body + [map_exit]:
                     for edge in state.in_edges(n):
                         src = None
@@ -108,13 +112,13 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         elif edge.src is node:
                             src = start_state.add_access(edge.data.data)
                             src_conn = None
-                            memlet.replace({k: "0" for k in node.map.params})
+                            memlet.replace(param_lb_map)
                         if edge.dst in copy_mapping:
                             dst = copy_mapping[edge.dst]
                         elif edge.dst is map_exit:
                             dst = start_state.add_access(edge.data.data)
                             dst_conn = None
-                            memlet.replace({k: "0" for k in node.map.params})
+                            memlet.replace(param_lb_map)
                         start_state.add_edge(src, src_conn, dst, dst_conn, memlet)
 
                 for edge in state.out_edges(node):

@@ -11,7 +11,6 @@ from copy import deepcopy
 
 def _test_for_unchanged_behavior(prog, num_apps):
     sdfg: dace.SDFG = prog.to_sdfg(simplify=True)
-    sdfg.save("original.sdfg")
     sdfg.validate()
 
     # Get ground truth values if we expect eliminations
@@ -26,7 +25,6 @@ def _test_for_unchanged_behavior(prog, num_apps):
 
     # Apply the transformation
     assert sdfg.apply_transformations_repeated(ConditionMapInterchange) == num_apps
-    sdfg.save("transformed.sdfg")
     sdfg.validate()
 
     # Test if the behavior is unchanged if we expect eliminations
@@ -71,7 +69,74 @@ def test_condition_map_interchange_nested_dep():
     _test_for_unchanged_behavior(tester, 1)
 
 
+def test_condition_map_interchange_multiple_conditions():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10], cond1: dace.bool[1], cond2: dace.bool[1]):
+        for i in dace.map[0:10]:
+            if cond1[0] and cond2[0]:
+                for j in dace.map[0:10]:
+                    A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_nested_multiple_conditions():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10], cond1: dace.bool[1], cond2: dace.bool[1]):
+        for i in dace.map[0:10]:
+            if cond1[0]:
+                for j in dace.map[0:10]:
+                    if cond2[0]:
+                        A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_conditional_write():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10]):
+        for i in dace.map[0:10]:
+            if i % 2 == 0:
+                for j in dace.map[0:10]:
+                    A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_multiple_writes():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10], cond: dace.bool[1]):
+        for i in dace.map[0:10]:
+            if cond[0]:
+                for j in dace.map[0:10]:
+                    A[i, j] = A[i, j] + 1
+                    A[i, j] = A[i, j] * 2
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_nested_dependency():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10]):
+        for i in dace.map[0:10]:
+            if A[i, 0] > 0.5:
+                for j in dace.map[1:10]:
+                    A[i, j] = A[i, j] + A[i, 0]
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
 if __name__ == "__main__":
     test_condition_map_interchange_basic()
     test_condition_map_interchange_nested()
     test_condition_map_interchange_nested_dep()
+    test_condition_map_interchange_multiple_conditions()
+    test_condition_map_interchange_nested_multiple_conditions()
+    test_condition_map_interchange_conditional_write()
+    test_condition_map_interchange_multiple_writes()
+    test_condition_map_interchange_nested_dependency()
