@@ -174,9 +174,9 @@ class FullMapFusion(ppl.Pass):
                     require_exclusive_intermediates=self.require_exclusive_intermediates,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
+                    # TODO: Remove once issue#1911 has been solved.
+                    _single_use_data=pipeline_results["FindSingleUseData"],
                 ))
-            # TODO: Remove once issue#1911 has been solved.
-            fusion_transforms[-1]._single_use_data = single_use_data = pipeline_results["FindSingleUseData"]
 
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
@@ -191,20 +191,15 @@ class FullMapFusion(ppl.Pass):
                     never_consolidate_edges=self.never_consolidate_edges,
                 ))
 
-        try:
-            pazz = pmp.PatternMatchAndApplyRepeated(
-                fusion_transforms,
-                permissive=False,
-                validate=False,
-                validate_all=self.validate_all,
-            )
-            result = pazz.apply_pass(sdfg, pipeline_results)
+        pazz = pmp.PatternMatchAndApplyRepeated(
+            fusion_transforms,
+            permissive=False,
+            validate=False,
+            validate_all=self.validate_all,
+        )
+        result = pazz.apply_pass(sdfg, pipeline_results)
 
-        finally:
-            if self.perform_vertical_map_fusion:
-                fusion_transforms[0]._single_use_data = None
-
-        if self.validate:
+        if self.validate and (not self.validate_all):
             sdfg.validate()
 
-        return result
+        return result if result > 0 else None
