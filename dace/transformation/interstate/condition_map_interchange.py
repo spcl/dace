@@ -154,12 +154,24 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                 )[0]
                 assert isinstance(nsdfg, NestedSDFG)
                 new_cond_branch = ControlFlowRegion()
-                new_cond_branch.add_nodes_from(nsdfg.sdfg.all_control_flow_blocks())
+                body = list(nsdfg.sdfg.nodes())
+
+                copy_mapping = {}
+                for b in body:
+                    new_b = copy.deepcopy(b)
+                    new_cond_branch.add_node(new_b)
+                    copy_mapping[b] = new_b
+                for edge in nsdfg.sdfg.edges():
+                    new_cond_branch.add_edge(
+                        copy_mapping[edge.src],
+                        copy_mapping[edge.dst],
+                        copy.deepcopy(edge.data),
+                    )
 
                 new_cond_block = ConditionalBlock()
                 new_cond_block.add_branch(branch_cond, new_cond_branch)
 
-                nsdfg.sdfg.remove_nodes_from(nsdfg.sdfg.all_control_flow_blocks())
+                nsdfg.sdfg.remove_nodes_from(body)
                 nsdfg.sdfg.add_node(new_cond_block, ensure_unique_name=True)
 
                 # Pass the symbols used in the condition
@@ -197,13 +209,12 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
             graph.add_node(new_state, ensure_unique_name=True)
             copy_mapping[state] = new_state
 
-        for state in all_states:
-            for edge in branch.in_edges(state):
-                graph.add_edge(
-                    copy_mapping[edge.src],
-                    copy_mapping[state],
-                    copy.deepcopy(edge.data),
-                )
+        for edge in branch.edges():
+            graph.add_edge(
+                copy_mapping[edge.src],
+                copy_mapping[edge.dst],
+                copy.deepcopy(edge.data),
+            )
 
         graph.add_edge(src_state, copy_mapping[branch.start_block], InterstateEdge())
         for sink in branch.sink_nodes():
