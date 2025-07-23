@@ -86,7 +86,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     symbol_mapping=sym_mapping,
                 )
                 for a, desc in state.sdfg.arrays.items():
-                    if a in inputs or a in outputs or desc.transient:
+                    if desc.transient:
                         nsdfg.sdfg.add_datadesc(a, desc)
 
                 start_state = nsdfg.sdfg.add_state(is_start_block=True)
@@ -101,41 +101,45 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         src_conn = edge.src_conn
                         dst = None
                         dst_conn = edge.dst_conn
+                        memlet = copy.deepcopy(edge.data)
+
                         if edge.src in copy_mapping:
                             src = copy_mapping[edge.src]
                         elif edge.src is node:
                             src = start_state.add_access(edge.data.data)
                             src_conn = None
+                            memlet.replace({k: "0" for k in node.map.params})
                         if edge.dst in copy_mapping:
                             dst = copy_mapping[edge.dst]
                         elif edge.dst is map_exit:
                             dst = start_state.add_access(edge.data.data)
                             dst_conn = None
-                        start_state.add_edge(
-                            src,
-                            src_conn,
-                            dst,
-                            dst_conn,
-                            copy.deepcopy(edge.data),
-                        )
+                            memlet.replace({k: "0" for k in node.map.params})
+                        start_state.add_edge(src, src_conn, dst, dst_conn, memlet)
 
                 for edge in state.out_edges(node):
+                    if edge.data.data not in nsdfg.sdfg.arrays:
+                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
+                        desc.shape = edge.data.subset.size()
+                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
                     state.add_edge(
                         edge.src,
                         edge.src_conn,
                         nsdfg,
                         edge.data.data,
-                        Memlet.from_array(
-                            edge.data.data, state.sdfg.arrays[edge.data.data]
-                        ),
+                        copy.deepcopy(edge.data),
                     )
                 for edge in state.in_edges(state.exit_node(node)):
+                    if edge.data.data not in nsdfg.sdfg.arrays:
+                        desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
+                        desc.shape = edge.data.subset.size()
+                        nsdfg.sdfg.add_datadesc(edge.data.data, desc)
                     state.add_edge(
                         nsdfg,
                         edge.data.data,
                         edge.dst,
                         edge.dst_conn,
-                        Memlet(edge.data.data, state.sdfg.arrays[edge.data.data]),
+                        copy.deepcopy(edge.data),
                     )
 
                 state.remove_nodes_from(body)
