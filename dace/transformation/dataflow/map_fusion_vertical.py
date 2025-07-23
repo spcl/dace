@@ -55,28 +55,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
     In order to determine if an intermediate can be removed or has to be kept, it is in general
     necessary to scan the whole SDFG, which is the default behaviour. There are two ways to
-    speed this up. The second way is to use the transformation inside a pipeline, which includes the
-    `FindSingleUseData` analysis pass, see note below. If the result of this pass is present then
-    the transformation will use it instead to determine if a intermediate can be removed.
+    speed this up. The first way is to use the transformation inside a pipeline, which includes
+    the `FindSingleUseData` analysis pass, see note below. If the result of the pass is present
+    then the transformation will use it  to determine if a intermediate can be removed.
     The second way is to specify `assume_always_shared`, which instruct the transformation to
     assume that the intermediate is shared, i.e. will become an output of the fused Map.
+    The downside of this is, that dead dataflow, i.e. writes that are not needed are generated.
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
-    :param assume_always_shared: Assume that all intermediates are shared.
-    :param require_exclusive_intermediates: If `True` then the transformation will only apply if
-        all intermediates can be removed.
-    :param consolidate_edges_only_if_not_extending: If `True`, the default is `False`,
-        the transformation will only consolidate edges if this does not lead to an
-        extension of the subset.
+    :param assume_always_shared: Handle all intermediate nodes as if they were classified as
+        "shared" , see `partition_first_outputs()` for more.
+    :param require_exclusive_intermediates: If `True` then the transformation will only apply
+        if all intermediates are "eclusive", i.e can be removed, see `partition_first_outputs()`.
+    :param consolidate_edges_only_if_not_extending: If `True` the transformation will only
+        consolidate edges if this does not lead to an extension of the subset.
     :param never_consolidate_edges: If `False`, the default, the function will never
         try to consolidate the edges. Thus Maps might have multiple connectors that
         goes to the same AccessNode.
 
     :note: This transformation modifies more nodes than it matches.
-    :note: Specifying `assume_always_shared` is generally safe, as it will not
-        remove writes and global data. However, it will potentially lead to dead dataflow.
     :note: Because of [issue#1911](https://github.com/spcl/dace/issues/1911) the `can_be_applied()`
         can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
         pass is not affected by this.
@@ -141,6 +140,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         never_consolidate_edges: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+
+        # See comment in `is_shared_data()` for more information.
+        # NOTE: The sole reason why we allow to pass it as an (undocumented, kw-only argument)
+        #   is that we can specify it in `apply_to()` calls, were `require_exclusive_intermediates`
+        #   is `True`.
+        # NOTE: `_pipeline_result` will take precedence over this value.
+        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = kwargs.pop('_single_use_data', None)
+
         super().__init__(**kwargs)
         if only_toplevel_maps is not None:
             self.only_toplevel_maps = only_toplevel_maps
@@ -157,9 +164,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if consolidate_edges_only_if_not_extending is not None:
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
-        # See comment in `is_shared_data()` for more information.
-        # NOTE: `_pipeline_result` will take precedence over this value.
-        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
+        if self.assume_always_shared and self.require_exclusive_intermediates:
+            raise ValueError(
+                "Specified `assume_always_shared` and `require_exclusive_intermediates` at the same time which is contradictory."
+            )
 
     @classmethod
     def expressions(cls) -> Any:
@@ -252,7 +260,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             first_map_exit=first_map_exit,
             second_map_entry=second_map_entry,
             param_repl=param_repl,
-            require_exclusive_intermediates=self.require_exclusive_intermediates,
         )
         if output_partition is None:
             return False
@@ -273,6 +280,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert isinstance(first_map_exit, nodes.MapExit)
         assert isinstance(second_map_entry, nodes.MapEntry)
         assert isinstance(self.array, nodes.AccessNode)
+        assert not (self.assume_always_shared and self.require_exclusive_intermediates)
 
         # As in [issue 1708](https://github.com/spcl/dace/issues/1703) we should here
         #  also initialize the edges. However, for performance reasons we do not do
@@ -301,7 +309,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             first_map_exit=first_map_exit,
             second_map_entry=second_map_entry,
             param_repl=dict(),
-            require_exclusive_intermediates=self.require_exclusive_intermediates,
         )
         assert output_partition is not None  # Make MyPy happy.
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
@@ -377,7 +384,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         first_map_exit: nodes.MapExit,
         second_map_entry: nodes.MapEntry,
         param_repl: Dict[str, str],
-        require_exclusive_intermediates: bool,
     ) -> Union[
             Tuple[
                 Set[graph.MultiConnectorEdge[dace.Memlet]],
@@ -412,13 +418,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             i.e. the maps can not be fused the function returns `None`.
 
         :param state: The in which the two maps are located.
-        :param sdfg: The full SDFG in whcih we operate.
+        :param sdfg: The full SDFG in which we operate.
         :param first_map_exit: The exit node of the first Map.
         :param second_map_entry: The entry node of the second Map.
         :param param_repl: Use this Map to rename the parameter of the second Map, such
             that they match the one of the first Map.
-        :param require_exclusive_intermediates: If `True` and a shared intermediate is
-            found immediately return with `None`.
+
+        :note: The output of this function is affected by the value of `self.assume_always_shared`
+            as well as by `self.require_exclusive_intermediates`.
         """
         # The three outputs set.
         pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
@@ -598,7 +605,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
                 # We found a non exclusive intermediate, but we only exclusive ones were
                 #  requested. Thus the decomposition does not exist.
-                if require_exclusive_intermediates:
+                if self.require_exclusive_intermediates:
                     return None
 
                 # The intermediate data is used somewhere else, either in this or another state.
@@ -1302,15 +1309,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         The function returns `True` is `data` refers to shared data and `False` otherwise.
         The process to determine this is as follows:
-        1) If `assume_always_shared` is `True` the function will return `False`.
+        1) If `assume_always_shared` is `True` the function will return `True` immediately.
         2) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
             it is classified as shared.
-        3) If `data` refers to non transient memory, the function returns `False`.
+        3) If `data` refers to non transient memory it is classified as shared.
         4) If `FindSingleUseData` is in the pipeline it will be used. I.e. it will check if `data`
             is in the set and return `True` or `False` otherwise.
         5) The function will perform a scan of the SDFG.
-
-        This order means that if a pipeline is present, then it will take precedence.
 
         :param data: The transient that should be checked.
         :param state: The state in which the fusion is performed.
@@ -1350,12 +1355,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             single_use_data = self._pipeline_results["FindSingelUseData"]
         elif self._single_use_data is not None:
             single_use_data = self._single_use_data
+
         # The single use data was present so scan it.
         if single_use_data is not None:
             assert sdfg in single_use_data
             return data.data not in single_use_data[sdfg]
 
-        # Perform the real scan.
+        # We have to perform the scan.
         return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
 
     def _scan_sdfg_if_data_is_shared(
