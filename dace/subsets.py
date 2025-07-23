@@ -297,8 +297,22 @@ class Range(Subset):
         return hash(tuple(r for r in self.ranges))
 
     def __add__(self, other):
-        sum_ranges = self.ranges + other.ranges
+        sum_ranges = [(*ranges, tile)
+                      for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + self.tile_sizes)]
         return Range(sum_ranges)
+
+    def __deepcopy__(self, memo) -> 'Range':
+        """Performs a deepcopy of `self`.
+
+        For performance reasons only the mutable parts are copied.
+        """
+        # Because SymPy expression and numbers and tuple in Python are immutable, it is enough
+        #  to shallow copy the list that stores them.
+        node = object.__new__(Range)
+        node.ranges = self.ranges.copy()
+        node.tile_sizes = self.tile_sizes.copy()
+
+        return node
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
@@ -889,6 +903,19 @@ class Indices(Subset):
 
     def __hash__(self):
         return hash(tuple(i for i in self.indices))
+
+    def __deepcopy__(self, memo) -> 'Indices':
+        """Performs a deepcopy of `self`.
+
+        For performance reasons only the mutable parts are copied.
+        """
+        # Because SymPy expression and numbers and tuple in Python are immutable, it is enough
+        #  to shallow copy the list that stores them.
+        node = object.__new__(Indices)
+        node.ranges = self.ranges.copy()
+        node.tile_sizes = self.tile_sizes.copy()
+
+        return node
 
     def num_elements(self):
         return 1
