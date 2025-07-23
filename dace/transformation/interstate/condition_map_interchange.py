@@ -85,6 +85,9 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     parent=state,
                     symbol_mapping=sym_mapping,
                 )
+                for sym, dt in state.sdfg.symbols.items():
+                    if sym not in nsdfg.sdfg.symbols:
+                        nsdfg.sdfg.add_symbol(sym, dt)
                 for a, desc in state.sdfg.arrays.items():
                     if desc.transient:
                         nsdfg.sdfg.add_datadesc(a, desc)
@@ -95,7 +98,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     new_n = copy.deepcopy(n)
                     start_state.add_node(new_n)
                     copy_mapping[n] = new_n
-                
+
                 param_lb_map = {}
                 for i in range(len(node.map.params)):
                     param_lb_map[node.map.params[i]] = node.map.range[i][0]
@@ -203,6 +206,8 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
 
                     else:
                         nsdfg.symbol_mapping[sym] = sym
+                        if sym not in nsdfg.sdfg.symbols:
+                            nsdfg.sdfg.add_symbol(sym, state.sdfg.symbols[sym])
 
         # Move all states in the branch before the conditional block
         src_state = graph.add_state_before(self.cond_block)

@@ -131,6 +131,67 @@ def test_condition_map_interchange_nested_dependency():
     _test_for_unchanged_behavior(tester, 1)
 
 
+def test_condition_map_interchange_no_condition():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10]):
+        for i in dace.map[0:10]:
+            for j in dace.map[0:10]:
+                A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 0)
+
+
+def test_condition_map_interchange_complex_condition():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10], cond1: dace.bool[1], cond2: dace.bool[1]):
+        for i in dace.map[0:10]:
+            if (cond1[0] or cond2[0]) and i % 2 == 0:
+                for j in dace.map[0:10]:
+                    A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_dependent_condition():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10]):
+        for i in dace.map[0:10]:
+            if A[i, 0] > 0:
+                for j in dace.map[0:10]:
+                    if A[i, j] < 0.5:
+                        A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_multiple_nested_conditions():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10], cond1: dace.bool[1], cond2: dace.bool[1]):
+        for i in dace.map[0:10]:
+            if cond1[0]:
+                for j in dace.map[0:10]:
+                    if cond2[0] and j % 2 == 0:
+                        A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_non_affine_condition():
+
+    @dace.program
+    def tester(A: dace.float32[10, 10]):
+        for i in dace.map[0:10]:
+            if i * i < 50:
+                for j in dace.map[0:10]:
+                    A[i, j] = A[i, j] + 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
 if __name__ == "__main__":
     test_condition_map_interchange_basic()
     test_condition_map_interchange_nested()
@@ -140,3 +201,8 @@ if __name__ == "__main__":
     test_condition_map_interchange_conditional_write()
     test_condition_map_interchange_multiple_writes()
     test_condition_map_interchange_nested_dependency()
+    test_condition_map_interchange_no_condition()
+    test_condition_map_interchange_complex_condition()
+    test_condition_map_interchange_dependent_condition()
+    test_condition_map_interchange_multiple_nested_conditions()
+    test_condition_map_interchange_non_affine_condition()
