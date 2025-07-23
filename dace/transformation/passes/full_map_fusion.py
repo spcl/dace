@@ -202,4 +202,4 @@ class FullMapFusion(ppl.Pass):
         if self.validate and (not self.validate_all):
             sdfg.validate()
 
-        return result if result > 0 else None
+        return result
