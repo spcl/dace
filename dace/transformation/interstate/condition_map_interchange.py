@@ -34,17 +34,10 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         # Each state in the branch is either empty or only contains maps
         for state in branch.all_states():
             for node in state.nodes():
-                if (
-                    not isinstance(node, (MapEntry, MapExit))
-                    and state.entry_node(node) is None
-                    and any(
-                        [
-                            not isinstance(n, (MapEntry, MapExit))
-                            for n in set(state.successors(node))
-                            | set(state.predecessors(node))
-                        ]
-                    )
-                ):
+                if (not isinstance(node, (MapEntry, MapExit)) and state.entry_node(node) is None and any([
+                        not isinstance(n, (MapEntry, MapExit)) for n in set(state.successors(node))
+                        | set(state.predecessors(node))
+                ])):
                     return False
 
         return True
@@ -75,9 +68,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     outputs.add(edge.data.data)
 
                 # Create the nested SDFG and add all symbols
-                sym_mapping = {
-                    s: s for s in list(state.sdfg.symbols.keys()) + node.map.params
-                }
+                sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
                 nsdfg = state.add_nested_sdfg(
                     sd.SDFG("map_body", parent=state),
                     inputs=inputs,
@@ -156,9 +147,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
             for node in state.nodes():
                 if not isinstance(node, MapEntry):
                     continue
-                nsdfg: NestedSDFG = list(
-                    state.all_nodes_between(node, state.exit_node(node))
-                )[0]
+                nsdfg: NestedSDFG = list(state.all_nodes_between(node, state.exit_node(node)))[0]
                 assert isinstance(nsdfg, NestedSDFG)
                 new_cond_branch = ControlFlowRegion()
                 body = list(nsdfg.sdfg.nodes())
