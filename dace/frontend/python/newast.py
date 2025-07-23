@@ -4741,7 +4741,14 @@ class ProgramVisitor(ExtNodeVisitor):
             result = result[1]
 
         if not isinstance(result, (tuple, list)):
-            return [result]
+            result = [result]
+
+        # Register input/output data containers
+        for res in result:
+            if res in self.inputs and res not in self.outputs:
+                # Mark the container as an output of the SDFG
+                self.outputs[res] = (self.last_block, *self.inputs[res][1:])
+
         return result
 
     # Used for memlet expressions outside of tasklets, otherwise ignored
