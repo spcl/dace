@@ -50,6 +50,11 @@ class FullMapFusion(ppl.Pass):
         default=False,
         desc="If `True` then all intermediates need to be 'exclusive', i.e. they will be removed by the fusion.",
     )
+    require_all_intermediates = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` all outputs of the first Map must be intermediate, i.e. going into the second Map.",
+    )
 
     perform_vertical_map_fusion = properties.Property(
         dtype=bool,
@@ -95,6 +100,7 @@ class FullMapFusion(ppl.Pass):
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
         require_exclusive_intermediates: Optional[bool] = None,
+        require_all_intermediates: Optional[bool] = None,
         perform_vertical_map_fusion: Optional[bool] = None,
         perform_horizontal_map_fusion: Optional[bool] = None,
         only_if_common_ancestor: Optional[bool] = None,
@@ -115,6 +121,8 @@ class FullMapFusion(ppl.Pass):
             self.assume_always_shared = assume_always_shared
         if require_exclusive_intermediates is not None:
             self.require_exclusive_intermediates = require_exclusive_intermediates
+        if require_all_intermediates is not None:
+            self.require_all_intermediates = require_all_intermediates
         if perform_vertical_map_fusion is not None:
             self.perform_vertical_map_fusion = perform_vertical_map_fusion
         if perform_horizontal_map_fusion is not None:
@@ -172,6 +180,7 @@ class FullMapFusion(ppl.Pass):
                     strict_dataflow=self.strict_dataflow,
                     assume_always_shared=self.assume_always_shared,
                     require_exclusive_intermediates=self.require_exclusive_intermediates,
+                    require_all_intermediates=self.require_all_intermediates,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
                     # TODO: Remove once issue#1911 has been solved.
