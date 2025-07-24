@@ -465,7 +465,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except InvalidSDFGError:
             raise
         except Exception as ex:
-            print(node, node)
+            print(node, node, state, state_id, nid)
             raise InvalidSDFGNodeError("Node validation failed: " + str(ex), sdfg, state_id, nid) from ex
 
         # Isolated nodes
@@ -839,6 +839,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
+                if isinstance(dst_node, nd.Tasklet) and e.data.is_empty():
+                    continue
                 if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
                     pass
                 else:
