@@ -69,7 +69,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         "shared" , see `partition_first_outputs()` for more.
     :param require_exclusive_intermediates: If `True` then the transformation will only apply
         if all intermediates are "eclusive", i.e can be removed, see `partition_first_outputs()`.
-    :param require_only_intermediates: If `True` then the transformation will only apply if
+    :param require_all_intermediates: If `True` then the transformation will only apply if
         the if all outputs of the first Map are intermediate, i.e. are consumed by the second Map.
     :param consolidate_edges_only_if_not_extending: If `True` the transformation will only
         consolidate edges if this does not lead to an extension of the subset.
@@ -119,7 +119,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         default=False,
         desc="If `True` then all intermediates need to be 'exclusive', i.e. they will be removed by the fusion.",
     )
-    require_only_intermediates = properties.Property(
+    require_all_intermediates = properties.Property(
         dtype=bool,
         default=False,
         desc="If `True` all outputs of the first Map must be intermediate, i.e. going into the second Map.",
@@ -143,7 +143,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
         require_exclusive_intermediates: Optional[bool] = None,
-        require_only_intermediates: Optional[bool] = None,
+        require_all_intermediates: Optional[bool] = None,
         consolidate_edges_only_if_not_extending: Optional[bool] = None,
         never_consolidate_edges: Optional[bool] = None,
         **kwargs: Any,
@@ -167,8 +167,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             self.assume_always_shared = assume_always_shared
         if require_exclusive_intermediates is not None:
             self.require_exclusive_intermediates = require_exclusive_intermediates
-        if require_only_intermediates is not None:
-            self.require_only_intermediates = require_only_intermediates
+        if require_all_intermediates is not None:
+            self.require_all_intermediates = require_all_intermediates
         if never_consolidate_edges is not None:
             self.never_consolidate_edges = never_consolidate_edges
         if consolidate_edges_only_if_not_extending is not None:
@@ -435,7 +435,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             that they match the one of the first Map.
 
         :note: The output of this function is affected by the value of `self.assume_always_shared`,
-            `require_only_intermediates` and by `self.require_exclusive_intermediates`.
+            `require_all_intermediates` and by `self.require_exclusive_intermediates`.
         """
         # The three outputs set.
         pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
@@ -463,7 +463,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     begin=intermediate_node,
                     end=second_map_entry,
             ):
-                if self.require_only_intermediates:  # We do not allow pure output nodes.
+                if self.require_all_intermediates:  # We do not allow pure output nodes.
                     return None
                 pure_outputs.add(out_edge)
                 continue
