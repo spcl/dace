@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests loop overwrite elimination transformations."""
+"""Tests the conditional map interchange transformation."""
 
 import numpy as np
 import pytest
@@ -17,9 +17,12 @@ def _test_for_unchanged_behavior(prog, num_apps):
     if num_apps > 0:
         input_data = {}
         for argName, argType in sdfg.arglist().items():
-            arr = dace.ndarray(shape=argType.shape, dtype=argType.dtype)
-            arr[:] = np.random.rand(*argType.shape).astype(argType.dtype.type)
-            input_data[argName] = arr
+            if isinstance(argType, dace.data.Scalar):
+                input_data[argName] = np.random.rand(1).astype(argType.dtype.type)[0]
+            elif isinstance(argType, dace.data.Array):
+                arr = dace.ndarray(shape=argType.shape, dtype=argType.dtype)
+                arr[:] = np.random.rand(*argType.shape).astype(argType.dtype.type)
+                input_data[argName] = arr
         ground_truth = deepcopy(input_data)
         sdfg(**ground_truth)
 
@@ -192,6 +195,65 @@ def test_condition_map_interchange_non_affine_condition():
     _test_for_unchanged_behavior(tester, 1)
 
 
+def test_condition_map_interchange_data_dependency():
+
+    @dace.program
+    def tester(A: dace.float32[10]):
+        if A[4] < 10:
+            for i in dace.map[0:10]:
+                A[i] = 10
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_data_dependency2():
+
+    @dace.program
+    def tester(A: dace.float32[10]):
+        if A[4] < 10:
+            for i in dace.map[0:10]:
+                A[i] = A[i] + 10
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_data_dependency3():
+
+    @dace.program
+    def tester(A: dace.float32[10], i_sym: dace.int32[1]):
+        if i_sym[0] < 10:
+            for i in dace.map[0:10]:
+                A[i] = A[i] + 10
+                i_sym[0] += 1
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_symbol_dependency():
+
+    @dace.program
+    def tester(A: dace.float32[10], i_sym: dace.int32):
+        if i_sym < 10:
+            for i in dace.map[0:10]:
+                A[i_sym] = A[i_sym] + 10
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
+def test_condition_map_interchange_symbol_dependency2():
+
+    @dace.program
+    def tester(A: dace.float32[10], i_sym: dace.int32):
+        if i_sym < 10:
+            for i in dace.map[0:10]:
+                A[i] = A[i] + 10
+                i_sym += 1
+        if i_sym < 10:
+            A[0] = A[0] + 10
+
+    _test_for_unchanged_behavior(tester, 1)
+
+
 if __name__ == "__main__":
     test_condition_map_interchange_basic()
     test_condition_map_interchange_nested()
@@ -206,3 +268,8 @@ if __name__ == "__main__":
     test_condition_map_interchange_dependent_condition()
     test_condition_map_interchange_multiple_nested_conditions()
     test_condition_map_interchange_non_affine_condition()
+    test_condition_map_interchange_data_dependency()
+    test_condition_map_interchange_data_dependency2()
+    test_condition_map_interchange_data_dependency3()
+    test_condition_map_interchange_symbol_dependency()
+    test_condition_map_interchange_symbol_dependency2()

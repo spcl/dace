@@ -2,8 +2,10 @@
 """Interchange conditional blocks with nested map regions."""
 
 from dace import sdfg as sd
+from dace import dtypes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
+from dace.properties import CodeBlock
 from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
 from dace.memlet import Memlet
 from dace.transformation import transformation
@@ -48,6 +50,12 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         cond_syms = set(branch_cond.get_free_symbols())
         all_states = list(branch.all_states())
 
+        # Prepend the condition computation
+        cond_sym = graph.sdfg.add_symbol("cond", dtypes.bool, find_new_name=True)
+        graph.sdfg.add_state_before(self.cond_block, assignments={cond_sym: branch_cond.as_string})
+        cond_syms = [cond_sym]
+        branch_cond = CodeBlock(cond_sym)
+
         # Wrap any map where the body does not contain a single nested SDFG
         for state in all_states:
             for node in state.nodes():
@@ -63,9 +71,11 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                 inputs = set()
                 outputs = set()
                 for edge in state.out_edges(node):
-                    inputs.add(edge.data.data)
+                    if edge.data.data is not None:
+                        inputs.add(edge.data.data)
                 for edge in state.in_edges(map_exit):
-                    outputs.add(edge.data.data)
+                    if edge.data.data is not None:
+                        outputs.add(edge.data.data)
 
                 # Create the nested SDFG and add all symbols
                 sym_mapping = {s: s for s in list(state.sdfg.symbols.keys()) + node.map.params}
@@ -104,19 +114,23 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         if edge.src in copy_mapping:
                             src = copy_mapping[edge.src]
                         elif edge.src is node:
+                            if edge.data.data is None:
+                                continue
                             src = start_state.add_access(edge.data.data)
                             src_conn = None
                             memlet.replace(param_lb_map)
                         if edge.dst in copy_mapping:
                             dst = copy_mapping[edge.dst]
                         elif edge.dst is map_exit:
+                            if edge.data.data is None:
+                                continue
                             dst = start_state.add_access(edge.data.data)
                             dst_conn = None
                             memlet.replace(param_lb_map)
                         start_state.add_edge(src, src_conn, dst, dst_conn, memlet)
 
                 for edge in state.out_edges(node):
-                    if edge.data.data not in nsdfg.sdfg.arrays:
+                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
                         desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
                         desc.shape = edge.data.subset.size()
                         nsdfg.sdfg.add_datadesc(edge.data.data, desc)
@@ -128,7 +142,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                         copy.deepcopy(edge.data),
                     )
                 for edge in state.in_edges(state.exit_node(node)):
-                    if edge.data.data not in nsdfg.sdfg.arrays:
+                    if edge.data.data not in nsdfg.sdfg.arrays and edge.data.data is not None:
                         desc = copy.deepcopy(state.sdfg.arrays[edge.data.data])
                         desc.shape = edge.data.subset.size()
                         nsdfg.sdfg.add_datadesc(edge.data.data, desc)
@@ -173,21 +187,24 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                 # Pass the symbols used in the condition
                 for sym in cond_syms:
                     if sym in state.sdfg.arrays:
+                        if sym in nsdfg.sdfg.arrays:  # Already added
+                            continue
                         nsdfg.sdfg.add_datadesc(sym, state.sdfg.arrays[sym])
                         nsdfg.add_in_connector(sym)
                         sym_access = state.add_access(sym)
-                        node.add_in_connector(f"IN_{sym}")
-                        node.add_out_connector(f"OUT_{sym}")
+                        conn_name = node.next_connector(sym)
+                        node.add_in_connector(f"IN_{conn_name}")
+                        node.add_out_connector(f"OUT_{conn_name}")
                         state.add_edge(
                             sym_access,
                             None,
                             node,
-                            f"IN_{sym}",
+                            f"IN_{conn_name}",
                             Memlet.from_array(sym, state.sdfg.arrays[sym]),
                         )
                         state.add_edge(
                             node,
-                            f"OUT_{sym}",
+                            f"OUT_{conn_name}",
                             nsdfg,
                             sym,
                             Memlet.from_array(sym, state.sdfg.arrays[sym]),
