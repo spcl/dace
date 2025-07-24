@@ -1614,8 +1614,9 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
 
             # If a view, get the relevant access node
             dstnode = edge.dst
-            while isinstance(sdfg.arrays[edge.data.data], data.View):
-                dstnode = dfg.out_edges(dstnode)[0].dst
+            if edge.data.data is not None:
+                while isinstance(sdfg.arrays[edge.data.data], data.View):
+                    dstnode = dfg.out_edges(dstnode)[0].dst
 
             # We need the streams leading out of the output data
             for e in dfg.out_edges(dstnode):
