@@ -912,9 +912,7 @@ class Indices(Subset):
         # Because SymPy expression and numbers and tuple in Python are immutable, it is enough
         #  to shallow copy the list that stores them.
         node = object.__new__(Indices)
-        node.ranges = self.ranges.copy()
-        node.tile_sizes = self.tile_sizes.copy()
-
+        node.indices = self.indices.copy()
         return node
 
     def num_elements(self):
