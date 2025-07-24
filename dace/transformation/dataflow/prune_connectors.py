@@ -156,18 +156,18 @@ class PruneSymbols(pm.SingleStateTransformation):
     def _find_symbols_that_can_not_be_removed(self, sdfg: SDFG) -> Set[str]:
         """Find the set of symbols that can not be removed."""
 
-        # The implementation of this function is such that it has the same behaviour as before,
-        #  where `dace.transformation.helpers.is_symbol_unused()` was used. However, I am sure
-        #  that it can be implemented in terms of `used_symbols()` but I am unsure if it is
-        #  so simple as `return sdfg.used_symbols()`?
-
+        # The implementation of this function is based upon `dace.transformation.helpers.is_symbol_unused()`.
+        #  However, instead of scanning the SDFG for every symbol, this function scans the SDFG
+        #  once and then returns the collected set.
+        # TODO: Investigate if this function can be replaced by a call to `used_symbols()`.
+        #   See https://github.com/spcl/dace/pull/2080#discussion_r2226418881
         unremovable_symbols: Set[str] = set()
 
         for desc in sdfg.arrays.values():
             unremovable_symbols.update(map(str, desc.free_symbols))
-        for state in sdfg.states():  # Previously `nodes()` was used.
+        for state in sdfg.states():
             unremovable_symbols.update(state.free_symbols)
-        for e in sdfg.edges():  # Are this all edges?
+        for e in sdfg.all_interstate_edges():
             unremovable_symbols.update(e.data.free_symbols)
         return unremovable_symbols
 
