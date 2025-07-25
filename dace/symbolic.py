@@ -1508,7 +1508,11 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
         # Constant
         try:
-            float(v)
+            # NOTE: we could also write `float(v)` to test for constants, however, this is
+            #   relatively slow. It is faster to transform the symbol `v` into a string and
+            #   then check if that is a constant by converting it to a `float` (under the
+            #   assumption that we have nothing higher than a `float`).
+            float(str(v))
             repl[k] = v
             continue
         except (TypeError, ValueError, AttributeError):

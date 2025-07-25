@@ -12,13 +12,10 @@ from dace.config import Config
 
 def nng(expr):
     # When dealing with set sizes, assume symbols are non-negative
-    try:
+    if hasattr(expr, 'free_symbols'):
         # TODO: Fix in symbol definition, not here
-        for sym in list(expr.free_symbols):
-            expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-        return expr
-    except AttributeError:  # No free_symbols in expr
-        return expr
+        return expr.subs(((sym, sp.Symbol(sym.name, nonnegative=True)) for sym in list(expr.free_symbols)))
+    return expr
 
 
 def bounding_box_cover_exact(subset_a, subset_b) -> bool:
@@ -56,13 +53,15 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
 
         # lower bound: first check whether symbolic positive condition applies
         if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-            if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb))
-                    or symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+            rb_simplified = symbolic.simplify_ext(nng(rb))
+            orb_simplified = symbolic.simplify_ext(nng(orb))
+            if not (rb_simplified == orb_simplified or rb_simplified <= orb_simplified):
                 return False
         # upper bound: first check whether symbolic positive condition applies
         if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-            if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore))
-                    or symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+            re_simplified = symbolic.simplify_ext(nng(re))
+            ore_simplified = symbolic.simplify_ext(nng(ore))
+            if not (re_simplified == ore_simplified or re_simplified >= ore_simplified):
                 return False
     return True
 
@@ -126,10 +125,12 @@ class Subset(object):
                 # self.start % self.step == other.index % self.step
                 if isinstance(other, Indices):
                     try:
-                        return all([(symbolic.simplify_ext(nng(start)) %
-                                     symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) %
-                                     symbolic.simplify_ext(nng(step))) == True
-                                    for (start, _, step), i in zip(self.ranges, other.indices)])
+                        for (start, _, step), i in zip(self.ranges, other.indices):
+                            simplified_step = symbolic.simplify_ext(nng(step))
+                            if not (((symbolic.simplify_ext(nng(start)) % simplified_step)
+                                     == (symbolic.simplify_ext(nng(i)) % simplified_step)) == True):
+                                return False
+                        return True
                     except:
                         return False
                 if isinstance(other, Range):
@@ -140,10 +141,13 @@ class Subset(object):
                         other_steps = [r[2] for r in other.ranges]
                         for start, step, ostart, ostep in zip(self.min_element(), self_steps, other.min_element(),
                                                               other_steps):
-                            if not (ostep % step == 0 and (
-                                (symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
-                                (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step))
-                                 == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
+                            simplified_start = symbolic.simplify_ext(nng(start))
+                            simplified_ostart = symbolic.simplify_ext(nng(ostart))
+
+                            if not (ostep % step == 0 and
+                                    ((simplified_start == simplified_ostart) or
+                                     (simplified_start % symbolic.simplify_ext(nng(step))
+                                      == simplified_ostart % symbolic.simplify_ext(nng(ostep))) == True)):
                                 return False
                     except:
                         return False

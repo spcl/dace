@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.fpga_testing import fpga_test, xilinx_test
-from dace.transformation.dataflow import MapFusion
+from dace.transformation.dataflow import MapFusionVertical
 from dace.transformation.interstate import FPGATransformSDFG
-from .mapfusion_test import multiple_fusions, fusion_with_transient
+from .map_fusion_vertical_test import multiple_fusions, fusion_with_transient
 import numpy as np
 from dace.config import set_temporary
 
@@ -11,7 +11,7 @@ from dace.config import set_temporary
 def test_multiple_fusions_fpga():
     sdfg = multiple_fusions.to_sdfg()
     sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(MapFusion) >= 2
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) >= 2
     assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.zeros_like(A)
@@ -32,7 +32,7 @@ def test_fusion_with_transient_fpga():
     expected = A * A * 2
     sdfg = fusion_with_transient.to_sdfg()
     sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(MapFusion) >= 2
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) >= 2
     assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
     sdfg(A=A)
     assert np.allclose(A, expected)
@@ -46,7 +46,7 @@ def test_fusion_with_transient_fpga_decoupled():
     expected = A * A * 2
     sdfg = fusion_with_transient.to_sdfg()
     sdfg.simplify()
-    assert sdfg.apply_transformations_repeated(MapFusion) >= 2
+    assert sdfg.apply_transformations_repeated(MapFusionVertical) >= 2
     assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
     with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
         sdfg(A=A)
