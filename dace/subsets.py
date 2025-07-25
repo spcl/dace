@@ -297,8 +297,7 @@ class Range(Subset):
         return hash(tuple(r for r in self.ranges))
 
     def __add__(self, other):
-        sum_ranges = [(*ranges, tile)
-                      for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + self.tile_sizes)]
+        sum_ranges = self.ranges + other.ranges
         return Range(sum_ranges)
 
     def __deepcopy__(self, memo) -> 'Range':
