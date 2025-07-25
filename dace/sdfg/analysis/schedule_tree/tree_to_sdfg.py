@@ -31,6 +31,9 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state = start_state
         """Current SDFGState in the SDFG that we are building."""
 
+        self._current_nestedSDFG: int | None = None
+        """Id of the current nested SDFG if we are inside one."""
+
         self._interstate_symbols: List[tn.AssignNode] = []
         """Interstate symbol assignments. Will be assigned with the next state transition."""
 
@@ -39,6 +42,9 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._nviews_bound_per_scope: Dict[int, List[tn.NView]] = {}
         """Mapping of id(SDFG) -> list of active NView nodes in that SDFG."""
+
+        self._nviews_deferred_removal: Dict[int, List[tn.NView]] = {}
+        """"Mapping of id(SDFG) -> list of NView nodes to be removed once we exit this nested SDFG."""
 
         # state management
         self._state_stack: List[SDFGState] = []
@@ -52,7 +58,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         """Apply an NView override if applicable. Returns true if the NView was applied."""
         length = len(self._nviews_free)
         for index, nview in enumerate(reversed(self._nviews_free), start=1):
-            if nview.target == array_name:
+            if nview.target == array_name and nview not in self._nviews_deferred_removal[id(sdfg)]:
                 # Add the "override" data descriptor
                 sdfg.add_datadesc(nview.target, nview.view_desc.clone())
                 if nview.src_desc.transient:
@@ -301,6 +307,7 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
     def _insert_nestedSDFG(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
         state_stack_size = len(self._state_stack)
+        outer_nestedSDFG = self._current_nestedSDFG
 
         # prepare inner SDFG
         inner_sdfg = SDFG("nested_sdfg", parent=self._current_state)
@@ -311,6 +318,8 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._state_stack.append(self._current_state)
         self._dataflow_stack.append((inner_sdfg, {"inputs": set(), "outputs": set()}))
         self._nviews_bound_per_scope[id(inner_sdfg)] = []
+        self._nviews_deferred_removal[id(inner_sdfg)] = []
+        self._current_nestedSDFG = id(inner_sdfg)
         self._current_state = start_state
 
         # visit children
@@ -374,9 +383,18 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # Move NViews back to "free" NViews for usage in a sibling scope.
         for nview in self._nviews_bound_per_scope[id(inner_sdfg)]:
+            # If this NView ended in the current nested SDFG, don't add it back to the
+            # "free NView" nodes. We need to keep it alive until here to make sure that
+            # we can add the memlets above.
+            if nview in self._nviews_deferred_removal[id(inner_sdfg)]:
+                continue
             self._nviews_free.append(nview)
 
         del self._nviews_bound_per_scope[id(inner_sdfg)]
+        del self._nviews_deferred_removal[id(inner_sdfg)]
+
+        # Restore current nested SDFG
+        self._current_nestedSDFG = outer_nestedSDFG
 
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
@@ -705,8 +723,16 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         self._nviews_free.append(node)
 
     def visit_NViewEnd(self, node: tn.NViewEnd, sdfg: SDFG) -> None:
-        length = len(self._nviews_free)
+        # If bound to the current nested SDFG, defer cleanup
+        if self._current_nestedSDFG is not None:
+            currently_bound = self._nviews_bound_per_scope[self._current_nestedSDFG]
+            for index, nview in enumerate(reversed(currently_bound)):
+                if node.target == nview.target:
+                    # Bound to current nested SDFG. Slate for deferred removal once we exit that nested SDFG.
+                    self._nviews_deferred_removal[self._current_nestedSDFG].append(nview)
+                    return
 
+        length = len(self._nviews_free)
         for index, nview in enumerate(reversed(self._nviews_free), start=1):
             if node.target == nview.target:
                 # Stack semantics: remove from the back of the list
