@@ -297,7 +297,8 @@ class Range(Subset):
         return hash(tuple(r for r in self.ranges))
 
     def __add__(self, other):
-        sum_ranges = self.ranges + other.ranges
+        sum_ranges = [(*ranges, tile)
+                      for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + other.tile_sizes)]
         return Range(sum_ranges)
 
     def num_elements(self):
