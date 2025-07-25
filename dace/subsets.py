@@ -103,9 +103,9 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
         # NOTE: Applying simplify takes a lot of time, thus we try to avoid it and try to do the test
         #   first with the symbols we get and if we are unable to figuring out something, we run
         #   simplify. Furthermore, we also try to postpone `nng()` as long as we can.
+        # NOTE: We use first `==` in the hope that it is much faster than `<=`.
         # NOTE: We have to use the `== True` test because of SymPy's behaviour. Otherwise we would
         #   get an expression resulting in a `TypeError`.
-        # TODO: Figuring out why we use this two stage version, instead of `(y <= x) == True`.
 
         # lower bound: first check whether symbolic positive condition applies
         if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
