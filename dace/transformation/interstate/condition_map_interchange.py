@@ -51,7 +51,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
         all_states = list(branch.all_states())
 
         # Prepend the condition computation
-        cond_sym = graph.sdfg.add_symbol("cond", dtypes.bool, find_new_name=True)
+        cond_sym = graph.sdfg.add_symbol(f"{self.cond_block.label}_cond", dtypes.bool, find_new_name=True)
         graph.sdfg.add_state_before(self.cond_block, assignments={cond_sym: branch_cond.as_string})
         cond_syms = [cond_sym]
         branch_cond = CodeBlock(cond_sym)
