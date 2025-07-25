@@ -237,7 +237,7 @@ class RedundantArray(pm.SingleStateTransformation):
             subset = copy.deepcopy(a1_subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
-            if len(subset.size()) != len(shape) or any(m != a for m, a in zip(subset.size(), shape, strict=True)):
+            if len(subset.size()) != len(shape) or any(m != a for m, a in zip(subset.size(), shape)):
                 return False
 
             # NOTE: Library node check
