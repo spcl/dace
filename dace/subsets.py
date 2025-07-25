@@ -34,9 +34,6 @@ def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
     :param subset_a: The first subset, the one that should cover.
     :param subset_b: The second subset, the one that should be convered.
     :param approximation: If `True` then use the approximated bounds.
-
-    :note: Although the function claims that it does not assumes positivity,
-        this is not guaranteed. This might be a bug.
     """
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
@@ -48,11 +45,9 @@ def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
-    # TODO: Although the function description and the very existence of
-    #   `bounding_box_symbolic_positive()` indicate that the function does not assume
-    #   positive symbols, the original function called `nng()` on the symbols.
-    #   This is most likely an error, but kept for compatibility.
-    simplify = lambda expr: symbolic.simplify_ext(nng(expr))
+    # NOTE: The original implementation always called `nng()`. However, it was decided that
+    #   this is an error and the call was removed in PR#2093.
+    simplify = lambda expr: symbolic.simplify_ext(expr)
     no_simplify = lambda expr: expr
 
     # NOTE: Just doing the check is very fast, compared to simplify. Thus we first try to do the
@@ -170,10 +165,10 @@ class Subset(object):
         elif not bounding_box_symbolic_positive(self, other):
             return False
 
-        # TODO: The original implementation always called `nng()` on the argument before passing
-        #   it into the simplify function. This looks like an error, calling it should depend
-        #   on the value of `symbolic_positive`.
-        simplify = lambda expr: symbolic.simplify_ext(nng(expr))
+        # NOTE: The original implementation always called `nng()`. However, it was decided that
+        #   and the application was made conditional on `symbolic_positive`, in PR#2093.
+        simplify = (lambda expr: symbolic.simplify_ext(nng(expr))) if symbolic_positive else (
+            lambda expr: symbolic.simplify_ext(expr))
         no_simplify = lambda expr: expr
 
         # In the following we will first perform the check as is, and if that fails try it again
