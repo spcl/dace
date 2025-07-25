@@ -1152,13 +1152,15 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     :param sym: The symbol to test.
     :return: True if the symbol can be removed, False otherwise.
     """
+    # TODO: Investigate if this function can be replaced by a call to `used_symbols()`.
+    #   See https://github.com/spcl/dace/pull/2080#discussion_r2226418881
     for desc in sdfg.arrays.values():
         if sym in map(str, desc.free_symbols):
             return False
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         if sym in state.free_symbols:
             return False
-    for e in sdfg.edges():
+    for e in sdfg.all_interstate_edges():
         if sym in e.data.free_symbols:
             return False
 
