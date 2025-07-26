@@ -1425,6 +1425,15 @@ class DebugInfo:
         return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
                          json_obj['filename'])
 
+    def __deepcopy__(self, memo) -> 'DebugInfo':
+        """Performs a `deepcopy` of `self`.
+
+        Because all members of `self` are immutable this function is essentially a shallow copy.
+        """
+        new = object.__new__(DebugInfo)
+        new.__dict__.update(self.__dict__)
+        return new
+
 
 ######################################################
 # Static (utility) functions
