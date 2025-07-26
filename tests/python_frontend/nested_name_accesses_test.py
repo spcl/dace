@@ -290,6 +290,37 @@ def test_issue_1139():
     assert np.allclose(c, np.linspace(xmin, xmax, 30))
 
 
+def test_issue_2100():
+    """
+    Reproduction of issue #2100, where a nested SDFG with a fill operation
+    would not register the filled array as an output, causing a validation failure.
+    """
+    N = dc.symbol('N')
+
+    @dc.program
+    def global_matmul(C: dc.float32[N, N] @ dc.StorageType.GPU_Global):
+        for i, j in dc.map[0:N:N, 0:N:N] @ dc.ScheduleType.GPU_Device:
+
+            for l in dc.map[0:64] @ dc.ScheduleType.GPU_ThreadBlock:
+
+                c = dc.ndarray(
+                    [N, N],
+                    dtype=dc.float32,
+                    storage=dc.StorageType.Register,
+                    strides=(N, 1),
+                )
+
+                for k in dc.map[0:1] @ dc.ScheduleType.Sequential:
+                    c.fill(0.0)
+
+                C[i:i + N, j:j + N] = c[:, :]
+
+    sdfg = global_matmul.to_sdfg(simplify=False)
+    sdfg.validate()
+    sdfg.simplify()
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_nested_name_accesses()
     test_nested_offset_access()
@@ -303,3 +334,4 @@ if __name__ == "__main__":
     test_access_to_nested_transient()
     test_access_to_nested_transient_dappy()
     test_issue_1139()
+    test_issue_2100()
