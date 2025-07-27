@@ -709,7 +709,11 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state, references: Optional[Set[int]] = None, **context: bool):
+    def validate(self,
+                 sdfg: 'dace.SDFG',
+                 state: 'dace.SDFGState',
+                 references: Optional[Set[int]] = None,
+                 **context: bool):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -727,7 +731,7 @@ class NestedSDFG(CodeNode):
                 raise ValueError('Parent SDFG not properly set for nested SDFG node')
 
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
-            for conn in connectors:
+            for conn in sorted(connectors):
                 if conn in self.sdfg.symbols:
                     raise ValueError(f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
                                      'To pass symbols use "symbol_mapping".')
@@ -735,6 +739,16 @@ class NestedSDFG(CodeNode):
                     raise NameError(
                         f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
                         'Example: parameter passed to a function without a matching array within it.')
+
+                # Verify that the internal data descriptor is equivalent to the external data descriptor connected
+                # to the connector.
+                edge = next(iter(state.edges_by_connector(self, conn)))
+                if not sdfg.arrays[edge.data.data].is_equivalent(self.sdfg.arrays[conn]):
+                    raise ValueError(
+                        f'Connector "{conn}" was given but the internal data descriptor ({self.sdfg.arrays[conn]}) '
+                        f'is not equivalent to the data descriptor connected to it ("{edge.data.data}", '
+                        f'{sdfg.arrays[edge.data.data]}). If a reinterpretation or a subset is needed, use a view.')
+
             for dname, desc in self.sdfg.arrays.items():
                 if not desc.transient and dname not in connectors:
                     raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
