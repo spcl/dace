@@ -932,6 +932,8 @@ class ASTRefiner(ast.NodeTransformer):
 @transformation.explicit_cf_compatible
 class RefineNestedAccess(transformation.SingleStateTransformation):
     """
+    THIS TRANSFORMATION IS DEPRECATED AND WILL BE REMOVED IN A FUTURE VERSION.
+
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
     using all of the contents. Makes the outer memlet smaller in shape and
     ensures that the offsets in the nested SDFG start with zero.
@@ -964,196 +966,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.nsdfg)]
 
-    @staticmethod
-    def _candidates(
-            state: SDFGState,
-            nsdfg: nodes.NestedSDFG) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet, Set[int]]]]:
-        in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
-        out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
-        ignore = set()
-        for nstate in nsdfg.sdfg.states():
-            for dnode in nstate.data_nodes():
-                if nsdfg.sdfg.arrays[dnode.data].transient:
-                    continue
-
-                # For now we only detect one element
-                read_set, write_set = nstate.read_and_write_sets()
-                for e in nstate.in_edges(dnode):
-                    if e.data.data not in write_set:
-                        # Skip data which is not in the read and write set of the state -> there also won't be a
-                        # connector
-                        continue
-                    # If more than one unique element detected, remove from
-                    # candidates
-                    if e.data.data in out_candidates:
-                        memlet, ns, indices = out_candidates[e.data.data]
-                        # Try to find dimensions in which there is a mismatch
-                        # and remove them from list
-                        for i, (s1, s2) in enumerate(zip(e.data.subset, memlet.subset)):
-                            if s1 != s2 and i in indices:
-                                indices.remove(i)
-                        if len(indices) == 0:
-                            ignore.add(e.data.data)
-                        out_candidates[e.data.data] = (memlet, ns, indices)
-                        continue
-                    out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
-                for e in nstate.out_edges(dnode):
-                    if e.data.data not in read_set:
-                        # Skip data which is not in the read and write set of the state -> there also won't be a
-                        # connector
-                        continue
-                    # If more than one unique element detected, remove from
-                    # candidates
-                    if e.data.data in in_candidates:
-                        memlet, ns, indices = in_candidates[e.data.data]
-                        # Try to find dimensions in which there is a mismatch
-                        # and remove them from list
-                        for i, (s1, s2) in enumerate(zip(e.data.subset, memlet.subset)):
-                            if s1 != s2 and i in indices:
-                                indices.remove(i)
-                        if len(indices) == 0:
-                            ignore.add(e.data.data)
-                        in_candidates[e.data.data] = (memlet, ns, indices)
-                        continue
-                    in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
-
-        # Check read memlets in interstate edges for candidates
-        for e in nsdfg.sdfg.all_interstate_edges():
-            for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
-                # If more than one unique element detected, remove from candidates
-                if m.data in in_candidates:
-                    memlet, ns, indices = in_candidates[m.data]
-                    # Try to find dimensions in which there is a mismatch and remove them from list
-                    for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
-                        if s1 != s2 and i in indices:
-                            indices.remove(i)
-                    if len(indices) == 0:
-                        ignore.add(m.data)
-                    in_candidates[m.data] = (memlet, ns, indices)
-                    continue
-                in_candidates[m.data] = (m, None, set(range(len(m.subset))))
-
-        # Check in/out candidates
-        for cand in in_candidates.keys() & out_candidates.keys():
-            s1, nstate1, ind1 = in_candidates[cand]
-            s2, nstate2, ind2 = out_candidates[cand]
-            indices = ind1 & ind2
-            if any(s1.subset[ind] != s2.subset[ind] for ind in indices):
-                ignore.add(cand)
-            in_candidates[cand] = (s1, nstate1, indices)
-            out_candidates[cand] = (s2, nstate2, indices)
-
-        # Ensure minimum elements of candidates do not begin with zero
-        def _check_cand(candidates, outer_edges):
-            for cname, (cand, nstate, indices) in candidates.items():
-                if all(me == 0 for i, me in enumerate(cand.subset.min_element()) if i in indices):
-                    ignore.add(cname)
-                    continue
-
-                # Ensure outer memlets begin with 0
-                try:
-                    outer_edge = next(iter(outer_edges(nsdfg, cname)))
-                except StopIteration:  # Connector does not exist on this side
-                    ignore.add(cname)
-                    continue
-                if any(me != 0 for i, me in enumerate(outer_edge.data.subset.min_element()) if i in indices):
-                    ignore.add(cname)
-                    continue
-
-                # Check w.r.t. loops
-                if nstate is not None and len(nstate.ranges) > 0:
-                    # Re-annotate loop ranges, in case someone changed them
-                    # TODO: Move out of here!
-                    for ns in nsdfg.sdfg.states():
-                        ns.ranges = {}
-                    from dace.sdfg.propagation import _annotate_loop_ranges
-                    _annotate_loop_ranges(nsdfg.sdfg, [])
-
-                    memlet = propagation.propagate_subset(
-                        [cand], nsdfg.sdfg.arrays[cname], sorted(nstate.ranges.keys()),
-                        subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]))
-                    if all(me == 0 for i, me in enumerate(memlet.subset.min_element()) if i in indices):
-                        ignore.add(cname)
-                        continue
-
-                    # Modify memlet to propagated one
-                    candidates[cname] = (memlet, nstate, indices)
-                else:
-                    memlet = cand
-
-                # If there are any symbols here that are not defined
-                # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) -
-                                   set(nsdfg.symbol_mapping.keys()))
-                if missing_symbols:
-                    ignore.add(cname)
-                    continue
-
-        _check_cand(in_candidates, state.in_edges_by_connector)
-        _check_cand(out_candidates, state.out_edges_by_connector)
-
-        # Return result, filtering out the states
-        return ({
-            k: (dc(v), ind)
-            for k, (v, _, ind) in in_candidates.items() if k not in ignore
-        }, {
-            k: (dc(v), ind)
-            for k, (v, _, ind) in out_candidates.items() if k not in ignore
-        })
-
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
-        nsdfg = self.nsdfg
-        ic, oc = RefineNestedAccess._candidates(graph, nsdfg)
-        return (len(ic) + len(oc)) > 0
+        return False
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        nsdfg_node: nodes.NestedSDFG = self.nsdfg
-        nsdfg: SDFG = nsdfg_node.sdfg
-        torefine_in, torefine_out = RefineNestedAccess._candidates(state, nsdfg_node)
-
-        refined = set()
-
-        def _offset_refine(torefine: Dict[str, Tuple[Memlet, Set[int]]],
-                           outer_edges: Callable[[nodes.NestedSDFG, str], Iterable[MultiConnectorEdge[Memlet]]]):
-            # Offset memlets inside negatively by "refine", modify outer
-            # memlets to be "refine"
-            for aname, (refine, indices) in torefine.items():
-                try:
-                    outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
-                except StopIteration:
-                    continue
-                new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
-                outer_edge.data.subset = subsets.Range([
-                    ns if i in indices else os
-                    for i, (os, ns) in enumerate(zip(outer_edge.data.subset, new_memlet.subset))
-                ])
-                if aname in refined:
-                    continue
-                # Refine internal memlets
-                for nstate in nsdfg.states():
-                    for e in nstate.edges():
-                        if e.data.data == aname:
-                            e.data.subset.offset(refine.subset, True, indices)
-                # Refine accesses in interstate edges
-                refiner = ASTRefiner(aname, refine.subset, nsdfg, indices)
-                for isedge in nsdfg.all_interstate_edges():
-                    for k, v in isedge.data.assignments.items():
-                        vast = ast.parse(v)
-                        refiner.visit(vast)
-                        isedge.data.assignments[k] = astutils.unparse(vast)
-                    if isedge.data.condition.language is dtypes.Language.Python:
-                        for i, stmt in enumerate(isedge.data.condition.code):
-                            isedge.data.condition.code[i] = refiner.visit(stmt)
-                    else:
-                        raise NotImplementedError
-                refined.add(aname)
-
-        # Proceed symmetrically on incoming and outgoing edges
-        _offset_refine(torefine_in, state.in_edges_by_connector)
-        _offset_refine(torefine_out, state.out_edges_by_connector)
-
-        # Propagate the State Memlets
-        propagation.propagate_memlets_state(sdfg, state)
+        raise NotImplementedError(
+            "The RefineNestedAccess transformation is no longer valid for Nested SDFG representations from DaCe 2.0 "
+            "onwards and will be removed in a future version.")
 
 
 @make_properties
