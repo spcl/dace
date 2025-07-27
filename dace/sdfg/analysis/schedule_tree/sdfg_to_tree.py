@@ -12,7 +12,7 @@ from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
 from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
 from dace.transformation.passes.analysis import StateReachability
-from dace.transformation.helpers import unsqueeze_memlet
+from dace.sdfg.propagation import align_memlet
 from dace.properties import CodeBlock
 from dace.memlet import Memlet
 
@@ -45,7 +45,7 @@ def dealias_sdfg(sdfg: SDFG):
         replacements: Dict[str, str] = {}
         inv_replacements: Dict[str, List[str]] = {}
         parent_edges: Dict[str, Memlet] = {}
-        to_unsqueeze: Set[str] = set()
+        to_rename: Set[str] = set()
 
         parent_sdfg = nsdfg.parent_sdfg
         parent_state = nsdfg.parent
@@ -62,13 +62,13 @@ def dealias_sdfg(sdfg: SDFG):
                     parent_edges[name] = edge
                     if parent_name in inv_replacements:
                         inv_replacements[parent_name].append(name)
-                        to_unsqueeze.add(parent_name)
+                        to_rename.add(parent_name)
                     else:
                         inv_replacements[parent_name] = [name]
                     break
 
-        if to_unsqueeze:
-            for parent_name in to_unsqueeze:
+        if to_rename:
+            for parent_name in to_rename:
                 parent_arr = parent_sdfg.arrays[parent_name]
                 if isinstance(parent_arr, data.View):
                     parent_arr = parent_arr.as_array()
@@ -91,18 +91,20 @@ def dealias_sdfg(sdfg: SDFG):
                         mpath = state.memlet_path(e)
                         src, dst = mpath[0].src, mpath[-1].dst
 
-                        # We need to take directionality of the memlet into account and unsqueeze either to source or
+                        # We need to take directionality of the memlet into account and align either to source or
                         # destination subset
                         if isinstance(src, nd.AccessNode) and src.data in child_names:
                             src_data = src.data
-                            new_src_memlet = unsqueeze_memlet(e.data, parent_edges[src.data].data, use_src_subset=True)
+                            new_src_memlet = align_memlet(state, e, False)
+                            new_src_memlet.data = parent_edges[src.data].data.data
                         else:
                             src_data = None
                             new_src_memlet = None
                             # We need to take directionality of the memlet into account
                         if isinstance(dst, nd.AccessNode) and dst.data in child_names:
                             dst_data = dst.data
-                            new_dst_memlet = unsqueeze_memlet(e.data, parent_edges[dst.data].data, use_dst_subset=True)
+                            new_dst_memlet = align_memlet(state, e, True)
+                            new_dst_memlet.data = parent_edges[dst.data].data.data
                         else:
                             dst_data = None
                             new_dst_memlet = None
@@ -121,7 +123,9 @@ def dealias_sdfg(sdfg: SDFG):
                     syms = e.data.read_symbols()
                     for memlet in e.data.get_read_memlets(nsdfg.arrays):
                         if memlet.data in child_names:
-                            repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges[memlet.data].data)
+                            repl_memlet = copy.deepcopy(memlet)
+                            repl_memlet.data = parent_edges[memlet.data].data.data
+                            repl_dict[str(memlet)] = repl_memlet
                             if memlet.data in syms:
                                 syms.remove(memlet.data)
                     for s in syms:
@@ -217,13 +221,15 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                 continue
             if isinstance(src, dace.nodes.AccessNode) and src.data in input_mapping:
                 src_data = src.data
-                src_memlet = unsqueeze_memlet(memlet, input_mapping[src.data], use_src_subset=True)
+                src_memlet = align_memlet(state, e, False)
+                src_memlet.data = input_mapping[src.data].data.data
             else:
                 src_data = None
                 src_memlet = None
             if isinstance(dst, dace.nodes.AccessNode) and dst.data in output_mapping:
                 dst_data = dst.data
-                dst_memlet = unsqueeze_memlet(memlet, output_mapping[dst.data], use_dst_subset=True)
+                dst_memlet = align_memlet(state, e, True)
+                dst_memlet.data = output_mapping[dst.data].data.data
             else:
                 dst_data = None
                 dst_memlet = None
@@ -231,9 +237,11 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
             # Other cases (code->code)
             if src_data is None and dst_data is None:
                 if e.data.data in input_mapping:
-                    memlet = unsqueeze_memlet(memlet, input_mapping[e.data.data])
+                    memlet = align_memlet(state, e, False)
+                    memlet.data = input_mapping[e.data.data].data.data
                 elif e.data.data in output_mapping:
-                    memlet = unsqueeze_memlet(memlet, output_mapping[e.data.data])
+                    memlet = align_memlet(state, e, True)
+                    memlet.data = output_mapping[e.data.data].data.data
                 e.data = memlet
             else:
                 if src_memlet is not None:
@@ -257,7 +265,9 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                 if memlet.data in output_mapping:
                     mapping = output_mapping
 
-                repl_dict[str(memlet)] = str(unsqueeze_memlet(memlet, mapping[memlet.data]))
+                repl_memlet = copy.deepcopy(memlet)
+                repl_memlet.data = mapping[memlet.data].data.data
+                repl_dict[str(memlet)] = str(repl_memlet)
                 if memlet.data in syms:
                     syms.remove(memlet.data)
         for s in syms:

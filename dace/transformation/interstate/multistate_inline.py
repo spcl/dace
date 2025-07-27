@@ -96,9 +96,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if not isinstance(edge.src, nodes.AccessNode):
                 return False
 
-            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
-                return False
-
             outer_desc = sdfg.arrays[edge.data.data]
             if isinstance(outer_desc, data.View):
                 return False
@@ -115,9 +112,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 return False
 
             if not isinstance(edge.dst, nodes.AccessNode):
-                return False
-
-            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
                 return False
 
             outer_desc = sdfg.arrays[edge.data.data]
