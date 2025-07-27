@@ -22,8 +22,7 @@ from dace.transformation import transformation as pm
 
 
 def _subset_has_shape(subset: subsets.Subset, shape: Sequence[int]) -> bool:
-    return (len(subset.size()) == len(shape) and
-            all(m == a for m, a in zip(subset.size(), shape)))
+    return len(subset.size()) == len(shape) and all(m == a for m, a in zip(subset.size(), shape))
 
 
 def _validate_subsets(edge: graph.MultiConnectorEdge,
@@ -571,8 +570,7 @@ class RedundantArray(pm.SingleStateTransformation):
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if (reduction or len(a_dims_to_pop) == len(in_desc.shape)
-                or not _subset_has_shape(a1_subset, in_desc.shape)):
+        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or not _subset_has_shape(a1_subset, in_desc.shape):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
