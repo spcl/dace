@@ -170,6 +170,33 @@ def test_view_offset_removal():
 
 
 def test_transient_removal_uneven_flow_through_map():
+    """
+    Tests that a transient array is not removed if it is not fully copied.
+
+    This test case validates a specific edge case for the `RedundantArray`
+    transformation. It ensures that the transformation doesn't incorrectly
+    remove a transient array when only a portion of it is used in a
+    subsequent copy, which would lead to incorrect results.
+
+    The SDFG is constructed with the following dataflow:
+
+    X[NxN] --(full copy)--> T0[NxN] --(slice copy)--> T1[NxN] --(full copy)--> Y[NxN]
+                                                      ^
+                                                      |
+                                                    (initialized to 0)
+
+    The test asserts that the `RedundantArray` transformation is not applied
+    to `T0`. This is the correct behavior. If `T0` were to be removed, the
+    dataflow from `X` would be redirected to `T1`. However, since only a
+    slice of `T0` is used, a simple redirection would result in the entire `X`
+    being copied to `T1`, which is incorrect. The transformation has
+    safeguards to prevent this by checking if the memlet from the potentially
+    redundant array covers the whole array. This test ensures these
+    safeguards are working.
+
+    The final output `Y` should contain zeros everywhere except for the last
+    column, which should be the same as the last column of `X`.
+    """
     g = dace.SDFG("testing")
     st0 = g.add_state()
     st1 = g.add_state_after(st0)
@@ -210,7 +237,12 @@ def test_transient_removal_uneven_flow_through_map():
     Yout = np.zeros_like(Xin)
     g(X=Xin, Y=Yout, N=5)
 
+    # Assertion 1: Check that the first 4 columns (indices 0 to 3) of Yout are all close to zero.
+    # This verifies that the zero-initialization of T1 (and thus Y) was successful for these parts.
     np.testing.assert_allclose(Yout[:, :4], 0)
+    # Assertion 2: Check that the last column (index 4) of Yout is approximately equal to
+    # the last column of the input array Xin. This verifies that the partial update
+    # from T0 to T1 (and then to Y) was successful.
     np.testing.assert_allclose(Yout[:, 4], Xin[:, 4])
 
 
