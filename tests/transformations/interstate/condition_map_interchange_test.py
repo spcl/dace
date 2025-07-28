@@ -232,10 +232,10 @@ def test_condition_map_interchange_data_dependency3():
 def test_condition_map_interchange_symbol_dependency():
 
     @dace.program
-    def tester(A: dace.float32[10], i_sym: dace.int32):
+    def tester(A: dace.float32[20], i_sym: dace.int32):
         if i_sym < 10:
             for i in dace.map[0:10]:
-                A[i_sym] = A[i_sym] + 10
+                A[i_sym + i] = A[i_sym + i] + 10
 
     _test_for_unchanged_behavior(tester, 1)
 
