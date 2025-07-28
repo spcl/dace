@@ -893,27 +893,6 @@ class InlineTransients(transformation.SingleStateTransformation):
             state.remove_node(tree.root().edge.dst)
 
 
-class ASTRefiner(ast.NodeTransformer):
-    """
-    Python AST transformer used in ``RefineNestedAccess`` to reduce (refine) the
-    subscript ranges based on the specification given in the transformation.
-    """
-
-    def __init__(self, to_refine: str, refine_subset: subsets.Subset, sdfg: SDFG, indices: Set[int] = None) -> None:
-        self.to_refine = to_refine
-        self.subset = refine_subset
-        self.sdfg = sdfg
-        self.indices = indices
-
-    def visit_Subscript(self, node: ast.Subscript) -> ast.Subscript:
-        if astutils.rname(node.value) == self.to_refine:
-            rng = subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays, without_array=True))
-            rng.offset(self.subset, True, self.indices)
-            return ast.copy_location(astutils.slice_to_subscript(self.to_refine, rng), node)
-
-        return self.generic_visit(node)
-
-
 @make_properties
 @transformation.explicit_cf_compatible
 class RefineNestedAccess(transformation.SingleStateTransformation):
