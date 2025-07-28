@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import itertools
+
 import numpy as np
 import pytest
-import itertools
 
 import dace
 from dace import data
@@ -170,7 +171,8 @@ def test_view_offset_removal():
 
 def test_transient_removal_uneven_flow_through_map():
     g = dace.SDFG("testing")
-    st = g.add_state()
+    st0 = g.add_state()
+    st1 = g.add_state_after(st0)
 
     N = dace.symbol('N')
 
@@ -178,21 +180,29 @@ def test_transient_removal_uneven_flow_through_map():
     T0, _ = g.add_transient('T0', [N, N], dtype=dace.float64)
     T1, _ = g.add_transient('T1', [N, N], dtype=dace.float64)
     Y, _ = g.add_array('Y', [N, N], dtype=dace.float64)
-    X, T0, T1, Y = tuple(st.add_access(u) for u in (X, T0, T1, Y))
+    T1a = st0.add_access(T1)
+    X, T0, T1b, Y = tuple(st1.add_access(u) for u in (X, T0, T1, Y))
 
+    # Initialize T1 with zeros.
+    mE, mX = st0.add_map('T1_set0', dict(i='0:N', j='0:N'))
+    mX.add_scope_connectors('out')
+    zt = st0.add_tasklet('set_zero', inputs={}, outputs={'out'}, code="out = 0.0")
+    st0.add_edge(mE, None, zt, None, dace.Memlet())
+    st0.add_edge(zt, 'out', mX, 'IN_out', dace.Memlet(f"{T1a.data}[i, j]"))
+    st0.add_edge(mX, 'OUT_out', T1a, None, g.make_array_memlet(T1a.data))
     # Write the full T0 transient.
-    c = st.add_tasklet('copy', inputs={'inp'}, outputs={'out'}, code="out = inp")
-    mE, mX = st.add_map('copy_map', dict(i='0:N', j='N-1:N'))
+    c = st1.add_tasklet('copy', inputs={'inp'}, outputs={'out'}, code="out = inp")
+    mE, mX = st1.add_map('copy_map', dict(i='0:N', j='0:N'))
     mE.add_scope_connectors('inp')
     mX.add_scope_connectors('out')
-    st.add_edge(X, None, mE, 'IN_inp', g.make_array_memlet(X.data))
-    st.add_edge(mE, 'OUT_inp', c, 'inp', dace.Memlet(f"{X.data}[i, j]"))
-    st.add_edge(c, 'out', mX, 'IN_out', dace.Memlet(f"{T0.data}[i, j]"))
-    st.add_edge(mX, 'OUT_out', T0, None, g.make_array_memlet(T0.data))
+    st1.add_edge(X, None, mE, 'IN_inp', g.make_array_memlet(X.data))
+    st1.add_edge(mE, 'OUT_inp', c, 'inp', dace.Memlet(f"{X.data}[i, j]"))
+    st1.add_edge(c, 'out', mX, 'IN_out', dace.Memlet(f"{T0.data}[i, j]"))
+    st1.add_edge(mX, 'OUT_out', T0, None, g.make_array_memlet(T0.data))
     # Forward only the boundary to the T1 transient.
-    st.add_edge(T0, None, T1, None, dace.Memlet(f"{T0.data}[0:N, N-1] -> [0:N, N-1]"))
+    st1.add_edge(T0, None, T1b, None, dace.Memlet(f"{T0.data}[0:N, N-1] -> [0:N, N-1]"))
     # Forward the full transient.
-    st.add_edge(T1, None, Y, None, dace.Memlet(f"{T1.data}[0:N, 0:N] -> [0:N, 0:N]"))
+    st1.add_edge(T1b, None, Y, None, dace.Memlet(f"{T1b.data}[0:N, 0:N] -> [0:N, 0:N]"))
 
     assert g.apply_transformations_repeated(RedundantArray) == 0
 
