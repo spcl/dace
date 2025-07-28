@@ -200,8 +200,8 @@ def test_transient_removal_uneven_flow_through_map():
     Yout = np.zeros_like(Xin)
     g(X=Xin, Y=Yout, N=5)
 
-    assert np.allclose(Yout[:, :4], 0)
-    assert np.allclose(Yout[:, 4], Xin[:, 4])
+    np.testing.assert_allclose(Yout[:, :4], 0)
+    np.testing.assert_allclose(Yout[:, 4], Xin[:, 4])
 
 
 if __name__ == '__main__':
