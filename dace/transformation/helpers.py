@@ -247,7 +247,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         fsymbols.update(defined_symbols)
         fsymbols = fsymbols - strictly_defined_symbols
         mapping = {s: s for s in fsymbols}
-        cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
+        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
@@ -495,7 +495,7 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg, None,
+    nested_sdfg = state.add_nested_sdfg(nsdfg,
                                         set(input_names.values()) | input_arrays,
                                         set(output_names.values()) | output_arrays.keys())
 

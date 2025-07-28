@@ -70,7 +70,7 @@ def fix_sdfg(sdfg, graph):
 
     # next up replace sdfg
     inner_sdfg = helper_sdfg.to_sdfg()
-    nnode = graph.add_nested_sdfg(inner_sdfg, sdfg, {'AA', 'BB', 'CC'}, {'CC'})
+    nnode = graph.add_nested_sdfg(inner_sdfg, {'AA', 'BB', 'CC'}, {'CC'})
     # redirect edges
     connectors = []
     for e in graph.in_edges(nested_original):

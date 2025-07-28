@@ -1580,7 +1580,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                   extra_map_symbols=map_symbols)
 
             internal_node = state.add_nested_sdfg(sdfg,
-                                                  self.sdfg,
                                                   set(inputs.keys()),
                                                   set(outputs.keys()),
                                                   debuginfo=self.current_lineinfo)
@@ -2290,11 +2289,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs),
                 extra_map_symbols=self._symbols_from_params(params, map_inputs))
-            tasklet = state.add_nested_sdfg(body,
-                                            self.sdfg,
-                                            inputs.keys(),
-                                            outputs.keys(),
-                                            debuginfo=self.current_lineinfo)
+            tasklet = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
             self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
@@ -4233,12 +4228,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
                     warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')
 
-        nsdfg = state.add_nested_sdfg(sdfg,
-                                      self.sdfg,
-                                      inputs.keys(),
-                                      outputs.keys(),
-                                      mapping,
-                                      debuginfo=self.current_lineinfo)
+        nsdfg = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), mapping, debuginfo=self.current_lineinfo)
         self._add_nested_symbols(nsdfg)
         inputs = {k: (state, v, set()) for k, v in inputs.items()}
         outputs = {k: (state, v, set()) for k, v in outputs.items()}
