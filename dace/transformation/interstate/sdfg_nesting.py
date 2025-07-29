@@ -1137,7 +1137,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                 nested_sdfg.symbols[s] = type
 
         # Add the nested SDFG to the parent state and connect it
-        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg, set(inputs.values()), set(outputs.values()))
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, set(inputs.values()), set(outputs.values()))
 
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)

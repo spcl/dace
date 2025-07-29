@@ -102,7 +102,6 @@ def _make_already_isloated_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dac
     inner_sdfg = _make_nested_sdfg_simple()
     nsdfg = state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"A"},
         outputs={"B"},
         symbol_mapping={},
@@ -145,7 +144,6 @@ def _make_non_empty_pre_set_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
     inner_sdfg = _make_nested_sdfg_simple()
     nsdfg = state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"A"},
         outputs={"B"},
         symbol_mapping={},
@@ -186,7 +184,6 @@ def _make_non_empty_pre_set_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace_no
     inner_sdfg = _make_nested_sdfg_adding()
     nsdfg = state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"A", "B"},
         outputs={"C"},
         symbol_mapping={},
@@ -219,7 +216,6 @@ def _make_non_empty_post_state_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_n
     inner_sdfg = _make_nested_sdfg_simple()
     nsdfg = state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"A"},
         outputs={"B"},
         symbol_mapping={},
@@ -258,7 +254,6 @@ def _make_non_empty_post_state_sdfg_2() -> Tuple[dace.SDFG, dace.SDFGState, dace
     inner_sdfg = _make_nested_sdfg_simple()
     nsdfg = state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"A"},
         outputs={"B"},
         symbol_mapping={},
@@ -313,7 +308,6 @@ def _make_multi_path_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_node
     inner_sdfg = _make_nested_sdfg_adding()
     nsdfg_node = state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"A", "B"},
         outputs={"C"},
         symbol_mapping={},

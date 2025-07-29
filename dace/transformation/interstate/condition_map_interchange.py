@@ -83,7 +83,6 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     sd.SDFG("map_body", parent=state),
                     inputs=inputs,
                     outputs=outputs,
-                    parent=state,
                     symbol_mapping=sym_mapping,
                 )
                 for sym, dt in state.sdfg.symbols.items():

@@ -554,7 +554,6 @@ def test_fusion_with_nested_sdfg_0():
         me1, mx1 = state.add_map("first_map", ndrange={"__i0": "0:10"})
         nsdfg = state.add_nested_sdfg(
             sdfg=_make_nested_sdfg(),
-            parent=sdfg,
             inputs={"a", "b", "c"},
             outputs={"t"},
             symbol_mapping={},
