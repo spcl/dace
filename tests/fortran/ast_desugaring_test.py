@@ -3068,3 +3068,28 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_constant_function_evaluation():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  double precision :: a = sqrt(4.)
+  double precision :: b = cos(0.)
+  double precision :: c = abs(-3.)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = const_eval_nodes(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: a = 2.0
+  DOUBLE PRECISION :: b = 1.0
+  DOUBLE PRECISION :: c = 3.0
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()

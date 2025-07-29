@@ -689,7 +689,7 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         elif intr.string in INTR_FNS:
             avals = tuple(_const_eval_basic_type(a, alias_map) for a in args)
             if all(isinstance(a, (np.float32, np.float64)) for a in avals):
-                return np.arctan(*avals)
+                return INTR_FNS[intr.string](*avals)
         elif intr.string == 'SELECTED_REAL_KIND':
             p, r = args
             p, r = _const_eval_basic_type(p, alias_map), _const_eval_basic_type(r, alias_map)
