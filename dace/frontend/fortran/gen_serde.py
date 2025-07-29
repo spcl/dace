@@ -109,7 +109,12 @@ def gen_base_type_serializer(typ: str, kind: Optional[int] = None) -> Subroutine
     if typ == 'logical':
         op = '\n'.join(['y = merge(1, 0, x)', "write (io, '(g0)', advance='no') y"])
     elif typ == 'real':
-        op = "write (buf, '(e28.20)') x; write (io, '(A)', advance='no') trim(adjustl(buf))"
+        # The Fortran scientific notation exponent field is two digits large by default.
+        # If the exponent is three digits large, the 'E' character gets overwritten to
+        # avoid losing digits. If the exponent is even larger, it gets replaced by **.
+        # If the 'E' character is missing, Serde interpretes the exponent as a new
+        # number. Expand the exponent field to three digits to avoid this problem.
+        op = "write (buf, '(e28.20e3)') x; write (io, '(A)', advance='no') trim(adjustl(buf))"
     else:
         op = "write (io, '(g0)', advance='no') x"
 
