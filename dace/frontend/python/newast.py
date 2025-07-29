@@ -4741,7 +4741,19 @@ class ProgramVisitor(ExtNodeVisitor):
             result = result[1]
 
         if not isinstance(result, (tuple, list)):
-            return [result]
+            result = [result]
+
+        # Register input/output data containers
+        for res in result:
+            try:
+                if res in self.inputs and res not in self.outputs:
+                    # Mark the container as an output of the SDFG
+                    self.outputs[res] = (self.last_block, *self.inputs[res][1:])
+            except TypeError:
+                # This error may occur if `res` is not hashable, for example a slice in Python 3.9.
+                # Such results are not containers and nothing needs to be done about them, so we can ignore the error.
+                pass
+
         return result
 
     # Used for memlet expressions outside of tasklets, otherwise ignored
