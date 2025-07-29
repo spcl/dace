@@ -121,6 +121,24 @@ def test_nested_conditional_in_loop_in_map():
                 A[i, j] = A[i, j] * A[i, j]
 
     sdfg = nested_conditional_in_loop_in_map.to_sdfg(simplify=True)
+    dace.propagate_memlets_sdfg(sdfg)
+
+    # Verify that the memlet propagation works correctly
+    i = dace.symbol('i')
+    state = sdfg.source_nodes()[0]
+    rnode = state.source_nodes()[0]
+    # Input memlets for A should be [0:M, 2:N] (immediately outside of nested SDFG should be [0:i+1, 0:N])
+    out_edges = state.out_edges(rnode)
+    assert len(out_edges) == 1
+    assert out_edges[0].data.subset.ranges == [(0, M - 1, 1), (0, N - 1, 1)]
+    nsdfg_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG))
+    assert state.in_edges(nsdfg_node)[0].data.subset.ranges == [(0, i, 1), (0, N - 1, 1)]
+    # Output memlets for A should be [0:M, 2:N] (immediately outside of nested SDFG should be [i, 2:N])
+    wnode = state.sink_nodes()[0]
+    in_edges = state.in_edges(wnode)
+    assert len(in_edges) == 1
+    assert in_edges[0].data.subset.ranges == [(0, M - 1, 1), (2, N - 1, 1)]
+    assert state.out_edges(nsdfg_node)[0].data.subset.ranges == [(i, i, 1), (2, N - 1, 1)]
 
     N = 20
     M = 20
