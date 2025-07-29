@@ -10,7 +10,7 @@ def _connected():
     try:
         urllib.request.urlopen('https://spcl.github.io/dace-webclient/dist/sdfv.js', timeout=1)
         return True
-    except urllib.error.URLError:
+    except (urllib.error.URLError, TimeoutError):
         return False
 
 
