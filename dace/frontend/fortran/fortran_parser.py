@@ -2545,7 +2545,7 @@ class AST_translator:
                                 if var_name not in global_code_str:
                                     sdfg.append_global_code(f"{dtypes.int32.ctype} {var_name};\n")
 
-                                sdfg.append_init_code(f"{var_name} = {dep_assignment.replace(".", "->")};\n")
+                                sdfg.append_init_code(f"{var_name} = {dep_assignment.replace('.', '->')};\n")
 
                         sdfg.append_global_code(f"{dtypes.int32.ctype} {symname};\n")
                         sdfg.append_init_code(
