@@ -8,6 +8,7 @@ import math
 import re
 from typing import Any, Dict, List
 import dace
+from dace.codegen.common import sym2cpp
 from dace.codegen.control_flow import ConditionalBlock
 from dace.codegen.targets import cpp
 from dace.libraries.standard import CodeLibraryNode
@@ -746,6 +747,22 @@ class StructToContainerGroups(ppl.Pass):
                     elif prev_type == "CA":
                         member_arr = member_arr.stype
 
+            access = ""
+            if arrname.endswith("__m_v1"):
+                p_src_access = src_access[:-len("->v1")]
+                p_src_access = "&" + p_src_access + "[0]"
+                access = f"{arrname} = {p_src_access}\n"
+            elif arrname.endswith("__m_v2"):
+                accum = dace.symbolic.SymExpr(1)
+                for s in sdfg.arrays[arrname].shape:
+                    accum *= s
+                tot_size =  sdfg.arrays[arrname].shape[-1] * sdfg.arrays[arrname].strides[-1]
+                assert tot_size == accum, f"{tot_size} != {accum}"
+                tot_size = accum
+                p_src_access = src_access[:-len("->v2")]
+                p_src_access = "&" + p_src_access + f"[{sym2cpp(tot_size)}]"
+                access = f"{arrname} = {p_src_access}\n"
+                pass
             if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
                 access = f"{arrname} = {src_access};\n"
                 rev_access = f"{src_access} = {arrname};\n"
@@ -757,6 +774,8 @@ class StructToContainerGroups(ppl.Pass):
                 else:
                     access = f"gpu_{arrname} = {src_access};\n"
                     rev_access = f"{src_access} = gpu_{arrname};\n"
+
+
             _cstr += access
             # Shallow copy copies back only scalars
             if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
