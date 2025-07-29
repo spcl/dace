@@ -1542,6 +1542,16 @@ class Array(Data):
             # Any other case (constant vs. constant), check for equality
             if otherdim != dim:
                 return False
+
+        # Test strides
+        for stride, otherstride in zip(self.strides, other.strides):
+            if otherstride != stride:
+                return False
+
+        # Test total size
+        if self.total_size != other.total_size:
+            return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
@@ -1712,6 +1722,11 @@ class Stream(Data):
         for dim, otherdim in zip(self.shape, other.shape):
             if dim != otherdim:
                 return False
+
+        # Test buffer size
+        if self.buffer_size != other.buffer_size:
+            return False
+
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
