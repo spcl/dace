@@ -115,6 +115,9 @@ def replace_in_codeblock(codeblock: properties.CodeBlock, repl: Dict[str, str], 
                     continue
                 # Use local variables and shadowing to replace
                 replacement = f'auto {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
+                if replacement in code:
+                    # If the replacement is already in the code, skip it
+                    continue
                 prefix = replacement + prefix
                 active_replacements.add(name)
 
