@@ -851,6 +851,9 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
     def out_edges(self, node) -> List[MultiConnectorEdge[EdgeT]]:
         return super().out_edges(node)
 
+    def all_edges(self, *nodes: NodeT) -> Iterable[MultiConnectorEdge[EdgeT]]:
+        return super().all_edges(*nodes)
+
     def edges_between(self, source: NodeT, destination: NodeT) -> List[MultiConnectorEdge[EdgeT]]:
         return super().edges_between(source, destination)
 
