@@ -33,15 +33,27 @@ class FullMapFusion(ppl.Pass):
         default=False,
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
+
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
+
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
         desc="If `True` then all intermediates will be classified as shared.",
+    )
+    require_exclusive_intermediates = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` then all intermediates need to be 'exclusive', i.e. they will be removed by the fusion.",
+    )
+    require_all_intermediates = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` all outputs of the first Map must be intermediate, i.e. going into the second Map.",
     )
 
     perform_vertical_map_fusion = properties.Property(
@@ -87,6 +99,8 @@ class FullMapFusion(ppl.Pass):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
+        require_exclusive_intermediates: Optional[bool] = None,
+        require_all_intermediates: Optional[bool] = None,
         perform_vertical_map_fusion: Optional[bool] = None,
         perform_horizontal_map_fusion: Optional[bool] = None,
         only_if_common_ancestor: Optional[bool] = None,
@@ -105,6 +119,10 @@ class FullMapFusion(ppl.Pass):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
+        if require_exclusive_intermediates is not None:
+            self.require_exclusive_intermediates = require_exclusive_intermediates
+        if require_all_intermediates is not None:
+            self.require_all_intermediates = require_all_intermediates
         if perform_vertical_map_fusion is not None:
             self.perform_vertical_map_fusion = perform_vertical_map_fusion
         if perform_horizontal_map_fusion is not None:
@@ -119,6 +137,9 @@ class FullMapFusion(ppl.Pass):
             self.never_consolidate_edges = never_consolidate_edges
         if consolidate_edges_only_if_not_extending is not None:
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
+
+        # TODO(phimuell): Raise an error if a flag was specified and the component that
+        #   needs it is disabled.
 
         if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
             raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
@@ -158,11 +179,13 @@ class FullMapFusion(ppl.Pass):
                     only_toplevel_maps=self.only_toplevel_maps,
                     strict_dataflow=self.strict_dataflow,
                     assume_always_shared=self.assume_always_shared,
+                    require_exclusive_intermediates=self.require_exclusive_intermediates,
+                    require_all_intermediates=self.require_all_intermediates,
                     consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
                     never_consolidate_edges=self.never_consolidate_edges,
+                    # TODO: Remove once issue#1911 has been solved.
+                    _single_use_data=pipeline_results["FindSingleUseData"],
                 ))
-            # TODO: Remove once issue#1911 has been solved.
-            fusion_transforms[-1]._single_use_data = single_use_data = pipeline_results["FindSingleUseData"]
 
         if self.perform_horizontal_map_fusion:
             # NOTE: If horizontal Map fusion is enable it is important that it runs after vertical
@@ -177,20 +200,15 @@ class FullMapFusion(ppl.Pass):
                     never_consolidate_edges=self.never_consolidate_edges,
                 ))
 
-        try:
-            pazz = pmp.PatternMatchAndApplyRepeated(
-                fusion_transforms,
-                permissive=False,
-                validate=False,
-                validate_all=self.validate_all,
-            )
-            result = pazz.apply_pass(sdfg, pipeline_results)
+        pazz = pmp.PatternMatchAndApplyRepeated(
+            fusion_transforms,
+            permissive=False,
+            validate=False,
+            validate_all=self.validate_all,
+        )
+        result = pazz.apply_pass(sdfg, pipeline_results)
 
-        finally:
-            if self.perform_vertical_map_fusion:
-                fusion_transforms[0]._single_use_data = None
-
-        if self.validate:
+        if self.validate and (not self.validate_all):
             sdfg.validate()
 
         return result

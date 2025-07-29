@@ -55,33 +55,36 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
     In order to determine if an intermediate can be removed or has to be kept, it is in general
     necessary to scan the whole SDFG, which is the default behaviour. There are two ways to
-    speed this up. The first way is to set `assume_always_shared` to `True`. In this case the
-    transformation will not perform the scan, but assume that the data is shared, i.e. used
-    somewhere else. This might lead to dead data flow.
-    The second way is to use the transformation inside a pipeline, which includes the
-    `FindSingleUseData` analysis pass, see note below. If the result of this pass is present then the
-    transformation will use it instead to determine if a intermediate can be removed. Note that
-    `assume_always_shared` takes precedence. For this pattern the `FullMapFusion` pass is provided,
-    that combines the analysis pass and `MapFusionVertical`.
+    speed this up. The first way is to use the transformation inside a pipeline, which includes
+    the `FindSingleUseData` analysis pass, see note below. If the result of the pass is present
+    then the transformation will use it  to determine if a intermediate can be removed.
+    The second way is to specify `assume_always_shared`, which instruct the transformation to
+    assume that the intermediate is shared, i.e. will become an output of the fused Map.
+    The downside of this is, that dead dataflow, i.e. writes that are not needed are generated.
 
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
-    :param assume_always_shared: Assume that all intermediates are shared.
-    :param consolidate_edges_only_if_not_extending: If `True`, the default is `False`,
-        the transformation will only consolidate edges if this does not lead to an
-        extension of the subset.
+    :param assume_always_shared: Handle all intermediate nodes as if they were classified as
+        "shared" , see `partition_first_outputs()` for more.
+    :param require_exclusive_intermediates: If `True` then the transformation will only apply
+        if all intermediates are "eclusive", i.e can be removed, see `partition_first_outputs()`.
+    :param require_all_intermediates: If `True` then the transformation will only apply if
+        the if all outputs of the first Map are intermediate, i.e. are consumed by the second Map.
+    :param consolidate_edges_only_if_not_extending: If `True` the transformation will only
+        consolidate edges if this does not lead to an extension of the subset.
     :param never_consolidate_edges: If `False`, the default, the function will never
         try to consolidate the edges. Thus Maps might have multiple connectors that
         goes to the same AccessNode.
 
     :note: This transformation modifies more nodes than it matches.
-    :note: If `assume_always_shared` is `True` then the transformation will assume that
-            all intermediates are shared. This avoids the problems mentioned above with
-            the cache at the expense of the creation of dead dataflow.
     :note: Because of [issue#1911](https://github.com/spcl/dace/issues/1911) the `can_be_applied()`
-            can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
-            pass is not affected by this.
+        can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
+        pass is not affected by this.
+    :note: `require_exclusive_intermediates` means that all intermediates, i.e. AccessNodes
+        connecting the first and second Maps, can be removed, outputs of the first Map that
+        are not consumed by the first Map are not considered. However, it means that also
+        non-transients are also affected. See `partition_first_outputs()`.
     """
 
     first_map_exit = transformation.transformation.PatternNode(nodes.MapExit)
@@ -99,15 +102,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         default=False,
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
+
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
+
     assume_always_shared = properties.Property(
         dtype=bool,
         default=False,
         desc="If `True` then all intermediates will be classified as shared.",
+    )
+    require_exclusive_intermediates = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` then all intermediates need to be 'exclusive', i.e. they will be removed by the fusion.",
+    )
+    require_all_intermediates = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` all outputs of the first Map must be intermediate, i.e. going into the second Map.",
     )
 
     never_consolidate_edges = properties.Property(
@@ -127,10 +142,20 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
+        require_exclusive_intermediates: Optional[bool] = None,
+        require_all_intermediates: Optional[bool] = None,
         consolidate_edges_only_if_not_extending: Optional[bool] = None,
         never_consolidate_edges: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+
+        # See comment in `is_shared_data()` for more information.
+        # NOTE: The sole reason why we allow to pass it as an (undocumented, kw-only argument)
+        #   is that we can specify it in `apply_to()` calls, were `require_exclusive_intermediates`
+        #   is `True`.
+        # NOTE: `_pipeline_result` will take precedence over this value.
+        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = kwargs.pop('_single_use_data', None)
+
         super().__init__(**kwargs)
         if only_toplevel_maps is not None:
             self.only_toplevel_maps = only_toplevel_maps
@@ -140,14 +165,19 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             self.strict_dataflow = strict_dataflow
         if assume_always_shared is not None:
             self.assume_always_shared = assume_always_shared
+        if require_exclusive_intermediates is not None:
+            self.require_exclusive_intermediates = require_exclusive_intermediates
+        if require_all_intermediates is not None:
+            self.require_all_intermediates = require_all_intermediates
         if never_consolidate_edges is not None:
             self.never_consolidate_edges = never_consolidate_edges
         if consolidate_edges_only_if_not_extending is not None:
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
-        # See comment in `is_shared_data()` for more information.
-        # NOTE: `_pipeline_result` will take precedence over this value.
-        self._single_use_data: Optional[Dict[dace.SDFG, Set[str]]] = None
+        if self.assume_always_shared and self.require_exclusive_intermediates:
+            raise ValueError(
+                "Specified `assume_always_shared` and `require_exclusive_intermediates` at the same time which is contradictory."
+            )
 
     @classmethod
     def expressions(cls) -> Any:
@@ -260,6 +290,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert isinstance(first_map_exit, nodes.MapExit)
         assert isinstance(second_map_entry, nodes.MapEntry)
         assert isinstance(self.array, nodes.AccessNode)
+        assert not (self.assume_always_shared and self.require_exclusive_intermediates)
 
         # As in [issue 1708](https://github.com/spcl/dace/issues/1703) we should here
         #  also initialize the edges. However, for performance reasons we do not do
@@ -291,6 +322,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         )
         assert output_partition is not None  # Make MyPy happy.
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
+        assert (not self.require_exclusive_intermediates) or (len(shared_outputs) == 0)
 
         # Now perform the actual rewiring, we handle each partition separately.
         if len(exclusive_outputs) != 0:
@@ -396,11 +428,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             i.e. the maps can not be fused the function returns `None`.
 
         :param state: The in which the two maps are located.
-        :param sdfg: The full SDFG in whcih we operate.
+        :param sdfg: The full SDFG in which we operate.
         :param first_map_exit: The exit node of the first Map.
         :param second_map_entry: The entry node of the second Map.
         :param param_repl: Use this Map to rename the parameter of the second Map, such
             that they match the one of the first Map.
+
+        :note: The output of this function is affected by the value of `self.assume_always_shared`,
+            `require_all_intermediates` and by `self.require_exclusive_intermediates`.
         """
         # The three outputs set.
         pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
@@ -428,6 +463,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     begin=intermediate_node,
                     end=second_map_entry,
             ):
+                if self.require_all_intermediates:  # We do not allow pure output nodes.
+                    return None
                 pure_outputs.add(out_edge)
                 continue
 
@@ -577,6 +614,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  Note that "removed" here means that it is reconstructed by a new
             #  output of the second Map.
             if self.is_shared_data(data=intermediate_node, state=state, sdfg=sdfg):
+
+                # We found a non exclusive intermediate, but we only exclusive ones were
+                #  requested. Thus the decomposition does not exist.
+                if self.require_exclusive_intermediates:
+                    return None
+
                 # The intermediate data is used somewhere else, either in this or another state.
                 # NOTE: If the intermediate is shared, then we will turn it into a
                 #   sink node attached to the combined MapExit. Technically this
@@ -1276,62 +1319,62 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     ) -> bool:
         """Tests if `data` is shared data, i.e. it can not be removed from the SDFG.
 
-        Depending on the situation, the function will not perform a scan of the whole SDFG:
-        1) If `assume_always_shared` was set to `True`, the function will return `True` unconditionally.
-        2) If `data` is non transient then the function will return `True`, as non transient data
-            must be reconstructed always.
-        3) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
+        The function returns `True` is `data` refers to shared data and `False` otherwise.
+        The process to determine this is as follows:
+        1) If `assume_always_shared` is `True` the function will return `True` immediately.
+        2) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
             it is classified as shared.
-        2) If `FindSingleUseData` is in the pipeline it will be used and no scan will be performed.
-        3) The function will perform a scan.
+        3) If `data` refers to non transient memory it is classified as shared.
+        4) If `FindSingleUseData` is in the pipeline it will be used. I.e. it will check if `data`
+            is in the set and return `True` or `False` otherwise.
+        5) The function will perform a scan of the SDFG.
 
         :param data: The transient that should be checked.
         :param state: The state in which the fusion is performed.
         :param sdfg: The SDFG in which we want to perform the fusing.
-
         """
-        # `assume_always_shared` takes precedence.
-        if self.assume_always_shared:
-            return True
 
-        # If `data` is non transient then return `True` as the intermediate can not be removed.
-        if not data.desc(sdfg).transient:
+        # Do not perform a scan just pretend that it is shared.
+        if self.assume_always_shared:
             return True
 
         # This means the data is consumed by multiple Maps, through the same AccessNode, in this state
         #  Note currently multiple incoming edges are not handled, but in the spirit of this function
         #  we consider such AccessNodes as shared, because we can not remove the intermediate.
+        # TODO(phimuell): If one of the two Maps has multiple connections to the intermediate,
+        #   then this detection will fail here. This is not a problem because this is currently
+        #   not supported. But still.
         if state.out_degree(data) > 1:
             return True
         if state.in_degree(data) > 1:
             return True
 
-        # NOTE: Actually, if this transformation is run through the `FullMapFusion` pass, it should
-        #  read the results from `FindSingelUseData`, that was computed because it is a dependent
-        #  pass through the `self._pipeline_results` which is set by the `SingleStateTransformation`.
-        #  However, this member is only set during when `apply()` is called, but not during
-        #  `can_be_applied()`, see [issue#1911](https://github.com/spcl/dace/issues/1911).
-        #  Because, the whole goal of this separation of scanning and fusion was to make the
-        #  transformation stateless, the member `_single_use_data` was introduced. If it is set
-        #  then we use it otherwise we use the scanner.
-        #  This value is set for example by the `FullMapFusion` pass.
-        # TODO(phimuell): Change this once the issue is resolved.
+        # Non transient data must be reconstructed anyways, so it is by definition shared.
+        if not data.desc(sdfg).transient:
+            return True
 
+        # NOTE: Actually, if this transformation is run inside a pipeline, which specified
+        #   `FindSingelUseData` as a dependent pass, it should read the cached data through
+        #   `self._pipeline_results`. However, this member is only set during the `apply()`
+        #   function but not during `can_be_applied()`, see [issue#1911](https://github.com/spcl/dace/issues/1911).
+        #   Since we also need the information during `can_be_applied()`, we would still scan the
+        #   SDFG. To avoid that the special member `_single_use_data` was introduced, which
+        #   allows to specify this from the outside. This is not nice, because it gives the
+        #   transformation state and every parent transformation must do that.
+        # TODO(phimuell): Change this once the issue is resolved.
         single_use_data = None
         if self._pipeline_results is not None and "FindSingelUseData" in self._pipeline_results:
             single_use_data = self._pipeline_results["FindSingelUseData"]
-
         elif self._single_use_data is not None:
             single_use_data = self._single_use_data
-        else:
-            # We have to perform the full scan of the SDFG.
-            return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
 
-        assert single_use_data is not None
-        assert sdfg in single_use_data, (
-            f"`_single_use_data` was set, but does not contain information about the SDFG '{sdfg.name}'.")
-        single_use_data_sdfg: Set[str] = single_use_data[sdfg]
-        return data.data not in single_use_data_sdfg
+        # The single use data was present so scan it.
+        if single_use_data is not None:
+            assert sdfg in single_use_data
+            return data.data not in single_use_data[sdfg]
+
+        # We have to perform the scan.
+        return self._scan_sdfg_if_data_is_shared(data=data, state=state, sdfg=sdfg)
 
     def _scan_sdfg_if_data_is_shared(
         self,
