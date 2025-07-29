@@ -40,7 +40,7 @@ def test_state_subgraph():
     nsdfg = dace.SDFG('nsdfg')
     nstate = nsdfg.add_state()
     me, mx = state.add_map('map', dict(i='0:N'))
-    nsdfg = state.add_nested_sdfg(nsdfg, None, {}, {}, symbol_mapping=dict(l=L / 2, i='i'))
+    nsdfg = state.add_nested_sdfg(nsdfg, {}, {}, symbol_mapping=dict(l=L / 2, i='i'))
     state.add_nedge(me, nsdfg, dace.Memlet())
     state.add_nedge(nsdfg, mx, dace.Memlet())
 
@@ -121,7 +121,7 @@ def test_nested_sdfg_free_symbols():
                         dace.InterstateEdge(condition='k >= 10', assignments={'j': 'j + 1'}))
     inner_sdfg.add_edge(inner_body_state, inner_guard_state, dace.InterstateEdge(assignments={'k': 'k + 1'}))
 
-    outer_body_state_2.add_nested_sdfg(inner_sdfg, None, {}, {}, symbol_mapping={'j': 'j'})
+    outer_body_state_2.add_nested_sdfg(inner_sdfg, {}, {}, symbol_mapping={'j': 'j'})
 
     assert not outer_sdfg.free_symbols
     assert 'i' not in inner_sdfg.free_symbols
