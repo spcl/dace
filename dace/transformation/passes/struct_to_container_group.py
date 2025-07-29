@@ -688,6 +688,43 @@ class StructToContainerGroups(ppl.Pass):
             "__CG_p_patch__CG_edges__m_end_block",
             "__CG_p_patch__CG_edges__m_start_index",
             "__CG_p_patch__CG_edges__m_end_index",
+            "__CG_global_data__m_grf_intmethod_e",
+            "__CG_global_data__m_rayleigh_type",
+            "__CG_global_data__m_divdamp_fac",
+            "__CG_p_patch__CG_edges__m_start_index",
+            "__CG_global_data__m_nflatlev",
+            "__CG_global_data__m_iadv_rhotheta",
+            "__CG_p_patch__CG_cells__m_end_blk",
+            "__CG_p_patch__CG_cells__m_end_index",
+            "__CG_global_data__m_kstart_moist",
+            "__CG_global_data__m_nflat_gradp",
+            "__CG_p_patch__CG_verts__m_start_index",
+            "__CG_p_patch__CG_cells__m_start_index",
+            "__CG_global_data__m_is_iau_active",
+            "__CG_global_data__m_ndyn_substeps_var",
+            "__CG_global_data__m_divdamp_fac_o2",
+            "__CG_p_nh__CG_metrics__m_bdy_mflx_e_idx",
+            "__CG_global_data__m_nproma",
+            "__CG_p_patch__m_n_childdom",
+            "__CG_p_patch__CG_verts__m_end_block",
+            "__CG_global_data__m_divdamp_order",
+            "__CG_p_nh__CG_metrics__m_pg_vertidx",
+            "__CG_p_nh__CG_metrics__m_bdy_mflx_e_blk",
+            "__CG_p_patch__m_id",
+            "__CG_global_data__m_kstart_dd3d",
+            "__CG_global_data__m_itime_scheme",
+            "__CG_p_nh__CG_metrics__m_pg_edgeblk",
+            "__CG_p_patch__CG_cells__m_start_blk",
+            "__CG_global_data__m_nrdmax",
+            "__CG_global_data__m_l_limited_area",
+            "__CG_p_patch__CG_edges__m_end_index",
+            "__CG_p_nh__CG_metrics__m_pg_edgeidx",
+            "__CG_p_patch__CG_verts__m_start_block",
+            "__CG_global_data__m_igradp_method",
+            "__CG_p_nh__CG_metrics__m_pg_listdim",
+            "__CG_p_nh__CG_metrics__m_pg_exdist",
+            "__CG_p_patch__CG_verts__m_end_index",
+            "__CG_global_data__m_divdamp_type",
         ],
     ):
         def _gen_loop(
@@ -748,10 +785,16 @@ class StructToContainerGroups(ppl.Pass):
                         member_arr = member_arr.stype
 
             access = ""
+            rev_access = ""
+            if arrname in host_list:
+                gpu_prefix = ""
+            else:
+                gpu_prefix = "gpu_"
+
             if arrname.endswith("__m_v1"):
                 p_src_access = src_access[:-len("->v1")]
                 p_src_access = "&" + p_src_access + "[0]"
-                access = f"{arrname} = {p_src_access}\n"
+                access = f"{gpu_prefix}{arrname} = {p_src_access}\n"
             elif arrname.endswith("__m_v2"):
                 accum = dace.symbolic.SymExpr(1)
                 for s in sdfg.arrays[arrname].shape:
@@ -761,19 +804,33 @@ class StructToContainerGroups(ppl.Pass):
                 tot_size = accum
                 p_src_access = src_access[:-len("->v2")]
                 p_src_access = "&" + p_src_access + f"[{sym2cpp(tot_size)}]"
-                access = f"{arrname} = {p_src_access}\n"
+                access = f"{gpu_prefix}{arrname} = {p_src_access}\n"
                 pass
-            if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
-                access = f"{arrname} = {src_access};\n"
-                rev_access = f"{src_access} = {arrname};\n"
+
+            if arrname.endswith("__m_v1") or arrname.endswith("__m_v2"):
+                if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
+                    access += f"\n//{arrname} = {src_access};\n"
+                    rev_access += f"\n//{src_access} = {arrname};\n"
+                else:
+                    assert isinstance(sdfg.arrays[arrname], dace.data.Array)
+                    if arrname in host_list:
+                        access += f"\n//{arrname} = {src_access};\n"
+                        rev_access += f"\n//{src_access} = {arrname};\n"
+                    else:
+                        access += f"\n//gpu_{arrname} = {src_access};\n"
+                        rev_access += f"\n//{src_access} = gpu_{arrname};\n"
             else:
-                assert isinstance(sdfg.arrays[arrname], dace.data.Array)
-                if arrname in host_list:
+                if isinstance(sdfg.arrays[arrname], dace.data.Scalar):
                     access = f"{arrname} = {src_access};\n"
                     rev_access = f"{src_access} = {arrname};\n"
                 else:
-                    access = f"gpu_{arrname} = {src_access};\n"
-                    rev_access = f"{src_access} = gpu_{arrname};\n"
+                    assert isinstance(sdfg.arrays[arrname], dace.data.Array)
+                    if arrname in host_list:
+                        access = f"{arrname} = {src_access};\n"
+                        rev_access = f"{src_access} = {arrname};\n"
+                    else:
+                        access = f"gpu_{arrname} = {src_access};\n"
+                        rev_access = f"{src_access} = gpu_{arrname};\n"
 
 
             _cstr += access
