@@ -363,8 +363,9 @@ class CodeNode(Node):
 
     label = Property(dtype=str, desc="Name of the CodeNode")
     location = DictProperty(key_type=str,
-                            value_type=dace.symbolic.pystr_to_symbolic,
-                            desc='Full storage location identifier (e.g., rank, GPU ID)')
+                            value_type=str,
+                            desc='Full storage location identifier (e.g., rank, GPU ID).'
+                            ' May be represented as a string, symbolic expression, or a symbolic Range subset.')
     environments = SetProperty(str,
                                desc="Environments required by CMake to build and run this code node.",
                                default=set())
