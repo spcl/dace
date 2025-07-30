@@ -628,7 +628,7 @@ def _filter_undefined_symbols(border_memlet: Memlet, outer_symbols: Dict[str, dt
             for rng in subset:
                 fall_back = False
                 for item in rng:
-                    if any(str(s) not in outer_symbols for s in item.free_symbols):
+                    if symbolic.issymbolic(item) and any(str(s) not in outer_symbols for s in item.free_symbols):
                         fall_back = True
                         break
                 if fall_back:
@@ -644,7 +644,7 @@ def _filter_undefined_symbols(border_memlet: Memlet, outer_symbols: Dict[str, dt
             for rng in subset:
                 fall_back = False
                 for item in rng:
-                    if any(str(s) not in outer_symbols for s in item.free_symbols):
+                    if symbolic.issymbolic(item) and any(str(s) not in outer_symbols for s in item.free_symbols):
                         fall_back = True
                         break
                 if fall_back:
