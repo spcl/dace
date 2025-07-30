@@ -168,7 +168,7 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
 
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
-        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, full_data=True)
+        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph)
         nested_state: SDFGState = nsdfg.sdfg.nodes()[0]
 
         # replicate loop in nested sdfg

@@ -290,21 +290,20 @@ def nest_sdfg_control_flow(sdfg: SDFG):
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
-                        name: Optional[str] = None,
-                        full_data: bool = False) -> nodes.NestedSDFG:
+                        name: Optional[str] = None) -> nodes.NestedSDFG:
     """ Turns a state subgraph into a nested SDFG. Operates in-place.
 
         :param sdfg: The SDFG containing the state subgraph.
         :param state: The state containing the subgraph.
         :param subgraph: Subgraph to nest.
         :param name: An optional name for the nested SDFG.
-        :param full_data: If True, nests entire input/output data.
         :return: The nested SDFG node.
         :raise KeyError: Some or all nodes in the subgraph are not located in
                          this state, or the state does not belong to the given
                          SDFG.
         :raise ValueError: The subgraph is contained in more than one scope.
     """
+    full_data = True
     if state.sdfg != sdfg:
         raise KeyError('State does not belong to given SDFG')
     if subgraph is not state and subgraph.graph is not state:
