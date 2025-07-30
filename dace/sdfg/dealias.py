@@ -2,7 +2,7 @@
 """
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
-from dace import SDFG, data, dtypes, subsets, symbolic
+from dace import SDFG, data, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
@@ -92,9 +92,9 @@ def dealias_sdfg(sdfg: SDFG):
             if name != parent_name:
                 replacements[name] = parent_name
                 parent_edges[name] = edge
+                to_unsqueeze.add(parent_name)
                 if parent_name in inv_replacements:
                     inv_replacements[parent_name].append(name)
-                    to_unsqueeze.add(parent_name)
                 else:
                     inv_replacements[parent_name] = [name]
                 break
@@ -159,14 +159,14 @@ def dealias_sdfg(sdfg: SDFG):
                         new_syms = new_src_memlet.used_symbols(all_symbols=True) - previous_syms
                         for sym in new_syms:
                             if sym not in sdfg.symbols:
-                                sdfg.add_symbol(str(sym))
+                                sdfg.add_symbol(str(sym), symbolic.DEFAULT_SYMBOL_TYPE)
                                 parent_node.symbol_mapping[sym] = sym
                         e.data.src_subset = new_src_memlet.subset
                     if new_dst_memlet is not None:
                         new_syms = new_dst_memlet.used_symbols(all_symbols=True) - previous_syms
                         for sym in new_syms:
                             if sym not in sdfg.symbols:
-                                sdfg.add_symbol(str(sym))
+                                sdfg.add_symbol(str(sym), symbolic.DEFAULT_SYMBOL_TYPE)
                                 parent_node.symbol_mapping[sym] = sym
                         e.data.dst_subset = new_dst_memlet.subset
                     if e.data.data == src_data:

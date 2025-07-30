@@ -121,7 +121,6 @@ def test_nested_conditional_in_loop_in_map():
                 A[i, j] = A[i, j] * A[i, j]
 
     sdfg = nested_conditional_in_loop_in_map.to_sdfg(simplify=True)
-    dace.propagate_memlets_sdfg(sdfg)
 
     # Verify that the memlet propagation works correctly
     i = dace.symbol('i')
