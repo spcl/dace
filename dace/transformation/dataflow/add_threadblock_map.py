@@ -123,7 +123,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         # Check if any inner maps are GPU-scheduled (e.g., GPU_ThreadBlock)
         for _, inner_entry in helpers.get_internal_scopes(graph, map_entry):
-            if inner_entry.map.schedule in dtypes.ScheduleType.GPU_SCHEDULES:
+            if inner_entry.map.schedule in dtypes.GPU_SCHEDULES:
                 return False  # Already has GPU-scheduled inner scope — does not apply
             
         # Check if the map is nested inside another GPU-scheduled map
@@ -131,7 +131,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         while parent_map_tuple is not None:
             parent_map, parent_state = parent_map_tuple
 
-            if parent_map.map.schedule in dtypes.ScheduleType.GPU_SCHEDULES:
+            if parent_map.map.schedule in dtypes.GPU_SCHEDULES:
                 return False  # Nested inside a GPU scope — does not apply
             
             parent_map_tuple = helpers.get_parent_map(parent_state, parent_map)
