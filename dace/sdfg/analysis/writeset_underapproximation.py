@@ -446,7 +446,6 @@ def _unsqueeze_memlet_subsetunion(internal_memlet: Memlet, external_memlet: Meml
         try:
             unsqueezed_memlet = unsqueeze_memlet(tmp_memlet,
                                                  external_memlet,
-                                                 False,
                                                  internal_offset=internal_array.offset,
                                                  external_offset=external_array.offset)
             subset = unsqueezed_memlet.subset

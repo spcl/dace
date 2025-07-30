@@ -945,43 +945,57 @@ def isolate_nested_sdfg(
 def _get_internal_subset(internal_memlet: Memlet,
                          external_memlet: Memlet,
                          use_src_subset: bool = False,
-                         use_dst_subset: bool = False) -> subsets.Subset:
-    if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
-        return internal_memlet.other_subset
+                         use_dst_subset: bool = False) -> Tuple[subsets.Subset, bool]:
+    """
+    Determines the internal memlet's subset to use based on the external memlet and the flags.
+
+    :param internal_memlet: The internal memlet (inside nested SDFG).
+    :param external_memlet: The external memlet before modification.
+    :param use_src_subset: If both sides of the memlet refer to the same array, prefer source subset.
+    :param use_dst_subset: If both sides of the memlet refer to the same array, prefer destination subset.
+    :return: The internal subset to use and a boolean indicating if the ``other_subset`` field was used.
+    """
     if not use_src_subset and not use_dst_subset:
-        return internal_memlet.subset
+        if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
+            return internal_memlet.other_subset, True
+        return internal_memlet.subset, False
     if use_src_subset and use_dst_subset:
         raise ValueError('Source and destination subsets cannot be specified at the same time')
     if use_src_subset and internal_memlet.src_subset is not None:
-        return internal_memlet.src_subset
+        return internal_memlet.src_subset, not internal_memlet._is_data_src
     if use_dst_subset and internal_memlet.dst_subset is not None:
-        return internal_memlet.dst_subset
-    return internal_memlet.subset
+        return internal_memlet.dst_subset, internal_memlet._is_data_src
+    return internal_memlet.subset, False
 
 
 def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
-                     preserve_minima: bool = False,
                      use_src_subset: bool = False,
                      use_dst_subset: bool = False,
                      internal_offset: Tuple[int] = None,
                      external_offset: Tuple[int] = None) -> Memlet:
-    """ Unsqueezes and offsets a memlet, as per the semantics of nested
-        SDFGs.
+    """ Unsqueezes and offsets a memlet, as per the semantics of nested SDFGs.
+        Generally, this function is the inverse of the array narrowing rules found in languages such as Python
+        (specifically in frameworks such as NumPy or PyTorch) and FORTRAN.
+
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
-        :param preserve_minima: Do not change the subset's minimum elements.
         :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
         :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
         :param internal_offset: The internal memlet's data descriptor offset.
         :param external_offset: The external memlet's data descriptor offset.
         :return: Offset Memlet to set on the resulting graph.
     """
-    internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
+    # We always use external_memlet's subset as the base.
+    # We either modify the internal memlet's subset or other_subset. Find out which one to use.
+    internal_subset, used_other_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset,
+                                                              use_dst_subset)
     internal_offset = internal_offset or [0] * len(internal_subset)
     external_offset = external_offset or [0] * len(external_memlet.subset)
     internal_subset = internal_subset.offset_new(internal_offset, False)
     result = Memlet.from_memlet(internal_memlet)
+    if used_other_subset:
+        result.other_subset = result.subset
     result.subset = internal_subset
 
     shape = external_memlet.subset.size()
@@ -1022,32 +1036,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     result.subset.offset(external_subset, False)
     result.subset.offset(external_offset, True)
 
-    if preserve_minima:
-        if len(result.subset) != len(external_memlet.subset):
-            raise ValueError('Memlet specifies reshape that cannot be un-squeezed.\n'
-                             'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
-        original_minima = external_memlet.subset.min_element()
-        for i in set(range(len(original_minima))):
-            rb, re, rs = result.subset.ranges[i]
-            result.subset.ranges[i] = (original_minima[i], re, rs)
-    # TODO: Offset rest of memlet according to other_subset
-    if external_memlet.other_subset is not None:
-        raise NotImplementedError
-
-    # Actual result preserves 'other subset' and placement of subsets in memlet
-    actual_result = Memlet.from_memlet(internal_memlet)
-    actual_result.data = external_memlet.data
-    if actual_result.other_subset:
-        if internal_memlet.data == external_memlet.data:
-            actual_result.subset = result.subset
-        else:
-            actual_result.other_subset = actual_result.subset
-            actual_result.subset = result.subset
-            actual_result._is_data_src = not actual_result._is_data_src
-    else:
-        actual_result.subset = result.subset
-
-    return actual_result
+    return result
 
 
 def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> ScopeSubgraphView:

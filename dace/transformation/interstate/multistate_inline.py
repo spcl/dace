@@ -311,8 +311,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         if outer_start_state is nsdfg_state:
             outer_state.parent_graph.start_block = outer_state.parent_graph.node_id(source)
 
-        # TODO: Modify memlets by offsetting
-
         # Replace nested SDFG parents with new SDFG
         for nstate in nsdfg.states():
             nstate.sdfg = sdfg
