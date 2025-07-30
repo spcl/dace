@@ -201,7 +201,7 @@ class IllegalCopy(TargetCodeGenerator):
     """ A code generator that is triggered when invalid copies are specified
         by the SDFG. Only raises an exception on failure. """
 
-    def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
+    def copy_memory(self, sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
         raise TypeError('Illegal copy! (from ' + str(src_node) + ' to ' + str(dst_node) + ')')
 
 
