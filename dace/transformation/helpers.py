@@ -1036,6 +1036,12 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     result.subset.offset(external_subset, False)
     result.subset.offset(external_offset, True)
 
+    result.data = external_memlet.data
+    if use_src_subset:
+        result._is_data_src = True
+    elif use_dst_subset:
+        result._is_data_src = False
+
     return result
 
 
