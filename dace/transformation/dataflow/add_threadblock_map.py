@@ -16,6 +16,7 @@ from dace.transformation.dataflow.tiling import MapTiling
 import functools
 from typing import List
 
+
 def to_3d_dims(dim_sizes: List) -> List:
     """
     Converts a list of dimension sizes to a 3D format.
@@ -41,6 +42,7 @@ def to_3d_dims(dim_sizes: List) -> List:
 
     return dim_sizes
 
+
 def product(iterable):
     """
     Computes the symbolic product of elements in the iterable using sympy.Mul.
@@ -50,6 +52,7 @@ def product(iterable):
     Purpose: This function is used to improve readability of the codeGen.
     """
     return functools.reduce(sympy.Mul, iterable, 1)
+
 
 def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: List):
     """
@@ -88,6 +91,7 @@ def validate_block_size_limits(kernel_map_entry: nodes.MapEntry, block_size: Lis
                          'thread-block size. To increase this limit, modify the '
                          '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
 
+
 @make_properties
 class AddThreadBlockMap(transformation.SingleStateTransformation):
     """
@@ -125,7 +129,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         for _, inner_entry in helpers.get_internal_scopes(graph, map_entry):
             if inner_entry.map.schedule in dtypes.GPU_SCHEDULES:
                 return False  # Already has GPU-scheduled inner scope — does not apply
-            
+
         # Check if the map is nested inside another GPU-scheduled map
         parent_map_tuple = helpers.get_parent_map(state, map_entry)
         while parent_map_tuple is not None:
@@ -133,7 +137,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
             if parent_map.map.schedule in dtypes.GPU_SCHEDULES:
                 return False  # Nested inside a GPU scope — does not apply
-            
+
             parent_map_tuple = helpers.get_parent_map(parent_state, parent_map)
 
         return True
@@ -145,8 +149,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         This is achieved by applying the `MapTiling` transformation to `self.map_entry`,
         using a computed block size. Essentially `self.map_entry` becomes then the thread block map and
-        the new inserted parent map (added by `MapTiling`) is the new kernel map. The schedules are set 
-        accordingly. A final consistency check verifies that the resulting thread block map's range fits 
+        the new inserted parent map (added by `MapTiling`) is the new kernel map. The schedules are set
+        accordingly. A final consistency check verifies that the resulting thread block map's range fits
         into the computed block size.
 
         Raises:
