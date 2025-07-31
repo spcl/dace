@@ -1557,17 +1557,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
-            data_name = None
-            data_desc = None
-            if isinstance(e.src, nodes.AccessNode):
-                data_name = e.src.data
-                data_desc = e.src.desc(sdfg)
-            else:
-                if e.data is None:
-                    raise Exception("Dynamic map input's memlet can't be None")
-                data_name = e.data.data
-                assert isinstance(e.data.data, str)
-                data_desc = state.sdfg.arrays[data_name]
+            if e.data is None:
+                raise Exception("Dynamic map input's memlet can't be None")
+            data_name = e.data.data
+            data_desc = state.sdfg.arrays[data_name]
             kernel_args[data_name] = data_desc
 
         # Add data from nested SDFGs to kernel arguments
