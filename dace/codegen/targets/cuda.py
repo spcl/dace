@@ -85,12 +85,10 @@ class CUDACodeGen(TargetCodeGenerator):
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
-
         """
         # Keep track of which kernels got a threadBlock map inserted
-        self._kernels_with_inserted_tb_maps: Set[nodes.MapEntry] = set()    
+        self._kernels_with_inserted_tb_maps: Set[nodes.MapEntry] = set()
         """
-
 
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
@@ -159,7 +157,6 @@ class CUDACodeGen(TargetCodeGenerator):
                                       CUDACodeGen,
                                       'CUDA',
                                       target_type=target_type)
-
         """
         # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
         old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
@@ -2074,7 +2071,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             #       overapproximation.
 
             if len(detected_block_sizes) > 1:
-
                 """
                 # Raise an error if user has manually explicitly  defined both, the gpu_block_size and explicitly
                 # threadBlock maps with conflicting block sizes.
