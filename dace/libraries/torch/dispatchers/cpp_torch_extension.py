@@ -61,20 +61,43 @@ def typeclass_to_torch_cpp_type(type: dace.typeclass) -> str:
         return _TYPECLASS_TO_TORCH_DTYPE_STR[type]
 
 
-def tensor_init_for_desc(name: str, desc: data.Data, zeros=False) -> str:
-    """ Emit the initialization code for a descriptor.
-    """
-    return f"""\
-Tensor {name} = torch::{'zeros' if zeros else 'empty'}(
-    {{{', '.join(str(s) for s in desc.shape)}}},
-    torch::TensorOptions()
-        .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-        .device(torch::{'kCUDA' if is_cuda(desc.storage) else 'kCPU'})
-        .layout(torch::kStrided));
-    """
+def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, torch.Tensor], zeros=True) -> str:
+    """Emit the initialization code for a descriptor."""
+    
+    # Check if name is in clean_weights
+    if name in clean_weights:
+        # Get the tensor from clean_weights
+        weight_tensor = clean_weights[name]
+        
+        # Convert the tensor to a C++ initializer list format
+        # Flatten the tensor and convert to list
+        values = weight_tensor.flatten().tolist()
+        
+        # Format the values as a C++ initializer list
+        values_str = ', '.join(f'{v}f' for v in values)
+        
+        return f"""\
+            Tensor {name} = torch::from_blob(
+                new float[{len(values)}]{{{values_str}}},
+                {{{', '.join(str(s) for s in desc.shape)}}},
+                torch::TensorOptions()
+                    .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
+                    .device(torch::{'kCUDA' if is_cuda(desc.storage) else 'kCPU'})
+                    .layout(torch::kStrided)).clone();
+            """
+    else:
+        # Initialize with zeros or empty
+        return f"""\
+            Tensor {name} = torch::{'zeros' if zeros else 'empty'}(
+                {{{', '.join(str(s) for s in desc.shape)}}},
+                torch::TensorOptions()
+                    .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
+                    .device(torch::{'kCUDA' if is_cuda(desc.storage) else 'kCPU'})
+                    .layout(torch::kStrided));
+            """
 
 
-def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_names: List[str]) -> str:
+def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_names: List[str], clean_weights: Dict[str, torch.Tensor]) -> str:
     """ Generate the code that initializes the output tensors
 
         :param module: the module
@@ -86,7 +109,7 @@ def initialize_outputs_code(module: 'dace.frontend.python.DaceModule', output_na
     arglist = module.sdfg.arglist()
     code = ""
     for name in sorted(output_names):
-        code += tensor_init_for_desc(name, arglist[name])
+        code += tensor_init_for_desc(name, arglist[name], clean_weights)
 
     return code
 
@@ -194,7 +217,7 @@ def item_to_cpp_literal(item) -> str:
 
 def constant_initializer_code(name: str, desc: data.Data, value) -> str:
     gpu_storage = dt.can_access(dt.ScheduleType.GPU_Device, desc.storage)
-
+    gpu_storage = False
     if desc.total_size == 0:
         return f"{desc.dtype.ctype} *{name}_ptr = nullptr;"
     elif isinstance(desc, data.Array) or gpu_storage:
@@ -244,11 +267,11 @@ def recover_saved_inputs_outputs(saved_inputs_outputs: List[str], other_saved: L
     return code
 
 
-def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str]) -> str:
+def setup_grad_values(backward_result: BackwardResult, sdfg: dace.SDFG, outputs: List[str], clean_weights: Dict[str, torch.Tensor]) -> str:
     code = "// input grads"
     for param_name, grad_name in sorted(backward_result.required_grad_names.items()):
         zero_init = backward_result.zero_init.get(param_name, True)
-        code += "\n" + tensor_init_for_desc(grad_name, sdfg.arrays[grad_name], zeros=zero_init)
+        code += "\n" + tensor_init_for_desc(grad_name, sdfg.arrays[grad_name], clean_weights, zeros=zero_init)
 
     code += "// output grads"
     for i, o in enumerate(outputs):
@@ -302,7 +325,7 @@ class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function
             at::AutoDispatchBelowADInplaceOrView g;
 
             // initialize outputs
-            {initialize_outputs_code(module, outputs_with_forwarded_outputs)}
+            {initialize_outputs_code(module, outputs_with_forwarded_outputs, module.dace_model.clean_weights)}
 
             {fwd_ptr_init_code}
 
@@ -339,7 +362,7 @@ class {sdfg_name}Function : public torch::autograd::Function<{sdfg_name}Function
 
             // create grad values
             // NOTE, it might make sense take these from .grad()
-            {setup_grad_values(backward_result, backward_sdfg, outputs)}
+            {setup_grad_values(backward_result, backward_sdfg, outputs, module.dace_model.clean_weights)}
             
             {bwd_ptr_init_code}
 
