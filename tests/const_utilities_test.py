@@ -116,7 +116,6 @@ def _gen_sdfg_with_symbol_use_in_nsdfg(write_only: bool = True) -> dace.SDFG:
     A_sym = dace.symbolic.symbol("A_sym", dace.int64)
     nsdfg = s1.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=s1.sdfg,
         inputs={},
         outputs={},
         symbol_mapping={"A_sym": A_sym},
