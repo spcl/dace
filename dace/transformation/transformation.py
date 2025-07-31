@@ -24,7 +24,7 @@ from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
-from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
+from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st, dealias
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
 from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
@@ -736,8 +736,9 @@ class ExpandTransformation(PatternTransformation):
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
 
-        # Fix nested schedules
+        # Fix nested schedules and aliasing
         if isinstance(expansion, nd.NestedSDFG):
+            dealias.dealias_sdfg_recursive(expansion.sdfg)
             infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [expansion.schedule], True)
 
         type(self).postprocessing(sdfg, state, expansion)

@@ -204,12 +204,12 @@ def test_fortran_frontend_memlet_in_map_test():
                     assert len(edges) == 1
                     memlet = edges[0].data
                     # Check that the correct memlet has the iteration variable
-                    assert memlet.subset[0] == (iter_var, iter_var, 1)
-                    assert memlet.subset[1] == (1, 10, 1)
+                    subset = memlet.subset if memlet.data in ('INP', 'OUT') else memlet.other_subset
+                    assert subset[0] == (iter_var, iter_var, 1)
+                    assert subset[1] == (1, 10, 1)
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_array_3dmap()
     test_fortran_frontend_array_access()
     test_fortran_frontend_input_output_connector()

@@ -25,7 +25,7 @@ from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
-from dace.sdfg import nodes
+from dace.sdfg import nodes, dealias
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
@@ -2179,6 +2179,10 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.Memlet())
+
+        # After parsing and connecting the nested SDFG, ensure the data descriptors match the outer SDFG
+        if isinstance(internal_node, nodes.NestedSDFG):
+            dealias.dealias_sdfg_recursive(internal_node.sdfg)
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
         """

@@ -229,6 +229,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
                                                         is_write=is_write,
+                                                        use_offset=True,
                                                         decouple_array_interfaces=decouple_array_interfaces)
 
         # Test for views of container arrays and structs
