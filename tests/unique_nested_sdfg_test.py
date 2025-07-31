@@ -108,7 +108,7 @@ def make_nested_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     to_nest = make_vecAdd_sdfg(nested_sdfg_name, dtype)
 
     # Nest it and connect memlets
-    nested_sdfg = vecAdd_parent_state.add_nested_sdfg(to_nest, vecAdd_parent_sdfg, {"x", "y"}, {"z"})
+    nested_sdfg = vecAdd_parent_state.add_nested_sdfg(to_nest, {"x", "y"}, {"z"})
     vecAdd_parent_state.add_memlet_path(x_in,
                                         nested_sdfg,
                                         dst_conn="x",
@@ -149,7 +149,7 @@ def make_nested_sdfg_cpu_single_state():
     z = state.add_write("z")
 
     # add it as nested SDFG, with proper symbol mapping
-    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "n"})
+    nested_sdfg = state.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "n"})
 
     state.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
@@ -165,7 +165,7 @@ def make_nested_sdfg_cpu_single_state():
     w = state.add_read("w")
     u = state.add_write("u")
 
-    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "m"})
+    nested_sdfg = state.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "m"})
 
     state.add_memlet_path(v, nested_sdfg, dst_conn="x", memlet=Memlet.simple(v, "0:m", num_accesses=m))
     state.add_memlet_path(w, nested_sdfg, dst_conn="y", memlet=Memlet.simple(w, "0:m", num_accesses=m))
@@ -198,7 +198,7 @@ def make_nested_sdfg_cpu_two_states():
     z = state_0.add_write("z")
 
     # add it as nested SDFG, with proper symbol mapping
-    nested_sdfg = state_0.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "n"})
+    nested_sdfg = state_0.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "n"})
 
     state_0.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state_0.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
@@ -216,7 +216,7 @@ def make_nested_sdfg_cpu_two_states():
     w = state_1.add_read("w")
     u = state_1.add_write("u")
 
-    nested_sdfg = state_1.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "m"})
+    nested_sdfg = state_1.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "m"})
 
     state_1.add_memlet_path(v, nested_sdfg, dst_conn="x", memlet=Memlet.simple(v, "0:m", num_accesses=m))
     state_1.add_memlet_path(w, nested_sdfg, dst_conn="y", memlet=Memlet.simple(w, "0:m", num_accesses=m))
@@ -248,7 +248,7 @@ def make_nested_nested_sdfg_cpu():
     z = state_0.add_write("z")
 
     # add it as nested SDFG, with proper symbol mapping
-    nested_sdfg = state_0.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "n"})
+    nested_sdfg = state_0.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "n"})
 
     state_0.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state_0.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
@@ -266,7 +266,7 @@ def make_nested_nested_sdfg_cpu():
     w = state_1.add_read("w")
     u = state_1.add_write("u")
 
-    nested_sdfg = state_1.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "m"})
+    nested_sdfg = state_1.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "m"})
 
     state_1.add_memlet_path(v, nested_sdfg, dst_conn="x", memlet=Memlet.simple(v, "0:m", num_accesses=m))
     state_1.add_memlet_path(w, nested_sdfg, dst_conn="y", memlet=Memlet.simple(w, "0:m", num_accesses=m))

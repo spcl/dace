@@ -207,7 +207,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'Trying to read an inaccessible data container "{container}" '
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
-    # Check for interstate edges that there are no write to scalars or arrays
+    # Check for interstate edges that write to scalars or arrays
     _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
 
 
@@ -884,8 +884,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
-                if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
-                    pass
+                # It is also possible that edge leads to a tasklet that has no incoming or outgoing memlet
+                # since the check is to be performed for all edges leading to the dst_node, it is sufficient
+                # to check for the memlets of outgoing edges
+                if e.data.is_empty():
+                    if isinstance(dst_node, nd.ExitNode):
+                        pass
+                    if isinstance(dst_node, nd.Tasklet) and all(
+                        {oe.data.is_empty()
+                         for oe in state.out_edges(dst_node)}):
+                        pass
                 else:
                     raise InvalidSDFGEdgeError(
                         f"Memlet creates an invalid path (sink node {dst_node}"
@@ -1170,3 +1178,14 @@ def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
     memlet_tokens = memlet_data.split('.')
     mem_root = '.'.join(memlet_tokens[:len(access_tokens)])
     return mem_root == access_data
+
+
+def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: 'dace.ControlFlowRegion'):
+    from dace.sdfg import InterstateEdge
+    for edge in cfg.edges():
+        if edge.data is not None and isinstance(edge.data, InterstateEdge):
+            # sdfg.arrays return arrays and scalars, it is invalid to write to them
+            if any([key in cfg.sdfg.arrays for key in edge.data.assignments]):
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"', cfg.sdfg,
+                    cfg.edge_id(edge))
