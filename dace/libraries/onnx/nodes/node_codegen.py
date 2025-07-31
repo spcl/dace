@@ -24,9 +24,28 @@ from dace.util import prod
 
 import onnx
 from onnx import helper
+from onnx import TensorProto
 
 log = logging.getLogger(__name__)
 
+def numpy_dtype_to_onnx_dtype(np_dtype):
+    """Convert numpy dtype to ONNX TensorProto data type integer."""
+    dtype_map = {
+        np.float32: TensorProto.FLOAT,
+        np.float64: TensorProto.DOUBLE,
+        np.int32: TensorProto.INT32,
+        np.int64: TensorProto.INT64,
+        np.uint32: TensorProto.UINT32,
+        np.uint64: TensorProto.UINT64,
+        np.int16: TensorProto.INT16,
+        np.uint16: TensorProto.UINT16,
+        np.int8: TensorProto.INT8,
+        np.uint8: TensorProto.UINT8,
+        np.bool_: TensorProto.BOOL,
+        np.float16: TensorProto.FLOAT16,
+        # Add more mappings as needed
+    }
+    return dtype_map.get(np_dtype, TensorProto.FLOAT)  # Default to FLOAT
 
 def _get_onnx_shape_from_desc(desc: dt.Data) -> Optional[List]:
     """Get the appropriate ONNX shape from a DaCe data descriptor.
@@ -126,7 +145,7 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str, edge_co
     else:
         storage = desc.storage
 
-    if storage in [dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register]:
+    if storage in [dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap]:
         mem_info = "ort_cpu_mem_info"
     elif storage is dtypes.StorageType.GPU_Global:
         mem_info = "ort_cuda_mem_info"
@@ -262,7 +281,7 @@ def expand_node(node, state, sdfg):
                 # Handle tensor attributes specially since helper.make_node doesn't handle them automatically
                 if attr.attribute_type == ONNXAttributeType.Tensor:
                     # Convert numpy array to ONNX tensor
-                    tensor = helper.make_tensor(name, value.dtype.type, value.shape, value.flatten().tolist())
+                    tensor = helper.make_tensor(name, numpy_dtype_to_onnx_dtype(value.dtype.type), value.shape, value.flatten().tolist())
                     node_attrs[name] = tensor
                 else:
                     node_attrs[name] = value
