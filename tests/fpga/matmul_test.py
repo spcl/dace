@@ -95,7 +95,7 @@ def create_gemm_sdfg(sdfg_name,
                                memlet=dace.Memlet(f"B_device[0:{K}, 0:{M}/{vec_width}]"))
     fpga_state.add_memlet_path(in_C,
                                gemm_node,
-                               dst_conn="_cin",
+                               dst_conn="_c",
                                memlet=dace.Memlet(f"C_device[0:{N}, 0:{M}/{vec_width}]"))
     fpga_state.add_memlet_path(gemm_node,
                                out_C,
