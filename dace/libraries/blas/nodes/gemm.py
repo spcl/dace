@@ -92,7 +92,6 @@ class ExpandGemmPure(ExpandTransformation):
             init_state = sdfg.add_state(node.label + "_initstate")
             state = sdfg.add_state_after(init_state, node.label + "_state")
 
-
         mul_out, mul_out_array = "_c", array_c
         output_nodes = None
 
