@@ -594,9 +594,6 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         new_sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         new_sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
-        if not equal_valued(0, node.beta):
-            new_sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
-
         def make_read_A(state):
 
             # A given row of A must be repeated according to B number of tiles
