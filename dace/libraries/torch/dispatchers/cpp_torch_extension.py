@@ -415,7 +415,7 @@ def code_for_module(module: 'dace.frontend.python.module.DaceModule', compiled_s
 {sdfg_name}(int64_t handle_ptr, {",".join(f"const Tensor& {name}_" for name in inputs)}) {{
 
     // initialize outputs
-    {initialize_outputs_code(module, outputs)}
+    {initialize_outputs_code(module, outputs, module.dace_model.clean_weights)}
     
     {ptr_init_code}
 
