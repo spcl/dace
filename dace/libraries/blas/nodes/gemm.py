@@ -92,8 +92,6 @@ class ExpandGemmPure(ExpandTransformation):
             init_state = sdfg.add_state(node.label + "_initstate")
             state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if '_c' in node.in_connectors:
-            sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=cdata[1].storage)
 
         mul_out, mul_out_array = "_c", array_c
         output_nodes = None
