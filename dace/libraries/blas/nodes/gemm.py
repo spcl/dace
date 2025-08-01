@@ -589,7 +589,6 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         new_state = new_sdfg.add_state("compute")
 
         # Add data descriptors
-
         new_sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         new_sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         new_sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
