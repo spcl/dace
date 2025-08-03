@@ -776,7 +776,7 @@ class NestedSDFG(CodeNode):
 
         # Validate undefined symbols
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+            symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
                 raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))

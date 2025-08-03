@@ -1017,7 +1017,7 @@ class InvalidSDFGError(Exception):
 
     def __str__(self):
         if self.state_id is not None:
-            state = self.sdfg.node(self.state_id)
+            state = self.sdfg.state(self.state_id)
             locinfo = self._getlineinfo(state)
             suffix = f' (at state {state.label})'
         else:
@@ -1096,10 +1096,16 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
-        state = self.sdfg.node(self.state_id)
+        from dace.sdfg.graph import NodeNotFoundError
+        try:
+            state = self.sdfg.state(self.state_id)
+            state_label = state.label
+        except NodeNotFoundError:
+            state = None
+            state_label = '<unknown>'
         locinfo = ''
 
-        if self.node_id is not None:
+        if state is not None and self.node_id is not None:
             from dace.sdfg.nodes import Node
             node: Node = state.node(self.node_id)
             nodestr = f', node {node}'
@@ -1114,7 +1120,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {state.label}{nodestr}){locinfo}'
+        return f'{self.message} (at state {state_label}{nodestr}){locinfo}'
 
 
 class NodeNotExpandedError(InvalidSDFGNodeError):
@@ -1141,9 +1147,15 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
-        state = self.sdfg.node(self.state_id)
+        from dace.sdfg.graph import NodeNotFoundError
+        try:
+            state = self.sdfg.state(self.state_id)
+            state_label = state.label
+        except NodeNotFoundError:
+            state = None
+            state_label = '<unknown>'
 
-        if self.edge_id is not None:
+        if state is not None and self.edge_id is not None:
             e = state.edges()[self.edge_id]
             edgestr = ", edge %s (%s:%s -> %s:%s)" % (
                 str(e.data),
@@ -1163,7 +1175,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {state.label}{edgestr}){locinfo}'
+        return f'{self.message} (at state {state_label}{edgestr}){locinfo}'
 
 
 def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
