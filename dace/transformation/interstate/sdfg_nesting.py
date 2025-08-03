@@ -12,7 +12,7 @@ import copy
 
 from dace import memlet, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
-from dace.sdfg import nodes, propagation, utils
+from dace.sdfg import dealias, nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
@@ -1148,4 +1148,5 @@ class NestSDFG(transformation.MultiStateTransformation):
             outer_state.add_edge(nested_node, val, arrnode, None,
                                  memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
 
+        dealias.integrate_nested_sdfg(nested_sdfg)
         return nested_node

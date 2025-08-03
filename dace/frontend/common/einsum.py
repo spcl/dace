@@ -11,7 +11,7 @@ import dace
 from dace import dtypes, subsets, symbolic
 from dace.data import _prod as prod
 from dace.sdfg.nodes import AccessNode
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
+from dace.sdfg import SDFG, SDFGState, InterstateEdge, dealias
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import StringLiteral
@@ -406,5 +406,6 @@ def _create_einsum_internal(sdfg: SDFG,
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, 'Z', c, None, Memlet.from_array(c.data, c.desc(sdfg)))
+        dealias.integrate_nested_sdfg(nsdfg)
 
     return output, c

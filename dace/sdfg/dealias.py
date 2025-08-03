@@ -308,7 +308,7 @@ def integrate_nested_sdfg(sdfg: SDFG):
                 view_desc.strides = [
                     parent_desc.strides[i] for i in range(len(parent_desc.shape)) if i not in unsqueezed_dims
                 ]
-            except ValueError:
+            except (ValueError, NotImplementedError):
                 print("WARNING")
                 # If unsqueezing fails, we keep the original view descriptor
                 pass

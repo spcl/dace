@@ -8,6 +8,7 @@ import re
 
 import dace
 from dace import data as dt, subsets as sbs
+from dace.sdfg import dealias
 import numpy as np
 from .subscript_converter import SubscriptConverter
 from ._common import *
@@ -513,4 +514,5 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                                   src_conn=f"_{data_name_inner}",
                                   memlet=dace.Memlet(f"{write_node_outer.data}[{subset}]", dynamic=True)),
 
+        dealias.integrate_nested_sdfg(nested_sdfg)
         return sdfg
