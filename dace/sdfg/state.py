@@ -14,7 +14,7 @@ from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterat
 
 import dace
 from dace.frontend.python import astutils
-from dace.sdfg.replace import replace_in_codeblock
+from dace.sdfg.replace import replace_in_codeblock, replace
 import dace.serialize
 from dace import data as dt
 from dace import dtypes
@@ -1755,6 +1755,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent_sdfg = self.sdfg
 
             sdfg.update_cfg_list([])
+            if symbol_mapping:
+                symbolic.safe_replace(symbol_mapping, lambda m: sdfg.replace_dict(m))
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -1767,7 +1769,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg,
             inputs,
             outputs,
-            symbol_mapping=symbol_mapping,
+            symbol_mapping=None,
             schedule=schedule,
             location=location,
             debuginfo=debuginfo,
@@ -1780,27 +1782,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Add "default" undefined symbols if None are given
             symbols = sdfg.free_symbols
-            if symbol_mapping is None:
-                symbol_mapping = {s: s for s in symbols}
-                s.symbol_mapping = symbol_mapping
-
-            # Validate missing symbols
-            missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols and self.sdfg is not None:
-                # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
-                symbol_mapping.update(parent_mapping)
-                s.symbol_mapping = symbol_mapping
-                missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols:
-                raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
+            symbol_mapping = {s: s for s in symbols}
+            s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG
             from dace.codegen.tools.type_inference import infer_expr_type
             for sym, symval in s.symbol_mapping.items():
                 if sym not in sdfg.symbols:
-                    # TODO: Think of a better way to avoid calling
-                    # symbols_defined_at in this moment
+                    # TODO: Think of a better way to avoid calling symbols_defined_at in this moment
                     sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
 
         return s
