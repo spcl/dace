@@ -7,7 +7,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 import copy
 
 
@@ -223,3 +223,168 @@ def dealias_sdfg(sdfg: SDFG):
             if len(out_edges) > 1:
                 for edge in out_edges[1:]:
                     parent_state.remove_memlet_path(edge)
+
+
+def integrate_nested_sdfg(sdfg: SDFG):
+    """
+    Integrates a nested SDFG into its parent SDFG, ensuring that all data descriptors that are connected to
+    the nested SDFG are shared with the parent SDFG. This function adds data containers to the nested
+    SDFG based on the edges connected to it, which match the data descriptors of the parent SDFG exactly.
+    It then changes the data descriptors that are not transient to become ``View`` data descriptors (i.e., with the same
+    properties that they had before, such as shape, dtype, and strides) using the ``View.view`` static function,
+    and connects the views to the newly-added data descriptors. That is, for every access node that uses the newly
+    redefined views, add a new access node that uses the newly-added data descriptor, and connect the two.
+    After this operation, the nested SDFG is valid in the context of the parent SDFG, and subsequent transformations
+    may be applied to remove the resultant views, if possible (not the responsibility of this function).
+
+    Precondition: The nested SDFG node must already be connected within the parent SDFG state.
+
+    :param sdfg: The SDFG to operate on.
+    :note: This function operates in-place.
+    """
+    if sdfg.parent is None:
+        return
+
+    parent_sdfg = sdfg.parent_sdfg
+    parent_state = sdfg.parent
+    parent_node = sdfg.parent_nsdfg_node
+
+    # Track which data containers need to be added and converted to views
+    to_add_and_view: Dict[str,
+                          Tuple[str,
+                                data.Data]] = {}  # Maps connector name -> (parent data name, parent data descriptor)
+    parent_mapping: Dict[str, str] = {}  # Maps connector name to parent data name
+
+    # Collect all edges connected to the nested SDFG node
+    for edge in parent_state.all_edges(parent_node):
+        if edge.data.data in parent_sdfg.arrays:
+            connector = edge.dst_conn if edge.dst == parent_node else edge.src_conn
+            if connector and connector in sdfg.arrays:
+                # Only process non-transient arrays
+                if not sdfg.arrays[connector].transient:
+                    to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
+
+    # Process each data container that needs to be integrated
+    visited: Set[str] = set()
+    symbols_to_add: Set[str] = set()
+    for inner_name, (parent_name, parent_desc, parent_memlet) in to_add_and_view.items():
+        if inner_name in visited:
+            continue
+        visited.add(inner_name)
+
+        # If the parent data descriptor is a view, we need to convert it to a regular data descriptor
+        # so that it can be used as a non-transient data descriptor in the nested SDFG.
+        if isinstance(parent_desc, data.View):
+            if isinstance(parent_desc, data.Structure):
+                parent_desc = parent_desc.as_structure()
+            else:
+                parent_desc = parent_desc.as_array()
+        else:
+            parent_desc = copy.deepcopy(parent_desc)
+        parent_desc.transient = False
+
+        # Add the parent data descriptor to the nested SDFG
+        new_parent_name = sdfg.add_datadesc(parent_name, parent_desc, find_new_name=True)
+        parent_mapping[inner_name] = new_parent_name
+        if new_parent_name != parent_name:
+            new_memlet = copy.deepcopy(parent_memlet)
+            new_memlet.data = new_parent_name
+            to_add_and_view[inner_name] = (new_parent_name, parent_desc, new_memlet)
+
+        # Get the original data descriptor
+        original_desc = sdfg.arrays[inner_name]
+
+        # Create a view of the parent data with the same properties as the original
+        view_desc = data.View.view(original_desc)
+
+        # If there is a shape mismatch, try to adjust the view descriptor
+        # using ND array program squeeze semantics.
+        if len(view_desc.shape) != len(parent_desc.shape):
+            try:
+                unsqueezed_dims = unsqueeze_memlet(Memlet.from_array(inner_name, view_desc),
+                                                   parent_memlet,
+                                                   return_dims=True)
+                # Every dimension that was squeezed should be removed from the view shape
+                view_desc.strides = [
+                    parent_desc.strides[i] for i in range(len(parent_desc.shape)) if i not in unsqueezed_dims
+                ]
+            except ValueError:
+                print("WARNING")
+                # If unsqueezing fails, we keep the original view descriptor
+                pass
+
+        # Replace the original descriptor with the view
+        sdfg.arrays[inner_name] = view_desc
+
+    # For each state, add access nodes and connections
+    for state in sdfg.all_states():
+        # Find relevant access nodes
+        for view_node in state.data_nodes():
+            if view_node.data not in to_add_and_view:
+                continue
+
+            parent_name, parent_desc, parent_memlet = to_add_and_view[view_node.data]
+
+            # Collect existing edges
+            in_edges = list(state.in_edges(view_node))
+            out_edges = list(state.out_edges(view_node))
+
+            # Skip if no edges (isolated node)
+            if not in_edges and not out_edges:
+                continue
+
+            # Create a new access node for the parent data
+            parent_access = state.add_access(parent_name)
+
+            # Rewire the graph based on access pattern
+            if in_edges and out_edges:
+                # Both read and write: need two view nodes
+                # Create a new view node for the write path
+                view_node_write = state.add_access(view_node.data)
+
+                # Rewire: predecessors -> view_write -> parent -> view_read -> successors
+                # Move all incoming edges to the write view node
+                for e in in_edges:
+                    state.add_edge(e.src, e.src_conn, view_node_write, e.dst_conn, e.data)
+                    state.remove_edge(e)
+
+                # Connect view_write -> parent
+                state.add_edge(view_node_write, 'views', parent_access, None, copy.deepcopy(parent_memlet))
+
+                # Connect parent -> view_read (original view_node)
+                state.add_edge(parent_access, None, view_node, 'views', copy.deepcopy(parent_memlet))
+
+            elif out_edges:
+                # Read only: parent -> view -> successors
+                state.add_edge(parent_access, None, view_node, 'views', copy.deepcopy(parent_memlet))
+
+            else:  # in_edges only
+                # Write only: predecessors -> view -> parent
+                state.add_edge(view_node, 'views', parent_access, None, copy.deepcopy(parent_memlet))
+
+    # Modify connector names on the nested SDFG node to match the parent SDFG
+    parent_node.in_connectors = {
+        parent_mapping[c] if c in parent_mapping else c: t
+        for c, t in parent_node.in_connectors.items()
+    }
+    parent_node.out_connectors = {
+        parent_mapping[c] if c in parent_mapping else c: t
+        for c, t in parent_node.out_connectors.items()
+    }
+
+    # Update edges to use the new parent data names
+    for edge in parent_state.all_edges(parent_node):
+        if edge.dst is parent_node:
+            if edge.dst_conn in parent_mapping:
+                edge.dst_conn = parent_mapping[edge.dst_conn]
+        elif edge.src is parent_node:
+            if edge.src_conn in parent_mapping:
+                edge.src_conn = parent_mapping[edge.src_conn]
+
+    # Add remaining symbols to symbol mapping using symbols_defined_at
+    symtypes = parent_state.symbols_defined_at(parent_node)
+    for sym_name, sym_type in symtypes.items():
+        if sym_name not in sdfg.symbols:
+            # Add the symbol to the SDFG and the parent node's symbol mapping
+            sdfg.add_symbol(sym_name, sym_type)
+        parent_node.symbol_mapping[sym_name] = sym_name

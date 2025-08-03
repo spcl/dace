@@ -2182,7 +2182,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # After parsing and connecting the nested SDFG, ensure the data descriptors match the outer SDFG
         if isinstance(internal_node, nodes.NestedSDFG):
-            dealias.dealias_sdfg_recursive(internal_node.sdfg)
+            dealias.integrate_nested_sdfg(internal_node.sdfg)
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
         """

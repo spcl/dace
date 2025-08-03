@@ -738,7 +738,7 @@ class ExpandTransformation(PatternTransformation):
 
         # Fix nested schedules and aliasing
         if isinstance(expansion, nd.NestedSDFG):
-            dealias.dealias_sdfg_recursive(expansion.sdfg)
+            dealias.integrate_nested_sdfg(expansion.sdfg)
             infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [expansion.schedule], True)
 
         type(self).postprocessing(sdfg, state, expansion)

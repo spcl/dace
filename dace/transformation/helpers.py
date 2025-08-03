@@ -973,7 +973,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      use_src_subset: bool = False,
                      use_dst_subset: bool = False,
                      internal_offset: Tuple[int] = None,
-                     external_offset: Tuple[int] = None) -> Memlet:
+                     external_offset: Tuple[int] = None,
+                     return_dims: bool = False) -> Union[Memlet, List[int]]:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested SDFGs.
         Generally, this function is the inverse of the array narrowing rules found in languages such as Python
         (specifically in frameworks such as NumPy or PyTorch) and FORTRAN.
@@ -984,7 +985,9 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
         :param internal_offset: The internal memlet's data descriptor offset.
         :param external_offset: The external memlet's data descriptor offset.
-        :return: Offset Memlet to set on the resulting graph.
+        :param return_dims: If ``True``, returns the dimensions that were detected as squeezed.
+        :return: Offset Memlet to set on the resulting graph, or a list of squeezed dimensions if ``return_dims`` is
+                 ``True``.
     """
     # We always use external_memlet's subset as the base.
     # We either modify the internal memlet's subset or other_subset. Find out which one to use.
@@ -1042,6 +1045,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     elif use_dst_subset:
         result._is_data_src = False
 
+    if return_dims:
+        return to_unsqueeze
     return result
 
 
