@@ -2359,7 +2359,7 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         else:
             return offset_symbols | used_symbols
     elif isinstance(scope, nd.NestedSDFG):
-        used_symbols = scope.sdfg.used_symbols(all_symbols=True)
+        used_symbols = scope.sdfg.used_symbols(all_symbols=False)
         # Can't pass them as const if they are written to in the nested SDFG
         written_symbols = _get_assignments(scope.sdfg)
         if constant_syms_only:
