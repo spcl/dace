@@ -96,8 +96,8 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     inner_out = map_state.edges()[2].data
     if inner_out.volume != 1:
         raise RuntimeError('Expected a volume of 1 on the inner output memlet')
-    if inner_out.subset[0] != (0, i, 1) or inner_out.subset[1] != (0, N - 1, 1):
-        raise RuntimeError('Expected subset of inner out memlet to be [0:i+1, 0:N], found ' + str(inner_out.subset))
+    if inner_out.subset[0] != (i, i, 1) or inner_out.subset[1] != (0, N - 1, 1):
+        raise RuntimeError('Expected subset of inner out memlet to be [i, 0:N], found ' + str(inner_out.subset))
 
     outer_out = map_state.edges()[3].data
     if outer_out.volume != M * N:
