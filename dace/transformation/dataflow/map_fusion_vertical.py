@@ -12,7 +12,7 @@ from dace.transformation.dataflow import map_fusion_helper as mfhelper
 class MapFusionVertical(transformation.SingleStateTransformation):
     """Implements the vertical Map fusion transformation.
 
-    The transformation will match the pattern `MapExit -> (A) -> MapEntry`, i.e. two Maps that have
+    The transformation will match the pattern `MapExit -> (A) -> MapEntry`, i.e., two Maps that have
     a linear dependency with one another.
     From a high level perspective it will remove the MapExit node of the first and the MapEntry node
     of the second Map. It will then rewire and modify the Memlets such that the data flow bypasses the
@@ -41,14 +41,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     * If the two Maps cover the same iteration space, essentially have the same start, stop and
         iteration , see `find_parameter_remapping()`.
     * Furthermore, they verify if the new fused Map did not introduce read write conflict,
-        essentially it tests if the data is pointwise, i.e. what is read is also written,
+        essentially it tests if the data is pointwise, i.e., what is read is also written,
         see `has_read_write_dependency()`.
     * Then it will examine the intermediate data. This will essentially test if the data that
         is needed by a single iteration of the second Map is produced by a single iteration of
         the first Map, see `partition_first_outputs()`.
 
     By default `strict_dataflow` is enabled. In this mode the transformation is more conservative.
-    The main difference is, that it will not adjust the subsets of the intermediate, i.e. turning
+    The main difference is, that it will not adjust the subsets of the intermediate, i.e., turning
     an array with shape `(1, 1, 1, 1)` into a scalar. Furthermore, shared intermediates, see
     `partition_first_outputs()` will only be created if the data is not referred downstream in
     the dataflow.
@@ -59,18 +59,18 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     the `FindSingleUseData` analysis pass, see note below. If the result of the pass is present
     then the transformation will use it  to determine if a intermediate can be removed.
     The second way is to specify `assume_always_shared`, which instruct the transformation to
-    assume that the intermediate is shared, i.e. will become an output of the fused Map.
-    The downside of this is, that dead dataflow, i.e. writes that are not needed are generated.
+    assume that the intermediate is shared, i.e., will become an output of the fused Map.
+    The downside of this is, that dead dataflow, i.e., writes that are not needed, are generated.
 
-    :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
+    :param only_inner_maps: Only match Maps that are internal, i.e., inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
     :param assume_always_shared: Handle all intermediate nodes as if they were classified as
-        "shared" , see `partition_first_outputs()` for more.
+        "shared", see `partition_first_outputs()` for more.
     :param require_exclusive_intermediates: If `True` then the transformation will only apply
-        if all intermediates are "eclusive", i.e can be removed, see `partition_first_outputs()`.
+        if all intermediates are "eclusive", i.e., can be removed, see `partition_first_outputs()`.
     :param require_all_intermediates: If `True` then the transformation will only apply if
-        the if all outputs of the first Map are intermediate, i.e. are consumed by the second Map.
+        all outputs of the first Map are intermediate, i.e., are consumed by the second Map.
     :param consolidate_edges_only_if_not_extending: If `True` the transformation will only
         consolidate edges if this does not lead to an extension of the subset.
     :param never_consolidate_edges: If `False`, the default, the function will never
@@ -81,7 +81,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     :note: Because of [issue#1911](https://github.com/spcl/dace/issues/1911) the `can_be_applied()`
         can not use the pipeline result and will thus scan the whole SDFG. The `FullMapFusion`
         pass is not affected by this.
-    :note: `require_exclusive_intermediates` means that all intermediates, i.e. AccessNodes
+    :note: `require_exclusive_intermediates` means that all intermediates, i.e., AccessNodes
         connecting the first and second Maps, can be removed, outputs of the first Map that
         are not consumed by the first Map are not considered. However, it means that also
         non-transients are also affected. See `partition_first_outputs()`.
@@ -100,7 +100,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
-        desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
+        desc="Only perform fusing if the Maps are inner Maps, i.e., does not have top level scope.",
     )
 
     strict_dataflow = properties.Property(
@@ -117,12 +117,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     require_exclusive_intermediates = properties.Property(
         dtype=bool,
         default=False,
-        desc="If `True` then all intermediates need to be 'exclusive', i.e. they will be removed by the fusion.",
+        desc="If `True` then all intermediates need to be 'exclusive', i.e., they will be removed by the fusion.",
     )
     require_all_intermediates = properties.Property(
         dtype=bool,
         default=False,
-        desc="If `True` all outputs of the first Map must be intermediate, i.e. going into the second Map.",
+        desc="If `True` all outputs of the first Map must be intermediate, i.e., going into the second Map.",
     )
 
     never_consolidate_edges = properties.Property(
@@ -380,9 +380,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Now turn the second output node into the output node of the first Map.
         second_map_exit.map = first_map_entry.map
 
-        # If we have "consolidated" edges, i.e. reused existing edges, then the set
+        # If we have "consolidated" edges, i.e., reused existing edges, then the set
         #  of that might have expanded, thus we have to propagate them. However,
-        #  in case we never consolidated, i.e. all edges were preserved, then we
+        #  in case we never consolidated, i.e., all edges were preserved, then we
         #  can skip that step.
         if not self.never_consolidate_edges:
             propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
@@ -425,7 +425,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         :return: If such a decomposition exists the function will return the three sets
             mentioned above in the same order. In case the decomposition does not exist,
-            i.e. the maps can not be fused the function returns `None`.
+            i.e., the maps can not be fused the function returns `None`.
 
         :param state: The in which the two maps are located.
         :param sdfg: The full SDFG in which we operate.
@@ -520,7 +520,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #   - The edge shall also not be a reduction edge.
             #   - Defined location to where they write.
             #   - No dynamic Melets.
-            #  Furthermore, we will also extract the subsets, i.e. the location they
+            #  Furthermore, we will also extract the subsets, i.e., the location they
             #  modify inside the intermediate array.
             #  Since we do not allow for WCR, we do not check if the producer subsets intersects.
             producer_subsets: List[subsets.Subset] = []
@@ -578,7 +578,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if not intermediate_node_out_edge.dst_conn.startswith("IN_"):
                     return None
 
-                # Now we look at all edges that leave the second MapEntry, i.e. the
+                # Now we look at all edges that leave the second MapEntry, i.e., the
                 #  edges that feeds the consumer and define what is read inside the Map.
                 #  We do not check them, but collect them and inspect them.
                 # NOTE1: The subset still uses the old iteration variables.
@@ -738,7 +738,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
             # Memlets have a lot of additional informations, to ensure that we get
             #  all of them, we have to do it this way. The main reason for this is
-            #  to handle the case were the "Memlet reverse direction", i.e. `data`
+            #  to handle the case were the "Memlet reverse direction", i.e., `data`
             #  refers to the other end of the connection than before.
             assert pre_exit_edge.data.dst_subset is not None
             new_pre_exit_memlet_src_subset = copy.deepcopy(pre_exit_edge.data.src_subset)
@@ -797,10 +797,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 else:
                     # If we found another target than the second MapEntry from the
                     #  intermediate node it means that the node _must_ survive,
-                    #  i.e. we are not in exclusive mode.
+                    #  i.e., we are not in exclusive mode.
                     assert not is_exclusive_set
 
-            # Now we will reroute the connections inside the second Map, i.e.
+            # Now we will reroute the connections inside the second Map, i.e.,
             #  instead of consuming the old intermediate node, they will now
             #  consume the new intermediate node.
             for in_conn_name in conn_names:
@@ -821,7 +821,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     #  of the Memlet we make a deep copy of it. There is a tricky part here, we have to
                     #  access `src_subset` however, this is only correctly set once it is put inside the
                     #  SDFG. Furthermore, we have to make sure that the Memlet does not change its direction.
-                    #  i.e. that the association of `subset` and `other_subset` does not change. For this
+                    #  i.e., that the association of `subset` and `other_subset` does not change. For this
                     #  reason we only modify `.data` attribute of the Memlet if its name refers to the old
                     #  intermediate. Furthermore, to play it safe, we only access the subset, `src_subset`
                     #  after we have inserted it to the SDFG.
@@ -979,10 +979,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         This is the value that must be substracted from the memlets to adjust, i.e
         (`memlet_to_adjust(correction, negative=True)`). If `producer_offset` is
         `None` then the function computes the correction that should be applied to
-        the producer memlets, i.e. the memlets of the tree converging at
+        the producer memlets, i.e., the memlets of the tree converging at
         `intermediate_node`. If `producer_offset` is given, it should be the output
         of the previous call to this function, with `producer_offset=None`. In this
-        case the function computes the correction for the consumer side, i.e. the
+        case the function computes the correction for the consumer side, i.e., the
         memlet tree that originates at `intermediate_desc`.
 
         :param original_subset: The original subset that was used to write into the
@@ -1198,7 +1198,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # While it is forbidden that a data container, used as intermediate, is also
         #  used as output of the second Map. It is allowed that the data container
         #  is used as intermediate and as input of the first Map. The partition only
-        #  checks that the data dependencies are mean, i.e. what is read by the second
+        #  checks that the data dependencies are mean, i.e., what is read by the second
         #  Map is also computed (written to the intermediate) it does not take into
         #  account the first Map's read to the data container.
         #  To make an example: The partition function will make sure that if the
@@ -1242,7 +1242,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # Now we inspect if there is a read write dependency, between data that is
         #  used as input and output of the fused Map. There is no problem is they
-        #  are pointwise, i.e. in each iteration the same locations are accessed.
+        #  are pointwise, i.e., in each iteration the same locations are accessed.
         #  Essentially they all boil down to `a += 1`.
         for inout_data_name in fused_inout_data_names:
             all_subsets = []
@@ -1298,7 +1298,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             else:
                 # The original code used `Range.offset` here, but that one had trouble
                 #  for `r1 = 'j, 0:10'` and `r2 = 'j, 0`. The solution would be to test
-                #  symmetrically, i.e. `r1 - r2` and `r2 - r1`. However, if we would
+                #  symmetrically, i.e., `r1 - r2` and `r2 - r1`. However, if we would
                 #  have `r2_1 = 'j, 0:10'` it consider it as failing, which is not
                 #  what we want. Thus we will use symmetric cover.
                 if not master_subset.covers(subset):
@@ -1317,7 +1317,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         state: dace.SDFGState,
         sdfg: dace.SDFG,
     ) -> bool:
-        """Tests if `data` is shared data, i.e. it can not be removed from the SDFG.
+        """Tests if `data` is shared data, i.e., it can not be removed from the SDFG.
 
         The function returns `True` is `data` refers to shared data and `False` otherwise.
         The process to determine this is as follows:
@@ -1325,7 +1325,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         2) If the AccessNode `data` has more than one outgoing edge or more than one incoming edge
             it is classified as shared.
         3) If `data` refers to non transient memory it is classified as shared.
-        4) If `FindSingleUseData` is in the pipeline it will be used. I.e. it will check if `data`
+        4) If `FindSingleUseData` is in the pipeline it will be used. I.e., it will check if `data`
             is in the set and return `True` or `False` otherwise.
         5) The function will perform a scan of the SDFG.
 

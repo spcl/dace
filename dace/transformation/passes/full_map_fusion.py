@@ -31,7 +31,7 @@ class FullMapFusion(ppl.Pass):
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
-        desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
+        desc="Only perform fusing if the Maps are inner Maps, i.e., does not have top level scope.",
     )
 
     strict_dataflow = properties.Property(
@@ -48,12 +48,12 @@ class FullMapFusion(ppl.Pass):
     require_exclusive_intermediates = properties.Property(
         dtype=bool,
         default=False,
-        desc="If `True` then all intermediates need to be 'exclusive', i.e. they will be removed by the fusion.",
+        desc="If `True` then all intermediates need to be 'exclusive', i.e., they will be removed by the fusion.",
     )
     require_all_intermediates = properties.Property(
         dtype=bool,
         default=False,
-        desc="If `True` all outputs of the first Map must be intermediate, i.e. going into the second Map.",
+        desc="If `True` all outputs of the first Map must be intermediate, i.e., going into the second Map.",
     )
 
     perform_vertical_map_fusion = properties.Property(
@@ -171,7 +171,7 @@ class FullMapFusion(ppl.Pass):
         fusion_transforms = []
         if self.perform_vertical_map_fusion:
             # We have to pass the single use data at construction. This is because that
-            #  `fusion._pipeline_results` is only defined, i.e. not `None` during `apply()`
+            #  `fusion._pipeline_results` is only defined, i.e., not `None` during `apply()`
             #  but during `can_be_applied()` it is not available. Thus we have to set it here.
             fusion_transforms.append(
                 dftrans.MapFusionVertical(
