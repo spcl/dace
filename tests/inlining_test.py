@@ -762,7 +762,6 @@ def _make_sdfg_for_multistate_inlining_with_symbol_promotion(
 
     nsdfg_node = outer_state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"inner_scalar", "a"},
         outputs={"b"},
         symbol_mapping=symbol_mapping,
@@ -929,7 +928,6 @@ def _make_sdfg_for_multistate_inlining_with_symbol_mapping(
 
     nsdfg_node = outer_state.add_nested_sdfg(
         sdfg=inner_sdfg,
-        parent=outer_sdfg,
         inputs={"a"},
         outputs={"b"},
         symbol_mapping=symbol_mapping,
