@@ -10,7 +10,7 @@ import time
 from os import path
 import warnings
 from numbers import Number
-from typing import Any, Dict, Iterable, List, Set, Tuple, Union, Callable, Optional
+from typing import Any, Dict, Iterable, List, Set, Tuple, Union, Callable, Optional, Literal
 import operator
 
 import dace
@@ -2072,7 +2072,6 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
                         self.inputs[vname] = (state, scope_memlet, inner_indices)
                         memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
 
@@ -2163,7 +2162,6 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
                         self.outputs[vname] = (state, scope_memlet, inner_indices)
                         inner_memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
                     vname = memlet.data
                 write_node = state.add_write(vname, debuginfo=self.current_lineinfo)
@@ -2293,9 +2291,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs),
                 extra_map_symbols=self._symbols_from_params(params, map_inputs))
-            tasklet = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
-            self._add_nested_symbols(tasklet)
-            self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
+            nsdfg_node = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
+            self._add_nested_symbols(nsdfg_node)
+            self._add_dependencies(state, nsdfg_node, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             from dace.codegen.tools.type_inference import infer_expr_type
@@ -3064,14 +3062,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
                 state.add_edge(tasklet, '__out', op3, None, out_memlet)
 
-    def _add_access(
-            self,
-            name: str,
-            rng: subsets.Range,
-            access_type: str,  # 'r' or 'w'
-            target: Union[ast.Name, ast.Subscript],
-            new_name: str = None,
-            arr_type: data.Data = None) -> str:
+    def _add_access(self,
+                    name: str,
+                    rng: subsets.Range,
+                    access_type: Literal['r', 'w'],
+                    target: Union[ast.Name, ast.Subscript],
+                    new_name: str = None,
+                    arr_type: data.Data = None) -> str:
         if access_type not in ('r', 'w'):
             raise ValueError("Access type {} is invalid".format(access_type))
         if new_name:
@@ -3461,13 +3458,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif (not name.startswith('__return')
                           and (isinstance(result_data, data.View) or
                                (not result_data.transient and isinstance(result_data, data.Array)))):
-                        true_name, new_data = self.sdfg.add_view(result,
-                                                                 result_data.shape,
-                                                                 result_data.dtype,
-                                                                 result_data.storage,
-                                                                 result_data.strides,
-                                                                 result_data.offset,
-                                                                 find_new_name=True)
+                        new_data = data.View.view(result_data)
+                        true_name = self.sdfg.add_datadesc(result, new_data, find_new_name=True)
                         self.views[true_name] = (result, Memlet.from_array(result, result_data))
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
