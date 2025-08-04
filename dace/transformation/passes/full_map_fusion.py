@@ -95,14 +95,14 @@ class FullMapFusion(ppl.Pass):
 
     def __init__(
         self,
+        perform_vertical_map_fusion: Optional[bool] = None,
+        perform_horizontal_map_fusion: Optional[bool] = None,
         only_inner_maps: Optional[bool] = None,
         only_toplevel_maps: Optional[bool] = None,
         strict_dataflow: Optional[bool] = None,
         assume_always_shared: Optional[bool] = None,
         require_exclusive_intermediates: Optional[bool] = None,
         require_all_intermediates: Optional[bool] = None,
-        perform_vertical_map_fusion: Optional[bool] = None,
-        perform_horizontal_map_fusion: Optional[bool] = None,
         only_if_common_ancestor: Optional[bool] = None,
         consolidate_edges_only_if_not_extending: Optional[bool] = None,
         never_consolidate_edges: Optional[bool] = None,
@@ -138,11 +138,24 @@ class FullMapFusion(ppl.Pass):
         if consolidate_edges_only_if_not_extending is not None:
             self.consolidate_edges_only_if_not_extending = consolidate_edges_only_if_not_extending
 
-        # TODO(phimuell): Raise an error if a flag was specified and the component that
-        #   needs it is disabled.
-
         if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
             raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
+        if not perform_vertical_map_fusion:
+            unique_vertical_arguments = {
+                "strict_dataflow": strict_dataflow,
+                "assume_always_shared": assume_always_shared,
+                "require_exclusive_intermediates": require_exclusive_intermediates,
+                "require_all_intermediates": require_exclusive_intermediates,
+            }
+            specified_vertical_arguments = [arg for arg, val in unique_vertical_arguments.items() if val is not None]
+            if specified_vertical_arguments:
+                raise ValueError(
+                    f'Used `FullMapFusion` without vertical Map fusion, but speciefied: {", ".join(specified_vertical_arguments)}'
+                )
+        if not perform_horizontal_map_fusion:
+            if only_if_common_ancestor is not None:
+                raise ValueError(
+                    f'Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Scopes | ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
