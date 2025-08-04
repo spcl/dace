@@ -131,7 +131,6 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     inner_sdfg_1 = _make_nested_sdfg("first_adding")
     nsdfg_node_1 = state.add_nested_sdfg(
         sdfg=inner_sdfg_1,
-        parent=outer_sdfg,
         inputs={"A", "B"},
         outputs={"C"},
         symbol_mapping={},
@@ -147,7 +146,6 @@ def _make_chain_reduction_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, dace_nodes.
     inner_sdfg_2 = _make_nested_sdfg("second_adding")
     nsdfg_node_2 = state.add_nested_sdfg(
         sdfg=inner_sdfg_2,
-        parent=outer_sdfg,
         inputs={"A", "B"},
         outputs={"C"},
         symbol_mapping={},
@@ -277,8 +275,8 @@ def test_empty_memlets():
     nstate2.add_edge(tasklet2, 'a_res', nstate2.add_write('field_a'), None, dace.Memlet.simple('field_a',
                                                                                                subset_str='0'))
 
-    nsdfg1_node = state.add_nested_sdfg(nsdfg1, None, {'field_a'}, {'field_b'})
-    nsdfg2_node = state.add_nested_sdfg(nsdfg2, None, {'field_a'}, {'field_a'})
+    nsdfg1_node = state.add_nested_sdfg(nsdfg1, {'field_a'}, {'field_b'})
+    nsdfg2_node = state.add_nested_sdfg(nsdfg2, {'field_a'}, {'field_a'})
 
     a_read = state.add_read('field_a')
     state.add_edge(a_read, None, nsdfg1_node, 'field_a', dace.Memlet.simple('field_a', subset_str='0'))
@@ -463,7 +461,7 @@ def test_inline_symexpr():
     sdfg.add_symbol('i', dace.int32)
     state = sdfg.add_state()
     w = state.add_write('A')
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'a'}, {'j': 'min(i, 10)'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'a'}, {'j': 'min(i, 10)'})
     state.add_edge(nsdfg_node, 'a', w, None, dace.Memlet('A'))
 
     # Verify that compilation works before inlining

@@ -194,31 +194,9 @@ def redundant_array_crashes_codegen_test_original_graph():
     return g
 
 
-def test_redundant_array_does_not_crash_codegen_but_produces_bad_graph_now():
-    """
-    This test demonstrates the bug in CPP Codegen that the [PR](https://github.com/spcl/dace/pull/1692) fixes.
-    """
-    g = redundant_array_crashes_codegen_test_original_graph()
-    g.apply_transformations(RedundantArray)
-    g.validate()
-    g.compile()
-
-    # NOTE: The produced graph still has bug. So, let's test for its existence.
-    assert len(g.states()) == 1
-    st = g.states()[0]
-    assert len(st.source_nodes()) == 1
-    src = st.source_nodes()[0]
-    assert len(st.out_edges(src)) == 1
-    e = st.out_edges(src)[0]
-    # This is the wrong part. These symbols are not available in this scope.
-    assert e.data.free_symbols == {'i', 'j'}
-
-
 if __name__ == '__main__':
     test_reshape_strides_multidim_array_all_dims_unit()
     test_reshape_strides_multidim_array_some_dims_unit()
     test_reshape_strides_multidim_array_different_shape()
     test_reshape_strides_from_strided_range()
     test_reshape_strides_from_strided_and_offset_range()
-
-    test_redundant_array_does_not_crash_codegen_but_produces_bad_graph_now()

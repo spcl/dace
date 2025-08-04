@@ -457,7 +457,7 @@ def test_nested_promotion_connector(with_subscript):
     nstate2.add_edge(a, None, t, 'inp', dace.Memlet('a[s2, s2 + 1]'))
     nstate2.add_edge(t, 'out', b, None, dace.Memlet('b[0]'))
 
-    nnode = state.add_nested_sdfg(nsdfg, None, {'a', 's'}, {'b'})
+    nnode = state.add_nested_sdfg(nsdfg, {'a', 's'}, {'b'})
     aouter = state.add_read('A')
     souter = state.add_read('scal')
     bouter = state.add_write('B')
