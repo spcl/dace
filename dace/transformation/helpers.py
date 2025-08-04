@@ -247,7 +247,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         fsymbols.update(defined_symbols)
         fsymbols = fsymbols - strictly_defined_symbols
         mapping = {s: s for s in fsymbols}
-        cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
+        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
@@ -495,7 +495,7 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg, None,
+    nested_sdfg = state.add_nested_sdfg(nsdfg,
                                         set(input_names.values()) | input_arrays,
                                         set(output_names.values()) | output_arrays.keys())
 
@@ -1152,13 +1152,15 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     :param sym: The symbol to test.
     :return: True if the symbol can be removed, False otherwise.
     """
+    # TODO: Investigate if this function can be replaced by a call to `used_symbols()`.
+    #   See https://github.com/spcl/dace/pull/2080#discussion_r2226418881
     for desc in sdfg.arrays.values():
         if sym in map(str, desc.free_symbols):
             return False
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         if sym in state.free_symbols:
             return False
-    for e in sdfg.edges():
+    for e in sdfg.all_interstate_edges():
         if sym in e.data.free_symbols:
             return False
 

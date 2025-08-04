@@ -3,6 +3,7 @@
 
 from .block_fusion import BlockFusion
 from .condition_fusion import ConditionFusion
+from .condition_map_interchange import ConditionMapInterchange
 from .state_fusion import StateFusion
 from .state_fusion_with_happens_before import StateFusionExtended
 from .state_elimination import (EndStateElimination, StartStateElimination, StateAssignElimination,

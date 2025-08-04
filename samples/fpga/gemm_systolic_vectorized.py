@@ -489,7 +489,7 @@ c_out = c_val + a_in * b_in""")
 
     # We need to enforce sequentiality between these loops
     write_sdfg = dace.SDFG("write_C")
-    write_sdfg_node = state.add_nested_sdfg(write_sdfg, sdfg, {"buffer_in", "forward_in"}, {"forward_out"})
+    write_sdfg_node = state.add_nested_sdfg(write_sdfg, {"buffer_in", "forward_in"}, {"forward_out"})
     state.add_memlet_path(C_buffer_write,
                           write_entry,
                           write_sdfg_node,
