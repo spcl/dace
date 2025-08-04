@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 import dace.sdfg.utils as sdutils
