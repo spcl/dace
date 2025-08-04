@@ -133,14 +133,14 @@ def test_nested_symbol_as_constant():
 @pytest.mark.parametrize("global_symbol", [True, False])
 def test_nested_symbol_collision(in_symbol_mapping, global_symbol):
     """
-        Test for symbol name collision between outer map and nested SDFG.
+    Test for symbol name collision between outer map and nested SDFG.
 
-        This test checks for a potential bug where a map uses symbol 'i' as its iterator,
-        and a nested SDFG inside that map also defines its own symbol 'i'. The nested
-        SDFG's symbol should be independent, but there's a risk that the outer 'i'
-        could be incorrectly substituted into the nested SDFG, causing incorrect behavior
-        when accessing array elements like B[i] where 'i' should refer to the outer symbol.
-        """
+    This test checks for a potential bug where a map uses symbol 'i' as its iterator,
+    and a nested SDFG inside that map also defines its own symbol 'i'. The nested
+    SDFG's symbol should be independent, but there's a risk that the outer 'i'
+    could be incorrectly substituted into the nested SDFG, causing incorrect behavior
+    when accessing array elements like B[i] where 'i' should refer to the outer symbol.
+    """
     # Create outer SDFG
     sdfg = dace.SDFG('test_symbol_collision')
     sdfg.add_array('B', [43], dace.float64)
