@@ -3,6 +3,7 @@ import copy
 import dace
 import dace.sdfg.utils as sdutils
 import pytest
+from dace.transformation.passes.analysis.scope_data_and_symbol_analysis import ScopeDataAndSymbolAnalysis, ScopeAnalysis
 
 
 def _add_shared_memory(sdfg: dace.SDFG, add_src_access_node: bool = False):
@@ -154,9 +155,7 @@ def _gen_sdfg_with_symbol_use_in_nsdfg(write_only: bool = True) -> dace.SDFG:
     return sdfg, s1, nsdfg
 
 
-def test_const_utilities_case_non_const_input_not_present_in_output():
-    """Standalone test function that can be run without pytest."""
-
+def _generate_and_transform_sdfg():
     # Create kernel
     N = dace.symbol("N", dtype=dace.int64)
     K = 5
@@ -187,12 +186,15 @@ def test_const_utilities_case_non_const_input_not_present_in_output():
     assert original_state is not None
     assert transformed_state is not None
 
+    return original_sdfg, transformed_sdfg, original_state, transformed_state
+
+
+def test_const_utilities_case_non_const_input_not_present_in_output():
+    _, transformed_sdfg, original_state, transformed_state = _generate_and_transform_sdfg()
+
     all_data_names = set(node.data for node in original_state.data_nodes())
     transformed_sdfg_tmp_names = set(node.data for node in transformed_state.data_nodes()
                                      if transformed_sdfg.arrays[node.data].transient)
-    original_sdfg_tmp_names = set(node.data for node in original_state.data_nodes()
-                                  if original_sdfg.arrays[node.data].transient)
-
     # Original state tests
     _check_map_entries(original_state, True, False, dace.dtypes.ScheduleType.GPU_Device, all_data_names - {"C"},
                        {"i", "N"})
@@ -238,7 +240,7 @@ def test_const_utilities_case_non_const_input_not_present_in_output():
 
 
 def test_const_utilities_case_write_only_free_symbol_in_nsdfg():
-    sdfg1, s1, nsdfg1 = _gen_sdfg_with_symbol_use_in_nsdfg(write_only=True)
+    sdfg1, _, nsdfg1 = _gen_sdfg_with_symbol_use_in_nsdfg(write_only=True)
     sdfg1.validate()
 
     const_data = sdutils.get_constant_data(nsdfg1)
@@ -246,7 +248,7 @@ def test_const_utilities_case_write_only_free_symbol_in_nsdfg():
     assert set() == const_data
     assert set() == const_symbols
 
-    sdfg2, s2, nsdfg2 = _gen_sdfg_with_symbol_use_in_nsdfg(write_only=False)
+    sdfg2, _, nsdfg2 = _gen_sdfg_with_symbol_use_in_nsdfg(write_only=False)
     sdfg2.validate()
     const_data = sdutils.get_constant_data(nsdfg2)
     const_symbols = sdutils.get_constant_symbols(nsdfg2)
@@ -254,6 +256,25 @@ def test_const_utilities_case_write_only_free_symbol_in_nsdfg():
     assert set() == const_symbols
 
 
+def test_const_utilities_pass_case_non_const_input_not_present_in_output():
+    _, transformed_sdfg, _, transformed_state = _generate_and_transform_sdfg()
+    args_dict = ScopeDataAndSymbolAnalysis().apply_pass(sdfg=transformed_sdfg, pipeline_res={})
+    assert len(args_dict) == 1
+    kernel_id, kernel_const_args = next(iter(args_dict.items()))
+    assert kernel_const_args.used_symbols == {"i", "N"}  # Used Symbols
+    assert "A" in kernel_const_args.used_data and "B" in kernel_const_args.used_data  # Used Data
+    assert kernel_const_args.constant_symbols == {"i", "N"}  # Constant Symbols
+    assert kernel_const_args.constant_data == set()  # Constant Data
+    guid = next(
+        iter({
+            n.guid
+            for n in transformed_state.nodes()
+            if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
+        }))
+    assert guid == kernel_id
+
+
 if __name__ == "__main__":
     test_const_utilities_case_non_const_input_not_present_in_output()
     test_const_utilities_case_write_only_free_symbol_in_nsdfg()
+    test_const_utilities_pass_case_non_const_input_not_present_in_output()
