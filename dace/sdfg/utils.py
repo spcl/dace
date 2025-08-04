@@ -2288,7 +2288,8 @@ def get_used_symbols(
     include_symbols_for_offset_calculations: bool = False,
 ) -> Set[str]:
     """
-    Returns a set of all used symbols in the given control flow region, state, or with the map scope.
+    Returns a set of all used symbols, that have been defined by the scope or were already defined for the duration of the
+    scope in the given control flow region, state, or with the map scope.
 
     :param cfg: The control flow region, state or a map entry node to check.
     :param parent_state: The parent graph of the scope, used only for MapEntry nodes.
@@ -2304,7 +2305,8 @@ def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.Map
                          parent_state: Union[SDFGState, None] = None,
                          include_symbols_for_offset_calculations: bool = False) -> Set[str]:
     """
-    Returns a set of all constant symbols in the given control flow region, state, or with the map scope.
+    Returns a set of all constant symbols in the given control flow region, state, or with the map scope,
+    which have been defined by the scope (e.g. map) or defined for the duration of the scope.
     A symbol is considered constant if no interstate edge within the scope writes to it.
 
     :param cfg: The control flow region, state or a map entry node to check.
