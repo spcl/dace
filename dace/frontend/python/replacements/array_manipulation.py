@@ -44,13 +44,14 @@ def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis
     #                  for a, s in zip(axis, desc.shape)])
     # dset = ','.join([f'0:{s}:1' for s in desc.shape])
 
+    arr_copy_name = pv.get_target_name()
     # view = _ndarray_reshape(pv, sdfg, state, arr, desc.shape)
-    # acpy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
+    # acpy, _ = sdfg.add_transient(arr_copy_name, desc.shape, desc.dtype, desc.storage, find_new_name=True)
     # vnode = state.add_read(view)
     # anode = state.add_read(acpy)
     # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> [{dset}]'))
 
-    arr_copy, _ = sdfg.add_temp_transient_like(desc)
+    arr_copy, _ = sdfg.add_temp_transient_like(desc, name=arr_copy_name)
     inpidx = ','.join([f'__i{i}' for i in range(ndim)])
     outidx = ','.join([f'{s} - __i{i} - 1' if a else f'__i{i}' for i, (a, s) in enumerate(zip(axis, desc.shape))])
     state.add_mapped_tasklet(name="_numpy_flip_",
@@ -109,7 +110,7 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
         to_flip = [axes[0]]
         transpose = True
 
-    arr_copy, narr = sdfg.add_temp_transient_like(desc)
+    arr_copy, narr = sdfg.add_temp_transient_like(desc, name=pv.get_target_name())
 
     shape_list = list(narr.shape)
     if transpose:
@@ -159,7 +160,8 @@ def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, a
 
     restype = arr1.dtype
     new_shape = [arr1.shape[i] for i in axes]
-    outname, arr2 = sdfg.add_temp_transient(new_shape, restype, arr1.storage)
+    outname = pv.get_target_name()
+    outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
     if axes == (1, 0):  # Special case for 2D transposition
         acc1 = state.add_read(inpname)
@@ -429,20 +431,22 @@ def _make_datatype_converter(typeclass: str):
     @oprepo.replaces("dace.{}".format(typeclass))
     @oprepo.replaces("numpy.{}".format(typeclass))
     def _converter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arg: UfuncInput):
-        return _datatype_converter(sdfg, state, arg, dtype=dtype)
+        return _datatype_converter(sdfg, state, arg, dtype=dtype, name_hint=pv.get_target_name())
 
 
 for typeclass in dtypes.TYPECLASS_STRINGS:
     _make_datatype_converter(typeclass)
 
 
-def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dtypes.typeclass) -> UfuncOutput:
+def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dtypes.typeclass,
+                        name_hint: str) -> UfuncOutput:
     """ Out-of-place datatype conversion of the input argument.
 
         :param sdfg: SDFG object
         :param state: SDFG State object
         :param arg: Input argument
         :param dtype: Datatype to convert input argument into
+        :param name_hint: Name hint for the output array
 
         :return: ``dace.data.Array`` of same size as input or ``dace.data.Scalar``
     """
@@ -452,7 +456,7 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
     (out_shape, map_indices, out_indices, inp_indices) = ufunc._validate_shapes(None, None, sdfg, None, [arg], [None])
 
     # Create output data
-    outputs = ufunc._create_output(sdfg, [arg], [None], out_shape, dtype)
+    outputs = ufunc._create_output(sdfg, [arg], [None], out_shape, dtype, name_hint=name_hint)
 
     # Set tasklet parameters
     impl = {
@@ -490,7 +494,7 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
 def _ndarray_astype(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype: dtypes.typeclass) -> str:
     if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
         dtype = dtypes.typeclass(dtype)
-    return _datatype_converter(sdfg, state, arr, dtype)[0]
+    return _datatype_converter(sdfg, state, arr, dtype, pv.get_target_name())[0]
 
 
 @oprepo.replaces('numpy.concatenate')
@@ -543,7 +547,12 @@ def _concat(visitor: ProgramVisitor,
     if out is None:
         if dtype is None:
             dtype = descs[0].dtype
-        name, odesc = sdfg.add_temp_transient(shape, dtype, storage=descs[0].storage, lifetime=descs[0].lifetime)
+        name, odesc = sdfg.add_transient(visitor.get_target_name(),
+                                         shape,
+                                         dtype,
+                                         storage=descs[0].storage,
+                                         lifetime=descs[0].lifetime,
+                                         find_new_name=True)
     else:
         name = out
         odesc = sdfg.arrays[out]
@@ -744,10 +753,16 @@ def _split_core(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
     r = state.add_read(ary)
     result = []
     offset = 0
-    for section in sections:
+    outname = visitor.get_target_name()
+    for i, section in enumerate(sections):
         shape = list(desc.shape)
         shape[axis] = section - offset
-        name, _ = sdfg.add_temp_transient(shape, desc.dtype, storage=desc.storage, lifetime=desc.lifetime)
+        name, _ = sdfg.add_transient(f'{outname}_{i}',
+                                     shape,
+                                     desc.dtype,
+                                     storage=desc.storage,
+                                     lifetime=desc.lifetime,
+                                     find_new_name=True)
         # Add copy
         w = state.add_write(name)
         subset = subsets.Range.from_array(desc)
@@ -759,7 +774,12 @@ def _split_core(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
     # Add final section
     shape = list(desc.shape)
     shape[axis] -= offset
-    name, _ = sdfg.add_temp_transient(shape, desc.dtype, storage=desc.storage, lifetime=desc.lifetime)
+    name, _ = sdfg.add_transient(f'{outname}_{len(sections)}',
+                                 shape,
+                                 desc.dtype,
+                                 storage=desc.storage,
+                                 lifetime=desc.lifetime,
+                                 find_new_name=True)
     w = state.add_write(name)
     subset = subsets.Range.from_array(desc)
     subset[axis] = (offset, offset + shape[axis] - 1, 1)
