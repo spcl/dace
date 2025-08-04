@@ -2268,7 +2268,7 @@ def get_constant_data(scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, 
                 if _incoming_memlet(state, node):
                     written_data.add(node.data)
 
-        # Need to consider map outputs and outputs too
+        # Need to consider map inputs and outputs too
         for ie in state.in_edges(scope):
             if ie.data is not None and ie.data.data is not None:
                 used_data.add(ie.data.data)
@@ -2295,7 +2295,7 @@ def get_used_symbols(
     :return: A set of symbol names.
     """
     return _get_used_symbols_impl(scope=scope,
-                                  constant_syms_only=True,
+                                  constant_syms_only=False,
                                   parent_state=parent_state,
                                   include_symbols_for_offset_calculations=include_symbols_for_offset_calculations)
 

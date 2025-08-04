@@ -879,7 +879,7 @@ class MapEntry(EntryNode):
 
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
-        Returns a set of symbol names that are used withn the Map scope created by this MapEntry
+        Returns a set of symbol names that are used within the Map scope created by this MapEntry
 
         :param all_symbols: If False, only returns symbols that are needed as arguments (only used in generated code).
         """
