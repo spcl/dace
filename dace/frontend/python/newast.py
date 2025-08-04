@@ -3517,6 +3517,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     self, target, f'Cannot assign value to global attribute or field "{name}". '
                     'Please define it prior to calling the function/method.')
 
+            # Special case: Assignment is not necessary as the target name is used in the internal expression
+            if true_name == result:
+                continue
+
             if (not is_return and isinstance(target, ast.Name) and true_name and not op
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
                 if true_name in self.views:
