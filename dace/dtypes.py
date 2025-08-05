@@ -1268,7 +1268,7 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
 MPI_Request = opaque('MPI_Request')
-
+gpuStream_t = opaque('gpuStream_t')
 
 @undefined_safe_enum
 @extensible_enum
@@ -1288,6 +1288,7 @@ class Typeclasses(aenum.AutoNumberEnum):
     float64 = float64
     complex64 = complex64
     complex128 = complex128
+    gpuStream_t = gpuStream_t
 
 
 _bool = bool
