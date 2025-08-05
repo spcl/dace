@@ -3518,7 +3518,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     'Please define it prior to calling the function/method.')
 
             # Special case: Assignment is not necessary as the target name is used in the internal expression
-            if true_name == result:
+            if true_name == result and op is None:
                 continue
 
             if (not is_return and isinstance(target, ast.Name) and true_name and not op
