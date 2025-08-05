@@ -1380,7 +1380,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # If the current AST node is a direct descendant of an assignment,
         # return the name of the left-hand side of the assignment.
-        if isinstance(self.current_ast_stack[-2], ast.Assign):
+        if len(self.current_ast_stack) > 1 and isinstance(self.current_ast_stack[-2], ast.Assign):
             target = self.current_ast_stack[-2].targets[0]
             if isinstance(target, ast.Tuple) and len(target.elts) > output_index:
                 return self._get_name_from_node(target.elts[output_index])
