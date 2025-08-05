@@ -3216,9 +3216,10 @@ class ProgramVisitor(ExtNodeVisitor):
         if new_name:
             var_name = new_name
         elif target:
-            var_name = "__tmp_{l}_{c}_{a}".format(l=target.lineno, c=target.col_offset, a=access_type)
+            var_name = self._get_name_from_node(target)
+            # var_name = "__tmp_{l}_{c}_{a}".format(l=target.lineno, c=target.col_offset, a=access_type)
         else:
-            var_name = self.sdfg.temp_data_name()
+            var_name = self.get_target_name()
 
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
