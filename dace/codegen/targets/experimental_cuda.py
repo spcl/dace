@@ -802,6 +802,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
         # ------------------- Declaration -------------------
+        # NOTE: Experimental for GPU stream
+        if nodedesc.dtype == dtypes.gpuStream_t:
+            array_ctype = f'{nodedesc.dtype.ctype} *'
+            declaration_stream.write(f'{nodedesc.dtype.ctype} * {dataname} = __state->gpu_context->streams;\n', cfg, state_id, node)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
+            return
+
         declared = self._dispatcher.declared_arrays.has(dataname)
 
         if not declared:
@@ -904,6 +911,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 callsite_stream.write(f'DACE_GPU_CHECK({self.backend}Free({dataname}));\n', cfg, state_id, node)
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
+            if nodedesc.dtype == dtypes.gpuStream_t:
+                return
             callsite_stream.write(f'DACE_GPU_CHECK({self.backend}FreeHost({dataname}));\n', cfg, state_id, node)
 
         elif nodedesc.storage in {dtypes.StorageType.GPU_Shared, dtypes.StorageType.Register}:
