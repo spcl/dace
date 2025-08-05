@@ -762,13 +762,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
         # ------------------- Declaration -------------------
-        array_ctype = f'{nodedesc.dtype.ctype} *'
         declared = self._dispatcher.declared_arrays.has(dataname)
 
         if not declared:
+            array_ctype = f'{nodedesc.dtype.ctype} *'
             declaration_stream.write(f'{array_ctype} {dataname};\n', cfg, state_id, node)
-
-        self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 
         # ------------------- Allocation -------------------
         arrsize = nodedesc.total_size
@@ -803,13 +802,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
         # ------------------- Declaration -------------------
-        array_ctype = f'{nodedesc.dtype.ctype} *'
         declared = self._dispatcher.declared_arrays.has(dataname)
 
         if not declared:
+            array_ctype = f'{nodedesc.dtype.ctype} *'
             declaration_stream.write(f'{array_ctype} {dataname};\n', cfg, state_id, node)
-
-        self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
 
         # ------------------- Allocation -------------------
         arrsize = nodedesc.total_size
