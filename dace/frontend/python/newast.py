@@ -825,12 +825,13 @@ class TaskletTransformer(ExtNodeTransformer):
 
         if arr_type is None:
             arr_type = type(parent_array)
+            var_name = self.sdfg._find_new_name(var_name)
         if arr_type == data.Scalar:
-            self.sdfg.add_scalar(var_name, dtype)
+            var_name, _ = self.sdfg.add_scalar(var_name, dtype, find_new_name=True)
         elif issubclass(arr_type, data.Array):
-            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
+            var_name, _ = self.sdfg.add_array(var_name, shape, dtype, strides=strides, find_new_name=True)
         elif arr_type == data.Stream:
-            self.sdfg.add_stream(var_name, dtype)
+            var_name, _ = self.sdfg.add_stream(var_name, dtype, find_new_name=True)
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
@@ -3313,17 +3314,17 @@ class ProgramVisitor(ExtNodeVisitor):
             if arr_type not in (data.Stream, data.Structure) and (shape == [1] or shape == (1, )):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
-            self.sdfg.add_scalar(var_name, dtype)
+            var_name, _ = self.sdfg.add_scalar(var_name, dtype, find_new_name=True)
         elif issubclass(arr_type, data.Array):
             if non_squeezed:
                 strides = [strides[d] for d in non_squeezed]
             else:
                 strides = [1]
-            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
+            var_name, _ = self.sdfg.add_array(var_name, shape, dtype, strides=strides, find_new_name=True)
         elif arr_type == data.Stream:
-            self.sdfg.add_stream(var_name, dtype)
+            var_name, _ = self.sdfg.add_stream(var_name, dtype, find_new_name=True)
         elif arr_type == data.Structure:
-            self.sdfg.add_datadesc(var_name, copy.deepcopy(parent_array))
+            var_name = self.sdfg.add_datadesc(var_name, copy.deepcopy(parent_array), find_new_name=True)
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
