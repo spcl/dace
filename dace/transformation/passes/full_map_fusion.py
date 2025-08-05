@@ -140,7 +140,7 @@ class FullMapFusion(ppl.Pass):
 
         if not (self.perform_vertical_map_fusion or self.perform_horizontal_map_fusion):
             raise ValueError('Neither perform `MapFusionVertical` nor `MapFusionHorizontal`')
-        if not perform_vertical_map_fusion:
+        if not self.perform_vertical_map_fusion:
             unique_vertical_arguments = {
                 "strict_dataflow": strict_dataflow,
                 "assume_always_shared": assume_always_shared,
@@ -152,7 +152,7 @@ class FullMapFusion(ppl.Pass):
                 raise ValueError(
                     f'Used `FullMapFusion` without vertical Map fusion, but speciefied: {", ".join(specified_vertical_arguments)}'
                 )
-        if not perform_horizontal_map_fusion:
+        if not self.perform_horizontal_map_fusion:
             if only_if_common_ancestor is not None:
                 raise ValueError(
                     f'Used `FullMapFusion` without horizontal Map fusion, but speciefied: only_if_common_ancestor')
