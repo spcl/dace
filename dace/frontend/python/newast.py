@@ -1164,6 +1164,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.outputs: DependencyType = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
         self.current_ast_stack: List[ast.AST] = []
+        self.default_output_index: int = 0
 
         self.modules = {k: v.__name__ for k, v in self.globals.items() if dtypes.ismodule(v)}
 
@@ -1359,7 +1360,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def get_target_name(self, output_index: int = 0) -> str:
+    def get_target_name(self, output_index: Optional[int] = None) -> str:
         """
         A heuristic that returns a human-readable name of the current assignment target or expression,
         in a way that is closest to the original Python code.
@@ -1376,6 +1377,8 @@ class ProgramVisitor(ExtNodeVisitor):
             warnings.warn("get_target_name() called without a current AST node. Returning placeholder name.",
                           UserWarning)
             return self.sdfg.temp_data_name()
+
+        output_index = output_index if output_index is not None else self.default_output_index
 
         current_ast_node = self.current_ast_stack[-1]
 
@@ -1487,7 +1490,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 pass
             return 'expr'
 
-    def add_temp_transient(self, *args, output_index=0, **kwargs) -> Tuple[str, data.Data]:
+    def add_temp_transient(self, *args, output_index=None, **kwargs) -> Tuple[str, data.Data]:
         """
         Helper shorthand method to add a transient array to the SDFG with a heuristically-generated name.
         Takes the same arguments as ``SDFG.add_temp_transient()``.
@@ -3440,14 +3443,27 @@ class ProgramVisitor(ExtNodeVisitor):
         elts = None
         results = None
         if isinstance(node_target, (ast.Tuple, ast.List)):
-            elts = node_target.elts
+            elts = list(node_target.elts)
         else:
             elts = [node_target]
 
+        # Unpack remaining tuples in left-hand side
+        tuple_found = True
+        while tuple_found:
+            tuple_found = False
+            for i, target in enumerate(elts):
+                if isinstance(target, (ast.Tuple, ast.List)):
+                    # Extend elts with the elements of the tuple/list
+                    elts = elts[:i] + target.elts + elts[i + 1:]
+                    tuple_found = True
+                    break
+
         results = []
         if isinstance(node.value, (ast.Tuple, ast.List)):
-            for n in node.value.elts:
+            for i, n in enumerate(node.value.elts):
+                self.default_output_index = i
                 results.extend(self._gettype(n))
+            self.default_output_index = 0
         else:
             rval = self._gettype(node.value)
             if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays
