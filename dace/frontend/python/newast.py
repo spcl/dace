@@ -1271,7 +1271,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     return_state.add_nedge(r, w, Memlet(vname))
                 else:
                     # Other cases can be replaced with return value directly
-                    self.sdfg.replace(arrname, vname)
+                    replace_datadesc_names(self.sdfg, {arrname: vname})
                     for k, (v, m) in self.views.items():
                         if v == arrname:
                             m.data = vname
