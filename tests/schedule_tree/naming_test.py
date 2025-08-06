@@ -38,7 +38,7 @@ def _nested_irreducible_loops():
     nsdfg = _irreducible_loop_to_loop()
 
     l1 = sdfg.node(5)
-    l1.add_nested_sdfg(nsdfg, None, {}, {})
+    l1.add_nested_sdfg(nsdfg, {}, {})
     return sdfg
 
 
@@ -96,7 +96,7 @@ def test_clash_symbol_mapping(constprop):
     nstate2.add_edge(t, 'b', w, None, dace.Memlet('out[k]'))
 
     # Connect nested SDFG to parent SDFG with an offset memlet
-    nsdfg_node = state2.add_nested_sdfg(nsdfg, None, {}, {'out'}, {'N': 'M', 'M': 'N', 'k': 'k'})
+    nsdfg_node = state2.add_nested_sdfg(nsdfg, {}, {'out'}, {'N': 'M', 'M': 'N', 'k': 'k'})
     w = state2.add_write('A')
     state2.add_edge(nsdfg_node, 'out', w, None, dace.Memlet('A[100:200]'))
 
@@ -153,7 +153,7 @@ def test_edgecase_symbol_mapping():
     nsdfg.add_edge(nstate, nstate2, dace.InterstateEdge(assignments={'k': 'M + 1'}))
     nsdfg.add_edge(nstate2, nstate3, dace.InterstateEdge(assignments={'l': 'k'}))
 
-    state2.add_nested_sdfg(nsdfg, None, {}, {}, {'N': 'M', 'M': 'N', 'k': 'M + 1'})
+    state2.add_nested_sdfg(nsdfg, {}, {}, {'N': 'M', 'M': 'N', 'k': 'M + 1'})
 
     stree = as_schedule_tree(sdfg)
 
