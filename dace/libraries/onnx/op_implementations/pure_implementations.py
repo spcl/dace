@@ -1069,14 +1069,16 @@ class PureCumSum(ONNXForward):
         nstate.add_edge(tasklet, "__y", output_nodes["y"], None, dace.Memlet.from_array("y", y_desc))
 
         return nsdfg
-
+    
 @op_implementation(op="Unsqueeze", name="pure")
 class PureUnsqueeze(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState,
                                sdfg: SDFG) -> bool:
-        return True
+        # Avoid this expansion if the backward pass will be contructed
+        # TODO pass the backward flag to the functions
+        return False
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState,
@@ -1158,7 +1160,7 @@ class PureUnsqueeze(ONNXForward):
                         dace.Memlet("expanded"))
 
         return nsdfg
-    
+
 @op_implementation(op="Unsqueeze", name="pure")
 class PureUnsqueeze(ONNXForward):
 
@@ -1176,8 +1178,7 @@ class PureUnsqueeze(ONNXForward):
             expanded[:] = np.reshape(data, expanded_desc.shape)
 
         return program_for_node(prog, sdfg, state, node)
-
-
+    
 @op_implementation(op="Squeeze", name="pure")
 class PureSqueeze(ONNXForward):
 
@@ -1247,8 +1248,12 @@ class PureSqueeze(ONNXForward):
 
 
 @op_implementation(op="ReduceMean", name="pure")
-class PureReduceMean(ONNXForward):
-
+class PureReduceMeanCPP(ONNXForward):
+    def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
+        # Avoid this expansion if the backward pass will be contructed
+        # TODO pass the backward flag to the functions
+        return False
+    
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
         # Set up the common SDFG structure
@@ -1403,12 +1408,19 @@ class PureEinsum(ONNXForward):
             desc.transient = False
             nsdfg.add_datadesc(e.src_conn, desc)
 
+        # Check if there is a wcr sum to accumulate the result instead of initialization the output
+        # This is necessary for gradient accumulation to be consistent
+        output_edge = state.out_edges(node)
+        assert len(output_edge) == 1, "Einsum node should have exactly one output edge"
+        output_edge = output_edge[0]
+        beta = 1 if output_edge.data.wcr else 0
         create_einsum_sdfg(None,
                            nsdfg,
                            nstate,
                            node.equation.replace(" ", ""),
                            *(e.dst_conn for e in node.iter_inputs_in_onnx_order(state)),
-                           output="Output")
+                           output="Output",
+                           beta=beta)
         return nsdfg
 
 
@@ -2000,10 +2012,58 @@ def Sigmoid(X, Y):
     Y[:] = dace.elementwise(lambda x: dtype(1) / (dtype(1) + exp(-x)), X)
 
 
-@python_pure_op_implementation(axes=lambda node: node.axes)
-def ReduceMean(data, reduced):
-    reduced[:] = np.mean(data, axis=axes)
+@op_implementation(op="ReduceMean", name="pure")
+class PureReduceMean(ONNXForward):
+    '''
+        ReduceMean expansion
+    '''
 
+    @staticmethod
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        # Check that all the inputs (even the optional ones) are present and constant
+        
+        if not hasattr(sdfg, "_parent_onnx_model"):
+            return False
+
+        # optional inputs
+        is_axes_present = True
+        try:
+            if in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+                return False
+        except ValueError:
+            is_axes_present = False
+
+        if not is_axes_present and hasattr(node, "axes"):
+            is_axes_present = True
+            
+        # Current constraints: axes must be explict. Axes must be zero
+        if not is_axes_present:
+            return False
+        
+        return True
+
+    @staticmethod
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # We treat both cases where axes is an attribute and where it is an input
+        # Since can be applied is true, we know that axes is present and valid
+        axes = None
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
+        except ValueError:
+            pass
+        if axes:
+            # Axes is a constant input to the node
+            raise NotImplementedError(
+                "PureReduceMean in the case where the axes are input connectors is not implemented yet.")
+        elif hasattr(node, "axes"):
+            # Axes is an attribute of the node
+            axes = node.axes
+
+            def prog(data, reduced):
+                reduced[:] = np.mean(data, axis=axes)
+
+            return program_for_node(prog, sdfg, state, node)
 
 @python_pure_op_implementation
 def Erf(input, output):
