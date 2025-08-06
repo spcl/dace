@@ -1388,9 +1388,13 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(self.current_ast_stack) > 1 and isinstance(self.current_ast_stack[-2], ast.Assign):
             target = self.current_ast_stack[-2].targets[0]
             if isinstance(target, ast.Tuple) and len(target.elts) > output_index:
-                return self._get_name_from_node(target.elts[output_index])
-            if isinstance(target, (ast.Name, ast.Subscript, ast.Attribute)):
-                return self._get_name_from_node(target)
+                candidate = self._get_name_from_node(target.elts[output_index])
+            elif isinstance(target, (ast.Name, ast.Subscript, ast.Attribute)):
+                candidate = self._get_name_from_node(target)
+
+            # If candidate appears in right-hand side (use ast.walk), skip
+            if candidate and not any(candidate == self._get_name_from_node(n) for n in ast.walk(current_ast_node)):
+                return candidate
 
         # If the current AST node is a variable name, return the name of the variable.
         if isinstance(current_ast_node, ast.Name):
