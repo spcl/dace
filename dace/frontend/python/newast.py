@@ -2487,7 +2487,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                       "".format(sym_name))
                         break
             else:
-                self.sdfg.add_symbol(sym_name, sym_obj.dtype)
+                sym_name = self.sdfg.add_symbol(sym_name, sym_obj.dtype, find_new_name=True)
 
             extra_syms = {sym_name: sym_obj}
 

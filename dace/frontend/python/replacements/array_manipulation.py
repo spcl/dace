@@ -143,7 +143,12 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
-def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
+def _transpose(pv: ProgramVisitor,
+               sdfg: SDFG,
+               state: SDFGState,
+               inpname: str,
+               axes=None,
+               outname: Optional[str] = None) -> str:
 
     arr1 = sdfg.arrays[inpname]
 
@@ -160,7 +165,8 @@ def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, a
 
     restype = arr1.dtype
     new_shape = [arr1.shape[i] for i in axes]
-    outname = pv.get_target_name()
+    if outname is None:
+        outname = pv.get_target_name()
     outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
     if axes == (1, 0):  # Special case for 2D transposition
