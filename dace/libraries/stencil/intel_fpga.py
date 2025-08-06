@@ -105,7 +105,6 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         nested_sdfg = dace.SDFG(node.label + "_inner", parent=state)
         nested_sdfg_tasklet = state.add_nested_sdfg(
             nested_sdfg,
-            sdfg,
             # Input connectors
             [k + "_in"
              for k in inputs if any(iterator_mapping[k])] + [name + "_buffer_in" for name, _ in buffer_sizes.items()],

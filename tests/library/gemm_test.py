@@ -58,7 +58,7 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, 
     state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
     if beta != 0.0:
         rC = state.add_read('C')
-        state.add_edge(rC, None, libnode, '_cin', dace.Memlet.from_array(C, C_arr))
+        state.add_edge(rC, None, libnode, '_c', dace.Memlet.from_array(C, C_arr))
 
     return sdfg
 

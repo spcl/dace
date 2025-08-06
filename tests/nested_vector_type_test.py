@@ -73,7 +73,7 @@ x_in1 = state.add_read('x1')
 y_in1 = state.add_read('y1')
 z_out1 = state.add_write('z1')
 
-nested_sdfg = state.add_nested_sdfg(vecAdd_sdfg, sdfg, {"_x", "_y"}, {"_res"})
+nested_sdfg = state.add_nested_sdfg(vecAdd_sdfg, {"_x", "_y"}, {"_res"})
 
 state.add_memlet_path(x_in1, nested_sdfg, dst_conn='_x', memlet=Memlet.simple(x_in1, "0:n"))
 state.add_memlet_path(y_in1, nested_sdfg, dst_conn='_y', memlet=Memlet.simple(y_in1, "0:n"))

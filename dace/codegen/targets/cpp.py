@@ -1479,12 +1479,10 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
             ptrname = ptr(name, desc, sd, codegen._frame)
             if isinstance(desc, data.Array) and desc.start_offset != 0:
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
+            callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', cfg, state_id,
+                                  scope_exit)
             if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-                callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', cfg, state_id,
-                                      scope_exit)
                 callsite_stream.write(f'DACE_GPU_CHECK({backend}DeviceSynchronize());')
-            else:
-                callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', cfg, state_id, scope_exit)
             to_remove.add((sd, name))
 
     # Clear all released memory from tracking
@@ -1520,7 +1518,8 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
 
             # If a view, get the relevant access node
             dstnode = edge.dst
-            while isinstance(sdfg.arrays[dstnode.data], data.View):
+            while isinstance(dstnode, dace.nodes.AccessNode) and dstnode.data is not None and isinstance(
+                    sdfg.arrays[dstnode.data], data.View):
                 dstnode = dfg.out_edges(dstnode)[0].dst
 
             # We need the streams leading out of the output data

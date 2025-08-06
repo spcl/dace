@@ -19,7 +19,7 @@ def _test_kernel_transient(persistent: bool):
     top_sdfg.arg_names = ['A']
     top_sdfg.add_datadesc('A', copy.deepcopy(sdfg.arrays['A']))
     state = top_sdfg.add_state()
-    n = state.add_nested_sdfg(sdfg, None, {}, {'A'})
+    n = state.add_nested_sdfg(sdfg, {}, {'A'})
     w = state.add_write('A')
     state.add_edge(n, 'A', w, None, dace.Memlet('A'))
 

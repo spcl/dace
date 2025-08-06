@@ -160,7 +160,7 @@ def make_outer_compute_state(sdfg):
 
     # Compute
     compute_sdfg = make_compute_sdfg()
-    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, sdfg, {"stream_in", "sliding_window", "row_buffers"},
+    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, {"stream_in", "sliding_window", "row_buffers"},
                                               {"stream_out", "sliding_window", "row_buffers"})
     systolic_entry, systolic_exit = state.add_map("unroll_compute", {"p": "0:P"},
                                                   schedule=dace.ScheduleType.FPGA_Device,

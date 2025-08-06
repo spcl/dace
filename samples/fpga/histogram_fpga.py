@@ -129,7 +129,7 @@ def make_sdfg(specialize, h, w):
 
     state = sdfg.add_state("compute")
     nested_sdfg = make_nested_sdfg(state)
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_in"}, {"hist_out"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, {"A_in"}, {"hist_out"})
     a_device = state.add_array("A_device", (H, W), dtype, transient=True, storage=dace.dtypes.StorageType.FPGA_Global)
     hist_device = state.add_array("hist_device", (num_bins, ),
                                   dace.uint32,

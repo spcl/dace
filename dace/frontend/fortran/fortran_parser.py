@@ -701,11 +701,7 @@ class AST_translator:
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
 
-        internal_sdfg = substate.add_nested_sdfg(new_sdfg,
-                                                 sdfg,
-                                                 ins_in_new_sdfg,
-                                                 outs_in_new_sdfg,
-                                                 symbol_mapping=sym_dict)
+        internal_sdfg = substate.add_nested_sdfg(new_sdfg, ins_in_new_sdfg, outs_in_new_sdfg, symbol_mapping=sym_dict)
 
         # Now adding memlets
         for i in self.libstates:

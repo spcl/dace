@@ -52,7 +52,7 @@ def create_deeply_nested_sdfg():
     )
 
     nsdfg.add_edge(nstate, nstate2, InterstateEdge(None, dict(mpt="k")))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]), set(['xout']))
+    nsdfg_node = state.add_nested_sdfg(nsdfg, set(["xin"]), set(['xout']))
     nsdfg_node.unique_name = "SomeUniqueName"
 
     state.add_memlet_path(

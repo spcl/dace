@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.dataflow import (MapFusion, ReduceExpansion, TrivialMapElimination, Vectorization, WarpTiling)
+from dace.transformation.dataflow import (MapFusionVertical, ReduceExpansion, TrivialMapElimination, Vectorization,
+                                          WarpTiling)
 from dace.transformation.interstate import (GPUTransformSDFG, HoistState, InlineSDFG, StateFusion)
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
@@ -40,11 +41,11 @@ def test_warp_softmax(vector_length=1):
     SubgraphFusion.apply_to(sdfg, sdfg.node(0).nodes())
     sdfg.expand_library_nodes()
     sdfg.simplify()
-    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion], validate_all=True)
+    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusionVertical], validate_all=True)
     sdfg.apply_transformations(GPUTransformSDFG, validate_all=True)
     assert sdfg.apply_transformations(WarpTiling) == 1
     sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion], validate_all=True)
-    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion], validate_all=True)
+    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusionVertical], validate_all=True)
     if vector_length != 1:
         sdfg.apply_transformations_repeated(Vectorization,
                                             dict(vector_len=vector_length,

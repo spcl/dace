@@ -102,7 +102,7 @@ def make_outer_compute_state(sdfg):
     nested_sdfg.add_edge(load_state, compute_state, dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(compute_state, store_state, dace.sdfg.InterstateEdge())
 
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_nested", "x_nested", "y_nested"}, {"y_nested"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, {"A_nested", "x_nested", "y_nested"}, {"y_nested"})
 
     a_device = state.add_array("A_device", (M, N), dtype, transient=True, storage=dace.dtypes.StorageType.FPGA_Global)
     x_device = state.add_array("x_device", (M, ), dtype, transient=True, storage=dace.dtypes.StorageType.FPGA_Global)

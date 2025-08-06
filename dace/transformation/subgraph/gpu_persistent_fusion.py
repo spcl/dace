@@ -272,7 +272,6 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         nested_sdfg = launch_state.add_nested_sdfg(
             kernel_sdfg,
-            sdfg,
             kernel_args_read,
             kernel_args_write,
         )

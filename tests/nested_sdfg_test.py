@@ -35,7 +35,7 @@ def test():
     B = state.add_array('B', [N, N], dp.float32)
 
     map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
-    nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'}, {'output'})
+    nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), {'input'}, {'output'})
 
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
@@ -84,7 +84,7 @@ def test_external_nsdfg():
     internal = sdfg_internal.to_sdfg()
     fd, filename = tempfile.mkstemp(suffix='.sdfg')
     internal.save(filename)
-    nsdfg = state.add_nested_sdfg(None, mysdfg, {'input'}, {'output'}, name='sdfg_internal', external_path=filename)
+    nsdfg = state.add_nested_sdfg(None, {'input'}, {'output'}, name='sdfg_internal', external_path=filename)
 
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))

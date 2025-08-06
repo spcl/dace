@@ -209,7 +209,7 @@ def test_dealias_interstate_edge():
 
     # Connect to nested SDFG both with renaming and offset memlets
     state = sdfg.add_state()
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A', 'B'}, {})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'A', 'B'}, {})
     ra = state.add_read('A')
     rb = state.add_read('B')
     state.add_edge(ra, None, nsdfg_node, 'B', dace.Memlet('A[1:20]'))

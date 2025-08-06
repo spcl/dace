@@ -374,7 +374,6 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         node.add_out_connector('_out')
 
         nsdfg = state.add_nested_sdfg(nsdfg,
-                                      sdfg,
                                       node.in_connectors,
                                       node.out_connectors,
                                       schedule=node.schedule,

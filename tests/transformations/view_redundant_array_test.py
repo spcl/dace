@@ -1,7 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import itertools
+
 import numpy as np
 import pytest
-import itertools
 
 import dace
 from dace import data
@@ -166,6 +167,83 @@ def test_view_offset_removal():
     sdfg(inout=inout, i=1)
 
     assert np.allclose(inout[1, 1:], inout[2, 1:])
+
+
+def test_transient_removal_uneven_flow_through_map():
+    """
+    Tests that a transient array is not removed if it is not fully copied.
+
+    This test case validates a specific edge case for the `RedundantArray`
+    transformation. It ensures that the transformation doesn't incorrectly
+    remove a transient array when only a portion of it is used in a
+    subsequent copy, which would lead to incorrect results.
+
+    The SDFG is constructed with the following dataflow:
+
+    X[NxN] --(full copy)--> T0[NxN] --(slice copy)--> T1[NxN] --(full copy)--> Y[NxN]
+                                                      ^
+                                                      |
+                                                    (initialized to 0)
+
+    The test asserts that the `RedundantArray` transformation is not applied
+    to `T0`. This is the correct behavior. If `T0` were to be removed, the
+    dataflow from `X` would be redirected to `T1`. However, since only a
+    slice of `T0` is used, a simple redirection would result in the entire `X`
+    being copied to `T1`, which is incorrect. The transformation has
+    safeguards to prevent this by checking if the memlet from the potentially
+    redundant array covers the whole array. This test ensures these
+    safeguards are working.
+
+    The final output `Y` should contain zeros everywhere except for the last
+    column, which should be the same as the last column of `X`.
+    """
+    g = dace.SDFG("testing")
+    st0 = g.add_state()
+    st1 = g.add_state_after(st0)
+
+    N = dace.symbol('N')
+
+    X, _ = g.add_array('X', [N, N], dtype=dace.float64)
+    T0, _ = g.add_transient('T0', [N, N], dtype=dace.float64)
+    T1, _ = g.add_transient('T1', [N, N], dtype=dace.float64)
+    Y, _ = g.add_array('Y', [N, N], dtype=dace.float64)
+    T1a = st0.add_access(T1)
+    X, T0, T1b, Y = tuple(st1.add_access(u) for u in (X, T0, T1, Y))
+
+    # Initialize T1 with zeros.
+    mE, mX = st0.add_map('T1_set0', dict(i='0:N', j='0:N'))
+    mX.add_scope_connectors('out')
+    zt = st0.add_tasklet('set_zero', inputs={}, outputs={'out'}, code="out = 0.0")
+    st0.add_edge(mE, None, zt, None, dace.Memlet())
+    st0.add_edge(zt, 'out', mX, 'IN_out', dace.Memlet(f"{T1a.data}[i, j]"))
+    st0.add_edge(mX, 'OUT_out', T1a, None, g.make_array_memlet(T1a.data))
+    # Write the full T0 transient.
+    c = st1.add_tasklet('copy', inputs={'inp'}, outputs={'out'}, code="out = inp")
+    mE, mX = st1.add_map('copy_map', dict(i='0:N', j='0:N'))
+    mE.add_scope_connectors('inp')
+    mX.add_scope_connectors('out')
+    st1.add_edge(X, None, mE, 'IN_inp', g.make_array_memlet(X.data))
+    st1.add_edge(mE, 'OUT_inp', c, 'inp', dace.Memlet(f"{X.data}[i, j]"))
+    st1.add_edge(c, 'out', mX, 'IN_out', dace.Memlet(f"{T0.data}[i, j]"))
+    st1.add_edge(mX, 'OUT_out', T0, None, g.make_array_memlet(T0.data))
+    # Forward only the boundary to the T1 transient.
+    st1.add_edge(T0, None, T1b, None, dace.Memlet(f"{T0.data}[0:N, N-1] -> [0:N, N-1]"))
+    # Forward the full transient.
+    st1.add_edge(T1b, None, Y, None, dace.Memlet(f"{T1b.data}[0:N, 0:N] -> [0:N, 0:N]"))
+
+    assert g.apply_transformations_repeated(RedundantArray) == 0
+
+    Xin = np.random.rand(5, 5)
+    Yout = np.zeros_like(Xin)
+    g(X=Xin, Y=Yout, N=5)
+
+    # Assertion 1: Check that the first 4 columns (indices 0 to 3) of Yout are all close to zero.
+    # This verifies that the zero-initialization of T1 (and thus Y) was successful for these parts.
+    np.testing.assert_allclose(Yout[:, :4], 0)
+    # Assertion 2: Check that the last column (index 4) of Yout is approximately equal to
+    # the last column of the input array Xin. This verifies that the partial update
+    # from T0 to T1 (and then to Y) was successful.
+    np.testing.assert_allclose(Yout[:, 4], Xin[:, 4])
 
 
 if __name__ == '__main__':

@@ -22,7 +22,7 @@ def test_nested_symbol_type():
     outer_sdfg.add_array('data', shape=[1], dtype=dace.float32)
 
     data = outer_state.add_write('data')
-    nested = outer_state.add_nested_sdfg(test_sdfg, outer_sdfg, {}, {'output'})
+    nested = outer_state.add_nested_sdfg(test_sdfg, {}, {'output'})
 
     outer_state.add_memlet_path(nested, data, src_conn='output', memlet=Memlet.simple(data.data, "0"))
 

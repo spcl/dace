@@ -2,7 +2,7 @@
 import numpy as np
 import dace
 from dace import dtypes
-from dace.transformation.dataflow import TaskletFusion, MapFusion
+from dace.transformation.dataflow import TaskletFusion, MapFusionVertical
 from dace.transformation.optimizer import Optimizer
 import pytest
 
@@ -103,7 +103,7 @@ def test_basic():
 
     sdfg = test_basic_tf.to_sdfg(simplify=True)
 
-    num_map_fusions = sdfg.apply_transformations(MapFusion)
+    num_map_fusions = sdfg.apply_transformations(MapFusionVertical)
     assert (num_map_fusions == 1)
     num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
     assert (num_tasklet_fusions == 1)
@@ -123,7 +123,7 @@ def test_same_name():
 
     sdfg = test_same_name.to_sdfg(simplify=True)
 
-    num_map_fusions = sdfg.apply_transformations_repeated(MapFusion)
+    num_map_fusions = sdfg.apply_transformations_repeated(MapFusionVertical)
     assert (num_map_fusions == 2)
     num_tasklet_fusions = sdfg.apply_transformations_repeated(TaskletFusion)
     assert (num_tasklet_fusions == 2)
@@ -143,7 +143,7 @@ def test_same_name_different_memlet():
 
     sdfg = test_same_name_different_memlet.to_sdfg(simplify=True)
 
-    num_map_fusions = sdfg.apply_transformations_repeated(MapFusion)
+    num_map_fusions = sdfg.apply_transformations_repeated(MapFusionVertical)
     assert (num_map_fusions == 2)
     num_tasklet_fusions = sdfg.apply_transformations_repeated(TaskletFusion)
     assert (num_tasklet_fusions == 2)
@@ -246,7 +246,7 @@ def test_none_connector():
 
     sdfg = sdfg_none_connector.to_sdfg()
     sdfg.simplify()
-    applied = sdfg.apply_transformations_repeated(MapFusion)
+    applied = sdfg.apply_transformations_repeated(MapFusionVertical)
     assert applied == 2
 
     map_entry = None

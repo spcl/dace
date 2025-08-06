@@ -139,8 +139,7 @@ class ExpandGearbox(dace.transformation.ExpandTransformation):
                                             memlet=dace.Memlet(f"{pack_name}[{elem_it}]"))
                 write_state.add_memlet_path(pack_access, write_nested, memlet=dace.Memlet(f"{write_nested.data}[0]"))
 
-            nested_sdfg_node = state.add_nested_sdfg(nested_sdfg, sdfg,
-                                                     {f"_{in_edge.dst_conn}", f"{buffer_name}_inner"},
+            nested_sdfg_node = state.add_nested_sdfg(nested_sdfg, {f"_{in_edge.dst_conn}", f"{buffer_name}_inner"},
                                                      {f"_{out_edge.src_conn}", f"{buffer_name}_inner"})
             buffer_read = state.add_read(buffer_name)
             buffer_write = state.add_write(buffer_name)

@@ -707,7 +707,6 @@ class ExpandTransformation(PatternTransformation):
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
-                                              sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name,

@@ -1580,7 +1580,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                   extra_map_symbols=map_symbols)
 
             internal_node = state.add_nested_sdfg(sdfg,
-                                                  self.sdfg,
                                                   set(inputs.keys()),
                                                   set(outputs.keys()),
                                                   debuginfo=self.current_lineinfo)
@@ -2290,11 +2289,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs),
                 extra_map_symbols=self._symbols_from_params(params, map_inputs))
-            tasklet = state.add_nested_sdfg(body,
-                                            self.sdfg,
-                                            inputs.keys(),
-                                            outputs.keys(),
-                                            debuginfo=self.current_lineinfo)
+            tasklet = state.add_nested_sdfg(body, inputs.keys(), outputs.keys(), debuginfo=self.current_lineinfo)
             self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs, map_inputs, symbols)
         elif iterator == 'range':
@@ -4233,12 +4228,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
                     warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')
 
-        nsdfg = state.add_nested_sdfg(sdfg,
-                                      self.sdfg,
-                                      inputs.keys(),
-                                      outputs.keys(),
-                                      mapping,
-                                      debuginfo=self.current_lineinfo)
+        nsdfg = state.add_nested_sdfg(sdfg, inputs.keys(), outputs.keys(), mapping, debuginfo=self.current_lineinfo)
         self._add_nested_symbols(nsdfg)
         inputs = {k: (state, v, set()) for k, v in inputs.items()}
         outputs = {k: (state, v, set()) for k, v in outputs.items()}
@@ -4741,7 +4731,19 @@ class ProgramVisitor(ExtNodeVisitor):
             result = result[1]
 
         if not isinstance(result, (tuple, list)):
-            return [result]
+            result = [result]
+
+        # Register input/output data containers
+        for res in result:
+            try:
+                if res in self.inputs and res not in self.outputs:
+                    # Mark the container as an output of the SDFG
+                    self.outputs[res] = (self.last_block, *self.inputs[res][1:])
+            except TypeError:
+                # This error may occur if `res` is not hashable, for example a slice in Python 3.9.
+                # Such results are not containers and nothing needs to be done about them, so we can ignore the error.
+                pass
+
         return result
 
     # Used for memlet expressions outside of tasklets, otherwise ignored

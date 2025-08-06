@@ -23,7 +23,7 @@ def test_refine_dataflow():
     A = state.add_access('A')
     B = state.add_access('B')
     me, mx = state.add_map('m', dict(i='0:5', j='0:5'))
-    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), sdfg, {'A'}, {'B'}, {'i': 'i', 'j': 'j'})
+    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), {'A'}, {'B'}, {'i': 'i', 'j': 'j'})
     state.add_memlet_path(A, me, nsdfg, dst_conn='A', memlet=dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_memlet_path(nsdfg, mx, B, src_conn='B', memlet=dace.Memlet.from_array('B', sdfg.arrays['B']))
 
@@ -63,10 +63,7 @@ def test_refine_interstate():
     B = state.add_access('B')
     select = state.add_access('select')
     me, mx = state.add_map('m', dict(i='0:5', j='0:5'))
-    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), sdfg, {'A', 'select'}, {'B'}, {
-        'i': 'i',
-        'j': 'j'
-    })
+    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), {'A', 'select'}, {'B'}, {'i': 'i', 'j': 'j'})
     state.add_memlet_path(A, me, nsdfg, dst_conn='A', memlet=dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_memlet_path(select,
                           me,
@@ -119,7 +116,7 @@ def test_free_symbols_only_by_indices():
     ia = state.add_access('idx_a')
     ib = state.add_access('idx_b')
     map_entry, map_exit = state.add_map('map', dict(i='0:5'))
-    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), sdfg, {'A', 'idx_a', 'idx_b'}, {'B'}, {'i': 'i'})
+    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), {'A', 'idx_a', 'idx_b'}, {'B'}, {'i': 'i'})
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='A', memlet=dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='B', memlet=dace.Memlet.from_array('B', sdfg.arrays['B']))
     state.add_memlet_path(ia,
@@ -215,7 +212,6 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
 
     nsdfg = state.add_nested_sdfg(
         nested_sdfg,
-        parent=sdfg,
         inputs={"A"},
         outputs={"T2", "T1"} if diff_in_out else {"T1"},
         symbol_mapping={},

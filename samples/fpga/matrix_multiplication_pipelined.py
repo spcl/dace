@@ -129,7 +129,7 @@ def make_sdfg(specialized, n, k, m):
     else_state.add_memlet_path(else_C_in, else_tasklet, memlet=else_c_in_memlet, dst_conn="c_in")
     else_state.add_memlet_path(else_tasklet, else_C_out, memlet=else_c_out_memlet, src_conn="c_out")
 
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_val", "B_val", "C_in"}, {"C_out"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, {"A_val", "B_val", "C_in"}, {"C_out"})
 
     ###########################################################################
     # Compute continued

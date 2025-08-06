@@ -79,7 +79,7 @@ def test_nested_sdfg():
 
     # Add outer edges
     omap_entry, omap_exit = state.add_map('omap', dict(k='0:2'))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'a'}, {'b'})
     state.add_memlet_path(A_, omap_entry, nsdfg_node, dst_conn='a', memlet=Memlet('A[0:N]'))
     state.add_memlet_path(nsdfg_node, omap_exit, B_, src_conn='b', memlet=Memlet('B[0:N]'))
 

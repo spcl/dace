@@ -1085,8 +1085,9 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return (f'dace::wcr_custom<{dtype.ctype}>:: template reduce{atomic}('
-                f'{custom_reduction}, {ptr}, {inname})')
+        return (
+            f'const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::reduce{atomic}<decltype(__dace__reduction_lambda)>('
+            f'__dace__reduction_lambda, {ptr}, {inname})')
 
     @staticmethod
     def gen_code_snitch(sdfg):

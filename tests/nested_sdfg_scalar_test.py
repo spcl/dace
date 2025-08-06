@@ -20,7 +20,7 @@ def _construct_sdfg():
                               external_edges=True)
 
     r = state.add_read('A')
-    n = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
+    n = state.add_nested_sdfg(nsdfg, {'a'}, {'b'})
     w = state.add_write('A')
     state.add_edge(r, None, n, 'a', dace.Memlet.simple('A', '1'))
     state.add_edge(n, 'b', w, None, dace.Memlet.simple('A', '0'))

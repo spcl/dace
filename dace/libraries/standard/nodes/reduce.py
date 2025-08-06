@@ -1470,7 +1470,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             r = nstate.add_read('_in')
             w = nstate.add_write('_out')
 
-            actual_nested_sdfg = nstate.add_nested_sdfg(nested_sdfg, nsdfg, {'s_mem', '_in'}, {'s_mem'})
+            actual_nested_sdfg = nstate.add_nested_sdfg(nested_sdfg, {'s_mem', '_in'}, {'s_mem'})
 
             inner_in = real_state.add_access('_in')
             inner_smem = real_state.add_access('s_mem')

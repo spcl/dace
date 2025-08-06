@@ -16,7 +16,7 @@ def test_map_unroll():
     entry_outer, exit_outer = outer_state.add_map("map_outer", {"i": "0:3", "j": "0:1"})
     entry_inner, exit_inner = outer_state.add_map("map_inner", {"k": "0:2"})
     nsdfg = dace.SDFG("unroll_nested")
-    nsdfg_node = outer_state.add_nested_sdfg(nsdfg, sdfg, {"x"}, {"y"})
+    nsdfg_node = outer_state.add_nested_sdfg(nsdfg, {"x"}, {"y"})
     outer_state.add_memlet_path(read,
                                 entry_outer,
                                 entry_inner,

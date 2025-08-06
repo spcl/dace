@@ -243,7 +243,6 @@ def _make_access_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFG]:
     state = sdfg.add_state(is_start_block=True)
     nsdfg_node = state.add_nested_sdfg(
         nsdfg,
-        parent=sdfg,
         inputs={'a'},
         outputs={'b'},
         symbol_mapping={},

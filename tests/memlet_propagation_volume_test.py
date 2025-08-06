@@ -79,7 +79,7 @@ def make_sdfg():
     bound_pipe = state.add_stream('bound_in', dace.int32, transient=True, storage=StorageType.FPGA_Local)
     out_stream = state.add_stream('out_stream', dace.int32, transient=True, storage=StorageType.FPGA_Local)
 
-    nest = state.add_nested_sdfg(make_nested_sdfg(), sdfg, {
+    nest = state.add_nested_sdfg(make_nested_sdfg(), {
         'IN_a',
         'IN_bound',
     }, {

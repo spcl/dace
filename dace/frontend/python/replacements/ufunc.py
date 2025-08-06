@@ -1192,7 +1192,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                 nested_sdfg.add_edge(cond_state, false_state, InterstateEdge(cond_else))
                 nested_sdfg.add_edge(true_state, false_state, InterstateEdge())
 
-                codenode = state.add_nested_sdfg(nested_sdfg, sdfg, set([n for n, _ in nested_sdfg_inputs.values()]),
+                codenode = state.add_nested_sdfg(nested_sdfg, set([n for n, _ in nested_sdfg_inputs.values()]),
                                                  set([n for n, _ in nested_sdfg_outputs.values()]))
                 me, mx = state.add_map(state.label + '_map', map_indices)
                 for arg in inputs + [where]:
@@ -1687,7 +1687,7 @@ def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg
 
     r = state.add_read(inputs[0])
     w = state.add_write(outputs[0])
-    codenode = state.add_nested_sdfg(nested_sdfg, sdfg, {inpconn}, {outconn})
+    codenode = state.add_nested_sdfg(nested_sdfg, {inpconn}, {outconn})
     me, mx = state.add_map(state.label + '_map', map_range)
     state.add_memlet_path(r, me, codenode, memlet=Memlet("{a}[{i}]".format(a=inputs[0], i=input_idx)), dst_conn=inpconn)
     state.add_memlet_path(codenode,

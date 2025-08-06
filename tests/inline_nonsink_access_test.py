@@ -38,7 +38,7 @@ def make_sdfg(outer_shape, inner_shape, outer_index, inner_index):
     nstate.add_edge(t_cube, 'o', D, None, dace.Memlet.simple('D', inner_index))
 
     # Add nested SDFG to SDFG
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'C', 'D'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {}, {'C', 'D'})
     state.add_edge(nsdfg_node, 'C', A, None, dace.Memlet('A'))
     state.add_edge(nsdfg_node, 'D', B, None, dace.Memlet('B'))
 

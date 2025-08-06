@@ -7,7 +7,7 @@ import sys
 import timeit
 from dace.sdfg.utils import load_precompiled_sdfg
 
-from dace.transformation.dataflow import MapFusion
+from dace.transformation.dataflow import MapFusionVertical
 
 lNx = dc.symbol('lNx', dtype=dc.int64, integer=True, positive=True)
 lNy = dc.symbol('lNy', dtype=dc.int64, integer=True, positive=True)
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     mpi_sdfg = jacobi_2d_dist.to_sdfg(simplify=False)
     if rank == 0:
         mpi_sdfg.simplify()
-        mpi_sdfg.apply_transformations_repeated([MapFusion])
+        mpi_sdfg.apply_transformations_repeated([MapFusionVertical])
         mpi_sdfg.simplify()
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()

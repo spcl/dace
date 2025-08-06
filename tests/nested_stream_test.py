@@ -20,7 +20,7 @@ sdfg.add_stream('SB', dace.int32, transient=True)
 sdfg.add_array('B', (2, ), dace.int32)
 SB = state.add_access('SB')
 B = state.add_write('B')
-n = state.add_nested_sdfg(nsdfg, None, set(), {'nout'})
+n = state.add_nested_sdfg(nsdfg, set(), {'nout'})
 state.add_edge(n, 'nout', SB, None, Memlet.simple('SB', '0'))
 state.add_nedge(SB, B, Memlet.simple('B', '0'))
 

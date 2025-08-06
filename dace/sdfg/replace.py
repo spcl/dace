@@ -4,13 +4,16 @@
 import re
 import warnings
 from typing import TYPE_CHECKING, Any, Dict, Optional
+from copy import deepcopy
 
 import sympy as sp
 
 import dace
-from dace import dtypes, properties, symbolic
+from dace import data, dtypes, properties, symbolic
 from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
+from dace.memlet import Memlet
+from dace.sdfg import nodes
 
 if TYPE_CHECKING:
     from dace.sdfg.state import StateSubgraphView
@@ -66,6 +69,46 @@ def replace_dict(subgraph: 'StateSubgraphView',
         symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
         for symname, new_name in repl.items()
     }
+
+    # Replace AccessNode with tasklet with constant value
+    sdfg = subgraph.sdfg
+    if isinstance(subgraph, dace.SDFGState):
+        state = subgraph
+        for node in subgraph.nodes():
+            # Make sure to replace only Scalar AccessNodes with no incoming edges
+            if isinstance(node, nodes.AccessNode):
+                if node.data in state.sdfg.arrays:
+                    desc = node.desc(state)
+                # In case the AccessNode name was replaced in the sdfg.arrays but not in the SDFG itself
+                # then we have to look for the replaced value in the sdfg.arrays
+                elif repl[node.data] in state.sdfg.arrays:
+                    desc = state.sdfg.arrays[repl[node.data]]
+                else:
+                    continue
+                if state.in_degree(node) == 0 and not desc.transient and isinstance(desc, data.Scalar):
+                    node_data_symbolic = dace.symbolic.pystr_to_symbolic(node.data)
+                    if node_data_symbolic in symrepl:
+                        tasklet = state.add_tasklet(name="constant",
+                                                    inputs={},
+                                                    outputs={f'{node.data}_value'},
+                                                    code=f'{node.data}_value = {symrepl[node_data_symbolic]}')
+                        access_node_name, _ = sdfg.add_transient(f'{node.data}', [1],
+                                                                 dtypes.typeclass(type(symrepl[node_data_symbolic])),
+                                                                 find_new_name=True)
+                        tmp_an = state.add_access(access_node_name)
+                        state.add_edge(tasklet, f'{node.data}_value', tmp_an, None,
+                                       Memlet.simple(access_node_name, '0'))
+                        # Replace all edges that were passing through the original AccessNode with the new AccessNode which is
+                        # connected to the tasklet. This is done to avoid ConstantPropagation from replacing the edges' data
+                        # with the constant value, which would break the SDFG.
+                        for edge in state.out_edges(node):
+                            for producer_tree in state.memlet_tree(edge).traverse_children(include_self=True):
+                                producer_edge = producer_tree.edge
+                                if producer_edge.data.data == node.data:
+                                    producer_edge.data.data = access_node_name
+                            state.add_edge(tmp_an, None, edge.dst, edge.dst_conn, deepcopy(edge.data))
+                            state.remove_edge(edge)
+                        state.remove_node(node)
 
     # Replace in node properties
     for node in subgraph.nodes():
