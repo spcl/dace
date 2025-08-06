@@ -1360,7 +1360,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def get_target_name(self, output_index: Optional[int] = None) -> str:
+    def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
         """
         A heuristic that returns a human-readable name of the current assignment target or expression,
         in a way that is closest to the original Python code.
@@ -1371,12 +1371,13 @@ class ProgramVisitor(ExtNodeVisitor):
         THIS METHOD IS ONLY VALID WHEN CALLED DURING PARSING.
 
         :param output_index: The index of the output in the arguments to find a name for (if the result is a tuple).
+        :param default: A default name to return if no target can be determined. If not given, uses ``temp_data_name``.
         :return: A string representing the target name.
         """
         if not self.current_ast_stack:
             warnings.warn("get_target_name() called without a current AST node. Returning placeholder name.",
                           UserWarning)
-            return self.sdfg.temp_data_name()
+            return default or self.sdfg.temp_data_name()
 
         output_index = output_index if output_index is not None else self.default_output_index
 
@@ -1454,7 +1455,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return astutils.unparse(current_ast_node)
 
         # If the name is invalid, use temp_data_name (__tmp*)
-        return self.sdfg.temp_data_name()
+        return default or self.sdfg.temp_data_name()
 
     def _get_name_from_node(self, node: ast.AST) -> str:
         """Helper method to extract a simple name from an AST node."""
@@ -5304,7 +5305,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 strides = None
 
             if is_index:
-                tmp = f'{array}_index'
+                tmp = self.get_target_name(default=f'{array}_index')
                 tmp, tmparr = self.sdfg.add_scalar(tmp,
                                                    arrobj.dtype,
                                                    arrobj.storage,
