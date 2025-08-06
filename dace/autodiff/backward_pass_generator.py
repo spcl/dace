@@ -110,8 +110,26 @@ def generate_grad_connector_names(existing_connectors: Set[str], forward_connect
 
     return names
 
+def extract_indices(expression: str) -> Dict[str, List[str]]:
+    """
+    Extracts indexed array names and their indices from a given string expression.
+    """
+    # Regular expression to match the array names and their indices
+    pattern = r"(\w+)\[((?:\w+,?\s*)+)\]"
+    
+    # Find all matches in the given expression
+    matches = re.findall(pattern, expression)
+    
+    # Create a dictionary to store the arrays and their indices
+    index_map = {}
+    for name, indices in matches:
+        # Split indices by comma and remove any extra spaces
+        index_list = [index.strip() for index in indices.split(',')]
+        index_map[name] = index_list
+    
+    return index_map
 
-def code_to_exprs(code: str, inputs: Set[str], outputs: Set[str], symbols: List[str]) -> Dict[str, sp.Expr]:
+def code_to_exprs(code: str, tasklet: nodes.Tasklet, symbols: List[str]) -> Tuple[Dict[str, sp.Expr], Dict[str, List[str]]]:
     """ Convert a python string to a set of (simplified) symbolic sympy expressions. Currently, this
         supports only code consisting of assignment statements.
 
@@ -121,14 +139,30 @@ def code_to_exprs(code: str, inputs: Set[str], outputs: Set[str], symbols: List[
         :return: map from outputs to symbolic expressions
     """
 
-    inputs = list(inputs)
-    outputs = list(outputs)
+    inputs: List[str] = list(tasklet.in_connectors)
+    outputs: List[str] = list(tasklet.out_connectors)
 
     # Add the definition of global constant symbols that are presen in the code
     # Prepare the Symbol declaration code
     symbol_code = ""
     for symb in symbols:
         symbol_code += f"    {symb} = sp.symbols('{symb}')\n"
+    
+    # We prepare a map of indexed objects and their indices
+    indexed_objects_map = extract_indices(code)
+    
+    # For now, make sure none of the outputs are indexed objects
+    assert not any(out in indexed_objects_map for out in outputs)
+    
+    # Add the definition of indexed objects to the sympy code
+    indexed_objects_code = ""
+    for conn in inputs + outputs:
+        if (conn in inputs and isinstance(tasklet.in_connectors[conn], dace.dtypes.pointer) or
+           (conn in outputs and isinstance(tasklet.out_connectors[conn], dace.dtypes.pointer))):
+            assert conn in indexed_objects_map
+            indexed_objects_code += f"    {conn} = sp.IndexedBase('{conn}')\n"
+            for idx in indexed_objects_map[conn]:
+                indexed_objects_code += f"    {idx} = sp.symbols('{idx}', cls=sp.Idx)\n"
 
     code_fn = """
 def symbolic_execution({}):
@@ -148,11 +182,13 @@ def symbolic_execution({}):
     import sympy as sp
 {}
 {}
+{}
     return {}
     """
     code_fn = code_fn.format(
         ", ".join(inputs),
         symbol_code,
+        indexed_objects_code,
         "\n".join("    " + line.strip() for line in code.split("\n")),
         ", ".join(outputs),
     )
@@ -173,12 +209,12 @@ def symbolic_execution({}):
             for i, res in enumerate(results):
                 if not isinstance(res, sp.Expr):
                     results[i] = sp.sympify(res)
-            return dict(zip(outputs, results))
+            return dict(zip(outputs, results)), indexed_objects_map
         else:
             # make sure that everything is a sympy expression
             if not isinstance(results, sp.Expr):
                 results = sp.sympify(results)
-            return {outputs[0]: results}
+            return {outputs[0]: results}, indexed_objects_map
     except Exception as e:
         raise AutoDiffException(
             "Exception occured while attempting to symbolically execute code:\n{}".format(code)) from e
@@ -2066,8 +2102,7 @@ class BackwardPassGenerator:
     ):
         """
         """
-        output_exprs = code_to_exprs(code_str, tasklet.in_connectors, tasklet.out_connectors,
-                                     list(self.sdfg.symbols.keys()))
+        output_exprs, indexed_objects_map = code_to_exprs(code_str, tasklet, list(self.sdfg.symbols.keys()))
 
         # for each output that an input is used in, there will be an entry for the expression of the
         # grad in this list in the final code snippet. When we generate the final code for the
@@ -2116,9 +2151,19 @@ class BackwardPassGenerator:
                 if type(output_expr) in [np.float64, np.float32, np.float16]:
                     output_expr = sp.Float(output_expr)
 
+                # We need to prepare the w.r.t expression
+                if inp in indexed_objects_map:
+                    # if the input is an indexed object, we need to create the sympy expression
+                    indexed_base = sp.IndexedBase(inp)
+                    idx_objects = [sp.Idx(index) for index in indexed_objects_map[inp]]
+                    inp_expr = indexed_base[tuple(idx_objects)]
+                else:
+                    # if the input is not an indexed object, we can just use it as is
+                    inp_expr = sp.symbols(inp)
+                    
                 # symbolically differentiate the output w.r.t inp
-                diff_expr = output_expr.diff(sp.symbols(inp))
-
+                diff_expr = output_expr.diff(inp_expr)
+                
                 # do common subexpression elimination
                 sub_expressions, diff_expr = sp.cse(diff_expr, symbols=symbol_generator)
 
@@ -2169,8 +2214,25 @@ class BackwardPassGenerator:
                 converted_sub_expressions = cast_consts_to_type(sub_expression_code_strs,
                                                                 self.sdfg.arrays[cands[0].data.data].dtype)
 
-                code += converted_sub_expressions + "\n"
-                rev_code[rev_output_grad_name].append(converted_code)
+                # If there is indirection in the input
+                if inp in indexed_objects_map:
+                    # We need to have indirection of the output container in the backward
+                    output_code = rev_output_grad_name + "[" + " , ".join(indexed_objects_map[inp]) + "]"
+                    
+                    # We also need to add the indices as connectors so that they are forwarded from the forward pass
+                    for idx in indexed_objects_map[inp]:
+                        if idx not in rev_inputs:
+                            # This needs to be available in the forward pass in the first place
+                            if idx not in tasklet.in_connectors:
+                                raise AutoDiffException(
+                                    f"Expected index {idx} to be an input connector of the tasklet {tasklet}, "
+                                    f"but it is not. This is required for the backward pass to work correctly.")
+                            rev_inputs.add(idx)
+                else:
+                    output_code = rev_output_grad_name
+                
+                code += converted_sub_expressions + "\n"    
+                rev_code[output_code].append(converted_code)
 
         for output, exprs in sorted(rev_code.items()):
             code += "\n" + output + " = " + " + ".join(exprs)
