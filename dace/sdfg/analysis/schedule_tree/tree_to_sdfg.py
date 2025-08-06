@@ -688,11 +688,11 @@ class StreeToSDFG(tn.ScheduleNodeVisitor):
         raise NotImplementedError(f"{type(node)} not implemented")
 
     def visit_CopyNode(self, node: tn.CopyNode, sdfg: SDFG) -> None:
-        raise NotImplementedError("Not yet ported to new stree bridge")
-
-        # apparently we need this for the first prototype
-        self._ensure_access_cache(self._current_state)
-        access_cache = self._access_cache[self._current_state]
+        # ensure we have an access_cache and fetch it
+        cache_key = (self._current_state, id(self._ctx.current_scope))
+        if cache_key not in self._ctx.access_cache:
+            self._ctx.access_cache[cache_key] = {}
+        access_cache = self._ctx.access_cache[cache_key]
 
         # assumption source access may or may not yet exist (in this state)
         src_name = node.memlet.data
