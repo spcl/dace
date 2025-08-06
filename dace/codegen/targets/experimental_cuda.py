@@ -430,9 +430,26 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(kernel_wrapper_args_typed)), cfg,
             state_id, scope_entry)
 
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        state = sdfg.state(state_id)
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('{', cfg, state_id, scope_entry)
+
+        # Synchronize all events leading to dynamic map range connectors
+        for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write(
+                self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
+                cfg, state_id, scope_entry)
+            
         # Calling the kernel wrapper function (in the CPU-side code)
         callsite_stream.write('__dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(kernel_wrapper_args_as_input)),
                               cfg, state_id, scope_entry)
+
+
+            
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('}', cfg, state_id, scope_entry)
 
     def _generate_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -1160,6 +1177,15 @@ class KernelSpec:
 
         # Retrieve arguments required for the kernels subgraph
         arglist: Dict[str, dt.Data] = kernel_parent_state.scope_subgraph(kernel_map_entry).arglist()
+
+        # Add also dynamic inputs required for the kernel
+        for e in dace.sdfg.dynamic_map_inputs(kernel_parent_state, kernel_map_entry):
+            var_name = str(e.dst_conn)
+            data_desc = e.src.desc(sdfg)
+            defined_type = get_defined_type(data_desc)
+            arglist[var_name] = data_desc
+            cudaCodeGen._dispatcher.defined_vars.add(var_name, defined_type, data_desc.ctype)
+
         self._arglist = arglist
 
         # Format arguments for input passing and function signatures (kernel and kernel wrapper)
