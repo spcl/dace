@@ -200,6 +200,10 @@ def argument_codegen(sdfg: dace.SDFG,
 
 def item_to_cpp_literal(item) -> str:
     dtype = str(item.dtype)
+    if np.isneginf(item):
+        return "-std::numeric_limits<float>::infinity()"
+    if np.isposinf(item):
+        return "std::numeric_limits<float>::infinity()"
     if dtype == "float32":
         return f"{item}f"
     elif dtype == "bool":
