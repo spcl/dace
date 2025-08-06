@@ -953,72 +953,11 @@ class BackwardPassGenerator:
                 desc = self.sdfg.arrays[forward_node.data]
                 avoid = True
                 lis = [
-                    # "__tmp7",
-                    # "out",
-                    # "__tmp2",
                 ]
                 if isinstance(out_edge.dst, nodes.MapEntry) and (len(out_edge.dst.range) != len(desc.shape)
                                                                  or desc.shape == (1, )) or forward_node.data in lis:
                     avoid = False
-
-                # avoid = False
-                # avoid = len(desc.shape) > 1
-                # if "softmax" in self.sdfg.name:
-                #     print(f"\"{forward_node.data}\",")
-                #     avoid = False
-                # else:
-                # avoid = len(desc.shape)>1
-                # skip = [
-                #     # "__tmp61",
-                #     # "__tmp59",
-                #         "__tmp55",
-                #         "__tmp54",
-                #         "__tmp53",
-                #         "__tmp52",
-                #         "__tmp51",
-                #         "__tmp50",
-                #         # "__tmp47",
-                #     # "__tmp49",
-                #     # "__tmp48",
-                #     # "__tmp46",
-                #     # "__tmp57",
-                #     # "__tmp56",
-                #     # "__tmp44",
-                #     # "__tmp43",
-                #     # "__tmp42",
-                #     # "__tmp40",
-                #     # "__tmp36",
-                #     # "__tmp35",
-                #     # "__tmp34",
-                #     # "__tmp33",
-                #     # "__tmp32",
-                #     # "__tmp31",
-                #     # "__tmp28",
-                #     # "__tmp30",
-                #     # "__tmp29",
-                #     # "__tmp27",
-                #     # "__tmp38",
-                #     # "__tmp37",
-                #     # "__tmp25",
-                #     # "__tmp24",
-                #     # "__tmp23",
-                #     # "__tmp17",
-                #     # "__tmp20",
-                #     # "__tmp15",
-                #     # "__tmp12",
-                #     # "__tmp7",
-                #     # "__tmp5",
-                #     # "__tmp3",
-
-                # ]
-                # if not avoid and "B" in forward_node.data or forward_node.data in skip:
-                #     avoid = True
-                # if not avoid:
-                #     print(f"\"{forward_node.data}\",")
-                # avoid = "tmp3" not in forward_node.data and "tmp5" not in forward_node.data and "tmp2" not in forward_node.data
-                # avoid = "tmp3" not in forward_node.data and "tmp5" not in forward_node.data
                 if avoid:
-                    print(f"\"{forward_node.data}\",")
                     # In this case we can avoid clearing out the gradients and just not have a wcr edge on the write edge in the backward pass
                     # clearing out the gradients is unnecessary because we will write to the same accesses immediatly after
                     clear_out_gradients = False
@@ -3794,7 +3733,6 @@ class BackwardPassGenerator:
         # List of constraints to return
         constraints: List = []
         constraints.append(0)
-        print(decs)
         sdfg_allocation_sizes: List[int] = []
 
         # Create an auxiliary variable that represents the PMU
