@@ -2150,9 +2150,15 @@ class ProgramVisitor(ExtNodeVisitor):
                         dtype = internal_node.sdfg.arrays[conn].dtype
                     else:
                         raise SyntaxError('Cannot determine connector type for tasklet input dependency')
+                    if conn in tasklet.out_connectors:
+                        tasklet_conn = conn
+                    else:
+                        assert len(tasklet.out_connectors
+                                   ) == 1, "Input tasklet to nested SDFG must have exactly one output connector"
+                        tasklet_conn = next(iter(tasklet.out_connectors.keys()))
                     new_scalar, _ = self.sdfg.add_scalar(new_scalar, dtype, transient=True, find_new_name=True)
                     accessnode = state.add_access(new_scalar)
-                    state.add_edge(tasklet, conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
+                    state.add_edge(tasklet, tasklet_conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
                     state.add_edge(accessnode, None, internal_node, conn, dace.Memlet.simple(new_scalar, '0'))
                     if entry_node is not None:
                         state.add_edge(entry_node, None, tasklet, None, dace.Memlet())
@@ -4217,8 +4223,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Handle scalar inputs to nested SDFG calls
         for conn, arg in args:
             if ((not isinstance(arg, str) or arg not in self.sdfg.arrays) and conn not in mapping.keys() | symbols):
-                argdict[conn] = state.add_tasklet('scalar', {}, {conn},
-                                                  '%s = %s' % (conn, arg),
+                argdict[conn] = state.add_tasklet('scalar', {}, {'__out'},
+                                                  f'__out = {arg}',
                                                   debuginfo=self.current_lineinfo)
 
         # Handle scalar inputs that become symbols in the nested SDFG
