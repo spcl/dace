@@ -4258,9 +4258,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add closure to global inputs/outputs (e.g., if processed as part of a map)
         for arrname in closure_arrays.keys():
-            if arrname not in names_to_replace:
+            if not (arrname in inputs or arrname in outputs) and arrname not in names_to_replace:
                 continue
-            narrname = names_to_replace[arrname]
+            if arrname in names_to_replace:
+                narrname = names_to_replace[arrname]
+            else:
+                narrname = arrname
 
             if narrname in inputs:
                 self.inputs[arrname] = (state, inputs[narrname], [])
