@@ -73,8 +73,21 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
         # Flatten the tensor and convert to list
         values = weight_tensor.flatten().tolist()
         
+        # Format the values based on the data type
+        def format_value(v, dtype):
+            if dtype in [dt.float32, dt.float16]:
+                return f'{v}f'
+            elif dtype == dt.float64:
+                return str(v)
+            elif dtype in [dt.int8, dt.int16, dt.int32, dt.int64, dt.uint8]:
+                return str(int(v))
+            elif dtype == dt.bool:
+                return str(v).lower()
+            else:
+                return str(v)
+            
         # Format the values as a C++ initializer list
-        values_str = ', '.join(f'{v}f' for v in values)
+        values_str = ', '.join(format_value(v, desc.dtype) for v in values)
         
         return f"""\
             Tensor {name} = torch::from_blob(
