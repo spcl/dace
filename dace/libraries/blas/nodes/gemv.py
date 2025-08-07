@@ -64,7 +64,11 @@ class ExpandGemvPure(ExpandTransformation):
             mul_out, mul_out_array = "_y", array_y
             output_nodes = None
         else:
-            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(shape_y, dtype_y, storage=storage)
+            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_transient('gemv_tmp',
+                                                                         shape_y,
+                                                                         dtype_y,
+                                                                         storage=storage,
+                                                                         find_new_name=True)
 
             access_tmp = state.add_read(tmp)
             output_nodes = {mul_out: access_tmp}

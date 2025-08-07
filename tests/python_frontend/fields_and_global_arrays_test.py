@@ -628,7 +628,7 @@ def test_same_global_array():
 
     # Ensure only three globals are created
     sdfg = caller.to_sdfg()
-    assert len([k for k in sdfg.arrays if k.startswith('__g')]) == 3
+    assert len([k for k, v in sdfg.arrays.items() if k.startswith('__g') and not v.transient]) == 3
 
 
 def test_two_inner_methods():

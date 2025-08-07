@@ -95,7 +95,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     type2 = arr2.dtype.type
     restype = dtypes.dtype_to_typeclass(np.result_type(type1, type2).type)
 
-    op3, arr3 = sdfg.add_temp_transient(output_shape, restype, arr1.storage)
+    op3, arr3 = sdfg.add_transient(visitor.get_target_name(), output_shape, restype, arr1.storage, find_new_name=True)
 
     acc1 = state.add_read(op1)
     acc2 = state.add_read(op2)
@@ -155,8 +155,8 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
     else:
         # Infer result type
         restype, _ = result_type([arr_a, arr_b], 'Mul')
-        op_out = sdfg.temp_data_name()
-        sdfg.add_scalar(op_out, restype, transient=True, storage=arr_a.storage)
+        op_out = pv.get_target_name()
+        op_out, _ = sdfg.add_scalar(op_out, restype, transient=True, storage=arr_a.storage, find_new_name=True)
 
     arr_out = sdfg.arrays[op_out]
 
@@ -183,7 +183,11 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
         raise SyntaxError()
 
     inp_arr = sdfg.arrays[inp_op]
-    out_arr = sdfg.add_temp_transient(inp_arr.shape, inp_arr.dtype, storage=inp_arr.storage)
+    out_arr = sdfg.add_transient(pv.get_target_name(),
+                                 inp_arr.shape,
+                                 inp_arr.dtype,
+                                 storage=inp_arr.storage,
+                                 find_new_name=True)
 
     from dace.libraries.linalg import Inv
 
@@ -207,7 +211,7 @@ def _solve(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: st
 
     a_arr = sdfg.arrays[op_a]
     b_arr = sdfg.arrays[op_b]
-    out_arr = sdfg.add_temp_transient(b_arr.shape, b_arr.dtype, storage=b_arr.storage)
+    out_arr = pv.add_temp_transient(b_arr.shape, b_arr.dtype, storage=b_arr.storage)
 
     from dace.libraries.linalg import Solve
 
@@ -231,7 +235,7 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
         raise SyntaxError()
 
     inp_arr = sdfg.arrays[inp_op]
-    out_arr = sdfg.add_temp_transient(inp_arr.shape, inp_arr.dtype, storage=inp_arr.storage)
+    out_arr = pv.add_temp_transient(inp_arr.shape, inp_arr.dtype, storage=inp_arr.storage)
 
     from dace.libraries.linalg import Cholesky
 
@@ -289,7 +293,7 @@ def _tensordot(pv: 'ProgramVisitor',
             raise ValueError("Output axes is not a permutation of the output's modes.")
         dot_shape = [dot_shape[i] for i in out_axes]
 
-    op_c, arr_c = sdfg.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
+    op_c, arr_c = pv.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
 
     from dace.libraries.linalg import TensorDot
     a = state.add_read(op_a)
@@ -322,5 +326,6 @@ def _einsum(pv: ProgramVisitor,
                               dtype=dtype,
                               optimize=optimize,
                               output=output,
+                              output_name=pv.get_target_name(),
                               alpha=alpha,
                               beta=beta)

@@ -32,7 +32,14 @@ def _define_local_ex(pv: ProgramVisitor,
         if not isinstance(strides, (list, tuple)):
             strides = [strides]
         strides = [int(s) if isinstance(s, Integral) else s for s in strides]
-    name, _ = sdfg.add_temp_transient(shape, dtype, strides=strides, storage=storage, lifetime=lifetime)
+    name = pv.get_target_name()
+    name, _ = sdfg.add_transient(name,
+                                 shape,
+                                 dtype,
+                                 strides=strides,
+                                 storage=storage,
+                                 lifetime=lifetime,
+                                 find_new_name=True)
     return name
 
 
@@ -50,8 +57,8 @@ def _define_local_scalar(pv: ProgramVisitor,
                          storage: dtypes.StorageType = dtypes.StorageType.Default,
                          lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local scalar in a DaCe program. """
-    name = sdfg.temp_data_name()
-    _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage, lifetime=lifetime)
+    name = pv.get_target_name()
+    name, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage, lifetime=lifetime, find_new_name=True)
     pv.variables[name] = name
     return name
 
@@ -64,12 +71,12 @@ def _define_local_structure(pv: ProgramVisitor,
                             storage: dtypes.StorageType = dtypes.StorageType.Default,
                             lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local structure in a DaCe program. """
-    name = sdfg.temp_data_name()
+    name = pv.get_target_name()
     desc = dcpy(dtype)
     desc.transient = True
     desc.storage = storage
     desc.lifetime = lifetime
-    sdfg.add_datadesc(name, desc)
+    name = sdfg.add_datadesc(name, desc, find_new_name=True)
     pv.variables[name] = name
     return name
 
@@ -77,8 +84,8 @@ def _define_local_structure(pv: ProgramVisitor,
 @oprepo.replaces('dace.define_stream')
 def _define_stream(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dtype: dtypes.typeclass, buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
-    name = sdfg.temp_data_name()
-    sdfg.add_stream(name, dtype, buffer_size=buffer_size, transient=True)
+    name = pv.get_target_name()
+    name, _ = sdfg.add_stream(name, dtype, buffer_size=buffer_size, transient=True, find_new_name=True)
     return name
 
 
@@ -91,8 +98,8 @@ def _define_streamarray(pv: ProgramVisitor,
                         dtype: dtypes.typeclass,
                         buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
-    name = sdfg.temp_data_name()
-    sdfg.add_stream(name, dtype, shape=shape, buffer_size=buffer_size, transient=True)
+    name = pv.get_target_name()
+    name, _ = sdfg.add_stream(name, dtype, shape=shape, buffer_size=buffer_size, transient=True, find_new_name=True)
     return name
 
 
@@ -114,7 +121,7 @@ def _define_literal_ex(pv: ProgramVisitor,
     if like is not None:
         raise NotImplementedError('"like" argument unsupported for numpy.array')
 
-    name = sdfg.temp_data_name()
+    name = pv.get_target_name()
     if dtype is not None and not isinstance(dtype, dtypes.typeclass):
         dtype = dtypes.typeclass(dtype)
 
@@ -138,7 +145,7 @@ def _define_literal_ex(pv: ProgramVisitor,
     if lifetime is not None:
         desc.lifetime = lifetime
 
-    sdfg.add_datadesc(name, desc)
+    name = sdfg.add_datadesc(name, desc, find_new_name=True)
 
     # If using existing array, make copy. Otherwise, make constant
     if isinstance(obj, str):

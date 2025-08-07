@@ -854,9 +854,9 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
     desc = sdfg.arrays[req_name]
     req_node = state.add_access(req_name)
 
-    src = sdfg.add_temp_transient([1], dtypes.int32)
+    src = sdfg.add_transient('comm_wait_src', [1], dtypes.int32, find_new_name=True)
     src_node = state.add_write(src[0])
-    tag = sdfg.add_temp_transient([1], dtypes.int32)
+    tag = sdfg.add_transient('comm_wait_tag', [1], dtypes.int32, find_new_name=True)
     tag_node = state.add_write(tag[0])
 
     if req_range:
@@ -1142,7 +1142,9 @@ def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str,
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_temp_transient((len(block_sizes), ), dtype=dace.int32)
+            bsizes_name, bsizes_desc = sdfg.add_transient('bsizes', (len(block_sizes), ),
+                                                          dtype=dace.int32,
+                                                          find_new_name=True)
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
                 '_set_bsizes_', {}, {'__out'},
@@ -1161,10 +1163,10 @@ def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str,
     out_desc = sdfg.arrays[outbuf_name]
     outbuf_node = state.add_write(outbuf_name)
 
-    gdesc = sdfg.add_temp_transient((9, ), dtype=dace.int32)
+    gdesc = pv.add_temp_transient((9, ), dtype=dace.int32, output_index=0)
     gdesc_node = state.add_write(gdesc[0])
 
-    ldesc = sdfg.add_temp_transient((9, ), dtype=dace.int32)
+    ldesc = pv.add_temp_transient((9, ), dtype=dace.int32, output_index=1)
     ldesc_node = state.add_write(ldesc[0])
 
     if inbuf_range:
@@ -1214,7 +1216,9 @@ def _bcgather(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, 
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_temp_transient((len(block_sizes), ), dtype=dace.int32)
+            bsizes_name, bsizes_desc = sdfg.add_transient('bsizes', (len(block_sizes), ),
+                                                          dtype=dace.int32,
+                                                          find_new_name=True)
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
                 '_set_bsizes_', {}, {'__out'},
@@ -1290,7 +1294,9 @@ def _distr_matmult(pv: ProgramVisitor,
             a_bsizes_desc = sdfg.arrays[a_bsizes_name]
             a_bsizes_node = state.add_read(a_bsizes_name)
         else:
-            a_bsizes_name, a_bsizes_desc = sdfg.add_temp_transient((len(a_block_sizes), ), dtype=dace.int32)
+            a_bsizes_name, a_bsizes_desc = sdfg.add_transient('a_bsizes', (len(a_block_sizes), ),
+                                                              dtype=dace.int32,
+                                                              find_new_name=True)
             a_bsizes_node = state.add_access(a_bsizes_name)
             a_bsizes_tasklet = state.add_tasklet(
                 '_set_a_bsizes_', {}, {'__out'},
@@ -1309,7 +1315,9 @@ def _distr_matmult(pv: ProgramVisitor,
             b_bsizes_desc = sdfg.arrays[b_bsizes_name]
             b_bsizes_node = state.add_read(b_bsizes_name)
         else:
-            b_bsizes_name, b_bsizes_desc = sdfg.add_temp_transient((len(b_block_sizes), ), dtype=dace.int32)
+            b_bsizes_name, b_bsizes_desc = sdfg.add_transient('b_bsizes', (len(b_block_sizes), ),
+                                                              dtype=dace.int32,
+                                                              find_new_name=True)
             b_bsizes_node = state.add_access(b_bsizes_name)
             b_bsizes_tasklet = state.add_tasklet(
                 '_set_b_sizes_', {}, {'__out'},
@@ -1327,7 +1335,7 @@ def _distr_matmult(pv: ProgramVisitor,
         tasklet = Pgemm("__DistrMatMult__", gm, gn, gk)
         m = arra.shape[0]
         n = arrb.shape[-1]
-        out = sdfg.add_temp_transient((m, n), dtype=arra.dtype)
+        out = pv.add_temp_transient((m, n), dtype=arra.dtype)
     elif len(arra.shape) == 2 and len(arrb.shape) == 1:
         # Gemv
         from dace.libraries.pblas.nodes.pgemv import Pgemv
@@ -1336,7 +1344,7 @@ def _distr_matmult(pv: ProgramVisitor,
             m = c_block_sizes[0]
         else:
             m = arra.shape[0]
-        out = sdfg.add_temp_transient((m, ), dtype=arra.dtype)
+        out = pv.add_temp_transient((m, ), dtype=arra.dtype)
     elif len(arra.shape) == 1 and len(arrb.shape) == 2:
         # Gemv transposed
         # Swap a and b
@@ -1348,7 +1356,7 @@ def _distr_matmult(pv: ProgramVisitor,
             n = c_block_sizes[0]
         else:
             n = arra.shape[1]
-        out = sdfg.add_temp_transient((n, ), dtype=arra.dtype)
+        out = pv.add_temp_transient((n, ), dtype=arra.dtype)
 
     anode = state.add_read(opa)
     bnode = state.add_read(opb)

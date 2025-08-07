@@ -54,5 +54,5 @@ The work is designed as two separate pull requests:
 1. #1696 - No-View Nested SDFGs makes the memlet behavior change going into/out of nested SDFGs
 2. Descriptor repository unification (No PR yet)
 
-Additionally, minor adaptations to the Python frontend as part of the [frontend refactoring](doc/design/frontend.md)
+Additionally, minor adaptations to the Python frontend (#2121) as part of the [frontend refactoring](doc/design/frontend.md)
 will assist with mitigating many `tmp*` names in SDFGs.

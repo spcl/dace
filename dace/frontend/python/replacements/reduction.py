@@ -49,10 +49,14 @@ def reduce(pv: ProgramVisitor,
             output_subset.pop(axis)
             output_shape = output_subset.size()
         if (len(output_shape) == 1 and output_shape[0] == 1):
-            outarr = sdfg.temp_data_name()
-            outarr, arr = sdfg.add_scalar(outarr, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage, transient=True)
+            outarr = pv.get_target_name()
+            outarr, arr = sdfg.add_scalar(outarr,
+                                          sdfg.arrays[inarr].dtype,
+                                          sdfg.arrays[inarr].storage,
+                                          transient=True,
+                                          find_new_name=True)
         else:
-            outarr, arr = sdfg.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
+            outarr, arr = pv.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
         inarr = in_array
@@ -293,7 +297,7 @@ def _argminmax(pv: ProgramVisitor,
     val_and_idx = dtypes.struct('_val_and_idx', idx=result_type, val=a_arr.dtype)
 
     # HACK: since identity cannot be specified for structs, we have to init the output array
-    reduced_structs, reduced_struct_arr = sdfg.add_temp_transient(reduced_shape, val_and_idx)
+    reduced_structs, reduced_struct_arr = pv.add_temp_transient(reduced_shape, val_and_idx)
 
     code = "__init = _val_and_idx(val={}, idx=-1)".format(
         dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype))
@@ -330,8 +334,8 @@ def _argminmax(pv: ProgramVisitor,
         external_edges=True)
 
     if return_both:
-        outidx, outidxarr = sdfg.add_temp_transient(sdfg.arrays[reduced_structs].shape, result_type)
-        outval, outvalarr = sdfg.add_temp_transient(sdfg.arrays[reduced_structs].shape, a_arr.dtype)
+        outidx, outidxarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, result_type, output_index=0)
+        outval, outvalarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, a_arr.dtype, output_index=1)
 
         nest.add_state().add_mapped_tasklet(name="_arg{}_extract_".format(func),
                                             map_ranges=reduced_maprange,
@@ -347,7 +351,7 @@ def _argminmax(pv: ProgramVisitor,
 
     else:
         # map to result_type
-        out, outarr = sdfg.add_temp_transient(sdfg.arrays[reduced_structs].shape, result_type)
+        out, outarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, result_type)
         nest(elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
         return nest, out
 

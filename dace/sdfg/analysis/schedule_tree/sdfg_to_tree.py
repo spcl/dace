@@ -757,9 +757,10 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     xfh.replace_code_to_code_edges(sdfg)
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
-        dealias_sdfg(sdfg)
         # Handle name collisions (in arrays, state labels, symbols)
         remove_name_collisions(sdfg)
+        # Ensure no arrays alias in SDFG tree
+        dealias_sdfg(sdfg)
 
     #############################
 

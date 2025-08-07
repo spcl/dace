@@ -75,6 +75,7 @@ class SpecializeEinsum(xf.ExpandTransformation):
                                   node.einsum_str,
                                   *sorted(inputs),
                                   output=output,
+                                  output_name=output,
                                   alpha=node.alpha,
                                   beta=node.beta)
         return sdfg
