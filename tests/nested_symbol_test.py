@@ -194,6 +194,61 @@ def test_nested_symbol_collision(in_symbol_mapping, global_symbol):
     assert np.allclose(B_val[0:10], 42), f"Expected all 42s, got {B_val}"
 
 
+def test_nested_symbol_collision_map():
+    """
+    Test for symbol name collision between outer map and nested SDFG's inner map.
+
+    This test checks for a potential bug where a map uses symbol 'i' as its iterator,
+    and a nested SDFG inside that map also defines its own symbol 'i' as a map iterate. The nested
+    SDFG's symbol should be independent, but there's a risk that the outer 'i'
+    could be incorrectly substituted into the nested SDFG, causing incorrect behavior
+    when accessing array elements like B[i] where 'i' should refer to the outer symbol.
+    """
+    # Create outer SDFG
+    sdfg = dace.SDFG('test_symbol_collision')
+    sdfg.add_array('B', [43], dace.float64)
+
+    state = sdfg.add_state('outer_state')
+
+    # Create map with Sequential schedule using 'i' as iterator
+    map_entry, map_exit = state.add_map('outer_map', dict(i='0:10'), schedule=dace.ScheduleType.Sequential)
+
+    # Create nested SDFG
+    nsdfg = dace.SDFG('nested')
+    nsdfg.add_scalar('b', dace.float64, transient=False)
+
+    nstate = nsdfg.add_state('nested_state')
+
+    # Add tasklet that uses the nested 'i' symbol
+    imap_entry, imap_exit = nstate.add_map('inner_map', dict(i='42:43'), schedule=dace.ScheduleType.Sequential)
+    tasklet = nstate.add_tasklet('set_i', {}, {'out'}, 'out = i')
+    b_access = nstate.add_access('b')
+    nstate.add_nedge(imap_entry, tasklet, dace.Memlet())
+    nstate.add_memlet_path(tasklet, imap_exit, b_access, src_conn='out', memlet=dace.Memlet.simple('b', '0'))
+
+    nested_node = state.add_nested_sdfg(nsdfg, {}, {'b'})
+
+    # Connect map to nested SDFG
+    B = state.add_write('B')
+
+    state.add_memlet_path(map_entry, nested_node, dst_conn=None, memlet=dace.Memlet())
+    state.add_memlet_path(nested_node, map_exit, B, src_conn='b', memlet=dace.Memlet.simple('B', 'i'))
+
+    # Integrate the nested SDFG into the outer SDFG
+    dealias.integrate_nested_sdfg(nsdfg)
+
+    # Execute and verify
+    B_val = np.zeros(43, dtype=np.float64)
+
+    sdfg.validate()
+
+    sdfg(B=B_val)
+
+    # All elements of B should be 42 (the nested 'i' value)
+    # not 0,1,2,...,9 (the outer 'i' values)
+    assert np.allclose(B_val[0:10], 42), f"Expected all 42s, got {B_val}"
+
+
 if __name__ == '__main__':
     test_nested_symbol()
     test_nested_symbol_dynamic()
@@ -205,3 +260,4 @@ if __name__ == '__main__':
     test_nested_symbol_collision(False, True)
     test_nested_symbol_collision(True, False)
     test_nested_symbol_collision(True, True)
+    test_nested_symbol_collision_map()
