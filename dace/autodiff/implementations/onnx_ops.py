@@ -2025,6 +2025,7 @@ class DefaultReduceSumBackward(BackwardImplementation):
         nsdfg.add_datadesc("reduced_grad", reduced_grad_desc)
 
         data_grad_desc = copy.deepcopy(input_desc)
+        data_grad_desc.transient = False
         nsdfg.add_datadesc("data_grad", data_grad_desc)
 
         grad_to_expand = "reduced_grad"
