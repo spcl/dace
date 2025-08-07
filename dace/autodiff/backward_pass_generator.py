@@ -571,17 +571,11 @@ class BackwardPassGenerator:
         """
         Maps each state in the SDFG to the views that indicates what to differentiate
         """
-
-        if "deriche" in self.sdfg.name:
-            find_subgraph = self._find_subgraph_to_differentiate_with_fwd
-        else:
-            find_subgraph = self._find_subgraph_to_differentiate
-        find_subgraph()
-
+        self._find_subgraph_to_differentiate()
         # Expand until there is nothing left to expand
         while self._expand_nodes():
             # Nodes have been expanded again on the expanded graph; recalculate the forward graph
-            find_subgraph()
+            self._find_subgraph_to_differentiate()
 
     def _reverse_states(self):
         """
@@ -1151,6 +1145,19 @@ class BackwardPassGenerator:
             self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
                                              recomputation_nsdfgs[index], strategy_choice[index])
 
+    def _remove_onnx_attribute_accessnodes(self, nodes_list: List[nodes.Node], state: SDFGState) -> None:
+        """
+        For some ONNX operators, nodes have attributes as input connectors even if the inputs are actually constant.
+        Examples of such attributes are `axis` and `keepdims` in `ReduceSum`. 
+        Gradients for these attributes should not be tracked since they represent control flow and not data flow.
+        """
+        attribute_to_remove = {"axis", "keepdims", "axes", "p", "dilations", "kernel_shape", "strides"}
+        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+            if isinstance(node, nodes.AccessNode):
+                out_edges = state.out_edges(node)
+                if out_edges and all(isinstance(edge.dst, ONNXOp) and edge.dst_conn in attribute_to_remove for edge in out_edges):
+                    nodes_list.remove(node)
+                        
     def _remove_maps_without_input_connectors(self, nodes_list: List[nodes.Node], state: SDFGState) -> None:
         """
         Remove maps that don't have any input connectors from the nodes_list.
@@ -1326,7 +1333,10 @@ class BackwardPassGenerator:
                 # Do a forward bfs from p and b
                 fwd_nodes = {n for e in state.edge_bfs(p_and_b_nodes) for n in [e.src, e.dst]}
                 nodes_list = list(backward_nodes.intersection(fwd_nodes))
+
+            # Clean up unwanted elements
             self._remove_maps_without_input_connectors(nodes_list, state)
+            self._remove_onnx_attribute_accessnodes(nodes_list, state)
 
             state_subgraph = dstate.StateSubgraphView(state, nodes_list)
 
@@ -2946,7 +2956,8 @@ class BackwardPassGenerator:
                                                  other_subset=fwd_memlet.other_subset
                                                  if fwd_memlet.data == forward_node.data else fwd_memlet.subset)
                     memlet = new_memlet
-
+            self.backward_sdfg.save("log_sdfgs/backward.sdfg")
+            self.sdfg.save("log_sdfgs/forward.sdfg")
             new_edge = backward_state.add_edge(
                 backward_dst_node,
                 self._lookup_required_grad_name(dest_node, input_conn),
