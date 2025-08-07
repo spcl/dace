@@ -1,4 +1,4 @@
-// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_COPY_H
 #define __DACE_COPY_H
 
@@ -8,6 +8,40 @@
 
 namespace dace
 {
+    template <typename T, int VECLEN,
+              typename std::enable_if<std::is_trivially_copyable<T>::value, bool>::type = true>
+    void CopyImpl(const T* src, T* dst, int COPYDIM)
+    {
+        memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
+    }
+
+    template <typename T, int VECLEN,
+              typename std::enable_if<!std::is_trivially_copyable<T>::value, bool>::type = true>
+    void CopyImpl(const T* src, T* dst, int COPYDIM)
+    {
+        __DACE_UNROLL
+        for (int i = 0; i < COPYDIM * VECLEN; ++i) {
+            dst[i] = src[i];
+        }
+    }
+
+    template <typename T, int COPYDIM, int VECLEN,
+              typename std::enable_if<std::is_trivially_copyable<T>::value, bool>::type = true>
+    void CopyImpl(const T* src, T* dst)
+    {
+        memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
+    }
+
+    template <typename T, int COPYDIM, int VECLEN,
+              typename std::enable_if<!std::is_trivially_copyable<T>::value, bool>::type = true>
+    void CopyImpl(const T* src, T* dst)
+    {
+        __DACE_UNROLL
+        for (int i = 0; i < COPYDIM * VECLEN; ++i) {
+            dst[i] = src[i];
+        }
+    }
+
     template<typename T, typename U>
     inline void InitArray(T *ptr, const U& value, int size)
     {
@@ -33,7 +67,7 @@ namespace dace
 #if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (sizeof...(OTHER_COPYDIMS) == 0 && SRC_STRIDE == 1 && dst_stride == 1) {
-                    memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
+                    CopyImpl<T, COPYDIM, VECLEN>(src, dst);
                     return;
                 }
 #endif
@@ -42,6 +76,7 @@ namespace dace
                 for (int i = 0; i < COPYDIM; ++i)
                     CopyND<T, VECLEN, ALIGNED, OTHER_COPYDIMS...>::template ConstSrc<OTHER_SRCDIMS...>::Copy(
                         src + i * SRC_STRIDE, dst + i * dst_stride, dst_otherdims...);
+
             }
 
             template <typename ACCUMULATE, typename... Args>
@@ -72,7 +107,7 @@ namespace dace
 #if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (sizeof...(OTHER_COPYDIMS) == 0 && src_stride == 1 && DST_STRIDE == 1) {
-                    memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
+                    CopyImpl<T, COPYDIM, VECLEN>(src, dst);
                     return;
                 }
 #endif
@@ -110,7 +145,7 @@ namespace dace
 #if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (sizeof...(OTHER_COPYDIMS) == 0 && src_stride == 1 && dst_stride == 1) {
-                    memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
+                    CopyImpl<T, COPYDIM, VECLEN>(src, dst);
                     return;
                 }
 #endif
@@ -148,63 +183,146 @@ namespace dace
         template <int...>
         struct ConstSrc
         {
+            template<typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
                 *(vec<T, VECLEN> *)dst = *(vec<T, VECLEN> *)src;
             }
 
-            template <typename ACCUMULATE, typename... Args>
+            template<typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Copy(const T *src, T *dst)
+            {
+                __DACE_UNROLL
+                for (int i = 0; i < VECLEN; i++){
+                    dst[i] = src[i];
+                }
+            }
+
+            template <typename ACCUMULATE, typename... Args,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
 
-            template <typename ACCUMULATE, typename... Args>
+            template <typename ACCUMULATE, typename... Args,
+                      typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
+            {
+                __DACE_UNROLL
+                for (int i = 0; i < VECLEN; i ++){
+                    dst[i] = acc(dst[i], src[i]);
+                }
+            }
+
+            template <typename ACCUMULATE, typename... Args,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
                 wcr_custom<T>::reduce_atomic(acc, (vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
+            }
+
+            template <typename ACCUMULATE, typename... Args,
+                      typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; i++){
+                    wcr_custom<T>::reduce_atomic(acc, dst, src);
+                }
             }
         };
 
         template <int...>
         struct ConstDst
         {
+            template <typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
                 *(vec<T, VECLEN> *)dst = *(vec<T, VECLEN> *)src;
             }
 
-            template <typename ACCUMULATE>
+            template <typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Copy(const T *src, T *dst)
+            {
+                __DACE_UNROLL
+                for (int i = 0; i < VECLEN; ++i){
+                    dst[i] = src[i];
+                }
+            }
+
+            template <typename ACCUMULATE, typename T2 = T,
+                      std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
 
-            template <typename ACCUMULATE>
+            template <typename ACCUMULATE, typename T2 = T,
+                      std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; ++i)
+                    dst[i] = acc(dst[i], src[i]);
+            }
+
+            template <typename ACCUMULATE, typename T2 = T,
+                    std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
                 wcr_custom<T>::reduce_atomic(acc, (vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
+            }
+
+            template <typename ACCUMULATE, typename T2 = T,
+                     std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; i++){
+                    wcr_custom<T>::reduce_atomic(acc, dst, src);
+                }
             }
         };
 
         struct Dynamic
         {
+            template <typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
                 *(vec<T, VECLEN> *)dst = *(vec<T, VECLEN> *)src;
             }
 
-            template <typename ACCUMULATE>
+            template <typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Copy(const T *src, T *dst)
+            {
+                for (int i = 0; i < VECLEN; ++i){
+                    dst[i] = src[i];
+                }
+            }
+
+            template <typename ACCUMULATE, typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
 
-            template <typename ACCUMULATE>
+            template <typename ACCUMULATE, typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; ++i)
+                    dst[i] = acc(dst[i], src[i]);
+            }
+
+            template <typename ACCUMULATE, typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
                 wcr_custom<T>::reduce_atomic(acc, (vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
+
+            template <typename ACCUMULATE, typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
+            {
+                wcr_custom<T>::reduce_atomic(acc, (vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
+            }
+
         };
     };
 
@@ -220,7 +338,7 @@ namespace dace
 #if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (N == 1 && SRC_STRIDE == 1 && dst_stride == 1) {
-                    memcpy(dst, src, copydim * sizeof(T) * VECLEN);
+                    CopyImpl<T, VECLEN>(src, dst, copydim);
                     return;
                 }
 #endif
@@ -259,7 +377,7 @@ namespace dace
 #if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (N == 1 && src_stride == 1 && DST_STRIDE == 1) {
-                    memcpy(dst, src, copydim * sizeof(T) * VECLEN);
+                    CopyImpl<T, VECLEN>(src, dst, copydim);
                     return;
                 }
 #endif
@@ -299,7 +417,7 @@ namespace dace
 #if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (N == 1 && src_stride == 1 && dst_stride == 1) {
-                    memcpy(dst, src, copydim * sizeof(T) * VECLEN);
+                    CopyImpl<T, VECLEN>(src, dst, copydim);
                     return;
                 }
 #endif
@@ -338,62 +456,151 @@ namespace dace
         template <int...>
         struct ConstSrc
         {
+            template<typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
                 *(vec<T, VECLEN> *)dst = *(vec<T, VECLEN> *)src;
+
             }
 
-            template <typename ACCUMULATE, typename... Args>
+            template <typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Copy(const T *src, T *dst)
+            {
+                for (int i = 0; i < VECLEN; ++i){
+                    dst[i] = src[i];
+                }
+            }
+
+            template <typename ACCUMULATE, typename... Args,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
 
-            template <typename ACCUMULATE, typename... Args>
+            template <typename ACCUMULATE, typename... Args, typename T2 = T,
+                      std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc, Args... args)
+            {
+                for (int i = 0; i < VECLEN; ++i)
+                    dst[i] = acc(dst[i], src[i]);
+            }
+
+            template <typename ACCUMULATE, typename... Arg,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
                 wcr_custom<T>::reduce_atomic(acc, (vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
+
+            template <typename ACCUMULATE, typename... Args,
+                    typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc, Args... args)
+            {
+                for (int i = 0; i < VECLEN; ++i)
+                    wcr_custom<T>::reduce_atomic(acc, &dst[i], src[i]);
+            }
+
         };
 
         template <int...>
         struct ConstDst
         {
+            template <typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
                 *(vec<T, VECLEN> *)dst = *(vec<T, VECLEN> *)src;
+
             }
 
-            template <typename ACCUMULATE>
+            template <typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Copy(const T *src, T *dst)
+            {
+                for (int i = 0; i < VECLEN; ++i)
+                    dst[i] = src[i];
+
+            }
+
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
 
-            template <typename ACCUMULATE>
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; i++){
+                    dst[i] = acc(dst[i], src[i]);
+                }
+            }
+
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
                 wcr_custom<T>::reduce_atomic(acc, (vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
+            }
+
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; i++){
+                    wcr_custom<T>::reduce_atomic(acc, dst[i], src[i]);
+                }
             }
         };
 
         struct Dynamic
         {
+            template <typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
                 *(vec<T, VECLEN> *)dst = *(vec<T, VECLEN> *)src;
+
             }
 
-            template <typename ACCUMULATE>
+            template <typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Copy(const T *src, T *dst)
+            {
+                for (int i = 0; i < VECLEN; i++){
+                    dst[i] = src[i];
+                }
+            }
+
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
                 *(vec<T, VECLEN> *)dst = acc(*(vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
             }
 
-            template <typename ACCUMULATE>
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; i++){
+                    dst = acc(dst[i], src[i]);
+                }
+            }
+
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
                 wcr_custom<T>::reduce_atomic(acc, (vec<T, VECLEN> *)dst, *(vec<T, VECLEN> *)src);
+            }
+
+            template <typename ACCUMULATE,
+                      typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
+            static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
+            {
+                for (int i = 0; i < VECLEN; i++){
+                    wcr_custom<T>::reduce_atomic(acc, dst[i], src[i]);
+                }
             }
         };
     };
