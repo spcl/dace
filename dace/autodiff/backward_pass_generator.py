@@ -2956,8 +2956,6 @@ class BackwardPassGenerator:
                                                  other_subset=fwd_memlet.other_subset
                                                  if fwd_memlet.data == forward_node.data else fwd_memlet.subset)
                     memlet = new_memlet
-            self.backward_sdfg.save("log_sdfgs/backward.sdfg")
-            self.sdfg.save("log_sdfgs/forward.sdfg")
             new_edge = backward_state.add_edge(
                 backward_dst_node,
                 self._lookup_required_grad_name(dest_node, input_conn),
