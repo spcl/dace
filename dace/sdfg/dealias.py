@@ -2,9 +2,10 @@
 """
 This module contains functions for ensuring SDFGs and nested SDFGs share the same data descriptors.
 """
-from dace import SDFG, data, subsets, symbolic
+from dace import data, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes as nd
+from dace.sdfg.sdfg import SDFG
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation.helpers import unsqueeze_memlet
 from typing import Dict, List, Set, Tuple
@@ -269,9 +270,19 @@ def integrate_nested_sdfg(sdfg: SDFG):
                         continue
                     to_add_and_view[connector] = (edge.data.data, parent_sdfg.arrays[edge.data.data], edge.data)
 
+    symbols_to_add: Set[symbolic.SymbolicType] = set()
+    # Collect all symbols that need to be added to the nested SDFG
+    for parent_name, parent_desc, parent_memlet in to_add_and_view.values():
+        for sym in parent_desc.used_symbols(all_symbols=True):
+            symbols_to_add.add(sym)
+        for sym in parent_memlet.used_symbols(all_symbols=True):
+            symbols_to_add.add(sym)
+
+    if symbols_to_add:
+        remove_symbol_aliases(sdfg, {sym: sym for sym in symbols_to_add})
+
     # Process each data container that needs to be integrated
     visited: Set[str] = set()
-    symbols_to_add: Set[str] = set()
     for inner_name, (parent_name, parent_desc, parent_memlet) in to_add_and_view.items():
         if inner_name in visited:
             continue
@@ -393,3 +404,34 @@ def integrate_nested_sdfg(sdfg: SDFG):
             # Add the symbol to the SDFG and the parent node's symbol mapping
             sdfg.add_symbol(sym_name, sym_type)
         parent_node.symbol_mapping[sym_name] = sym_name
+
+
+def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[str, str]:
+    """
+    Removes symbol aliases from the SDFG based on the provided symbol mapping.
+    This function ensures that all symbols in the SDFG are unique and that
+    aliases are resolved to their original symbols.
+
+    :param sdfg: The SDFG to operate on.
+    :param symbol_mapping: A dictionary mapping aliases to their original symbols.
+    :return: A dictionary mapping original symbols to their new names, if any renaming was necessary.
+    """
+    # The following symbols are at risk of aliasing with symbols internal to the SDFG.
+    # We need to ensure that these symbols are not aliased by renaming them in the SDFG to unique names.
+    target_symbols = set().union(*(symbolic.free_symbols_and_functions(v) for v in symbol_mapping.values()))
+    sdfg_symbols = set(sdfg.used_symbols(all_symbols=True))
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            sdfg_symbols.update(node.new_symbols(sdfg, state, {}).keys())
+    if target_symbols & sdfg_symbols:
+        # If there is an intersection, we need to rename the symbols in the SDFG
+        all_symbols = sdfg_symbols | target_symbols | sdfg.arrays.keys() | sdfg.constants_prop.keys()
+        repl_dict = {}
+        for sym in target_symbols:
+            if str(sym) in sdfg_symbols and str(sym) not in repl_dict:
+                new_name = data.find_new_name(str(sym), all_symbols)
+                repl_dict[str(sym)] = new_name
+                all_symbols.add(new_name)
+        sdfg.replace_dict(repl_dict)
+        return repl_dict
+    return {}
