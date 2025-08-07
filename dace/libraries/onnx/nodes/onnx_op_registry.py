@@ -129,6 +129,13 @@ def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str,
         if len(kwargs) > 0:
             raise TypeError(f"Unknown arguments {', '.join(kwargs)}")
 
+        # Remove all non_string attributes
+        # Sometimes constants are passed as inputs, but they do not require AccessNodes
+        # so we can skip them
+        inputs = {inp: arr_name
+                  for inp, arr_name in inputs.items()
+                  if isinstance(arr_name, str)}
+        
         for inp, arr_name in inputs.items():
             read = state.add_read(arr_name)
             state.add_edge(read, None, onnx_node, inp,
