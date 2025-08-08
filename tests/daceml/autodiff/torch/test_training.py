@@ -4,9 +4,6 @@ import pytest
 
 import numpy as np
 import torch
-from efficientnet_pytorch import get_model_params
-from efficientnet_pytorch.model import MBConvBlock
-from torchvision import datasets, transforms
 from torch import nn, optim
 from transformers import BertLayer, BertConfig
 
