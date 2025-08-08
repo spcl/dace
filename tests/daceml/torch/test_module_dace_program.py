@@ -15,7 +15,7 @@ def test_parse_forward_simple(gpu):
     torch_module = copy_to_gpu(
         gpu,
         torch.nn.Sequential(torch.nn.Linear(12, 24), torch.nn.Linear(24, 2)))
-    dace_module = DaceModule(torch_module)
+    dace_module = DaceModule(torch_module, sdfg_name='test_parse_forward_simple')
     x = copy_to_gpu(gpu, torch.randn(2, 12))
     expected = torch_module(x)
     result = dace_module(x)
@@ -42,7 +42,7 @@ def test_parse_forward_nested(gpu):
         torch.nn.Sequential(
             torch.nn.Sequential(torch.nn.Linear(12, 24),
                                 torch.nn.Linear(24, 2)), nn.Softmax(dim=1)))
-    dace_module2 = DaceModule(torch_module)
+    dace_module2 = DaceModule(torch_module, sdfg_name='test_parse_forward_nested')
     x = copy_to_gpu(gpu, torch.randn(2, 12))
     expected = torch_module(x)
     result = dace_module2(x)
