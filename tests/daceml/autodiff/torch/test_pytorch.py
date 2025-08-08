@@ -52,6 +52,7 @@ def run_pytorch_module(
 
     dace_module = DaceModule(
         module,
+        simplify=False,
         backward=True,
         sdfg_name=sdfg_name,
         auto_optimize=auto_optimize,
