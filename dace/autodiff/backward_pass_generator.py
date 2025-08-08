@@ -472,6 +472,7 @@ class BackwardPassGenerator:
         # TODO: deal with a full unroll of a loop inside this function
         self._create_stateviews_mapping()
 
+        self.sdfg.save("log_sdfgs/forward.sdfg")
         # Reverse each state in the graph
         self._reverse_states()
 
@@ -2634,10 +2635,6 @@ class BackwardPassGenerator:
                             for tree_edge in backward_state.memlet_tree(edge):
                                 tree_edge.data.wcr = "lambda x, y: x + y"
 
-                    elif backward_state.in_degree(reversed_node) == 1:
-                        self._set_wcr_sum_if_needed(forward_state, backward_state,
-                                                    backward_state.in_edges(reversed_node)[0])
-
                 # If this node is a tasklet with a condition, we add some modification to the backward state
                 elif (isinstance(node, nodes.Tasklet)
                       and self._conditional_tasklet(node)) or (isinstance(node, nodes.NestedSDFG)
@@ -2708,77 +2705,6 @@ class BackwardPassGenerator:
         assert state in self.reversed_states_map
         # get the backward state for this node
         return self.reversed_states_map[state]
-
-    def _set_wcr_sum_if_needed(self,
-                               forward_state: SDFGState,
-                               backward_state: SDFGState,
-                               edge: dgraph.MultiConnectorEdge,
-                               summation_node: bool = False):
-        """ Set the WCR to sum for all edges along the path of edge, if needed.
-            This function will also add gradient initialization to zero if necessary.
-            The initialization is necessary if there will be a wcr or if the write will be to only a subset of the array.
-            :param edge: the root edge to start from
-            :param summation_node: True if this node is a part of a summation node for gradient accumulation
-        """
-
-        inverse_array_grad_map = {v: k for k, v in self.array_grad_map.items()}
-
-        add_wcr = False
-
-        # This method assumes that the memlet tree is iterated from the root backwards
-        for path_edge in backward_state.memlet_tree(edge):
-            data_name = path_edge.data.data
-            if data_name in inverse_array_grad_map and inverse_array_grad_map[
-                    data_name] in self.conflicted_gradient_buffers:
-                add_wcr = True
-                # NOTE even though init_grad is called below, the gradient
-                # buffer will not actually be zeroed when
-                break
-
-            # Set the wcr to sum temporarily so that the following works
-            # Here, we are checking if there are possible conflicting writes
-            # To the same node
-
-            # We need to manually set the start block of the SDFG so that the following works
-            try:
-                start_state = self.sdfg.start_state
-            except (dace.sdfg.graph.NodeNotFoundError, ValueError):
-                source_nodes = self.sdfg.source_nodes()
-                # Because we are adding the reversed states then connecting them
-                # There will be more than a single source node which confuses the start_state function
-                source_nodes = [n for n in source_nodes if "reversed" not in n.label]
-                if len(source_nodes) != 1:
-                    raise AutoDiffException("Can't figure out the start block of the SDFG." +
-                                            " is_write_conflicted_with_reason will likely fail")
-                self.sdfg.start_block = source_nodes[0].block_id
-            old_wcr = path_edge.data.wcr
-            path_edge.data.wcr = "lambda x, y: x + y"
-            if is_write_conflicted_with_reason(backward_state, path_edge):
-                # if we have a write conflict, we need WCR
-                add_wcr = True
-            path_edge.data.wcr = old_wcr
-
-        # Special case for reads within loops
-        within_loop, _ = self._state_within_loop(forward_state)
-
-        # If this is a summation node we will treat this special case in the reverse_subgraph function
-        if within_loop and not summation_node:
-            # Check that the values read from this loop should accumelate at each iteration
-            # TODO
-
-            # Check that the write is to a golbal array and not a temorary
-            if not self.backward_sdfg.arrays[edge.dst.data].transient:
-                add_wcr = True
-
-        # Check if any of the inputs from this accessnode will be used to contribute in a wcr way
-        if not add_wcr:
-            add_wcr = self._input_used_with_a_wcr(forward_state=forward_state, backward_node=edge.dst)
-
-        if add_wcr and edge not in self.no_wcr_edges:
-            if "cavity" in self.sdfg.name and "tmp" in edge.dst.data:
-                return
-            for tree_edge in backward_state.memlet_tree(edge):
-                tree_edge.data.wcr = "lambda x, y: x + y"
 
     def _input_used_with_a_wcr(self, forward_state: SDFGState, backward_node: nodes.AccessNode):
         """

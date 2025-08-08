@@ -30,7 +30,6 @@ def autooptimize_sdfgs_for_ad(bwd_generator: BackwardPassGenerator):
     backward_gemm_to_library_node(backward_sdfg)
     cavity_flow_opt(backward_sdfg)
     fuse_states_cav(backward_sdfg)
-    backward_sdfg.save("log_sdfgs/backward_sdfg_after_flow.sdfg")
 
     # # 2- We make all the arrays in the SDFG transient except for the gradient computations
     fwd_modified = []
