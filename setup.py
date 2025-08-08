@@ -116,12 +116,13 @@ setup(name='dace',
           'pyreadline;platform_system=="Windows"',
           'typing-compat; python_version < "3.8"',
           'packaging',
-          'onnx',
+          'onnx <= 1.17.0',
           'torch',
           'onnxsim',
           'protobuf',
           'scipy',
           'pulp',
+          'ninja'
       ] + cmake_requires,
       extras_require={
           'testing': [
