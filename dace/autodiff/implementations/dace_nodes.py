@@ -269,7 +269,7 @@ class ReverseReduce(BackwardImplementation):
                     backward_state.add_edge(bwd_in_read, None, bwd_out_read,
                                             "views",
                                             copy.deepcopy(out_edge.data))
-
+            return nsdfg, result
         elif reduction_type is dtypes.ReductionType.Min:
 
             # In this case, we need to get the index of the minimum value
