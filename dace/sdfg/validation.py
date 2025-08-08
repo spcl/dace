@@ -907,8 +907,22 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if not e.data.allow_oob and e.data.other_subset is not None and not (
             (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
-            dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
+            if isinstance(src_node, nd.AccessNode):
+                src_expr = e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen
+            elif isinstance(src_node, nd.CodeNode) and e.src.out_connectors[e.src_conn] is not None:
+                # Get data from connector
+                src_expr = e.data.src_subset.num_elements() * e.src.out_connectors[e.src_conn].veclen
+            else:
+                src_expr = e.data.src_subset.num_elements()
+
+            if isinstance(dst_node, nd.AccessNode):
+                dst_expr = e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen
+            elif isinstance(dst_node, nd.CodeNode) and e.dst.in_connectors[e.dst_conn] is not None:
+                # Get data from connector
+                dst_expr = e.data.dst_subset.num_elements() * e.dst.in_connectors[e.dst_conn].veclen
+            else:
+                dst_expr = e.data.dst_subset.num_elements()
+
             if symbolic.inequal_symbols(src_expr, dst_expr):
                 error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
                 # NOTE: Make an exception for Views and reference sets
@@ -1003,7 +1017,7 @@ class InvalidSDFGError(Exception):
 
     def __str__(self):
         if self.state_id is not None:
-            state = self.sdfg.node(self.state_id)
+            state = self.sdfg.state(self.state_id)
             locinfo = self._getlineinfo(state)
             suffix = f' (at state {state.label})'
         else:
@@ -1082,10 +1096,16 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
-        state = self.sdfg.node(self.state_id)
+        from dace.sdfg.graph import NodeNotFoundError
+        try:
+            state = self.sdfg.state(self.state_id)
+            state_label = state.label
+        except NodeNotFoundError:
+            state = None
+            state_label = '<unknown>'
         locinfo = ''
 
-        if self.node_id is not None:
+        if state is not None and self.node_id is not None:
             from dace.sdfg.nodes import Node
             node: Node = state.node(self.node_id)
             nodestr = f', node {node}'
@@ -1100,7 +1120,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {state.label}{nodestr}){locinfo}'
+        return f'{self.message} (at state {state_label}{nodestr}){locinfo}'
 
 
 class NodeNotExpandedError(InvalidSDFGNodeError):
@@ -1127,9 +1147,15 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
-        state = self.sdfg.node(self.state_id)
+        from dace.sdfg.graph import NodeNotFoundError
+        try:
+            state = self.sdfg.state(self.state_id)
+            state_label = state.label
+        except NodeNotFoundError:
+            state = None
+            state_label = '<unknown>'
 
-        if self.edge_id is not None:
+        if state is not None and self.edge_id is not None:
             e = state.edges()[self.edge_id]
             edgestr = ", edge %s (%s:%s -> %s:%s)" % (
                 str(e.data),
@@ -1149,7 +1175,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {state.label}{edgestr}){locinfo}'
+        return f'{self.message} (at state {state_label}{edgestr}){locinfo}'
 
 
 def validate_memlet_data(memlet_data: str, access_data: str) -> bool:

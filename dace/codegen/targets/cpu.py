@@ -229,6 +229,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
                                                         is_write=is_write,
+                                                        use_offset=True,
                                                         decouple_array_interfaces=decouple_array_interfaces)
 
         # Test for views of container arrays and structs
@@ -1688,6 +1689,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = cfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
@@ -1841,6 +1843,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(nested_global_stream.getvalue())
             function_stream.write(nested_stream.getvalue())
 
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _generate_MapEntry(
