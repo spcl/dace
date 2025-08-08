@@ -70,7 +70,7 @@ class DefaultEinsumBackward(BackwardImplementation):
         access_output_grad = nstate.add_read(result.given_grad_names["Output"])
 
         def create_access_node(connector: str) -> nd.AccessNode:
-            nsdfg.add_datadesc(connector, butils.forward_in_desc_with_name(forward_node, context, connector))
+            nsdfg.add_datadesc(connector, copy.deepcopy(butils.forward_in_desc_with_name(forward_node, context, connector)))
             return nstate.add_read(connector)
 
         # the forward inputs we will require
