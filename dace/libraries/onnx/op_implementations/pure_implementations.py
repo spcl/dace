@@ -2021,14 +2021,10 @@ class PureReduceMean(ONNXForward):
     @staticmethod
     def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         # Check that all the inputs (even the optional ones) are present and constant
-        
-        if not hasattr(sdfg, "_parent_onnx_model"):
-            return False
-
         # optional inputs
         is_axes_present = True
         try:
-            if in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
                 return False
         except ValueError:
             is_axes_present = False
@@ -2047,6 +2043,7 @@ class PureReduceMean(ONNXForward):
         # We treat both cases where axes is an attribute and where it is an input
         # Since can be applied is true, we know that axes is present and valid
         axes = None
+        # TODO: avoid catching Exceptions
         try:
             if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
                 axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
@@ -2056,10 +2053,9 @@ class PureReduceMean(ONNXForward):
             # Axes is a constant input to the node
             raise NotImplementedError(
                 "PureReduceMean in the case where the axes are input connectors is not implemented yet.")
-        elif hasattr(node, "axes"):
+        else:
             # Axes is an attribute of the node
-            axes = node.axes
-
+            axes = node.axes if hasattr(node, "axes") else None
             def prog(data, reduced):
                 reduced[:] = np.mean(data, axis=axes)
 
@@ -2320,7 +2316,7 @@ class SplitPure(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        from daceml.transformation.replacement import onnx_constant_or_none
+        from dace.transformation.onnx.replacement import onnx_constant_or_none
 
         # Check if we have either split input or num_outputs attribute
         has_split_input = len(list(state.in_edges_by_connector(node, "split"))) > 0
@@ -2339,7 +2335,7 @@ class SplitPure(ONNXForward):
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
-        from daceml.transformation.replacement import onnx_constant_or_none
+        from dace.transformation.onnx.replacement import onnx_constant_or_none
 
         nsdfg = dace.SDFG(node.label + "_expansion")
         nstate = nsdfg.add_state()

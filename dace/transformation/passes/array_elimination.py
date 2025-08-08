@@ -44,9 +44,6 @@ class ArrayElimination(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
-        if "adi" in sdfg.name:
-            print(f"Skipping ArrayElimination pass for {sdfg.name}")
-            return None
         result: Set[str] = set()
         reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
         # Get access nodes and modify set as pass continues

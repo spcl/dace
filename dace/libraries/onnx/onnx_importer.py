@@ -94,7 +94,7 @@ class ONNXModel:
                 import onnx
                 import os
                 import numpy as np
-                from daceml.onnx import ONNXModel
+                from dace.onnx import ONNXModel
 
                 model_path = os.path.join("..", "tests", "onnx_files", "efficientnet.onnx")
                 model = onnx.load(model_path)
