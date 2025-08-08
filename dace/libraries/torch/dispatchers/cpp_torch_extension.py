@@ -198,9 +198,6 @@ def argument_codegen(sdfg: dace.SDFG,
         if name not in clean_weights:
             raise ValueError(f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
                              f" of the PyTorch Module, and not a constant.")
-        if arglist[name].total_size > 1024:
-            raise ValueError(f"Cannot generate PyTorch module C++ code: SDFG argument {name} is not an input or output"
-                             f" of the PyTorch Module, and is too large.")
 
         value = clean_weights[name]
         ptr_init_code += f"{constant_initializer_code(name, arglist[name], value)}\n"
