@@ -193,7 +193,7 @@ namespace dace
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
                 __DACE_UNROLL
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     dst[i] = src[i];
                 }
             }
@@ -210,7 +210,7 @@ namespace dace
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
                 __DACE_UNROLL
-                for (int i = 0; i < VECLEN; i ++){
+                for (int i = 0; i < VECLEN; ++i){
                     dst[i] = acc(dst[i], src[i]);
                 }
             }
@@ -226,7 +226,7 @@ namespace dace
                       typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     wcr_custom<T>::reduce_atomic(acc, dst, src);
                 }
             }
@@ -276,7 +276,7 @@ namespace dace
                      std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     wcr_custom<T>::reduce_atomic(acc, dst, src);
                 }
             }
@@ -532,7 +532,7 @@ namespace dace
                       typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     dst[i] = acc(dst[i], src[i]);
                 }
             }
@@ -548,7 +548,7 @@ namespace dace
                       typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     wcr_custom<T>::reduce_atomic(acc, dst[i], src[i]);
                 }
             }
@@ -566,7 +566,7 @@ namespace dace
             template <typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Copy(const T *src, T *dst)
             {
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     dst[i] = src[i];
                 }
             }
@@ -582,7 +582,7 @@ namespace dace
                       typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate(const T *src, T *dst, ACCUMULATE acc)
             {
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     dst = acc(dst[i], src[i]);
                 }
             }
@@ -598,7 +598,7 @@ namespace dace
                       typename T2 = T, std::enable_if_t<!std::is_trivially_copyable<T2>::value, bool> = true>
             static DACE_HDFI void Accumulate_atomic(const T *src, T *dst, ACCUMULATE acc)
             {
-                for (int i = 0; i < VECLEN; i++){
+                for (int i = 0; i < VECLEN; ++i){
                     wcr_custom<T>::reduce_atomic(acc, dst[i], src[i]);
                 }
             }
