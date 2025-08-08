@@ -145,7 +145,7 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str, edge_co
     else:
         storage = desc.storage
 
-    if storage in [dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap]:
+    if storage in [dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register]:
         mem_info = "ort_cpu_mem_info"
     elif storage is dtypes.StorageType.GPU_Global:
         mem_info = "ort_cuda_mem_info"
