@@ -20,9 +20,7 @@ def test_inconn_self_copy():
         return B
 
     sdfg = inconn_self_copy.to_sdfg(simplify=False)
-    sdfg.save('test_pre_is.sdfg')
-    sdfg.apply_transformations(InlineSDFG)
-    sdfg.save('test_post_is.sdfg')
+    assert sdfg.apply_transformations(InlineSDFG) > 0
 
     A = np.zeros((5, 5), dtype=np.int32)
     A[0] = 1
@@ -49,10 +47,7 @@ def test_outconn_self_copy():
         return B
 
     sdfg = outconn_self_copy.to_sdfg(simplify=False)
-    sdfg.apply_transformations_repeated(xforms)
-    sdfg.save('test_pre_is.sdfg')
-    sdfg.apply_transformations(InlineSDFG)
-    sdfg.save('test_post_is.sdfg')
+    assert sdfg.apply_transformations(InlineSDFG) > 0
 
     A = np.zeros((5, 5), dtype=np.int32)
     A[0] = 1
@@ -80,10 +75,7 @@ def test_in_out_inconn_copy():
         return B
 
     sdfg = in_out_inconn_copy.to_sdfg(simplify=False)
-    sdfg.apply_transformations_repeated(xforms)
-    sdfg.save('test_pre_is.sdfg')
-    sdfg.apply_transformations(InlineSDFG)
-    sdfg.save('test_post_is.sdfg')
+    assert sdfg.apply_transformations(InlineSDFG) > 0
 
     A = np.zeros((5, 5), dtype=np.int32)
     A[0] = 1
@@ -117,10 +109,7 @@ def test_intermediate_copies():
         return B
 
     sdfg = intermediate_copies.to_sdfg(simplify=False)
-    sdfg.apply_transformations_repeated(xforms)
-    sdfg.save('test_pre_is.sdfg')
-    sdfg.apply_transformations(InlineSDFG)
-    sdfg.save('test_post_is.sdfg')
+    assert sdfg.apply_transformations(InlineSDFG) > 0
 
     A = np.zeros((5, 5), dtype=np.int32)
     A[0] = 1
