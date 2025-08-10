@@ -921,11 +921,11 @@ class TaskletTransformer(ExtNodeTransformer):
             node.id = name
         elif isinstance(node, ast.Subscript):
             if isinstance(node.value, ast.Call):
-                node = node.value
-                node.func.id = name
+                subnode = node.value
+                subnode.func.id = name
             elif name_subscript:
-                node = node.value
-                node.id = name
+                subnode = node.value
+                subnode.id = name
             else:
                 node.value.id = name
         elif isinstance(node, ast.Call):
