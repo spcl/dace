@@ -135,7 +135,7 @@ class _ConfigData(threading.local):
         self._metadata_filename = os.path.join(dace_path, 'config_schema.yml')
 
         # Load configuration schema (for validation and defaults)
-        self.load_schema()
+        self.load_schema(filename=None)
 
         # Priority order: current working directory, default configuration file (DACE_CONFIG), then ~/.dace.conf
         for filename in [self.default_filename, default_cfg_filename]:
