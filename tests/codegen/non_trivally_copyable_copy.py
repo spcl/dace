@@ -58,6 +58,7 @@ public:
 };
 """
 
+
 def _gen_sdfg():
     sdfg = dace.SDFG("non_trivial_copy_test")
     s1 = sdfg.add_state("main")
@@ -67,29 +68,35 @@ def _gen_sdfg():
     sdfg.add_array(
         "A",
         dtype=interesting_type,
-        shape=[10,],
-        strides=[1,],
+        shape=[
+            10,
+        ],
+        strides=[
+            1,
+        ],
         transient=False,
     )
     sdfg.add_array(
         "B",
         dtype=interesting_type,
-        shape=[10,],
-        strides=[1,],
+        shape=[
+            10,
+        ],
+        strides=[
+            1,
+        ],
         transient=False,
     )
 
     a = s1.add_access("A")
     b = s1.add_access("B")
 
-    s1.add_edge(
-        a, None, b, None, 
-        dace.memlet.Memlet.from_array("A", sdfg.arrays["A"])
-    )
+    s1.add_edge(a, None, b, None, dace.memlet.Memlet.from_array("A", sdfg.arrays["A"]))
 
     sdfg.append_global_code(struct_str)
 
     return sdfg
+
 
 def _gen_sdfg_with_copy_in_and_out():
     sdfg = dace.SDFG("non_trivial_copy_test_execution")
@@ -99,26 +106,25 @@ def _gen_sdfg_with_copy_in_and_out():
 
     interesting_type = dace.opaque("interesting_type")
 
-    for name, is_transient, dtype in [("A", False, dace.float64),
-                                      ("iA", True, interesting_type),
-                                      ("B", False, dace.float64),
-                                      ("iB", True, interesting_type)]:
+    for name, is_transient, dtype in [("A", False, dace.float64), ("iA", True, interesting_type),
+                                      ("B", False, dace.float64), ("iB", True, interesting_type)]:
 
         sdfg.add_array(
             name,
             dtype=dtype,
-            shape=[10,],
-            strides=[1,],
+            shape=[
+                10,
+            ],
+            strides=[
+                1,
+            ],
             transient=is_transient,
         )
 
     ia = s1.add_access("iA")
     ib = s1.add_access("iB")
 
-    s1.add_edge(
-        ia, None, ib, None, 
-        dace.memlet.Memlet.from_array("iA", sdfg.arrays["iA"])
-    )
+    s1.add_edge(ia, None, ib, None, dace.memlet.Memlet.from_array("iA", sdfg.arrays["iA"]))
 
     sdfg.append_global_code(struct_str)
 
@@ -174,8 +180,8 @@ def test_non_trivial_copy_execution():
     sdfg = _gen_sdfg_with_copy_in_and_out()
     sdfg.validate()
     csdfg = sdfg.compile()
-    A = numpy.ndarray((10,), dtype=float)
-    B = numpy.ndarray((10,), dtype=float)
+    A = numpy.ndarray((10, ), dtype=float)
+    B = numpy.ndarray((10, ), dtype=float)
     for i in range(10):
         A[i] = 1
         B[i] = -1
