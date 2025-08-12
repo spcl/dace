@@ -1642,6 +1642,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         if axis < 0:
             axis = rank + axis
         reduction_axes = list(range(axis, rank))
+        leading_non_normalized_axes = list(range(axis))
         norm_size = float(
             np.prod([X_desc.shape[i] for i in range(axis, rank)]))
 
@@ -1823,6 +1824,8 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
         # Compute bias gradient if needed
         if "B" in required_gradients:
             b_grad_op = donnx.ONNXReduceSum("b_grad_op", keepdims=0, optional={"axes"})
+            # This reduction will sum over the leading non-normalized axes
+            b_grad_op.axes = leading_non_normalized_axes
             nstate.add_node(b_grad_op)
             nstate.add_edge(nstate.add_read("Y_grad"), None, b_grad_op, "data",
                            nsdfg.make_array_memlet("Y_grad"))
@@ -1849,6 +1852,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
                             nsdfg.make_array_memlet("dY_x_hat"))
 
             scale_grad_op = donnx.ONNXReduceSum("scale_grad_op", keepdims=0, optional={"axes"})
+            scale_grad_op.axes = leading_non_normalized_axes
             nstate.add_node(scale_grad_op)
             nstate.add_edge(dY_x_hat_access, None, scale_grad_op, "data",
                            nsdfg.make_array_memlet("dY_x_hat"))
