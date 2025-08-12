@@ -2050,16 +2050,18 @@ class PureReduceMean(ONNXForward):
         except ValueError:
             pass
         if axes:
-            # Axes is a constant input to the node
-            raise NotImplementedError(
-                "PureReduceMean in the case where the axes are input connectors is not implemented yet.")
+            if len(axes) == 1:
+                axes = axes[0]
+            else:
+                raise NotImplementedError(
+                    "PureReduceMean in the case where there are multiple axes as input connectors is not implemented yet.")
         else:
             # Axes is an attribute of the node
             axes = node.axes if hasattr(node, "axes") else None
-            def prog(data, reduced):
-                reduced[:] = np.mean(data, axis=axes)
+        def prog(data, reduced):
+            reduced[:] = np.mean(data, axis=axes)
 
-            return program_for_node(prog, sdfg, state, node)
+        return program_for_node(prog, sdfg, state, node)
 
 @python_pure_op_implementation
 def Erf(input, output):
@@ -2568,15 +2570,15 @@ class PureGather(ONNXForward):
         tasklet.in_connectors["__data"] = dace.pointer(out_desc.dtype)
 
         return nsdfg
-
-
+        
 @op_implementation(op="ReduceSum", name="pure")
-class PureReduceSum(ONNXForward):
+class PureReduceSumCPP(ONNXForward):
 
     @staticmethod
     def forward_can_be_applied(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> bool:
-        # Allow any axes input
-        return True
+        # Avoid this expansion if the backward pass will be contructed
+        # TODO pass the backward flag to the functions
+        return False
 
     @staticmethod
     def forward(node: 'ONNXOp', state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
@@ -2605,6 +2607,57 @@ class PureReduceSum(ONNXForward):
         return nsdfg
 
 
+@op_implementation(op="ReduceSum", name="pure")
+class PureReduceSum(ONNXForward):
+    '''
+        ReduceSum expansion
+    '''
+
+    @staticmethod
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
+        # Check that all the inputs (even the optional ones) are present and constant
+        # optional inputs
+        is_axes_present = True
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data not in sdfg._parent_onnx_model.clean_weights:
+                return False
+        except ValueError:
+            is_axes_present = False
+
+        if not is_axes_present and hasattr(node, "axes"):
+            is_axes_present = True
+            
+        # Current constraints: axes must be explict. Axes must be zero
+        if not is_axes_present:
+            return False
+        
+        return True
+
+    @staticmethod
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> typing.Union[Node, SDFG]:
+        # We treat both cases where axes is an attribute and where it is an input
+        # Since can be applied is true, we know that axes is present and valid
+        axes = None
+        # TODO: avoid catching Exceptions
+        try:
+            if hasattr(sdfg, "_parent_onnx_model") and in_edge_with_name(node, state, "axes").src.data in sdfg._parent_onnx_model.clean_weights:
+                axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
+        except ValueError:
+            pass
+        if axes:
+            if len(axes) == 1:
+                axes = axes[0]
+            else:
+                raise NotImplementedError(
+                    "PureReduceSum in the case where there are multiple axes as input connectors is not implemented yet.")
+        else:
+            # Axes is an attribute of the node
+            axes = node.axes if hasattr(node, "axes") else None
+        def prog(data, reduced):
+            reduced[:] = np.sum(data, axis=axes)
+
+        return program_for_node(prog, sdfg, state, node)
+    
 @op_implementation(op="ReduceMax", name="pure")
 class PureReduceMax(ONNXForward):
 
