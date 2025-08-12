@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import copy
 
 import torch
 import torch.nn as nn
@@ -17,7 +18,7 @@ def run_pytorch_module(
     gpu,
     shape=None,
     use_max=False,
-    auto_optimize=True,
+    auto_optimize=False,
     rtol=1e-4,
     atol=1e-3,
     post_onnx_hooks=None,
@@ -25,6 +26,7 @@ def run_pytorch_module(
     shape = shape or (3, 5)
 
     module = copy_to_gpu(gpu, module)
+    pt_model_for_dace = copy.deepcopy(module)
 
     input_value = torch.rand(*shape, dtype=torch.float32)
 
@@ -51,7 +53,7 @@ def run_pytorch_module(
     pytorch_s.backward()
 
     dace_module = DaceModule(
-        module,
+        pt_model_for_dace,
         simplify=False,
         backward=True,
         sdfg_name=sdfg_name,
@@ -161,7 +163,7 @@ def test_layernorm(sdfg_name, gpu):
     run_pytorch_module(Module(),
                        sdfg_name,
                        gpu,
-                       shape=(1, 3),
+                       shape=(2, 3),
                        use_max=True,
                        atol=1e-2)
 

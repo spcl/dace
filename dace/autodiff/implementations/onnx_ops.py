@@ -1657,7 +1657,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             name="init_axes",
             inputs={},
             outputs={"out": dace.pointer(dace.int64)},
-            code=f"\n".join([f"out[{i}] = {val};" for i, val in enumerate(reduction_axes)]),
+            code=f"\n".join([f"out[{i}] = {0};" for i, val in enumerate(reduction_axes)]),
             language=dace.Language.CPP
         )
         nstate.add_edge(axes_tasklet, "out", axes_access, None,
@@ -1674,6 +1674,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
 
         mean_op = donnx.ONNXReduceMean("mean_op",
                                      keepdims=1, optional={"axes"})
+        mean_op.axes = reduction_axes
         nstate.add_node(mean_op)
         nstate.add_edge(nstate.add_read("X"), None, mean_op, "data",
                        nsdfg.make_array_memlet("X"))
@@ -1728,6 +1729,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
 
         variance_op = donnx.ONNXReduceMean("variance_op",
                                          keepdims=1, optional={"axes"})
+        variance_op.axes = reduction_axes
         nstate.add_node(variance_op)
         nstate.add_edge(sq_diff_access, None, variance_op, "data",
                        nsdfg.make_array_memlet("sq_diff"))
@@ -1881,6 +1883,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
 
             dX_hat_mean_op = donnx.ONNXReduceMean("dX_hat_mean_op",
                                                  keepdims=1, optional={"axes"})
+            dX_hat_mean_op.axes = reduction_axes
             nstate.add_node(dX_hat_mean_op)
             nstate.add_edge(dX_hat_access, None, dX_hat_mean_op, "data",
                             nsdfg.make_array_memlet("dX_hat"))
@@ -1914,6 +1917,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
 
             dX_hat_x_hat_mean_op = donnx.ONNXReduceMean("dX_hat_x_hat_mean_op",
                                                        keepdims=1, optional={"axes"})
+            dX_hat_x_hat_mean_op.axes = reduction_axes
             nstate.add_node(dX_hat_x_hat_mean_op)
             nstate.add_edge(dX_hat_x_hat_access, None, dX_hat_x_hat_mean_op,
                             "data", nsdfg.make_array_memlet("dX_hat_x_hat"))
@@ -2024,6 +2028,10 @@ class DefaultReduceSumBackward(BackwardImplementation):
         reduced_grad_desc.transient = False
         nsdfg.add_datadesc("reduced_grad", reduced_grad_desc)
 
+        data_grad_desc_tmp = copy.deepcopy(input_desc)
+        data_grad_desc_tmp.transient = True
+        nsdfg.add_datadesc("data_grad_tmp", data_grad_desc_tmp)
+
         data_grad_desc = copy.deepcopy(input_desc)
         data_grad_desc.transient = False
         nsdfg.add_datadesc("data_grad", data_grad_desc)
@@ -2103,11 +2111,18 @@ class DefaultReduceSumBackward(BackwardImplementation):
 
         expand_op = donnx.ONNXExpand("expand_grad")
         nstate.add_node(expand_op)
-        write_data_grad = nstate.add_write("data_grad")
+        write_data_grad_tmp = nstate.add_write("data_grad_tmp")
         
         nstate.add_edge(read_grad_to_expand, None, expand_op, "input", nsdfg.make_array_memlet(grad_to_expand))
         nstate.add_edge(shape_access, None, expand_op, "shape", nsdfg.make_array_memlet(shape_name))
-        nstate.add_edge(expand_op, "output", write_data_grad, None, nsdfg.make_array_memlet("data_grad"))
+        nstate.add_edge(expand_op, "output", write_data_grad_tmp, None, nsdfg.make_array_memlet("data_grad_tmp"))
+        
+        # We add an additional write from data_grad_tmp to data_grad
+        # This is necessary to accumelate gradients in the backward pass.
+        finale_memlet = nsdfg.make_array_memlet("data_grad")
+        finale_memlet.wcr = "lambda x, y: x + y"
+        write_data_grad = nstate.add_write("data_grad")
+        nstate.add_edge(write_data_grad_tmp, None, write_data_grad, None, finale_memlet)
         
         inputs = {"reduced_grad"}
         if not keepdims and 'axes' in forward_node.in_connectors:
