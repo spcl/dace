@@ -2355,7 +2355,7 @@ def _make_map_fusion_nested_sdfg_slicing(
     return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood
 
 
-@pytest.mark.xfail(reason="Handling of NestedSDFG that do slicing is not implemented properly.")
+#@pytest.mark.xfail(reason="Handling of NestedSDFG that do slicing is not implemented properly.")
 def test_map_fusion_nested_sdfg_slicing():
     nb_cells = 4
     nb_levels = 7
