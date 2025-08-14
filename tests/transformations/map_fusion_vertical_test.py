@@ -2242,6 +2242,169 @@ def test_map_fusion_consolidate_consume_not_same_range_default():
     assert state.degree(a) == 1
 
 
+def _make_map_fusion_nested_sdfg_slicing(
+    nb_cells: int,
+    nb_levels: int,
+    c2e_dim: int,
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapExit, nodes.AccessNode, nodes.MapEntry, nodes.NestedSDFG,
+           nodes.AccessNode]:
+    sdfg = dace.SDFG(unique_name("nested_sdfg"))
+    state = sdfg.add_state(is_start_block=True)
+
+    sdfg.add_array(
+        "cell_data",
+        shape=(nb_cells, nb_levels),
+        dtype=dace.int32,
+        transient=False,
+    )
+    sdfg.add_array(
+        "c2e",
+        shape=(nb_cells, c2e_dim),
+        dtype=dace.int32,
+        transient=False,
+    )
+    sdfg.add_array(
+        "result_data",
+        shape=(nb_cells, nb_levels),
+        dtype=dace.int32,
+        transient=False,
+    )
+    sdfg.add_array(
+        "intermediate",
+        shape=(nb_cells, c2e_dim, nb_levels),
+        dtype=dace.int32,
+        transient=True,
+    )
+    sdfg.add_array(
+        "local_hood",
+        shape=(c2e_dim, ),
+        dtype=dace.int32,
+        transient=True,
+    )
+    sdfg.add_scalar(
+        "accumulator",
+        dtype=dace.int32,
+        transient=True,
+    )
+
+    cell_data = state.add_access("cell_data")
+    result_data = state.add_access("result_data")
+    c2e = state.add_access("c2e")
+    local_hood = state.add_access("local_hood")
+    intermediate = state.add_access("intermediate")
+    accumulator = state.add_access("accumulator")
+
+    me1, mx1 = state.add_map("map1", ndrange={"__iCell": f"0:{nb_cells}", "__iK": f"0:{nb_levels}"})
+
+    state.add_edge(cell_data, None, me1, "IN_cell_data", dace.Memlet(f"cell_data[0:{nb_cells}, 0:{nb_levels}]"))
+    state.add_edge(c2e, None, me1, "IN_c2e", dace.Memlet(f"c2e[0:{nb_cells}, 0:{c2e_dim}]"))
+    me1.add_scope_connectors("cell_data")
+    me1.add_scope_connectors("c2e")
+
+    hood_me, hood_mx = state.add_map("hood_map", ndrange={"__i": f"0:{c2e_dim}"})
+    hood_tasklet = state.add_tasklet(
+        "hood_tasklet",
+        inputs={"__field", "__index"},
+        code=f"__out = __field[__index] if __index != -1 else 2147483647",
+        outputs={"__out"},
+    )
+
+    state.add_edge(me1, "OUT_cell_data", hood_me, "IN_cell_data", dace.Memlet(f"cell_data[0:{nb_cells}, __iK]"))
+    state.add_edge(me1, "OUT_c2e", hood_me, "IN_c2e", dace.Memlet(f"c2e[__iCell, 0:{c2e_dim}]"))
+    hood_me.add_scope_connectors("cell_data")
+    hood_me.add_scope_connectors("c2e")
+
+    state.add_edge(hood_me, "OUT_cell_data", hood_tasklet, "__field", dace.Memlet(f"cell_data[0:{nb_cells}, __iK]"))
+    state.add_edge(hood_me, "OUT_c2e", hood_tasklet, "__index", dace.Memlet("c2e[__iCell, __i]"))
+
+    state.add_edge(hood_tasklet, "__out", hood_mx, "IN_local_hood", dace.Memlet("local_hood[__i]"))
+    hood_mx.add_scope_connectors("local_hood")
+
+    state.add_edge(hood_mx, "OUT_local_hood", local_hood, None, dace.Memlet(f"local_hood[0:{c2e_dim}]"))
+
+    state.add_edge(local_hood, None, mx1, "IN_intermediate", dace.Memlet(f"intermediate[__iCell, 0:{c2e_dim}, __iK]"))
+    mx1.add_scope_connectors("intermediate")
+    state.add_edge(mx1, "OUT_intermediate", intermediate, None,
+                   dace.Memlet(f"intermediate[0:{nb_cells}, 0:{c2e_dim}, 0:{nb_levels}]"))
+
+    me2, mx2 = state.add_map("map2", ndrange={"__iCell": f"0:{nb_cells}", "__iK": f"0:{nb_levels}"})
+
+    edge_reduction = state.add_reduce(
+        wcr='lambda x, y: x + y',
+        axes=None,
+        identity=0,
+    )
+
+    state.add_edge(intermediate, None, me2, "IN_intermediate",
+                   dace.Memlet(f"intermediate[0:{nb_cells}, 0:{c2e_dim}, 0:{nb_levels}]"))
+    me2.add_scope_connectors("intermediate")
+
+    state.add_edge(me2, "OUT_intermediate", edge_reduction, None,
+                   dace.Memlet(f"intermediate[__iCell, 0:{c2e_dim}, __iK]"))
+    state.add_edge(edge_reduction, None, accumulator, None, dace.Memlet("accumulator[0]"))
+
+    state.add_edge(accumulator, None, mx2, "IN_result", dace.Memlet("[0] -> result_data[__iCell, __iK]"))
+    mx2.add_scope_connectors("result")
+    state.add_edge(mx2, "OUT_result", result_data, None, dace.Memlet(f"result_data[0:{nb_cells}, 0:{nb_levels}]"))
+
+    edge_reduction.expand(sdfg, state)
+    reduction_nsdfg = count_nodes(state, nodes.NestedSDFG, True)[0]
+
+    sdfg.validate()
+
+    return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood
+
+
+@pytest.mark.xfail(reason="Handling of NestedSDFG that do slicing is not implemented properly.")
+def test_map_fusion_nested_sdfg_slicing():
+    nb_cells = 4
+    nb_levels = 7
+    c2e_dim = 5
+
+    sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood = _make_map_fusion_nested_sdfg_slicing(
+        nb_cells=nb_cells, nb_levels=nb_levels, c2e_dim=c2e_dim)
+
+    assert state.in_degree(reduction_nsdfg) == 1
+    inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
+    assert len(inner_reduction.strides) == 1
+    assert inner_reduction.shape[0] == c2e_dim
+    assert inner_reduction.strides[0] == sdfg.arrays["intermediate"].strides[1]
+    assert count_nodes(state, nodes.MapEntry) == 3
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    MapFusionVertical.apply_to(
+        sdfg,
+        verify=True,
+        options={
+            "strict_dataflow": False,
+        },
+        first_map_exit=mx1,
+        array=intermediate,
+        second_map_entry=me2,
+    )
+
+    assert count_nodes(state, nodes.MapEntry) == 2
+
+    inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
+    assert len(inner_reduction.strides) == 1
+
+    assert state.in_degree(reduction_nsdfg) == 1
+    outer_reduction_node = next(iter(state.in_edges(reduction_nsdfg))).src
+    assert isinstance(outer_reduction_node, nodes.AccessNode)
+    outer_reduction = outer_reduction_node.desc(sdfg)
+    assert len(outer_reduction.shape) == 1
+    assert outer_reduction.shape[0] == c2e_dim
+    assert outer_reduction.strides[0] == 1
+
+    # The strides of the inner variable must be updated such that it matches what is on the outside.
+    assert inner_reduction.strides == outer_reduction.strides
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -2282,3 +2445,4 @@ if __name__ == '__main__':
     test_map_fusion_consolidate_consume_same_range_not_allowed()
     test_map_fusion_consolidate_consume_same_range_if_not_extending()
     test_map_fusion_consolidate_consume_not_same_range_if_not_extending()
+    #test_map_fusion_nested_sdfg_slicing()
