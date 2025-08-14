@@ -594,11 +594,18 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
                     # If the data is consumed by a nested SDFG then we do not apply. The reason
                     #  is that we would need to adapt the inner data descriptor what is currently
-                    #  not supported.
+                    #  not supported. However, in some cases we can avoid that.
                     for final_consumer_edge in state.memlet_tree(inner_consumer_edge).leaves():
                         final_consumer = final_consumer_edge.dst
                         if isinstance(final_consumer, nodes.NestedSDFG):
-                            return None
+                            inner_sdfg = final_consumer.sdfg
+                            if isinstance(inner_sdfg.arrays[final_consumer_edge.dst_conn], data.Scalar):
+                                # The inner data is a scalar, thus the access will be done on the
+                                #  outside, thus there is nothing to modify and we can process this
+                                #  Map.
+                                pass
+                            else:
+                                return None
 
             assert found_second_map, (f"Found '{intermediate_node}' which looked like a pure node, but is not one.")
             assert len(consumer_subsets) != 0
