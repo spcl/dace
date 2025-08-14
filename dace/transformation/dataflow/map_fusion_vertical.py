@@ -591,6 +591,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     if inner_consumer_edge.data.src_subset is None:
                         return None
                     consumer_subsets.append(inner_consumer_edge.data.src_subset)
+
+                    # If the data is consumed by a nested SDFG then we do not apply. The reason
+                    #  is that we would need to adapt the inner data descriptor what is currently
+                    #  not supported.
+                    for final_consumer_edge in state.memlet_tree(inner_consumer_edge).leaves():
+                        final_consumer = final_consumer_edge.dst
+                        if isinstance(final_consumer, nodes.NestedSDFG):
+                            return None
+
             assert found_second_map, (f"Found '{intermediate_node}' which looked like a pure node, but is not one.")
             assert len(consumer_subsets) != 0
 
