@@ -1760,26 +1760,43 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         if inner_edge.data.data == inner_data:
                             return False
 
-        # In certain cases we actually allow a nested SDFG. If the data on the inside has the
-        #  same shape as the _reduced_ intermediate, if it is used only as indicated and if
-        #  it is not recursively passed. In that case we can just modify the `strides` attribute
-        #  of the data descriptor of the nested SDFG.
-        assert len(reduced_intermediate_shape) > 0
-        if len(nsdfg.symbol_mapping) == 0:
-            # If there is no symbol mapping then the shape on the outside and the inside
-            #  must be the same.
-            assert all(not symbolic.issymbolic(s) for s in inner_desc.shape)
+        # In certain cases we actually allow an adjustment of the inner descriptor, this adjustment
+        #  is done by `_updated_inner_strides_of_nested_sdfg()`.
+
+        # A case that we allow is that that whole reduced intermediate is passed into the nested
+        #  SDFG. This sounds simple to check but it is not.
+        if len(inner_desc.shape) != len(reduced_intermediate_shape):
+            pass
+        elif len(nsdfg.symbol_mapping) == 0:
+            # If there is no symbol mapping involved we require that the shapes of the inner and
+            #  the outer descriptor matches exactly and that the inner shape does not have any
+            #  symbols. This is to avoid issues with symbol aliasing.
+            if not all(str(s).isdigit() for s in inner_desc.shape):
+                return False
             if reduced_intermediate_shape == inner_desc.shape:
                 return True
         else:
+            # In case there is a symbol mapping, we can not simply compare, but must consider
+            #  symbol remapping. Furthermore, all symbols in the shape must come from the mapping,
+            #  this is also to avoid aliasing.
+
+            free_symb_inner_shape = set()
+            for s in inner_desc.shape:
+                if isinstance(s, symbolic.sympy.Basic):
+                    free_symb_inner_shape |= set(s.free_symbols)
+
+            # Symbols not supplied by the outside are used.
+            if not free_symb_inner_shape.issubset(nsdfg.symbol_mapping):
+                return False
+
             inner_replaced_shape = list(inner_desc.shape)
 
             def replfunc(mapping):
                 for i, s in enumerate(inner_replaced_shape):
-                    if symbolic.issymbolic(s):
+                    if not str(s).isdigit():
                         inner_replaced_shape[i] = s.subs(mapping)
 
-            symbolic.safe_replace(nested_sdfg.symbol_mapping, replfunc)
+            symbolic.safe_replace(nsdfg.symbol_mapping, replfunc)
 
             if list(reduced_intermediate_desc.shape) == inner_replaced_shape:
                 return True
@@ -1806,11 +1823,30 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         elif isinstance(inner_desc, data.Array) and inner_desc.shape == (1, ):
             return
 
-        # Now
-        assert len(inner_desc.shape) == len(reduced_intermediate_desc.shape)
+        # We now compute the new strides of the inner data descriptor. Since we know already that
+        #  the inner data and what is passed from the outside are the same we just use the same
+        #  strides inside as outside. While transforming an inner symbol to the corresponding outer
+        #  symbol is easy, the reverse is not. Thus we will generate a new symbol whose value is
+        #  set to the value of the outer stride.
+        assert len(reduced_intermediate_desc.shape) == len(inner_desc.shape)
+        new_inner_strides: List[int] = []
+        symbol_mapping = nsdfg.symbol_mapping
+        for i, (inner_strides, outer_strides) in enumerate(zip(inner_desc.strides, reduced_intermediate_desc.strides)):
+            if str(outer_strides).isdigit():
+                new_inner_strides.append(outer_strides)
+            else:
+                inner_strides_sym = f"map_fusion_nsdfg_stride_mapping_{inner_data}_{outer_edge.data}_{i}"
+                assert inner_strides_sym not in symbol_mapping
+                symbol_mapping[inner_strides_sym] = outer_strides
+                new_inner_strides.append(inner_strides_sym)
+        inner_desc.strides = tuple(new_inner_strides)
 
-        if any(symbolic.issymbolic(s) for s in reduced_intermediate_desc.strides):
-            assert False
-        else:
-            # The strides is fully symbolic so so need to create a symbol mapping.
-            inner_desc.strides = copy.copy(reduced_intermediate_desc.strides)
+        # Now replace the shape.
+        inner_replaced_shape = list(inner_desc.shape)
+
+        def replfunc(mapping):
+            for i, s in enumerate(inner_replaced_shape):
+                if not str(s).isdigit():
+                    inner_replaced_shape[i] = s.subs(mapping)
+
+        symbolic.safe_replace(nsdfg.symbol_mapping, replfunc)
