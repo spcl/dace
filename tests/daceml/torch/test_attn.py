@@ -7,7 +7,6 @@ from dace.frontend.python.module import DaceModule
 from dace.transformation.dataflow import RedundantSecondArray
 
 from dace.testing import copy_to_gpu, torch_tensors_close
-from dace.transformation.onnx import ConstantFolding
 
 
 def test_attn(gpu, sdfg_name, use_cpp_dispatcher, default_implementation):

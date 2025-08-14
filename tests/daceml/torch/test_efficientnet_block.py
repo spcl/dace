@@ -10,7 +10,6 @@ import dace.libraries.onnx as donnx
 from dace.libraries.onnx.op_implementations.cudnn_implementations import CudnnConvolution
 from dace.frontend.python.module import DaceModule
 from dace.testing import torch_tensors_close
-from dace.transformation.onnx import PadConvFusion, ConstantDeviceCopyElimination
 
 
 @pytest.mark.pure

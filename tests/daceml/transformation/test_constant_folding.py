@@ -33,3 +33,7 @@ def test_bert_subgraph(sdfg_name):
     # assert that only two nodes remain
     assert len(dace_model.sdfg.nodes()[0].nodes()) == 2
     assert np.allclose(out_before, out_after)
+
+
+if __name__ == "__main__":
+    test_bert_subgraph("reshape_sdfg")
