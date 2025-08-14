@@ -2,6 +2,7 @@
 import copy
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
+import itertools
 import dace
 from dace import data, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
@@ -515,6 +516,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if len(producer_edges) > 1:
                 return None
 
+            # Maps a producer subset to the reduced intermediate shape. This is needed
+            #  to avoid it to recompute it again later.
+            reduced_intermediate_shape_cache: Dict[subsets.Subset, Tuple[int, ...]] = {}
+
             # Now check the constraints we have on the producers.
             #   - The source of the producer can not be a view (we do not handle this)
             #   - The edge shall also not be a reduction edge.
@@ -535,6 +540,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 if producer_edge.data.dst_subset is None:
                     return None
 
+                _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
+                    producer_subset=producer_edge.data.dst_subset, inter_desc=intermediate_desc)
+
                 # If we reduce the intermediate node then we also change the underlying
                 #  memory layout, i.e. the strides. This change is not captured by the
                 #  data dependency checks. Thus we have to check them separately here.
@@ -546,12 +554,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 sdfg=sdfg,
                                 nsdfg=final_producer,
                                 intermediate=intermediate_node,
-                                edge=final_producer_edge,
+                                reduced_intermediate_shape=reduced_inter_shape,
+                                outer_edge=final_producer_edge,
                         ):
                             return None
 
                 # Now issues found with that edge.
                 producer_subsets.append(producer_edge.data.dst_subset)
+                assert producer_subsets[-1] not in reduced_intermediate_shape_cache
+                reduced_intermediate_shape_cache[producer_subsets[-1]] = reduced_inter_shape
 
             # Check if the producer do not intersect
             if len(producer_subsets) == 1:
@@ -573,7 +584,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  For the covering test we only need their subsets, but we will perform
             #  some scan and filtering on them.
             found_second_map = False
-            consumer_subsets: List[subsets.Subset] = []
             for intermediate_node_out_edge in state.out_edges(intermediate_node):
                 # If the second MapEntry is not immediately reachable from the intermediate
                 #  node, then ensure that there is not path that goes to it.
@@ -603,11 +613,30 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #   This is different compared to the producer Memlet. The reason is
                 #   because in a consumer the data is conditionally read, so the data
                 #   has to exists anyway.
+                has_found_a_consumer = False
                 for inner_consumer_edge in state.out_edges_by_connector(
                         second_map_entry, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
-                    if inner_consumer_edge.data.src_subset is None:
+                    consumer_subset = inner_consumer_edge.data.src_subset
+                    if consumer_subset is None:
                         return None
-                    consumer_subsets.append(inner_consumer_edge.data.src_subset)
+
+                    # The consumer still uses the original symbols of the second Map, so we must rename them.
+                    if param_repl:
+                        consumer_subset = copy.deepcopy(consumer_subset)
+                        symbolic.safe_replace(mapping=param_repl, replace_callback=consumer_subset.replace)
+
+                    # Now we are checking if a single iteration of the first (top) Map
+                    #  can satisfy all data requirements of the second (bottom) Map.
+                    #  For this we look if the producer covers the consumer. A consumer must
+                    #  be covered by exactly one producer.
+                    prospective_producers = [
+                        producer_subset for producer_subset in producer_subsets
+                        if producer_subset.covers(consumer_subset)
+                    ]
+                    if len(prospective_producers) != 1:
+                        return None
+                    prospective_producer = prospective_producers[0]
+                    reduced_inter_shape = reduced_intermediate_shape_cache[prospective_producer]
 
                     # As for the producer we have to check if the reduction of the memory
                     #  layout of the intermediate can be handled.
@@ -619,27 +648,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                     sdfg=sdfg,
                                     nsdfg=final_consumer,
                                     intermediate=intermediate_node,
-                                    edge=final_consumer_edge,
+                                    reduced_intermediate_shape=reduced_inter_shape,
+                                    outer_edge=final_consumer_edge,
                             ):
                                 return None
 
+                    has_found_a_consumer = True
             assert found_second_map, (f"Found '{intermediate_node}' which looked like a pure node, but is not one.")
-            assert len(consumer_subsets) != 0
-
-            # The consumer still uses the original symbols of the second Map, so we must rename them.
-            if param_repl:
-                consumer_subsets = copy.deepcopy(consumer_subsets)
-                for consumer_subset in consumer_subsets:
-                    symbolic.safe_replace(mapping=param_repl, replace_callback=consumer_subset.replace)
-
-            # Now we are checking if a single iteration of the first (top) Map
-            #  can satisfy all data requirements of the second (bottom) Map.
-            #  For this we look if the producer covers the consumer. A consumer must
-            #  be covered by exactly one producer.
-            for consumer_subset in consumer_subsets:
-                nb_coverings = sum(producer_subset.covers(consumer_subset) for producer_subset in producer_subsets)
-                if nb_coverings != 1:
-                    return None
+            assert has_found_a_consumer
 
             # After we have ensured coverage, we have to decide if the intermediate
             #  node can be removed (`\mathbb{E}`) or has to be restored (`\mathbb{S}`).
@@ -1621,7 +1637,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         sdfg: dace.SDFG,
         nsdfg: nodes.NestedSDFG,
         intermediate: nodes.AccessNode,
-        edge: graph.MultiConnectorEdge[dace.Memlet],
+        reduced_intermediate_shape: Tuple[int, ...],
+        outer_edge: graph.MultiConnectorEdge[dace.Memlet],
     ) -> bool:
         """Check if the nested SDFG can be handled.
 
@@ -1633,14 +1650,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param sdfg: The SDFG on which we operate.
         :param nsdfg: The nested SDFG object that we should examine.
         :param intermediate: The intermediate node.
-        :edge: The (final) edge that connects the intermediate with the nested SDFG.
+        :param reduced_intermediate_shape: Shape of the intermediate when it is reduced.
+        :param outer_edge: The (final) edge that connects the intermediate with the nested SDFG.
         """
-        is_incomming_edge = edge.dst is nsdfg
-        assert (is_incomming_edge) or (edge.src is nsdfg)
+        is_incomming_edge = outer_edge.dst is nsdfg
+        assert (is_incomming_edge) or (outer_edge.src is nsdfg)
 
         intermediate_data_outside: str = intermediate.data
         inner_sdfg = nsdfg.sdfg
-        inner_data = edge.dst_conn if is_incomming_edge else edge.src_conn
+        inner_data = outer_edge.dst_conn if is_incomming_edge else outer_edge.src_conn
         assert inner_data in inner_sdfg.arrays
         inner_desc = inner_sdfg.arrays[inner_data]
 
@@ -1660,9 +1678,46 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         if len(inner_desc.shape) == 1 and inner_desc.shape[0] == 1:
             return True
 
-        # TEST IF WE DO NOT HAVE TO PROPAGATE IT
+        # We do not allow nested handling, i.e. the data can not be passed to another
+        #  nested SDFG. Otherwise it would become too complicated. Thus we now check
+        #  if the data is passed further down, by inspecting all nested SDFG.
+        # TODO(phimuell): Implement recursive handling.
+        for inner_state in inner_sdfg.states():
+            for inner_node in inner_state.nodes():
+                if isinstance(inner_node, nodes.AccessNode) and inner_node.data == inner_data:
+                    # Test if the data is only used in the way indicated by the outer usage.
+                    if is_incomming_edge and inner_state.in_degree(inner_node) != 0:
+                        return False
+                    elif (not is_incomming_edge) and inner_state.out_degree(inner_node) != 0:
+                        return False
 
-        # TEST IF WE ALLOW SOMETHING
+                    # Test if the data is not used by views, because we also would have to modify them.
+                    edges_to_inspect = itertools.chain(inner_state.in_edges(inner_node),
+                                                       inner_state.out_edges(inner_node))
+                    for inner_edge in edges_to_inspect:
+                        other_node = inner_edge.dst if inner_edge.src is inner_node else inner_edge.src
+                        assert other_node is not inner_node
+                        if isinstance(other_node, nodes.AccessNode) and isinstance(other_node.desc(inner_sdfg),
+                                                                                   data.View):
+                            return False
+
+                elif isinstance(inner_node, nodes.NestedSDFG):
+                    # Test if the data is not passed further into nested SDFG.
+                    # TODO(phimuell): Probably only one kind of edge needs to be tests, this is
+                    #   implied by the AccessNode test above.
+                    edges_to_inspect = itertools.chain(inner_state.in_edges(inner_node),
+                                                       inner_state.out_edges(inner_node))
+                    for inner_edge in edges_to_inspect:
+                        if inner_edge.data.data == inner_data:
+                            return False
+
+        # In certain cases we actually allow a nested SDFG. If the data on the inside has the
+        #  same shape as the _reduced_ intermediate, if it is used only as indicated and if
+        #  it is not recursively passed. In that case we can just modify the `strides` attribute
+        #  of the data descriptor of the nested SDFG.
+        assert len(reduced_intermediate_shape) > 0
+        if reduced_intermediate_shape == inner_desc.shape:
+            return True
 
         # There is no reason for us to allow it.
         return False
