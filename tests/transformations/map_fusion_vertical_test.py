@@ -2405,6 +2405,111 @@ def test_map_fusion_nested_sdfg_slicing():
     assert all(np.allclose(ref[k], res[k]) for k in ref)
 
 
+def _make_map_fusion_with_non_slicing_nsdfg(
+) -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapExit, nodes.AccessNode, nodes.MapEntry, nodes.NestedSDFG]:
+
+    def make_nested_sdfg() -> dace.SDFG:
+        sdfg = dace.SDFG(unique_name("nested"))
+        state = sdfg.add_state(is_start_block=True)
+        for name in ["aa", "bb"]:
+            sdfg.add_scalar(name, dtype=dace.float64, transient=False)
+
+        inner_tlet = state.add_tasklet(
+            "inner_tasklet",
+            inputs={"__in"},
+            code="__out = math.sin(__in)",
+            outputs={"__out"},
+        )
+
+        state.add_edge(state.add_access("aa"), None, inner_tlet, "__in", dace.Memlet("aa[0]"))
+        state.add_edge(inner_tlet, "__out", state.add_access("bb"), None, dace.Memlet("bb[0]"))
+        sdfg.validate()
+        return sdfg
+
+    sdfg = dace.SDFG(unique_name("map_fusion_non_slicing_nested_sdfg"))
+    state = sdfg.add_state(is_start_block=True)
+
+    for name in "abc":
+        sdfg.add_array(
+            name,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=(name == "b"),
+        )
+    a, b, c = (state.add_access(name) for name in "abc")
+
+    _, me1, mx1 = state.add_mapped_tasklet(
+        "map1",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("a[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("b[__i]")},
+        external_edges=True,
+        input_nodes={a},
+        output_nodes={b},
+    )
+
+    tlet_that_will_be_replaced_with_a_nsdfg, me2, mx2 = state.add_mapped_tasklet(
+        "map2",
+        map_ranges={"__i": "0:10"},
+        inputs={"aa": dace.Memlet("b[__i]")},
+        code="",
+        outputs={"bb": dace.Memlet("c[__i]")},
+        external_edges=True,
+        input_nodes={b},
+        output_nodes={c},
+    )
+
+    nsdfg = state.add_nested_sdfg(
+        sdfg=make_nested_sdfg(),
+        inputs={"aa"},
+        outputs={"bb"},
+    )
+    dace.transformation.helpers.redirect_edge(
+        state,
+        next(iter(state.in_edges(tlet_that_will_be_replaced_with_a_nsdfg))),
+        new_dst=nsdfg,
+    )
+    dace.transformation.helpers.redirect_edge(
+        state,
+        next(iter(state.out_edges(tlet_that_will_be_replaced_with_a_nsdfg))),
+        new_src=nsdfg,
+    )
+    state.remove_node(tlet_that_will_be_replaced_with_a_nsdfg)
+
+    sdfg.validate()
+
+    return sdfg, state, mx1, c, me2, nsdfg
+
+
+@pytest.mark.parametrize("strict_dataflow", [True, False])
+def test_map_fusion_with_non_slicing_nsdfg(strict_dataflow: bool):
+    sdfg, state, mx1, c, me2, nsdfg = _make_map_fusion_with_non_slicing_nsdfg()
+
+    assert all(e.data.src_subset.num_elements() == 1 for e in state.in_edges(nsdfg))
+    assert all(e.data.dst_subset.num_elements() == 1 for e in state.out_edges(nsdfg))
+
+    ref, res = make_sdfg_args(sdfg)
+    compile_and_run_sdfg(sdfg, **ref)
+
+    # Here it is possible to apply the fusion, because the nested SDFG does not need
+    #  to know the size.
+    apply_fusion(
+        sdfg,
+        removed_maps=1,
+        strict_dataflow=strict_dataflow,
+    )
+
+    if strict_dataflow:
+        assert all(
+            len(ie.src.desc(sdfg).shape) == 1 and ie.src.desc(sdfg).shape[0] == 1 for ie in state.in_edges(nsdfg))
+    else:
+        assert all(isinstance(ie.src.desc(sdfg), dace_data.Scalar) for ie in state.in_edges(nsdfg))
+
+    compile_and_run_sdfg(sdfg, **res)
+    assert all(np.allclose(ref[k], res[k]) for k in ref)
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
