@@ -131,7 +131,11 @@ def register_op_repo_replacement(cls: Type[onnx_op.ONNXOp], cls_name: str,
 
         # Remove all non_string attributes
         # Sometimes constants are passed as inputs, but they do not require AccessNodes
-        # so we can skip them
+        # so we add them first as attributes to the node
+        for inp, arr_name in inputs.items():
+            if not isinstance(arr_name, str):
+                setattr(onnx_node, inp, arr_name)
+
         inputs = {inp: arr_name
                   for inp, arr_name in inputs.items()
                   if isinstance(arr_name, str)}
