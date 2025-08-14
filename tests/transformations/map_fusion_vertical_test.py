@@ -61,13 +61,29 @@ def unique_name(name: str) -> str:
     return f"{name}_{unique_sufix}"
 
 
-def make_sdfg_args(sdfg: dace.SDFG, ) -> tuple[dict[str, Any], dict[str, Any]]:
+def make_sdfg_args(sdfg: dace.SDFG, spec: Optional[Dict[str, Any]] = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    if spec:
+        sdfg = copy.deepcopy(sdfg)
+        sdfg.replace_dict(spec)
     ref = {
         name: (np.array(np.random.rand(*desc.shape), copy=True, dtype=desc.dtype.as_numpy_dtype()) if isinstance(
             desc, dace_data.Array) else np.array(np.random.rand(1), copy=True, dtype=desc.dtype.as_numpy_dtype())[0])
         for name, desc in sdfg.arrays.items() if not desc.transient
     }
+    if spec:
+        ref.update(spec)
     res = copy.deepcopy(ref)
+
+    for args in [res, ref]:
+        for arg, value in args.items():
+            if arg not in sdfg.arrays:
+                continue
+            desc = sdfg.arrays[arg]
+            if desc.transient or (not isinstance(desc, dace_data.Array)):
+                continue
+            val_strides = tuple((ss // value.itemsize for ss in value.strides))
+            assert val_strides == desc.strides
+
     return ref, res
 
 
@@ -2243,13 +2259,17 @@ def test_map_fusion_consolidate_consume_not_same_range_default():
 
 
 def _make_map_fusion_nested_sdfg_slicing(
-    nb_cells: int,
-    nb_levels: int,
-    c2e_dim: int,
+    nb_cells: Union[int, str],
+    nb_levels: Union[int, str],
+    c2e_dim: Union[int, str],
 ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapExit, nodes.AccessNode, nodes.MapEntry, nodes.NestedSDFG,
            nodes.AccessNode]:
     sdfg = dace.SDFG(unique_name("nested_sdfg"))
     state = sdfg.add_state(is_start_block=True)
+
+    for x in [nb_cells, nb_levels, c2e_dim]:
+        if isinstance(x, str):
+            sdfg.add_symbol(x, dace.int32)
 
     sdfg.add_array(
         "cell_data",
@@ -2355,11 +2375,16 @@ def _make_map_fusion_nested_sdfg_slicing(
     return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood
 
 
-#@pytest.mark.xfail(reason="Handling of NestedSDFG that do slicing is not implemented properly.")
-def test_map_fusion_nested_sdfg_slicing():
-    nb_cells = 4
-    nb_levels = 7
-    c2e_dim = 5
+@pytest.mark.parametrize("symbolic_size", [True, False])
+def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool):
+    if symbolic_size:
+        nb_cells = "nb_cells"
+        nb_levels = "nb_levels"
+        c2e_dim = "c2e_dim"
+    else:
+        nb_cells = 4
+        nb_levels = 7
+        c2e_dim = 5
 
     sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood = _make_map_fusion_nested_sdfg_slicing(
         nb_cells=nb_cells, nb_levels=nb_levels, c2e_dim=c2e_dim)
@@ -2367,11 +2392,17 @@ def test_map_fusion_nested_sdfg_slicing():
     assert state.in_degree(reduction_nsdfg) == 1
     inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
     assert len(inner_reduction.strides) == 1
-    assert inner_reduction.shape[0] == c2e_dim
+    assert str(inner_reduction.shape[0]) == str(c2e_dim)
     assert inner_reduction.strides[0] == sdfg.arrays["intermediate"].strides[1]
     assert count_nodes(state, nodes.MapEntry) == 3
 
-    ref, res = make_sdfg_args(sdfg)
+    spec = {
+        nb_cells: 4,
+        nb_levels: 7,
+        c2e_dim: 5,
+    } if symbolic_size else {}
+
+    ref, res = make_sdfg_args(sdfg, spec=spec)
     compile_and_run_sdfg(sdfg, **ref)
 
     MapFusionVertical.apply_to(
@@ -2395,7 +2426,7 @@ def test_map_fusion_nested_sdfg_slicing():
     assert isinstance(outer_reduction_node, nodes.AccessNode)
     outer_reduction = outer_reduction_node.desc(sdfg)
     assert len(outer_reduction.shape) == 1
-    assert outer_reduction.shape[0] == c2e_dim
+    assert str(outer_reduction.shape[0]) == str(c2e_dim)
     assert outer_reduction.strides[0] == 1
 
     # The strides of the inner variable must be updated such that it matches what is on the outside.
