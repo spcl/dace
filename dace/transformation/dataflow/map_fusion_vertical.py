@@ -534,6 +534,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
                 if producer_edge.data.dst_subset is None:
                     return None
+
+                # If we reduce the intermediate node then we also change the underlying
+                #  memory layout, i.e. the strides. This change is not captured by the
+                #  data dependency checks. Thus we have to check them separately here.
+                for final_producer_edge in state.memlet_tree(producer_edge).leaves():
+                    final_producer = final_producer_edge.dst
+                    if isinstance(final_producer, nodes.NestedSDFG):
+                        if not self._check_if_nested_sdfg_can_be_handled(
+                                state=state,
+                                sdfg=sdfg,
+                                nsdfg=final_producer,
+                                intermediate=intermediate_node,
+                                edge=final_producer_edge,
+                        ):
+                            return None
+
+                # Now issues found with that edge.
                 producer_subsets.append(producer_edge.data.dst_subset)
 
             # Check if the producer do not intersect
@@ -592,19 +609,18 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                         return None
                     consumer_subsets.append(inner_consumer_edge.data.src_subset)
 
-                    # If the data is consumed by a nested SDFG then we do not apply. The reason
-                    #  is that we would need to adapt the inner data descriptor what is currently
-                    #  not supported. However, in some cases we can avoid that.
+                    # As for the producer we have to check if the reduction of the memory
+                    #  layout of the intermediate can be handled.
                     for final_consumer_edge in state.memlet_tree(inner_consumer_edge).leaves():
                         final_consumer = final_consumer_edge.dst
                         if isinstance(final_consumer, nodes.NestedSDFG):
-                            inner_sdfg = final_consumer.sdfg
-                            if isinstance(inner_sdfg.arrays[final_consumer_edge.dst_conn], data.Scalar):
-                                # The inner data is a scalar, thus the access will be done on the
-                                #  outside, thus there is nothing to modify and we can process this
-                                #  Map.
-                                pass
-                            else:
+                            if not self._check_if_nested_sdfg_can_be_handled(
+                                    state=state,
+                                    sdfg=sdfg,
+                                    nsdfg=final_consumer,
+                                    intermediate=intermediate_node,
+                                    edge=final_consumer_edge,
+                            ):
                                 return None
 
             assert found_second_map, (f"Found '{intermediate_node}' which looked like a pure node, but is not one.")
@@ -1598,3 +1614,55 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert isinstance(defining_node, nodes.AccessNode)
         assert not self.is_view(defining_node, sdfg)
         return defining_node
+
+    def _check_if_nested_sdfg_can_be_handled(
+        self,
+        state: dace.SDFGState,
+        sdfg: dace.SDFG,
+        nsdfg: nodes.NestedSDFG,
+        intermediate: nodes.AccessNode,
+        edge: graph.MultiConnectorEdge[dace.Memlet],
+    ) -> bool:
+        """Check if the nested SDFG can be handled.
+
+        If the intermediate is consumed by the nested SDFG, then it might be needed,
+        to modify the strides of the inner data. This function is called to check
+        if `_modify_mapped_data_descriptor_in_nested_sdfg()` can handle this.
+
+        :param state: The state in which we operate.
+        :param sdfg: The SDFG on which we operate.
+        :param nsdfg: The nested SDFG object that we should examine.
+        :param intermediate: The intermediate node.
+        :edge: The (final) edge that connects the intermediate with the nested SDFG.
+        """
+        is_incomming_edge = edge.dst is nsdfg
+        assert (is_incomming_edge) or (edge.src is nsdfg)
+
+        intermediate_data_outside: str = intermediate.data
+        inner_sdfg = nsdfg.sdfg
+        inner_data = edge.dst_conn if is_incomming_edge else edge.src_conn
+        assert inner_data in inner_sdfg.arrays
+        inner_desc = inner_sdfg.arrays[inner_data]
+
+        # We do not allow that the data is used as input and output.
+        # TODO(phimuell): In this situation it should be enough.
+        if intermediate_data_outside in nsdfg.in_connectors and intermediate_data_outside in nsdfg.out_connectors:
+            return False
+
+        # The inner data is an array or a scalar.
+        if not isinstance(inner_desc, (data.Array, data.Scalar)):
+            return False
+
+        # If the inner data is a scalar, then there is no issue with mapping of strides
+        #  thus it is naturally handled. The same holds if the inner array has shape `(1,)`.
+        if isinstance(inner_desc, data.Scalar):
+            return True
+        if len(inner_desc.shape) == 1 and inner_desc.shape[0] == 1:
+            return True
+
+        # TEST IF WE DO NOT HAVE TO PROPAGATE IT
+
+        # TEST IF WE ALLOW SOMETHING
+
+        # There is no reason for us to allow it.
+        return False
