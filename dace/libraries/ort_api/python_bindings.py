@@ -85,20 +85,44 @@ class SessionOptions:
 
 
 class KernelSession:
+    """
+    Transitional wrapper that used to create a KernelSession.
+    Now it optionally creates a standard OrtSession (if env + model are given),
+    or just manages SessionOptions with no session handle.
+    """
 
-    def __init__(self, api, cuda=False):
+    def __init__(self, api, cuda: bool = False, *, env=None, model_bytes: bytes = None, model_path: str = None):
         self.api = api
         self.session_options = SessionOptions(api, cuda=cuda)
+        self.env = env
+        self.model_bytes = model_bytes
+        self.model_path = model_path
+        self.ptr = None  # OrtSession* (if created)
 
     def __enter__(self):
-        so_ptr = self.session_options.__enter__()
+        so_ptr = self.session_options.__enter__()  # prepares OrtSessionOptions*
         self.ptr = ctypes.c_void_p()
 
-        self.api.CreateKernelSession(so_ptr.ptr, ctypes.byref(self.ptr), 12)
+        # If env + model are supplied, create a normal OrtSession.
+        if self.env is not None:
+            if self.model_bytes:
+                buf = (ctypes.c_char * len(self.model_bytes)).from_buffer_copy(self.model_bytes)
+                self.api.CreateSessionFromArray(self.env, buf, ctypes.c_size_t(len(self.model_bytes)),
+                                                so_ptr.ptr, ctypes.byref(self.ptr))
+            elif self.model_path:
+                # ORTCHAR_T* conversion is handled by your arg mapper
+                self.api.CreateSession(self.env, self.model_path, so_ptr.ptr, ctypes.byref(self.ptr))
+            else:
+                # No model supplied: leave self.ptr as NULL; this is fine for code paths
+                # that only needed the old KernelSession side-effects.
+                pass
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.api.ReleaseKernelSession(self.ptr)
+        # If we created a real OrtSession, release it.
+        if isinstance(self.ptr, ctypes.c_void_p) and self.ptr.value:
+            self.api.ReleaseSession(self.ptr)
         self.session_options.__exit__(exc_type, exc_val, exc_tb)
 
 

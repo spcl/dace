@@ -179,11 +179,30 @@ class ONNXRuntimeCUDA:
         
         {providers_setup_code}
 
-        // overwrite the CPU ORT session with the CUDA session
-        
-        //__state->ort_api->ReleaseKernelSession(__state->ort_session);
-        //__ort_check_status(__state->ort_api,
-__state->ort_api->CreateKernelSession(__state->ort_session_options, &__state->ort_session, /*opset_version=*/12));
+        // Recreate an ORT session with CUDA EP.
+        // If a session already exists (e.g., created with CPU EP earlier), release it first.
+        if (__state->ort_session) {{
+            __state->ort_api->ReleaseSession(__state->ort_session);
+            __state->ort_session = nullptr;
+        }}
+
+        // Prefer in-memory model if available; otherwise fall back to a model path.
+        if (__state->model_data && __state->model_data_size > 0) {{
+            __ort_check_status(__state->ort_api,
+                __state->ort_api->CreateSessionFromArray(
+                    __state->ort_env,
+                    __state->model_data,          // const void*
+                    __state->model_data_size,     // size_t
+                    __state->ort_session_options,
+                    &__state->ort_session));
+        }} else {{
+            __ort_check_status(__state->ort_api,
+                __state->ort_api->CreateSession(
+                    __state->ort_env,
+                    __state->model_path,          // const char*
+                    __state->ort_session_options,
+                    &__state->ort_session));
+        }}
         """
         return init_code
 

@@ -40,40 +40,32 @@ class ORTCAPIInterface:
 
     # yapf: disable
     functions_to_expose = [
+        # Core
         "CreateEnv",
         "CreateSessionOptions",
-        "CreateKernelSession",
-        "CreateExecutableKernelContext",
-        "ExecutableKernelContext_AddInput",
-        "ExecutableKernelContext_AddOutput",
-        "ExecutableKernelContext_AddAttributeString",
-        "ExecutableKernelContext_AddAttributeStrings",
-        "ExecutableKernelContext_AddAttributeFloat",
-        "ExecutableKernelContext_AddAttributeFloats",
-        "ExecutableKernelContext_AddAttributeInt",
-        "ExecutableKernelContext_AddAttributeInts",
-        "ExecutableKernelContext_AddAttributeTensor",
-        "CreateExecutableKernel",
-        "ExecutableKernel_IsOutputOnCpu",
-        "ExecutableKernel_IsInputOnCpu",
-        "ExecutableKernel_SetInput",
-        "ExecutableKernel_SetOutput",
-        "ExecutableKernel_Compute",
-        "SessionOptionsAppendExecutionProvider_CUDA",
+        "CreateSession",                 
+        "CreateSessionFromArray",        
+        "UpdateCUDAProviderOptions",
+        "SessionOptionsAppendExecutionProvider_CUDA",      
+        "SessionOptionsAppendExecutionProvider_CUDA_V2",   
+        "CreateCUDAProviderOptions",                        
+        "GetCUDAProviderOptionsAsString",                   
+        # Memory / Tensors
         "CreateCpuMemoryInfo",
         "CreateMemoryInfo",
         "CreateTensorWithDataAsOrtValue",
     ]
+
     release_functions_to_expose = [
-        "ExecutableKernel",
-        "ExecutableKernelContext",
-        "KernelSession",
+        "Session",          
         "SessionOptions",
+        "CUDAProviderOptions",  
         "MemoryInfo",
         "Status",
         "Env",
-        "Value"
+        "Value",
     ]
+    
     # yapf: enable
     enums_to_expose = {
         "OrtMemType": ["OrtMemTypeDefault", "OrtMemTypeCPU"],
@@ -90,7 +82,7 @@ class ORTCAPIInterface:
             "ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64", "ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128",
             "ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16"
         ],
-        "OrtCudnnConvAlgoSearch": ["EXHAUSTIVE", "HEURISTIC", "DEFAULT"]
+        "OrtCudnnConvAlgoSearch": ["OrtCudnnConvAlgoSearchExhaustive", "OrtCudnnConvAlgoSearchHeuristic", "OrtCudnnConvAlgoSearchDefault"]
     }
 
     _function_signatures = collections.defaultdict(list)
@@ -134,7 +126,7 @@ class ORTCAPIInterface:
             converted_args = []
             for arg_typ, arg in zip(sig, args):
                 try:
-                    converted_args.append(arg_typ(arg))
+                    converted_args.append(self._coerce_ctypes_arg(arg_typ, arg))
                 except Exception as e:
                     raise TypeError(f"Could not convert argument {arg}") from e
 
@@ -144,7 +136,62 @@ class ORTCAPIInterface:
 
         wrapper.__name__ = function_name
         return wrapper
+    
+    def _coerce_ctypes_arg(self, arg_typ, arg):
+        # If the argument is already the exact expected ctypes type, keep it.
+        try:
+            if isinstance(arg, arg_typ):
+                return arg
+        except TypeError:
+            # arg_typ might not be a proper class; ignore and continue
+            pass
 
+        # c_char_p expects bytes; accept str/bytes/c_char_p
+        if arg_typ is ctypes.c_char_p:
+            if arg is None:
+                return None
+            if isinstance(arg, ctypes.c_char_p):
+                return arg
+            if isinstance(arg, (bytes, bytearray)):
+                return ctypes.c_char_p(bytes(arg))
+            if isinstance(arg, str):
+                return ctypes.c_char_p(arg.encode("utf-8"))
+            if isinstance(arg, ctypes.c_void_p) and arg.value is not None:
+                return ctypes.c_char_p(arg.value)
+            # fall through to generic conversion error
+
+        # Pointer types: if we got some pointer/byref already, pass it through;
+        # if it's a void* or address-int, cast it.
+        try:
+            is_ptr_type = issubclass(arg_typ, ctypes._Pointer)
+        except TypeError:
+            is_ptr_type = False
+
+        if is_ptr_type:
+            if isinstance(arg, ctypes._Pointer):
+                return ctypes.cast(arg, arg_typ)
+            if isinstance(arg, ctypes.c_void_p):
+                return ctypes.cast(arg, arg_typ)
+            # Many ctypes "byref" objects aren't instances of _Pointer; let them through.
+            return arg
+
+        # Simple scalars: unwrap .value if it's a ctypes scalar; also accept numpy scalars
+        if isinstance(arg, ctypes._SimpleCData):
+            val = arg.value
+        else:
+            val = arg
+        # numpy scalar -> Python scalar
+        if hasattr(val, "item"):
+            try:
+                val = val.item()
+            except Exception:
+                pass
+        # Booleans: normalize
+        if arg_typ is ctypes.c_bool:
+            val = bool(val)
+
+        return arg_typ(val)
+    
     def _check_status(self, status: ctypes.c_void_p):
         if status:
             msg = self.dll.GetErrorMessage(ctypes.c_void_p(status))
@@ -158,45 +205,141 @@ class ORTCAPIInterface:
             :param enum_value_name: the string containing the value name.
             :return: the integer value.
         """
-        return ctypes.c_int(self._function_pointers[f"Get{enum_value_name}"]())
+        return int(self._function_pointers[f"Get{enum_value_name}"]())
 
     # Code generation methods
     def _get_function_def(self, header_code, function_name):
-        # find the arguments of the function
-        match = re.search(rf"ORT_API2_STATUS\({function_name},(.*?)\)", header_code)
-        if match is None:
+        import re, ctypes
+
+        # 1) Find start after "ORT_API2_STATUS(function_name,"
+        pat = re.compile(rf"ORT_API2_STATUS\(\s*{re.escape(function_name)}\s*,", re.DOTALL)
+        m = pat.search(header_code)
+        if not m:
             raise RuntimeError(f"Couldn't parse ORT header file (couldn't find function {function_name} in header)")
 
-        # remove annotations like _Inout_, _In_, etc.
-        args_str = re.sub(r"_[^_\s]*?_", "", match[1].strip())
-        # remove long whitespace
+        i = m.end()
+        depth = 1  # we are inside the outer '('
+        args_chars = []
+        while i < len(header_code):
+            ch = header_code[i]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            args_chars.append(ch)
+            i += 1
+        if depth != 0:
+            raise RuntimeError(f"Unbalanced parentheses for {function_name}")
+
+        args_str = "".join(args_chars)
+
+        # 2) Strip SAL annotations completely (keep lowercase like size_t intact)
+        args_str = re.sub(
+            r"(?<![A-Za-z0-9_])_[A-Z][A-Za-z0-9_]*\s*\([^()]*\)",
+            " ",
+            args_str,
+        )
+        # if SAL stripping in older builds already produced ORTCHAR, put the _T back
+        args_str = re.sub(
+            r"(?<![A-Za-z0-9_])_[A-Z][A-Za-z0-9_]*_?",
+            " ",
+            args_str,
+        )
+        args_str = re.sub(r"\bORTCHAR\b(?=\s*\*)", "ORTCHAR_T", args_str)
+        # 3) Normalize whitespace
         args_str = re.sub(r"\s+", " ", args_str.strip())
 
-        # figure out the names of the function parameters
+        # 4) Parse arguments
         arg_names = []
-        for arg in args_str.split(","):
-            c_var_name_regex = r"[a-zA-Z_][a-zA-Z_0-9]*"
-            match = re.search(fr"(?:const )?(?:enum )?\s*({c_var_name_regex})([*\s]+)({c_var_name_regex})", arg.strip())
+        ORTCAPIInterface._function_signatures.setdefault(function_name, [])
 
-            if match is None:
-                raise RuntimeError(f"Couldn't parse ORT header file (couldn't parse argument '{arg}'"
-                                   f" of function {function_name})")
-            type_name, whitespace, var_name = match[1], match[2], match[3]
+        for raw in [a.strip() for a in args_str.split(",") if a.strip() and a.strip() != "void"]:
+            # var name is the last identifier
+            mname = re.search(r"([A-Za-z_][A-Za-z0-9_]*)$", raw)
+            if not mname:
+                raise RuntimeError(f"Couldn't parse ORT header file (couldn't parse argument '{raw}' of function {function_name})")
+            var_name = mname.group(1)
+            type_part = raw[:mname.start()].strip()
+
+            # Remove C qualifiers that can precede the base type
+            # (IMPORTANT: strip 'enum' so base becomes 'OrtAllocatorType', 'OrtMemType', etc.)
+            type_part = re.sub(r"\b(const|volatile|enum|struct|union)\b", "", type_part).strip()
+
+            # base type (last bare identifier) and any pointer stars after it
+            mtype = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$", type_part)
+            if not mtype:
+                raise RuntimeError(f"Couldn't parse ORT header file (couldn't parse argument '{raw}' of function {function_name})")
+            type_name, ptrs_tail = mtype.group(1), mtype.group(2)
+            num_indirection = ptrs_tail.count("*")
+
             arg_names.append(var_name)
 
-            ctypes_mapping = {"int64_t": ctypes.c_int64}
-            num_indirection = sum(1 if c == "*" else 0 for c in whitespace)
+            # Map to ctypes converters
+            ctypes_mapping = {
+                "int64_t": ctypes.c_int64,
+                "size_t": ctypes.c_size_t,
+            }
+
             if type_name in ctypes_mapping and num_indirection == 0:
                 ctypes_type = ctypes_mapping[type_name]
-            elif type_name == "char" and num_indirection == 1:
-                ctypes_type = lambda x: ctypes.c_char_p(x.encode("ascii"))
+
+            elif type_name == "char" and num_indirection >= 1:
+                # char*, char** …
+                if num_indirection >= 2:
+                    # char**: pass through; caller should supply (c_char_p * n)(...)
+                    ctypes_type = (lambda x: x)
+                else:
+                    # char*: accept None | c_char_p | bytes/bytearray | str | void*
+                    def _to_c_char_p(x):
+                        if x is None:
+                            return None
+                        if isinstance(x, ctypes.c_char_p):
+                            return x
+                        if isinstance(x, (bytes, bytearray)):
+                            return ctypes.c_char_p(bytes(x))
+                        if isinstance(x, str):
+                            return ctypes.c_char_p(x.encode("utf-8"))
+                        if isinstance(x, ctypes.c_void_p) and x.value is not None:
+                            return ctypes.c_char_p(x.value)
+                        # last-resort: try bytes()
+                        try:
+                            return ctypes.c_char_p(bytes(x))
+                        except Exception as e:
+                            raise TypeError(f"char* argument must be bytes or str, got {type(x).__name__}") from e
+                    ctypes_type = _to_c_char_p
+
             elif hasattr(ctypes, f"c_{type_name}") and num_indirection == 0:
                 ctypes_type = getattr(ctypes, f"c_{type_name}")
+
             elif type_name in ORTCAPIInterface.enums_to_expose:
-                ctypes_type = lambda x: self.get_enum_value(x)
+                def _enum_coerce(x):
+                    # if caller passed the name, look it up
+                    if isinstance(x, str):
+                        return self.get_enum_value(x)  # already a Python int
+                    # if caller passed a ctypes scalar, unwrap
+                    if isinstance(x, ctypes._SimpleCData):
+                        return int(x.value)
+                    # otherwise force to int (handles Python ints, numpy ints)
+                    try:
+                        return int(x)
+                    except Exception:
+                        raise TypeError(f"Enum argument must be a name or integer, got {type(x).__name__}")
+                ctypes_type = _enum_coerce
+
             elif num_indirection > 0:
-                # pointers must be converted manually
-                ctypes_type = lambda x: x
+                # Any pointer type (including const void*): pass through; caller supplies byref/pointer/buffer
+                ctypes_type = (lambda x: x)
+            elif type_name == "ORTCHAR_T" and num_indirection >= 1:
+                if os.name == "nt":
+                    # Windows uses wide chars
+                    ctypes_type = (lambda x: x if isinstance(x, ctypes.c_wchar_p)
+                                else ctypes.c_wchar_p(x))
+                else:
+                    # POSIX uses narrow chars
+                    ctypes_type = (lambda x: x if isinstance(x, ctypes.c_char_p)
+                                else ctypes.c_char_p(x))
             else:
                 raise RuntimeError(f"Could not import function {function_name}: couldn't identify type {type_name}")
 
@@ -208,14 +351,43 @@ class ORTCAPIInterface:
         }}
         """
 
+        
     @staticmethod
     def _get_release_function(object_name) -> str:
+        # keep your ctypes signature registration
         ORTCAPIInterface._function_signatures[f"Release{object_name}"] = [lambda x: x]
-        return f"""
-        extern "C" void Release{object_name}(Ort{object_name}* input) {{
-            ort_api->Release{object_name}(input);
-        }}
-        """
+
+        # ---- Special case: CUDAProviderOptions (v2 vs v1) ----
+        if object_name == "CUDAProviderOptions":
+            return r'''
+    #if defined(ORT_API_VERSION) && ORT_API_VERSION >= 11
+    extern "C" void ReleaseCUDAProviderOptions(OrtCUDAProviderOptionsV2* input) {
+        if (ort_api && ort_api->ReleaseCUDAProviderOptions) {
+            ort_api->ReleaseCUDAProviderOptions(input);
+        }
+    }
+    #else
+    // ORT CUDA EP v1: options is a plain struct; nothing to free.
+    // Keep a compatible symbol that's a no-op so callers can always "release".
+    extern "C" void ReleaseCUDAProviderOptions(OrtCUDAProviderOptions* /*input*/) {
+        // no-op on older ORT
+    }
+    #endif
+    '''
+        # ---- Back-compat shim: KernelSession is gone; map to Session ----
+        if object_name == "KernelSession":
+            return r'''
+    extern "C" void ReleaseKernelSession(OrtSession* input) {
+        ort_api->ReleaseSession(input);
+    }
+    '''
+
+        # ---- Generic case ----
+        return f'''
+    extern "C" void Release{object_name}(Ort{object_name}* input) {{
+        ort_api->Release{object_name}(input);
+    }}
+    '''
 
     @staticmethod
     def _get_dtype_function(enum_name, enum_value_name) -> str:
@@ -260,7 +432,6 @@ class ORTCAPIInterface:
         #include <sstream>
         #include "onnxruntime_c_api.h"
         #include "cpu_provider_factory.h"
-        #include "cuda_provider_factory.h"
 
         // Start global ORT setup
         const OrtApi* ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
