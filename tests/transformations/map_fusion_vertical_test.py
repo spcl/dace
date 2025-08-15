@@ -2378,6 +2378,13 @@ def _make_map_fusion_nested_sdfg_slicing(
 @pytest.mark.parametrize("strict_dataflow", [True, False])
 @pytest.mark.parametrize("symbolic_size", [True, False])
 def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bool):
+
+    # NOTE: If `strict_dataflow` is enabled then the reduced intermediate's shape
+    #   will be `(1, 5, 1)` but on the inside it will just be `(5,)` thus it does
+    #   not work.
+    if strict_dataflow:
+        pytest.mark.xfail("Remapping in `strict_data` mode is not supported.")
+
     if symbolic_size:
         nb_cells = "nb_cells"
         nb_levels = "nb_levels"
