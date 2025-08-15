@@ -2264,7 +2264,7 @@ def _make_map_fusion_nested_sdfg_slicing(
     c2e_dim: Union[int, str],
     strict_dataflow: bool,
 ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapExit, nodes.AccessNode, nodes.MapEntry, nodes.NestedSDFG,
-           nodes.AccessNode]:
+           nodes.NestedSDFG]:
 
     if isinstance(nb_cells, str):
         nb_cells = dace_symbolic.pystr_to_symbolic(nb_cells)
@@ -2273,7 +2273,7 @@ def _make_map_fusion_nested_sdfg_slicing(
     if isinstance(c2e_dim, str):
         c2e_dim = dace_symbolic.pystr_to_symbolic(c2e_dim)
 
-    def make_hood_nsdfg(nb_cells, nb_levels, c2e_dim) -> dace.SDFG:
+    def make_hood_nsdfg(nb_cells, nb_levels, c2e_dim, local_hood_single_stride, strict_dataflow) -> dace.SDFG:
         sdfg = dace.SDFG(unique_name("hood_sdfg"))
         state = sdfg.add_state(is_start_block=True)
 
@@ -2295,10 +2295,17 @@ def _make_map_fusion_nested_sdfg_slicing(
             dtype=dace.int32,
             transient=False,
         )
+        if strict_dataflow:
+            local_hood_shape = (1, c2e_dim, 1)
+            local_hood_strides = (1, local_hood_single_stride, 1)
+        else:
+            local_hood_shape = (c2e_dim, )
+            local_hood_strides = (local_hood_single_stride, )
+
         sdfg.add_array(
             "local_hood",
-            shape=(c2e_dim, ),
-            strides=(1, ),
+            shape=local_hood_shape,
+            strides=local_hood_strides,
             dtype=dace.int32,
             transient=False,
         )
@@ -2323,10 +2330,12 @@ def _make_map_fusion_nested_sdfg_slicing(
         state.add_edge(hood_me, "OUT_cell_data", hood_tasklet, "__field", dace.Memlet(f"cell_data[0:{nb_cells}]"))
         state.add_edge(hood_me, "OUT_c2e", hood_tasklet, "__index", dace.Memlet("c2e[__i]"))
 
-        state.add_edge(hood_tasklet, "__out", hood_mx, "IN_local_hood", dace.Memlet("local_hood[__i]"))
+        state.add_edge(hood_tasklet, "__out", hood_mx, "IN_local_hood",
+                       dace.Memlet("local_hood[0, __i, 0]" if strict_dataflow else "local_hood[__i]"))
         hood_mx.add_scope_connectors("local_hood")
 
-        state.add_edge(hood_mx, "OUT_local_hood", local_hood, None, dace.Memlet(f"local_hood[0:{c2e_dim}]"))
+        state.add_edge(hood_mx, "OUT_local_hood", local_hood, None,
+                       dace.Memlet(f"local_hood[0, 0:{c2e_dim}, 0]" if strict_dataflow else f"local_hood[0:{c2e_dim}]"))
 
         sdfg.validate()
 
@@ -2411,12 +2420,6 @@ def _make_map_fusion_nested_sdfg_slicing(
         dtype=dace.int32,
         transient=True,
     )
-    sdfg.add_array(
-        "local_hood",
-        shape=(c2e_dim, ),
-        dtype=dace.int32,
-        transient=True,
-    )
     sdfg.add_scalar(
         "accumulator",
         dtype=dace.int32,
@@ -2426,7 +2429,6 @@ def _make_map_fusion_nested_sdfg_slicing(
     cell_data = state.add_access("cell_data")
     result_data = state.add_access("result_data")
     c2e = state.add_access("c2e")
-    local_hood = state.add_access("local_hood")
     intermediate = state.add_access("intermediate")
     accumulator = state.add_access("accumulator")
 
@@ -2438,16 +2440,19 @@ def _make_map_fusion_nested_sdfg_slicing(
     me1.add_scope_connectors("c2e")
 
     hood_nsdfg = state.add_nested_sdfg(
-        sdfg=make_hood_nsdfg(nb_cells=nb_cells, nb_levels=nb_levels, c2e_dim=c2e_dim),
+        sdfg=make_hood_nsdfg(nb_cells=nb_cells,
+                             nb_levels=nb_levels,
+                             c2e_dim=c2e_dim,
+                             local_hood_single_stride=sdfg.arrays["intermediate"].strides[1],
+                             strict_dataflow=strict_dataflow),
         inputs={"c2e", "cell_data"},
         outputs={"local_hood"},
         symbol_mapping={},
     )
     state.add_edge(me1, "OUT_c2e", hood_nsdfg, "c2e", dace.Memlet(f"c2e[__iCell, 0:{c2e_dim}]"))
     state.add_edge(me1, "OUT_cell_data", hood_nsdfg, "cell_data", dace.Memlet(f"cell_data[0:{nb_cells}, __iK]"))
-    state.add_edge(hood_nsdfg, "local_hood", local_hood, None, dace.Memlet(f"local_hood[0:{c2e_dim}]"))
-
-    state.add_edge(local_hood, None, mx1, "IN_intermediate", dace.Memlet(f"intermediate[__iCell, 0:{c2e_dim}, __iK]"))
+    state.add_edge(hood_nsdfg, "local_hood", mx1, "IN_intermediate",
+                   dace.Memlet(f"intermediate[__iCell, 0:{c2e_dim}, __iK]"))
     mx1.add_scope_connectors("intermediate")
     state.add_edge(mx1, "OUT_intermediate", intermediate, None,
                    dace.Memlet(f"intermediate[0:{nb_cells}, 0:{c2e_dim}, 0:{nb_levels}]"))
@@ -2479,7 +2484,7 @@ def _make_map_fusion_nested_sdfg_slicing(
 
     sdfg.validate()
 
-    return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood
+    return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, hood_nsdfg
 
 
 @pytest.mark.parametrize("strict_dataflow", [True, False])
@@ -2495,7 +2500,7 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         nb_levels = 7
         c2e_dim = 5
 
-    sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood = _make_map_fusion_nested_sdfg_slicing(
+    sdfg, state, mx1, intermediate, me2, reduction_nsdfg, hood_nsdfg = _make_map_fusion_nested_sdfg_slicing(
         nb_cells=nb_cells, nb_levels=nb_levels, c2e_dim=c2e_dim, strict_dataflow=strict_dataflow)
 
     assert state.in_degree(reduction_nsdfg) == 1
@@ -2517,8 +2522,6 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         c2e_dim: 5,
     } if symbolic_size else {}
 
-    sdfg.view()
-
     ref, res = make_sdfg_args(sdfg, spec=spec)
     compile_and_run_sdfg(sdfg, **ref)
 
@@ -2532,11 +2535,11 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         array=intermediate,
         second_map_entry=me2,
     )
-    sdfg.view()
 
     assert count_nodes(state, nodes.MapEntry) == 1
 
     inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
+    inner_local_hood = hood_nsdfg.sdfg.arrays["local_hood"]
 
     assert state.in_degree(reduction_nsdfg) == 1
     outer_reduction_node = next(iter(state.in_edges(reduction_nsdfg))).src
@@ -2544,47 +2547,69 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
     outer_reduction = outer_reduction_node.desc(sdfg)
 
     _transfrom = lambda x: tuple(dace_symbolic.pystr_to_symbolic(xx) for xx in x)
+
     if strict_dataflow:
-        exp_outer_shape = _transfrom((1, c2e_dim, 1))
-        exp_outer_strides = _transfrom((c2e_dim, 1, 1))
+        exp_outer_reduction_shape = _transfrom((1, c2e_dim, 1))
+        exp_outer_reduction_strides = _transfrom((c2e_dim, 1, 1))
 
         if symbolic_size:
-            symbol_mapping = reduction_nsdfg.symbol_mapping
-
             inner_symbolic_shape = str(inner_reduction.shape[1])
             assert not inner_symbolic_shape.isdigit()
             assert str(c2e_dim) != inner_symbolic_shape
-            assert str(symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_shape = _transfrom((1, inner_symbolic_shape, 1))
+            assert str(reduction_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_reduction_shape = _transfrom((1, inner_symbolic_shape, 1))
 
             inner_symbolic_strides = str(inner_reduction.strides[0])
             assert not inner_symbolic_strides.isdigit()
             assert str(c2e_dim) != inner_symbolic_strides
-            assert str(symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_strides = _transfrom((inner_symbolic_strides, 1, 1))
+            assert str(reduction_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_reduction_strides = _transfrom((inner_symbolic_strides, 1, 1))
+
+            inner_symbolic_shape = str(inner_local_hood.shape[1])
+            assert not inner_symbolic_shape.isdigit()
+            assert str(c2e_dim) != inner_symbolic_shape
+            assert str(hood_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_local_hood_shape = _transfrom((1, inner_symbolic_shape, 1))
+
+            inner_symbolic_strides = str(inner_local_hood.strides[0])
+            assert not inner_symbolic_strides.isdigit()
+            assert str(c2e_dim) != inner_symbolic_strides
+            assert str(hood_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_local_hood_strides = _transfrom((inner_symbolic_strides, 1, 1))
+
         else:
-            exp_inner_strides = _transfrom((c2e_dim, 1, 1))
-            exp_inner_shape = _transfrom((1, c2e_dim, 1))
+            exp_inner_reduction_strides = _transfrom((c2e_dim, 1, 1))
+            exp_inner_reduction_shape = _transfrom((1, c2e_dim, 1))
+            exp_inner_local_hood_strides = exp_inner_reduction_strides
+            exp_inner_local_hood_shape = exp_inner_reduction_shape
     else:
-        exp_outer_shape = _transfrom((c2e_dim, ))
-        exp_outer_strides = _transfrom((1, ))
-        exp_inner_strides = _transfrom((1, ))
+        exp_outer_reduction_shape = _transfrom((c2e_dim, ))
+        exp_outer_reduction_strides = _transfrom((1, ))
+        exp_inner_reduction_strides = _transfrom((1, ))
+        exp_inner_local_hood_strides = _transfrom((1, ))
 
         if symbolic_size:
-            symbol_mapping = reduction_nsdfg.symbol_mapping
-
             inner_symbolic_shape = str(inner_reduction.shape[0])
             assert not inner_symbolic_shape.isdigit()
             assert str(c2e_dim) != inner_symbolic_shape
-            assert str(symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_shape = _transfrom((inner_symbolic_shape, ))
-        else:
-            exp_inner_shape = _transfrom((c2e_dim, ))
+            assert str(reduction_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_reduction_shape = _transfrom((inner_symbolic_shape, ))
 
-    assert exp_outer_shape == outer_reduction.shape
-    assert exp_outer_strides == outer_reduction.strides
-    assert exp_inner_shape == inner_reduction.shape
-    assert exp_inner_strides == inner_reduction.strides
+            inner_symbolic_shape = str(inner_local_hood.shape[0])
+            assert not inner_symbolic_shape.isdigit()
+            assert str(c2e_dim) != inner_symbolic_shape
+            assert str(hood_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_local_hood_shape = _transfrom((inner_symbolic_shape, ))
+        else:
+            exp_inner_reduction_shape = _transfrom((c2e_dim, ))
+            exp_inner_local_hood_shape = _transfrom((c2e_dim, ))
+
+    assert exp_outer_reduction_shape == outer_reduction.shape
+    assert exp_outer_reduction_strides == outer_reduction.strides
+    assert exp_inner_reduction_shape == inner_reduction.shape
+    assert exp_inner_reduction_strides == inner_reduction.strides
+    assert exp_inner_local_hood_shape == inner_local_hood.shape
+    assert exp_inner_local_hood_strides == inner_local_hood.strides
 
     compile_and_run_sdfg(sdfg, **res)
     assert all(np.allclose(ref[k], res[k]) for k in ref)
