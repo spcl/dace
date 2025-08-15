@@ -1838,7 +1838,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 assert inner_strides_sym not in symbol_mapping
                 symbol_mapping[inner_strides_sym] = outer_strides
                 new_inner_strides.append(symbolic.pystr_to_symbolic(inner_strides_sym))
-        inner_desc.strides = tuple(new_inner_strides)
 
         # Now replace the shape. We are using the same scheme as for the strides.
         new_inner_shape: List[int] = []
@@ -1851,4 +1850,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 assert inner_shape_sym not in symbol_mapping
                 symbol_mapping[inner_shape_sym] = outer_shape
                 new_inner_shape.append(symbolic.pystr_to_symbolic(inner_shape_sym))
-        inner_desc.shape = tuple(new_inner_shape)
+
+        # This will also update the dependent quantities.
+        inner_desc.set_shape(
+            new_shape=tuple(new_inner_shape),
+            strides=tuple(new_inner_strides),
+        )
