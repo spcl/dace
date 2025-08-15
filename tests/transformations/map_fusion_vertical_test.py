@@ -2266,6 +2266,72 @@ def _make_map_fusion_nested_sdfg_slicing(
 ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapExit, nodes.AccessNode, nodes.MapEntry, nodes.NestedSDFG,
            nodes.AccessNode]:
 
+    if isinstance(nb_cells, str):
+        nb_cells = dace_symbolic.pystr_to_symbolic(nb_cells)
+    if isinstance(nb_levels, str):
+        nb_levels = dace_symbolic.pystr_to_symbolic(nb_levels)
+    if isinstance(c2e_dim, str):
+        c2e_dim = dace_symbolic.pystr_to_symbolic(c2e_dim)
+
+    def make_hood_nsdfg(nb_cells, nb_levels, c2e_dim) -> dace.SDFG:
+        sdfg = dace.SDFG(unique_name("hood_sdfg"))
+        state = sdfg.add_state(is_start_block=True)
+
+        for x in [nb_cells, nb_levels, c2e_dim]:
+            if isinstance(x, str):
+                sdfg.add_symbol(x, dace.int32)
+
+        sdfg.add_array(
+            "cell_data",
+            shape=(nb_cells, ),
+            strides=(nb_levels, ),
+            dtype=dace.int32,
+            transient=False,
+        )
+        sdfg.add_array(
+            "c2e",
+            shape=(c2e_dim, ),
+            strides=(1, ),
+            dtype=dace.int32,
+            transient=False,
+        )
+        sdfg.add_array(
+            "local_hood",
+            shape=(c2e_dim, ),
+            strides=(1, ),
+            dtype=dace.int32,
+            transient=False,
+        )
+
+        cell_data = state.add_access("cell_data")
+        c2e = state.add_access("c2e")
+        local_hood = state.add_access("local_hood")
+
+        hood_me, hood_mx = state.add_map("hood_map", ndrange={"__i": f"0:{c2e_dim}"})
+        hood_tasklet = state.add_tasklet(
+            "hood_tasklet",
+            inputs={"__field", "__index"},
+            code=f"__out = __field[__index] if __index != -1 else 2147483647",
+            outputs={"__out"},
+        )
+
+        state.add_edge(cell_data, None, hood_me, "IN_cell_data", dace.Memlet(f"cell_data[0:{nb_cells}]"))
+        state.add_edge(c2e, None, hood_me, "IN_c2e", dace.Memlet(f"c2e[0:{c2e_dim}]"))
+        hood_me.add_scope_connectors("cell_data")
+        hood_me.add_scope_connectors("c2e")
+
+        state.add_edge(hood_me, "OUT_cell_data", hood_tasklet, "__field", dace.Memlet(f"cell_data[0:{nb_cells}]"))
+        state.add_edge(hood_me, "OUT_c2e", hood_tasklet, "__index", dace.Memlet("c2e[__i]"))
+
+        state.add_edge(hood_tasklet, "__out", hood_mx, "IN_local_hood", dace.Memlet("local_hood[__i]"))
+        hood_mx.add_scope_connectors("local_hood")
+
+        state.add_edge(hood_mx, "OUT_local_hood", local_hood, None, dace.Memlet(f"local_hood[0:{c2e_dim}]"))
+
+        sdfg.validate()
+
+        return sdfg
+
     def make_reducing_nsdfg(c2e_dim, mapped_stride, strict_dataflow) -> dace.SDFG:
         sdfg = dace.SDFG(unique_name("reducing_nested_sdfg"))
         init_state = sdfg.add_state(is_start_block=True)
@@ -2371,26 +2437,15 @@ def _make_map_fusion_nested_sdfg_slicing(
     me1.add_scope_connectors("cell_data")
     me1.add_scope_connectors("c2e")
 
-    hood_me, hood_mx = state.add_map("hood_map", ndrange={"__i": f"0:{c2e_dim}"})
-    hood_tasklet = state.add_tasklet(
-        "hood_tasklet",
-        inputs={"__field", "__index"},
-        code=f"__out = __field[__index] if __index != -1 else 2147483647",
-        outputs={"__out"},
+    hood_nsdfg = state.add_nested_sdfg(
+        sdfg=make_hood_nsdfg(nb_cells=nb_cells, nb_levels=nb_levels, c2e_dim=c2e_dim),
+        inputs={"c2e", "cell_data"},
+        outputs={"local_hood"},
+        symbol_mapping={},
     )
-
-    state.add_edge(me1, "OUT_cell_data", hood_me, "IN_cell_data", dace.Memlet(f"cell_data[0:{nb_cells}, __iK]"))
-    state.add_edge(me1, "OUT_c2e", hood_me, "IN_c2e", dace.Memlet(f"c2e[__iCell, 0:{c2e_dim}]"))
-    hood_me.add_scope_connectors("cell_data")
-    hood_me.add_scope_connectors("c2e")
-
-    state.add_edge(hood_me, "OUT_cell_data", hood_tasklet, "__field", dace.Memlet(f"cell_data[0:{nb_cells}, __iK]"))
-    state.add_edge(hood_me, "OUT_c2e", hood_tasklet, "__index", dace.Memlet("c2e[__iCell, __i]"))
-
-    state.add_edge(hood_tasklet, "__out", hood_mx, "IN_local_hood", dace.Memlet("local_hood[__i]"))
-    hood_mx.add_scope_connectors("local_hood")
-
-    state.add_edge(hood_mx, "OUT_local_hood", local_hood, None, dace.Memlet(f"local_hood[0:{c2e_dim}]"))
+    state.add_edge(me1, "OUT_c2e", hood_nsdfg, "c2e", dace.Memlet(f"c2e[__iCell, 0:{c2e_dim}]"))
+    state.add_edge(me1, "OUT_cell_data", hood_nsdfg, "cell_data", dace.Memlet(f"cell_data[0:{nb_cells}, __iK]"))
+    state.add_edge(hood_nsdfg, "local_hood", local_hood, None, dace.Memlet(f"local_hood[0:{c2e_dim}]"))
 
     state.add_edge(local_hood, None, mx1, "IN_intermediate", dace.Memlet(f"intermediate[__iCell, 0:{c2e_dim}, __iK]"))
     mx1.add_scope_connectors("intermediate")
@@ -2445,7 +2500,7 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
 
     assert state.in_degree(reduction_nsdfg) == 1
     inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
-    assert count_nodes(state, nodes.MapEntry) == 3
+    assert count_nodes(state, nodes.MapEntry) == 2
 
     if strict_dataflow:
         assert len(inner_reduction.strides) == 3
@@ -2462,6 +2517,8 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         c2e_dim: 5,
     } if symbolic_size else {}
 
+    sdfg.view()
+
     ref, res = make_sdfg_args(sdfg, spec=spec)
     compile_and_run_sdfg(sdfg, **ref)
 
@@ -2475,8 +2532,9 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         array=intermediate,
         second_map_entry=me2,
     )
+    sdfg.view()
 
-    assert count_nodes(state, nodes.MapEntry) == 2
+    assert count_nodes(state, nodes.MapEntry) == 1
 
     inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
 
