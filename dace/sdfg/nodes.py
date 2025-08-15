@@ -912,12 +912,8 @@ class MapEntry(EntryNode):
                     )
                     free_symbols |= code_symbols
                     continue
-
-            if hasattr(n, 'used_symbols'):
-                if isinstance(n, dace.nodes.NestedSDFG):
-                    free_symbols |= n.used_symbols(all_symbols)
-                else:
-                    free_symbols |= n.used_symbols(parent_state, all_symbols)
+            elif isinstance(n, dace.nodes.NestedSDFG):
+                free_symbols |= n.used_symbols(all_symbols)
             else:
                 free_symbols |= n.free_symbols
 
