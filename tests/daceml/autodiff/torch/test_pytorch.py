@@ -74,6 +74,12 @@ def run_pytorch_module(
                         dace_input.grad,
                         rtol=rtol,
                         atol=atol)
+    
+    for (name, dace_param), (pt_name,
+                             pt_param) in zip(module.named_parameters(),
+                                              dace_module.named_parameters()):
+        assert 'model.' + name == pt_name
+        torch_tensors_close(name, pt_param.grad, dace_param.grad, rtol=rtol, atol=atol)
 
 
 def test_simple(sdfg_name, gpu):

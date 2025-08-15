@@ -22,7 +22,8 @@ def test_bert_encoder(gpu, default_implementation, sdfg_name):
     dace_model = DaceModule(ptmodel,
                             training=False,
                             sdfg_name=sdfg_name,
-                            simplify=True)
+                            simplify=False,
+                            backward=True)
 
     if gpu:
 
@@ -50,3 +51,7 @@ def test_bert_encoder(gpu, default_implementation, sdfg_name):
                 (hasattr(n, "environments") and "cuBLAS" in n.environments or
                  hasattr(n, "implementation") and n.implementation == "cuBLAS")
                 for n, _ in dace_model.sdfg.all_nodes_recursive())
+
+if __name__ == "__main__":
+    torch.manual_seed(42)
+    test_bert_encoder(gpu=False, default_implementation="pure", sdfg_name="bert_encoder")

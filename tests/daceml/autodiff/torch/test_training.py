@@ -1,5 +1,5 @@
 import os
-
+import copy
 import pytest
 
 import numpy as np
@@ -27,7 +27,7 @@ def training_step(dace_model,
                                  dace_model.state_dict().values()):
         assert torch.allclose(dace_value, value)
 
-    dace_model = DaceModule(dace_model, backward=True, sdfg_name=sdfg_name)
+    dace_model = DaceModule(dace_model, backward=True, simplify=False, sdfg_name=sdfg_name)
 
     x, y = train_batch
     x = copy_to_gpu(gpu, x)

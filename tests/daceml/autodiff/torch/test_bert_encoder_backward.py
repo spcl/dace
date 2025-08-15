@@ -36,6 +36,12 @@ def test_bert_encoder_backward(gpu, sdfg_name):
 
     torch_tensors_close("input_grad", ptinput.grad, dace_input.grad)
 
+    for (name, dace_param), (pt_name,
+                             pt_param) in zip(ptmodel.named_parameters(),
+                                              dace_model.named_parameters()):
+        assert 'model.' + name == pt_name
+        torch_tensors_close(name, pt_param.grad, dace_param.grad)
 
 if __name__ == "__main__":
+    torch.manual_seed(42)
     test_bert_encoder_backward(gpu=False, sdfg_name="bert_encoder")

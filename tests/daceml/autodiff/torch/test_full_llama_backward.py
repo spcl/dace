@@ -77,7 +77,7 @@ def test_llama_model_backward(gpu, sdfg_name):
     model = LlamaForCausalLM(config)
     model.eval()
     export_seq_length = 32
-    export_batch_size = 1
+    export_batch_size = 2
     export_input = torch.randint(3, config.vocab_size, (export_batch_size, export_seq_length), dtype=torch.long)
     export_input = copy_to_gpu(gpu, export_input)
 

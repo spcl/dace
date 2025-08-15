@@ -39,8 +39,6 @@ class LlamaDecoderLayerWrapper(nn.Module):
 
 @pytest.mark.cpublas
 def test_llama_decoder_backward(gpu, sdfg_name):
-    seed = 42
-    torch.manual_seed(seed)
     # Create configuration
     config = LlamaConfig(
         hidden_size=512,
@@ -58,7 +56,7 @@ def test_llama_decoder_backward(gpu, sdfg_name):
     decoder_layer = LlamaDecoderLayer(config, layer_idx=0)
 
     # Prepare dummy inputs
-    batch_size = 1
+    batch_size = 2
     seq_length = 128
 
     # Create input tensors
@@ -69,9 +67,8 @@ def test_llama_decoder_backward(gpu, sdfg_name):
     # Create wrapped model
     wrapped_model = LlamaDecoderLayerWrapper(decoder_layer, config)
     wrapped_model = copy_to_gpu(gpu, wrapped_model)
-    wrapped_model_to_use = copy.deepcopy(wrapped_model)
     dace_model = DaceModule(
-        wrapped_model_to_use,
+        wrapped_model,
         sdfg_name=sdfg_name,
         onnx_simplify=True,
         simplify=False,
@@ -100,4 +97,5 @@ def test_llama_decoder_backward(gpu, sdfg_name):
     torch_tensors_close("hidden_states_pt_grad", hidden_states_pt.grad, hidden_states_dace.grad)
     
 if __name__ == "__main__":
+    torch.manual_seed(42)
     test_llama_decoder_backward(gpu=False, sdfg_name="llama_decoder_backward_test")

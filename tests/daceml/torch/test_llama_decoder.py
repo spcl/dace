@@ -57,7 +57,7 @@ def test_llama_decoder(gpu, sdfg_name):
     decoder_layer.eval()
 
     # Prepare dummy inputs
-    batch_size = 1
+    batch_size = 2
     seq_length = 128
 
     # Create input tensors
