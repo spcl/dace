@@ -54,6 +54,9 @@ class ORTCAPIInterface:
         "CreateCpuMemoryInfo",
         "CreateMemoryInfo",
         "CreateTensorWithDataAsOrtValue",
+        "CreateOp",
+        # "CreateOpAttr",
+        # "InvokeOp",
     ]
 
     release_functions_to_expose = [
@@ -104,6 +107,11 @@ class ORTCAPIInterface:
             lbd()
 
     def _dll_get_fptr(self, function_name):
+        if not hasattr(self.dll, function_name):
+            raise AttributeError(
+                f"{self.dll._name} does not export '{function_name}'. "
+                "Check the caller that requested this symbol."
+            )
         func_ptr = getattr(self.dll, function_name)
         if function_name in self.functions_to_expose:
             # annotate functions that return a status
@@ -126,7 +134,8 @@ class ORTCAPIInterface:
             converted_args = []
             for arg_typ, arg in zip(sig, args):
                 try:
-                    converted_args.append(self._coerce_ctypes_arg(arg_typ, arg))
+                    val = self._coerce_ctypes_arg(arg_typ, arg) if arg else None
+                    converted_args.append(val)
                 except Exception as e:
                     raise TypeError(f"Could not convert argument {arg}") from e
 

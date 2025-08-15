@@ -69,7 +69,7 @@ class SessionOptions:
 
         if self.cuda and hasattr(self.api.dll, "OrtSessionOptionsAppendExecutionProvider_CUDA"):
             cuda_opts = OrtCUDAProviderOptions(device_id=0,
-                                               cudnn_conv_algo_search=self.api.get_enum_value("DEFAULT"),
+                                               cudnn_conv_algo_search=self.api.get_enum_value("OrtCudnnConvAlgoSearchDefault"),
                                                cuda_mem_limit=np.iinfo(ctypes.c_size_t).max,
                                                do_copy_in_default_stream=1,
                                                has_user_compute_stream=0,
