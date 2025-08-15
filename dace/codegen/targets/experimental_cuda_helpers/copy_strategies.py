@@ -193,7 +193,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         This function returns True if:
         - We are not currently generating kernel code
         - The copy occurs between two AccessNodes
-        - The storage types involve a CPU and a GPU (but not CPU-to-CPU or GPU-to-GPU)
+        - 
 
         This check is used to detect and handle transfers between host and device memory spaces.
         """
@@ -220,6 +220,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
     def generate_copy(self, copy_context: CopyContext) -> None:
         """Execute host-device copy with CUDA memory operations"""
 
+        return
         # guard
         _, _, _, _, memlet = copy_context.edge
         if memlet.wcr is not None:
@@ -357,9 +358,9 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         src = f'{src_expr} + {offset_src}'
         dst = f'{dst_expr} + {offset_dst}'
 
-        dpitch = f'{dst_strides[-2]} + sizeof({ctype})'
-        spitch = f'{src_strides[-2]} + sizeof({ctype})'
-        width = f'{copy_shape[-1]} + sizeof({ctype})'
+        dpitch = f'{dst_strides[-2]} * sizeof({ctype})'
+        spitch = f'{src_strides[-2]} * sizeof({ctype})'
+        width = f'{copy_shape[-1]} * sizeof({ctype})'
         height = copy_shape[-2]
         kind = f'{backend}Memcpy{src_location}To{dst_location}'
 

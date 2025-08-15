@@ -1,3 +1,4 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 # Standard library imports
 import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
@@ -28,7 +29,12 @@ from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_a
 
 # DaCe transformation imports
 from dace.transformation.passes import analysis as ap
-from dace.transformation.passes.gpustream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
+from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
+from dace.transformation.passes.gpustream.gpu_stream_topology_simplification import GPUStreamTopologySimplification
+from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
 from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
@@ -36,6 +42,9 @@ from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import In
 # Experimental CUDA helper imports
 from dace.codegen.targets.experimental_cuda_helpers.gpu_stream_manager import GPUStreamManager
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp, emit_sync_debug_checks, get_defined_type
+
+
+from dace.codegen.targets import cpp
 
 # Type checking imports (conditional)
 if TYPE_CHECKING:
@@ -126,7 +135,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         - Adding explicit ThreadBlock Maps where missing and infer Grid and Block dimensions for
           every Kernel in the SDFG
         - Handling GPU<->GPU strided copies.
-        - Assigning backend GPU streams (e.g., CUDA streams) and creating the GPUStreamManager.
+        - TODO: update: Assigning backend GPU streams (e.g., CUDA streams) and creating the GPUStreamManager.
         - Handling memory pool management
         """
 
@@ -198,13 +207,36 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Define backend stream access expression (e.g., CUDA stream handle)
         gpu_stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"
 
-        # Initialize and configure GPU stream scheduling pass
-        gpu_stream_pass = NaiveGPUStreamScheduler()
-        gpu_stream_pass.set_gpu_stream_access_template(gpu_stream_access_template)
-        assigned_streams = gpu_stream_pass.apply_pass(sdfg, None)
+        # TODO: Update
+        stream_pipeline = Pipeline(
+            [
+                NaiveGPUStreamScheduler(),
+                InsertGPUStreamsToKernels(),
+                InsertGPUStreamSyncTasklets(),
+                InsertGPUCopyTasklets(),
+                GPUStreamTopologySimplification(),
+            ]
+        )
+        
+        self._dispatcher._used_targets.add(self)
+        gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
 
         # Initialize runtime GPU stream manager
-        self._gpu_stream_manager = GPUStreamManager(sdfg, assigned_streams, gpu_stream_access_template)
+        # TODO: probably to be deleted
+        self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments, gpu_stream_access_template)
+
+        # Get GPU stream persistent array name used in state struct
+        # NOTE: GPU stream array name from the configurations is prepended with an ID for consistency,
+        # since struct definition and access are handled elsewhere (e.g., framecode.py, cpu.py, cpp.py)
+        # TODO: Nicer
+        self._initialize_gpustreams = ""
+        gpu_stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(",")[0]
+        for csdfg, name, desc in sdfg.arrays_recursive(include_nested_data=True):
+            if name == gpu_stream_array_name and desc.lifetime == dtypes.AllocationLifetime.Persistent:
+                gpu_stream_field_name = f'__{csdfg.cfg_id}_{name}'
+                self._initialize_gpustreams += f"__state->{gpu_stream_field_name} = __state->gpu_context->streams;\n"
+
+
 
         #----------------- Shared Memory Synchronization related Logic -----------------
 
@@ -339,7 +371,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if not self._in_device_code:
 
             # Enter kernel context and recursively generate device code
-            self._in_device_code = True
 
             # New scope for defined variables (kernel functions scope)
             self._dispatcher.defined_vars.enter_scope(scope_entry)
@@ -370,6 +401,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             # Recursively generate GPU code into the kernel_stream (will be in a .cu file)
             kernel_stream = CodeIOStream()
             kernel_function_stream = self._globalcode
+
+            self._in_device_code = True
 
             kernel_scope_generator = KernelScopeGenerator(codegen=self)
             if kernel_scope_generator.applicable(sdfg, cfg, dfg_scope, state_id, kernel_function_stream, kernel_stream):
@@ -431,7 +464,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             state_id, scope_entry)
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
-        state = sdfg.state(state_id)
+        state = cfg.state(state_id)
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
             callsite_stream.write('{', cfg, state_id, scope_entry)
 
@@ -444,7 +477,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Calling the kernel wrapper function (in the CPU-side code)
         callsite_stream.write('__dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(kernel_wrapper_args_as_input)),
                               cfg, state_id, scope_entry)
-
 
             
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
@@ -509,12 +541,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # ----------------- Kernel Launch Invocation -----------------------
         kargs = ', '.join(['(void *)&' + arg for arg in kernel_args_as_input])
-
+        _, stream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
         self._localcode.write(
             f'''
             void  *{kernel_name}_args[] = {{ {kargs} }};
             gpuError_t __err = {self.backend}LaunchKernel(
-                (void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {0}, {gpu_stream}
+                (void*){kernel_name}, dim3({gdims}), dim3({bdims}), {kernel_name}_args, {0}, {stream_var_name}
             );
             ''', cfg, state_id, scope_entry)
 
@@ -764,6 +796,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
+        # NOTE: Experimental for GPU stream
+        if nodedesc.dtype == dtypes.gpuStream_t:
+            return
+
         # ------------------- Allocation/Declaration -------------------
 
         # Call the appropriate handler based on storage type
@@ -819,13 +855,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
         # ------------------- Declaration -------------------
-        # NOTE: Experimental for GPU stream
-        if nodedesc.dtype == dtypes.gpuStream_t:
-            array_ctype = f'{nodedesc.dtype.ctype} *'
-            declaration_stream.write(f'{nodedesc.dtype.ctype} * {dataname} = __state->gpu_context->streams;\n', cfg, state_id, node)
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, array_ctype)
-            return
-
         declared = self._dispatcher.declared_arrays.has(dataname)
 
         if not declared:
@@ -1040,6 +1069,9 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
         DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
     }}
 
+    // Here
+    {other_gpustream_init}
+
     {initcode}
 
     return 0;
@@ -1091,6 +1123,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
            file_header=fileheader.getvalue(),
            nstreams=self._gpu_stream_manager.num_gpu_streams,
            nevents=self._gpu_stream_manager.num_gpu_events,
+           other_gpustream_init=self._initialize_gpustreams,
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,
@@ -1167,7 +1200,7 @@ class KernelSpec:
                  dfg_scope: ScopeSubgraphView, state_id: int):
 
         # Get kernel entry/exit nodes and current state
-        kernel_map_entry = dfg_scope.source_nodes()[0]
+        kernel_map_entry: nodes.MapEntry  = dfg_scope.source_nodes()[0]
         kernel_parent_state: SDFGState = cfg.state(state_id)
 
         self._kernel_map_entry: nodes.MapEntry = kernel_map_entry
@@ -1187,13 +1220,23 @@ class KernelSpec:
         # Retrieve arguments required for the kernels subgraph
         arglist: Dict[str, dt.Data] = kernel_parent_state.scope_subgraph(kernel_map_entry).arglist()
 
-        # Add also dynamic inputs required for the kernel
+        # Add also dynamic inputs required for the kernel to arglist except streams
+        # streams are only needed for the kernel wrapper and launcher function
+        stream_args = []
+        stream_args_typed = []
         for e in dace.sdfg.dynamic_map_inputs(kernel_parent_state, kernel_map_entry):
-            var_name = str(e.dst_conn)
             data_desc = e.src.desc(sdfg)
-            defined_type = get_defined_type(data_desc)
-            arglist[var_name] = data_desc
-            cudaCodeGen._dispatcher.defined_vars.add(var_name, defined_type, data_desc.ctype)
+            var_name = str(e.dst_conn)
+
+            if data_desc.dtype == dtypes.gpuStream_t:
+                _, stream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
+                stream_args.append(f"{var_name}")
+                stream_args_typed.append(f"gpuStream_t {stream_var_name}")
+            else:
+                var_name = str(e.dst_conn)
+                arglist[var_name] = data_desc
+                defined_type = get_defined_type(data_desc)
+                cudaCodeGen._dispatcher.defined_vars.add(var_name, defined_type, data_desc.ctype, allow_shadowing=True)
 
         self._arglist = arglist
 
@@ -1201,8 +1244,8 @@ class KernelSpec:
         self._args_as_input = [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in arglist.items()]
         self._args_typed = [('const ' if name in kernel_constants else '') + data.as_arg(name=name) for name, data in arglist.items()]
 
-        self._kernel_wrapper_args_as_input = ['__state'] + self._args_as_input
-        self._kernel_wrapper_args_typed = [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] + self._args_typed
+        self._kernel_wrapper_args_as_input = ['__state'] + self._args_as_input + stream_args
+        self._kernel_wrapper_args_typed = [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] + self._args_typed + stream_args_typed
 
         # The kernel's grid and block dimensions
         self._grid_dims, self._block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]

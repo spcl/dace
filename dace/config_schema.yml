@@ -457,7 +457,7 @@ required:
                             Yakup Koray Budanaz for Berkays master-thesis.
                         enum: [legacy, experimental]
                         default: experimental
-
+                        
                     gpu_index_type:
                         type: str
                         title: Thread/block/warp index data type
@@ -511,6 +511,17 @@ required:
                             (e.g., `cooperative_groups::wait(block)`). Setting this allows users to customize the
                             variable name without modifying the source code or relying on a fixed name.
                         default: block
+
+                    gpu_stream_name:
+                        type: str
+                        title: Name for the GPU stream object
+                        description: >
+                            GPU streams allow GPU operations, such as kernel execution or memory transfers, to run asynchronously 
+                            and in parallel. This field specifies the naming convention for the hpu stream array and its connectors 
+                            in the SDFG. For example: 'gpu_streams,gpu_stream' means 'gpu_streams' is the array containing the 
+                            stream objects, and 'gpu_stream0' (prefix derived from the second name + stream id) is used as a 
+                            connector for gpu_streams[0].
+                        default: gpu_streams,gpu_stream
 
             #############################################
             # General FPGA flags

@@ -15,11 +15,16 @@ cp = pytest.importorskip("cupy")
 rng = cp.random.default_rng(42)
 
 
-def count_node(sdfg: dace.SDFG, node_type):
+def count_node(sdfg: dace.SDFG, node_type, ignore_gpustream_nodes=True):
     nb_nodes = 0
     for rsdfg in sdfg.all_sdfgs_recursive():
         for state in sdfg.states():
             for node in state.nodes():
+                if (ignore_gpustream_nodes and 
+                    isinstance(node, dace_nodes.AccessNode) 
+                    and node.desc(state).dtype == dace.dtypes.gpuStream_t
+                    ):
+                    continue
                 if isinstance(node, node_type):
                     nb_nodes += 1
     return nb_nodes
