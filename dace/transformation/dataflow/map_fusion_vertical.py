@@ -767,7 +767,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 )
 
             else:
-                assert (pre_exit_edge.data.subset.num_elements() > 1) or all(x == 1 for x in new_inter_shape)
                 is_scalar = False
                 new_inter_name, new_inter_desc = sdfg.add_transient(
                     new_inter_name,
@@ -1835,10 +1834,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if str(outer_strides).isdigit():
                 new_inner_strides.append(outer_strides)
             else:
-                inner_strides_sym = f"map_fusion_nsdfg_strides_mapping_{inner_data}_{outer_edge.data}_{i}"
+                inner_strides_sym = f"map_fusion_nsdfg_strides_mapping_{inner_data}_{outer_edge.data.data}_{i}"
                 assert inner_strides_sym not in symbol_mapping
                 symbol_mapping[inner_strides_sym] = outer_strides
-                new_inner_strides.append(inner_strides_sym)
+                new_inner_strides.append(symbolic.pystr_to_symbolic(inner_strides_sym))
         inner_desc.strides = tuple(new_inner_strides)
 
         # Now replace the shape. We are using the same scheme as for the strides.
@@ -1848,8 +1847,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             if str(outer_shape).isdigit():
                 new_inner_shape.append(outer_shape)
             else:
-                inner_shape_sym = f"map_fusion_nsdfg_shape_mapping_{inner_data}_{outer_edge.data}_{i}"
+                inner_shape_sym = f"map_fusion_nsdfg_shape_mapping_{inner_data}_{outer_edge.data.data}_{i}"
                 assert inner_shape_sym not in symbol_mapping
                 symbol_mapping[inner_shape_sym] = outer_shape
-                new_inner_shape.append(inner_shape_sym)
+                new_inner_shape.append(symbolic.pystr_to_symbolic(inner_shape_sym))
         inner_desc.shape = tuple(new_inner_shape)
