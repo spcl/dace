@@ -2548,35 +2548,33 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
 
     _transfrom = lambda x: tuple(dace_symbolic.pystr_to_symbolic(xx) for xx in x)
 
+    def _extract(nsdfg, inner_value, is_shape):
+        if strict_dataflow:
+            assert len(inner_value) == 3
+            inner_symbolic_value = str(inner_value[1 if is_shape else 0])
+        else:
+            assert len(inner_value) == 1
+            assert is_shape
+            inner_symbolic_value = str(inner_value[0])
+        assert inner_symbolic_value.startswith(f"map_fusion_nsdfg_{'shape' if is_shape else 'strides'}_")
+        assert inner_symbolic_value in nsdfg.sdfg.symbols
+        assert inner_symbolic_value in nsdfg.symbol_mapping
+        assert str(c2e_dim) != inner_symbolic_value
+        assert str(nsdfg.symbol_mapping[inner_symbolic_value]) == str(c2e_dim)
+        if strict_dataflow:
+            return _transfrom((1, inner_symbolic_value, 1)) if is_shape else _transfrom((inner_symbolic_value, 1, 1))
+        else:
+            return _transfrom((inner_symbolic_value, ))
+
     if strict_dataflow:
         exp_outer_reduction_shape = _transfrom((1, c2e_dim, 1))
         exp_outer_reduction_strides = _transfrom((c2e_dim, 1, 1))
 
         if symbolic_size:
-            inner_symbolic_shape = str(inner_reduction.shape[1])
-            assert not inner_symbolic_shape.isdigit()
-            assert str(c2e_dim) != inner_symbolic_shape
-            assert str(reduction_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_reduction_shape = _transfrom((1, inner_symbolic_shape, 1))
-
-            inner_symbolic_strides = str(inner_reduction.strides[0])
-            assert not inner_symbolic_strides.isdigit()
-            assert str(c2e_dim) != inner_symbolic_strides
-            assert str(reduction_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_reduction_strides = _transfrom((inner_symbolic_strides, 1, 1))
-
-            inner_symbolic_shape = str(inner_local_hood.shape[1])
-            assert not inner_symbolic_shape.isdigit()
-            assert str(c2e_dim) != inner_symbolic_shape
-            assert str(hood_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_local_hood_shape = _transfrom((1, inner_symbolic_shape, 1))
-
-            inner_symbolic_strides = str(inner_local_hood.strides[0])
-            assert not inner_symbolic_strides.isdigit()
-            assert str(c2e_dim) != inner_symbolic_strides
-            assert str(hood_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_local_hood_strides = _transfrom((inner_symbolic_strides, 1, 1))
-
+            exp_inner_reduction_shape = _extract(reduction_nsdfg, inner_reduction.shape, True)
+            exp_inner_reduction_strides = _extract(reduction_nsdfg, inner_reduction.strides, False)
+            exp_inner_local_hood_shape = _extract(hood_nsdfg, inner_local_hood.shape, True)
+            exp_inner_local_hood_strides = _extract(hood_nsdfg, inner_local_hood.strides, False)
         else:
             exp_inner_reduction_strides = _transfrom((c2e_dim, 1, 1))
             exp_inner_reduction_shape = _transfrom((1, c2e_dim, 1))
@@ -2589,17 +2587,8 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         exp_inner_local_hood_strides = _transfrom((1, ))
 
         if symbolic_size:
-            inner_symbolic_shape = str(inner_reduction.shape[0])
-            assert not inner_symbolic_shape.isdigit()
-            assert str(c2e_dim) != inner_symbolic_shape
-            assert str(reduction_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_reduction_shape = _transfrom((inner_symbolic_shape, ))
-
-            inner_symbolic_shape = str(inner_local_hood.shape[0])
-            assert not inner_symbolic_shape.isdigit()
-            assert str(c2e_dim) != inner_symbolic_shape
-            assert str(hood_nsdfg.symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
-            exp_inner_local_hood_shape = _transfrom((inner_symbolic_shape, ))
+            exp_inner_reduction_shape = _extract(reduction_nsdfg, inner_reduction.shape, True)
+            exp_inner_local_hood_shape = _extract(hood_nsdfg, inner_local_hood.shape, True)
         else:
             exp_inner_reduction_shape = _transfrom((c2e_dim, ))
             exp_inner_local_hood_shape = _transfrom((c2e_dim, ))
