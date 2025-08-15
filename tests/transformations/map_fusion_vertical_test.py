@@ -2375,8 +2375,9 @@ def _make_map_fusion_nested_sdfg_slicing(
     return sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood
 
 
+@pytest.mark.parametrize("strict_dataflow", [True, False])
 @pytest.mark.parametrize("symbolic_size", [True, False])
-def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool):
+def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bool):
     if symbolic_size:
         nb_cells = "nb_cells"
         nb_levels = "nb_levels"
@@ -2409,7 +2410,7 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool):
         sdfg,
         verify=True,
         options={
-            "strict_dataflow": False,
+            "strict_dataflow": strict_dataflow,
         },
         first_map_exit=mx1,
         array=intermediate,
