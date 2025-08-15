@@ -274,9 +274,9 @@ def integrate_nested_sdfg(sdfg: SDFG):
     # Collect all symbols that need to be added to the nested SDFG
     for parent_name, parent_desc, parent_memlet in to_add_and_view.values():
         for sym in parent_desc.used_symbols(all_symbols=True):
-            symbols_to_add.add(sym)
+            symbols_to_add.add(str(sym))
         for sym in parent_memlet.used_symbols(all_symbols=True):
-            symbols_to_add.add(sym)
+            symbols_to_add.add(str(sym))
 
     if symbols_to_add:
         remove_symbol_aliases(sdfg, {sym: sym for sym in symbols_to_add})
@@ -433,5 +433,22 @@ def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[st
                 repl_dict[str(sym)] = new_name
                 all_symbols.add(new_name)
         sdfg.replace_dict(repl_dict)
+        symbolic.safe_replace(repl_dict, lambda d: _replace_dict_keys(symbol_mapping, d))
+        if sdfg.parent_nsdfg_node is not None:
+            symbolic.safe_replace(repl_dict, lambda d: _replace_dict_keys(sdfg.parent_nsdfg_node.symbol_mapping, d))
         return repl_dict
     return {}
+
+
+def _replace_dict_keys(target_dict: Dict[str, symbolic.SymbolicType], d: Dict[str, str]):
+    """
+    Helper function to replace keys in a dictionary with other keys.
+
+    :param d: The dictionary to replace keys in.
+    :return: A new dictionary with keys replaced by the new keys in the input dictionary.
+    """
+    tmp: Dict[str, symbolic.SymbolicType] = copy.copy(target_dict)
+    target_dict.clear()
+    for key, value in tmp.items():
+        new_key = d.get(key, key)  # Replace key if it exists in d, otherwise keep original
+        target_dict[str(new_key)] = value

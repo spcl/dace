@@ -112,6 +112,11 @@ def _replace_dict_keys(d, old, new):
         del d[old]
 
 
+def _remove_dict_keys(d, old):
+    if old in d:
+        del d[old]
+
+
 def _replace_dict_values(d, old, new):
     for k, v in d.items():
         if v == old:
@@ -792,6 +797,16 @@ class SDFG(ControlFlowRegion):
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
+                else:
+                    _remove_dict_keys(self._arrays, name)
+                    if name in self.symbols:
+                        old_sym = self.symbols[name]
+                        del self.symbols[name]
+                        new_syms = symrepl[symbolic.pystr_to_symbolic(name)].free_symbols
+                        self.symbols.update({str(s): old_sym for s in new_syms})
+
+                    _remove_dict_keys(self.constants_prop, name)
+                    _remove_dict_keys(self.callback_mapping, name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
