@@ -2,6 +2,7 @@
 """ Transformation helper API. """
 import copy
 import itertools
+import warnings
 from networkx import MultiDiGraph
 
 from dace.properties import CodeBlock
@@ -246,7 +247,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         fsymbols.update(defined_symbols)
         fsymbols = fsymbols - strictly_defined_symbols
         mapping = {s: s for s in fsymbols}
-        cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
+        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
@@ -494,7 +495,7 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg, None,
+    nested_sdfg = state.add_nested_sdfg(nsdfg,
                                         set(input_names.values()) | input_arrays,
                                         set(output_names.values()) | output_arrays.keys())
 
@@ -576,126 +577,206 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
-    """
-    Given a subgraph, adds a new SDFG state before the state that contains it,
-    removes the subgraph from the original state, and connects the two states.
+def state_fission(
+    subgraph: graph.SubgraphView,
+    label: Optional[str] = None,
+    allow_isolated_nodes: bool = True,
+) -> SDFGState:
+    """Splits the state into two connected states such that `subgraph` is located in the first/top state.
 
-    :param subgraph: the subgraph to remove.
-    :return: the newly created SDFG state.
-    """
+    The function will create a new state before the state in which `subgraph` is located in, this
+    new state is also returned. Then the function will then distribute the dataflow onto these two
+    states. In general it will move the dataflow defined by `subgraph`, together with all its
+    dependencies into the first/top state and the rest will be in the second state (which is the
+    current state).
+    Beside the dependencies of `subgraph` the function might also move nodes located downstream of
+    `subgraph` into the first state. The first reason is that the "cut" at that location is not
+    possible, i.e. there must be a non view AccessNode to transmit data from the first to the
+    second state. Another reason is that the function maintains the number of "writing nodes", i.e
+    AccessNodes with incoming connections, this behaviour is analogous to `isolate_nested_sdfg()`.
+    Another reason why more nodes are moved to the first state are scopes. It is only possible to
+    split a state at the top scope, not as an example, within a Map. Thus if a node inside `subgraph`
+    if not at the global scope the function will include its containing state. Thus if you only
+    pass a Tasklet, with a Map, as `subgraph` then the function will add the surrounding Map
+    to the first state as well.
 
+    Note, the split might result in a state where nodes become isolated inside a state. By default
+    the function allows this to happen in either state. However, it will cause a validation error.
+    By  setting `allow_isolated_nodes` to `False` the function will remove all isolated nodes in
+    both states.
+
+    :param subgraph: The graph that describes the split location.
+    :param label: The label to use for the new state.
+    :param allow_isolated_nodes: If `True`, the default, then the function might create isolated
+        nodes. If it is `False` all isolated nodes will be removed after the split in both states.
+
+    :return: The newly created state that is located before the one containing `subgraph`.
+
+    :note: Currently scopes are not handled, if for example `subgraph` only contains a Tasklet from
+        inside a Map, then the function will add all dependencies, i.e. the MapEntry, but will
+        most likely fail to pick up the MapExit.
+
+    :todo: Handle partial Map scopes.
+    """
     state: SDFGState = subgraph.graph
-    newstate = state.parent_graph.add_state_before(state, label=label)
+    sdfg: SDFG = state.sdfg
 
-    # Save edges before removing nodes
-    orig_edges = subgraph.edges()
+    # State fissions can not occur within a scope, i.e., the MapEntry of a Map scope can not end up
+    #  in the first state while the MapExit lands in the second state. Extend the set of nodes to
+    #  make sure we have only top level nodes and their scope.
+    initial_first_nodes: Set[nodes.Node] = set()
+    scope_dict = state.scope_dict()
+    for node in subgraph.nodes():
+        containing_scope = scope_dict[node]
 
-    # Mark boundary access nodes to keep after fission
-    nodes_to_remove = set(subgraph.nodes())
-    boundary_nodes = [n for n in subgraph.nodes() if len(state.out_edges(n)) > len(subgraph.out_edges(n))
-                      ] + [n for n in subgraph.nodes() if len(state.in_edges(n)) > len(subgraph.in_edges(n))]
+        if node in initial_first_nodes:
+            continue  # Already added by a previous node.
 
-    # Make dictionary of nodes to add to new state
-    new_nodes = {n: n for n in subgraph.nodes()}
-    new_nodes.update({b: copy.deepcopy(b) for b in boundary_nodes})
+        elif isinstance(node, nodes.EntryNode):
+            # Add the whole body of the Map to the first state. ExitNodes are handled by the scope
+            #  implementation, as they are located inside the scope of their associated EntryNode.
+            initial_first_nodes.update(state.scope_subgraph(node).nodes())
 
-    nodes_to_remove -= set(boundary_nodes)
-    state.remove_nodes_from(nodes_to_remove)
+        elif containing_scope is None:
+            initial_first_nodes.add(node)  # Global node just add it.
 
-    for n in new_nodes.values():
-        if isinstance(n, nodes.NestedSDFG):
-            # Set the new parent state
-            n.sdfg.parent = newstate
+        else:
+            # Note at global scope, find the top most scope node and add the defining subgraph.
+            while scope_dict[containing_scope] is not None:
+                containing_scope = scope_dict[containing_scope]
+            top_entry_node = containing_scope
+            initial_first_nodes.update(state.scope_subgraph(top_entry_node).nodes())
 
-    newstate.add_nodes_from(new_nodes.values())
+    # Notes that should end up in the first state.
+    first_nodes: Set[nodes.Node] = set()
+    for node in initial_first_nodes:
+        utils.find_upstream_nodes(
+            node_to_start=node,
+            state=state,
+            seen=first_nodes,  # Inplace update.
+        )
 
-    for e in orig_edges:
-        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, e.data)
+    # For semantic reasons we can only split certain Memlets, i.e. Memlets that started at an
+    #  AccessNode. We now have to inspect the boundary of the nodes defining `first_nodes`.
+    #  If we found a Memlet that can not be split, then we add the node also to `first_nodes`.
+    nodes_to_scan: List[nodes.Node] = list(first_nodes)
+    boundary_nodes: Set[nodes.Node] = set()
+    pure_first_nodes: Set[nodes.Node] = set()
 
-    for bn in boundary_nodes:
-        bn._in_connectors.clear()
+    while len(nodes_to_scan) > 0:
+        node_to_scan = nodes_to_scan.pop()
+        non_first_state_consumer = [
+            oedge.dst for oedge in state.out_edges(node_to_scan)
+            if (oedge.dst not in first_nodes) and (not oedge.data.is_empty())
+        ]
 
-    return newstate
+        if len(non_first_state_consumer) == 0:
+            # There are no consumer that are not inside `first_nodes` thus it is inside `first_nodes`
+            #  and it is "pure", i.e. not a boundary node.
+            assert node_to_scan in first_nodes
+            pure_first_nodes.add(node_to_scan)
+            boundary_nodes.discard(node_to_scan)
 
+        elif isinstance(node_to_scan, nodes.AccessNode) and (not isinstance(node_to_scan.desc(sdfg), data.View)):
+            # There are consumer that are not inside the first state, but `node_to_scan` is a non
+            #  view AccessNode, it therefore qualifies to be a boundary node.
+            assert node_to_scan in first_nodes
+            boundary_nodes.add(node_to_scan)
 
-def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str] = None) -> SDFGState:
-    """
-    """
-    newstate = state.parent_graph.add_state_after(state, label=label)
+        else:
+            # There are non first state consumer and `node_to_scan` does not qualify to be a boundary
+            #  node. Thus we have to add all its consumer and their producer, to the first state as well.
+            new_first_nodes: Set[nodes.Node] = set()
+            for new_first_state_node_seed in non_first_state_consumer:
+                utils.find_upstream_nodes(
+                    node_to_start=new_first_state_node_seed,
+                    state=state,
+                    seen=new_first_nodes,  # Inplace update!
+                )
 
-    # Bookkeeping
-    nodes_to_move = set([node])
-    boundary_nodes = set()
-    orig_edges = set()
+            # All nodes that we found are first state nodes. However, we have to reevaluate if they
+            #  are still boundary nodes or have become pure nodes.
+            boundary_nodes.difference_update(new_first_nodes)
+            nodes_to_scan.extend(new_first_nodes)
+            first_nodes.update(new_first_nodes)
 
-    # Collect predecessors
-    if not isinstance(node, nodes.AccessNode):
-        for edge in state.in_edges(node):
-            for e in state.memlet_path(edge):
-                nodes_to_move.add(e.src)
-                orig_edges.add(e)
+    # Ensure that all dependencies are assigned to the first state.
+    assert len(first_nodes) >= 1
+    assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
+    assert all(all(iedge.src in first_nodes for iedge in state.in_edges(bnode)) for bnode in boundary_nodes)
+    assert boundary_nodes.isdisjoint(pure_first_nodes)
+    assert boundary_nodes.union(pure_first_nodes) == first_nodes
 
-    # Collect nodes_to_move
-    for edge in state.edge_bfs(node):
-        nodes_to_move.add(edge.dst)
-        orig_edges.add(edge)
+    if len(first_nodes) == 1:
+        warnings.warn(
+            f"While splitting `{state.label}` the supplied `subgraph` leads to isolated nodes in the first state" +
+            (", that will be removed." if not allow_isolated_nodes else "."))
 
-        if not isinstance(edge.dst, nodes.AccessNode):
-            for iedge in state.in_edges(edge.dst):
-                if iedge == edge:
+    # Now create the new states on which we will operate. It is important that the newly created
+    #  state is at the top.
+    # NOTE: There is the case that `subgraph` contains the entire dataflow in `state`, in that case
+    #   one might think, that we could perform an optimization, such as just create a new state and
+    #   keep the nodes. However, this is not possible, since the function only returns the new state
+    #   and code assumes that this is the first/top state containing the `subgraph` dataflow. Thus
+    #   we have to perform the relocation.
+    second_state = state
+    first_state = state.parent_graph.add_state_before(state, label=label)
+
+    # This map maps the nodes from the old/original state to the corresponding node in the first/new
+    #  state. The pure nodes are the exact same objects, but the we copy the boundary nodes, since
+    #  they have also to be present inside the second state.
+    first_nodes_map: Dict[nodes.Node, nodes.Node] = {node: node for node in pure_first_nodes}
+    first_nodes_map.update({old_bnode: copy.deepcopy(old_bnode) for old_bnode in boundary_nodes})
+
+    # Save the edges that we have to copy.
+    subgraph_to_copy = graph.SubgraphView(second_state, first_nodes)
+    edges_to_copy = list(subgraph_to_copy.edges())
+
+    # Now remove and the nodes from the first state and add them to the second state.
+    second_state.remove_nodes_from(pure_first_nodes)
+    first_state.add_nodes_from(first_nodes_map.values())
+
+    # Now recreate the edge structure in the first state based on the first state.
+    for original_edge in edges_to_copy:
+        first_state.add_edge(
+            first_nodes_map[original_edge.src],
+            original_edge.src_conn,
+            first_nodes_map[original_edge.dst],
+            original_edge.dst_conn,
+            original_edge.data,
+        )
+
+    # Cleaning the connectors of the boundary nodes. In the first state we have to remove all
+    #  outgoing connectors and in the second state all incoming.
+    # NOTE: I am actually not sure why this is here, it was in the original code, so I retained it.
+    #   Since, only non view AccessNodes can transmit data across states, the connectors for them
+    #   should be `None` anyway.
+    for second_state_boundary_node in boundary_nodes:
+        first_state_boundary_node = first_nodes_map[second_state_boundary_node]
+        assert second_state.in_degree(second_state_boundary_node) == 0
+        first_state_boundary_node._out_connectors.clear()
+        second_state_boundary_node._in_connectors.clear()
+
+    # Remove isolated nodes.
+    # TODO(phimuell): Is this the best approach, it might be a bit too far reaching.
+    if not allow_isolated_nodes:
+        warning_was_issued = False
+        for state_to_clean in [first_state, second_state]:
+            for node in list(state_to_clean.nodes()):
+                # This is how the validation defines isolated.
+                if isinstance(node, nodes.CodeNode):
                     continue
+                elif state_to_clean.degree(node) == 0:
+                    if (not warning_was_issued) and (state_to_clean is second_state):
+                        # Warning for isolated nodes in the second state if we do not delete it.
+                        #  is a bit expensive, this is why we do not issue a warning in that case.
+                        warnings.warn(
+                            f"While splitting state `{state.label}` some nodes in the original state, got isolated and are now deleted."
+                        )
+                        warning_was_issued = True
+                    state_to_clean.remove_node(node)
 
-                for e in state.memlet_path(iedge):
-                    nodes_to_move.add(e.src)
-                    orig_edges.add(e)
-
-    # Define boundary nodes
-    for node in set(nodes_to_move):
-        if isinstance(node, nodes.AccessNode):
-            for iedge in state.in_edges(node):
-                if iedge.src not in nodes_to_move:
-                    boundary_nodes.add(node)
-                    break
-
-            if node in boundary_nodes:
-                continue
-
-            for oedge in state.out_edges(node):
-                if oedge.dst not in nodes_to_move:
-                    boundary_nodes.add(node)
-                    break
-
-    # Duplicate boundary nodes
-    new_nodes = {}
-    for node in boundary_nodes:
-        node_ = copy.deepcopy(node)
-        state.add_node(node_)
-        new_nodes[node] = node_
-
-    for edge in state.edges():
-        if edge.src in boundary_nodes and edge.dst in boundary_nodes:
-            state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
-                           copy.deepcopy(edge.data))
-        elif edge.src in boundary_nodes:
-            state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-        elif edge.dst in boundary_nodes:
-            state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
-
-    # Move nodes
-    state.remove_nodes_from(nodes_to_move)
-
-    for n in nodes_to_move:
-        if isinstance(n, nodes.NestedSDFG):
-            # Set the new parent state
-            n.sdfg.parent = newstate
-
-    newstate.add_nodes_from(nodes_to_move)
-
-    for e in orig_edges:
-        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
-
-    return newstate
+    return first_state
 
 
 def isolate_nested_sdfg(
@@ -1071,13 +1152,15 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     :param sym: The symbol to test.
     :return: True if the symbol can be removed, False otherwise.
     """
+    # TODO: Investigate if this function can be replaced by a call to `used_symbols()`.
+    #   See https://github.com/spcl/dace/pull/2080#discussion_r2226418881
     for desc in sdfg.arrays.values():
         if sym in map(str, desc.free_symbols):
             return False
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         if sym in state.free_symbols:
             return False
-    for e in sdfg.edges():
+    for e in sdfg.all_interstate_edges():
         if sym in e.data.free_symbols:
             return False
 

@@ -265,6 +265,12 @@ class CUDACodeGen(TargetCodeGenerator):
             if self.backend != 'cuda':
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
+            # Keep only global arrays
+            pooled = filter(
+                lambda aname: sdfg.arrays[aname].lifetime in
+                (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.
+                 External), pooled)
+
             # Lazily compute reachability and access nodes
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
@@ -272,7 +278,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 # Find all data descriptors that will no longer be used after this state
                 last_state_arrays: Set[str] = set(
                     s for s in access_sets
@@ -777,7 +783,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            if not nodedesc.pool:  # If pooled, will be freed somewhere else
+            if nodedesc.pool:
+                if (sdfg, dataname) not in self.pool_release:  # If pooled, will be freed somewhere else
+                    cudastream = getattr(node, '_cuda_stream', 'nullptr')
+                    if cudastream != 'nullptr':
+                        cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                    callsite_stream.write(
+                        f'DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n' % (self.backend, dataname, cudastream), cfg, state_id,
+                        node)
+            else:
                 callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)

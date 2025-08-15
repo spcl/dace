@@ -12,32 +12,29 @@ from dace.config import Config
 
 def nng(expr):
     # When dealing with set sizes, assume symbols are non-negative
-    try:
+    if hasattr(expr, 'free_symbols'):
         # TODO: Fix in symbol definition, not here
-        for sym in list(expr.free_symbols):
-            expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-        return expr
-    except AttributeError:  # No free_symbols in expr
-        return expr
+        return expr.subs(((sym, sp.Symbol(sym.name, nonnegative=True)) for sym in list(expr.free_symbols)))
+    return expr
 
 
-def bounding_box_cover_exact(subset_a, subset_b) -> bool:
-    min_elements_a = subset_a.min_element()
-    max_elements_a = subset_a.max_element()
-    min_elements_b = subset_b.min_element()
-    max_elements_b = subset_b.max_element()
+def bounding_box_cover_exact(subset_a, subset_b, approximation=False) -> bool:
+    """Test if `subset_a` covers `subset_b`.
 
-    # Covering only make sense if the two subsets have the same number of dimensions.
-    if len(min_elements_a) != len(min_elements_b):
-        return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
-                          f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
+    The function uses a bounding box to test if `subset_a` covers `subset_b`,
+    i.e. that `subset_a` is at least as big as `subset_b`. By default the
+    box is constructed using `{min, max}_element()` or if `approximation` is
+    `True` `{min, max}_element_approx()`. The most important difference compared
+    to `bounding_box_cover_exact()` is that this function does not assume
+    that the symbols are positive.
 
-    return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
-                and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)])
+    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
+    and `False` otherwise.
 
-
-def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> bool:
+    :param subset_a: The first subset, the one that should cover.
+    :param subset_b: The second subset, the one that should be convered.
+    :param approximation: If `True` then use the approximated bounds.
+    """
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
     min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
@@ -48,22 +45,89 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> b
         return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
                           f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
 
+    # NOTE: The original implementation always called `nng()`. However, it was decided that
+    #   this is an error and the call was removed in PR#2093.
+    simplify = lambda expr: symbolic.simplify_ext(expr)
+    no_simplify = lambda expr: expr
+
+    # NOTE: Just doing the check is very fast, compared to simplify. Thus we first try to do the
+    #   matching without running if this does not work, then we try again with simplify.
+    for simp_fun in [no_simplify, simplify]:
+        if all((simp_fun(rb) <= simp_fun(orb)) == True and (simp_fun(re) >= simp_fun(ore)) == True
+               for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b)):
+            return True
+    return False
+
+
+def bounding_box_symbolic_positive(subset_a, subset_b, approximation=False) -> bool:
+    """Checks if `subset_a` covers `subset_b` using positivity assumption.
+
+    The function uses a bounding box to test if `subset_a` covers `subset_b`,
+    i.e. that `subset_a` is at least as big as `subset_b`. By default the
+    box is constructed using `{min, max}_element()` or if `approximation` is
+    `True` `{min, max}_element_approx()`. The function will perform the
+    covering check under the assumption that all symbols are positive,
+    which is the main difference to `bounding_box_cover_exact()`.
+
+    The function returns `True` if it _can be shown_ that `subset_a` covers `subset_b`
+    and `False` otherwise.
+
+    :param subset_a: The first subset, the one that should cover.
+    :param subset_b: The second subset, the one that should be convered.
+    :param approximation: If `True` then use the approximated bounds.
+
+    :note: In previous versions this function raised `TypeError` in some cases
+        when a truth value could not be determined. This behaviour was removed,
+        since the `bounding_box_cover_exact()` does not show this behaviour.
+    """
+    min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
+    max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
+    min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
+    max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
+
+    # Covering only make sense if the two subsets have the same number of dimensions.
+    if len(min_elements_a) != len(min_elements_b):
+        return ValueError(f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                          f" test covering a bounding box of dimensionality {len(min_elements_b)}.")
+
+    # NOTE: `nng()` is applied inside the loop.
+    simplify = lambda expr: symbolic.simplify_ext(expr)
+    no_simplify = lambda expr: expr
+
     for rb, re, orb, ore in zip(min_elements_a, max_elements_a, min_elements_b, max_elements_b):
-        # NOTE: We first test for equality, which always returns True or False. If the equality test returns
-        # False, then we test for less-equal and greater-equal, which may return an expression, leading to
-        # TypeError. This is a workaround for the case where two expressions are the same or equal and
-        # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+        # NOTE: Applying simplify takes a lot of time, thus we try to avoid it and try to do the test
+        #   first with the symbols we get and if we are unable to figuring out something, we run
+        #   simplify. Furthermore, we also try to postpone `nng()` as long as we can.
+        # NOTE: We use first `==` in the hope that it is much faster than `<=`.
+        # NOTE: We have to use the `== True` test because of SymPy's behaviour. Otherwise we would
+        #   get an expression resulting in a `TypeError`.
 
         # lower bound: first check whether symbolic positive condition applies
         if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-            if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb))
-                    or symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+            rb, orb = nng(rb), nng(orb)
+            for simp_fun in [no_simplify, simplify]:
+                simp_rb, simp_orb = simp_fun(rb), simp_fun(orb)
+                if (simp_rb == simp_orb) == True:
+                    break
+                elif (simp_rb <= simp_orb) == True:
+                    break
+            else:
+                # We were unable to determine covering for that dimension.
+                #  Thus we assume that there is no covering.
                 return False
+
         # upper bound: first check whether symbolic positive condition applies
         if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-            if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore))
-                    or symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+            re, ore = nng(re), nng(ore)
+            for simp_fun in [no_simplify, simplify]:
+                simp_re, simp_ore = simp_fun(re), simp_fun(ore)
+                if (simp_re == simp_ore) == True:
+                    break
+                elif (simp_re >= simp_ore) == True:
+                    break
+            else:
                 return False
+
     return True
 
 
@@ -80,22 +144,10 @@ class Subset(object):
                 f"A subset of dimensionality {self.dims()} cannot test covering a subset of dimensionality {other.dims()}"
             )
 
-        if not Config.get('optimizer', 'symbolic_positive'):
-            try:
-                return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
-                            and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                            for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
-                                                        other.min_element_approx(), other.max_element_approx())])
-            except TypeError:
-                return False
+        if Config.get('optimizer', 'symbolic_positive'):
+            return bounding_box_symbolic_positive(self, other, approximation=True)
         else:
-            try:
-                if not bounding_box_symbolic_positive(self, other, True):
-                    return False
-            except TypeError:
-                return False
-
-            return True
+            return bounding_box_cover_exact(self, other, approximation=True)
 
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
@@ -108,14 +160,20 @@ class Subset(object):
 
         # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
-        try:
-            bounding_box_cover = bounding_box_cover_exact(
-                self, other) if symbolic_positive else bounding_box_symbolic_positive(self, other)
-            if not bounding_box_cover:
-                return False
-        except TypeError:
+        if symbolic_positive and (not bounding_box_cover_exact(self, other)):
+            return False
+        elif not bounding_box_symbolic_positive(self, other):
             return False
 
+        # NOTE: The original implementation always called `nng()`. However, it was decided that
+        #   and the application was made conditional on `symbolic_positive`, in PR#2093.
+        simplify = (lambda expr: symbolic.simplify_ext(nng(expr))) if symbolic_positive else (
+            lambda expr: symbolic.simplify_ext(expr))
+        no_simplify = lambda expr: expr
+
+        # In the following we will first perform the check as is, and if that fails try it again
+        #   with simplify. We do it because simplify is a very expensive operation and we try to
+        #   avoid calling it.
         try:
             # if self is an index no further distinction is needed
             if isinstance(self, Indices):
@@ -125,32 +183,46 @@ class Subset(object):
                 # other is an index so we need to check if the step of self is such that other is covered
                 # self.start % self.step == other.index % self.step
                 if isinstance(other, Indices):
-                    try:
-                        return all([(symbolic.simplify_ext(nng(start)) %
-                                     symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) %
-                                     symbolic.simplify_ext(nng(step))) == True
-                                    for (start, _, step), i in zip(self.ranges, other.indices)])
-                    except:
-                        return False
-                if isinstance(other, Range):
+                    # TODO: Think if inverting the order is simpler.
+                    for simp_fun in [no_simplify, simplify]:
+                        for (start, _, step), i in zip(self.ranges, other.indices):
+                            simp_step = simp_fun(step)
+                            simp_start = simp_fun(start)
+                            simp_i = simp_fun(i)
+                            if not (((simp_start % simp_step) == (simp_i % simp_step)) == True):
+                                return False
+                    return True
+
+                else:
+                    assert isinstance(other, Range)
                     # other is a range so in every dimension self.step has to divide other.step and
                     # self.start % self.step = other.start % other.step
-                    try:
-                        self_steps = [r[2] for r in self.ranges]
-                        other_steps = [r[2] for r in other.ranges]
-                        for start, step, ostart, ostep in zip(self.min_element(), self_steps, other.min_element(),
-                                                              other_steps):
-                            if not (ostep % step == 0 and (
-                                (symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
-                                (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step))
-                                 == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
-                                return False
-                    except:
-                        return False
+                    self_steps = [r[2] for r in self.ranges]
+                    other_steps = [r[2] for r in other.ranges]
+                    starts = self.min_element()
+                    ostarts = other.min_element()
+
+                    for i, simp_fun in enumerate([no_simplify, simplify]):
+                        try:
+                            for start, step, ostart, ostep in zip(starts, self_steps, ostarts, other_steps):
+                                simp_start = simp_fun(start)
+                                simp_ostart = simp_fun(ostart)
+                                if not (ostep % step == 0 and
+                                        ((simp_start == simp_ostart) or
+                                         (simp_start % simp_fun(step) == simp_ostart % simp_fun(ostep)) == True)):
+                                    return False
+                        except TypeError:
+                            # If a `TypeError happens during the "no simplify" phase, we immediately
+                            #   go to the simplify phase, in the hope that it might be possible to
+                            #   simplify the expression more. If we are already using simplify, then
+                            #   we return `False`.
+                            if i == 0:
+                                continue
+                            return False
                     return True
-        # unknown type
             else:
-                raise TypeError
+                raise ValueError(
+                    f'Does not know how to compare a `{type(self).__name__}` with a `{type(other).__name__}`.')
 
         except TypeError:
             return False
@@ -293,8 +365,21 @@ class Range(Subset):
         return hash(tuple(r for r in self.ranges))
 
     def __add__(self, other):
-        sum_ranges = self.ranges + other.ranges
-        return Range(sum_ranges)
+        return Range(
+            ((*ranges, tile) for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + other.tile_sizes)))
+
+    def __deepcopy__(self, memo) -> 'Range':
+        """Performs a deepcopy of `self`.
+
+        For performance reasons only the mutable parts are copied.
+        """
+        # Because SymPy expression and numbers and tuple in Python are immutable, it is enough
+        #  to shallow copy the list that stores them.
+        node = object.__new__(Range)
+        node.ranges = self.ranges.copy()
+        node.tile_sizes = self.tile_sizes.copy()
+
+        return node
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
@@ -885,6 +970,17 @@ class Indices(Subset):
 
     def __hash__(self):
         return hash(tuple(i for i in self.indices))
+
+    def __deepcopy__(self, memo) -> 'Indices':
+        """Performs a deepcopy of `self`.
+
+        For performance reasons only the mutable parts are copied.
+        """
+        # Because SymPy expression and numbers and tuple in Python are immutable, it is enough
+        #  to shallow copy the list that stores them.
+        node = object.__new__(Indices)
+        node.indices = self.indices.copy()
+        return node
 
     def num_elements(self):
         return 1

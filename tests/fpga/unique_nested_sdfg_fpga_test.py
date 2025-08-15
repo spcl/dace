@@ -141,7 +141,7 @@ def make_nested_sdfg_fpga(unique_names):
     z = state.add_write("z")
 
     # add nested sdfg with symbol mapping
-    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "n"})
+    nested_sdfg = state.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "n"})
 
     if unique_names:
         nested_sdfg.unique_name = sdfg_name
@@ -163,7 +163,7 @@ def make_nested_sdfg_fpga(unique_names):
     w = state2.add_read("w")
     u = state2.add_write("u")
 
-    nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "m"})
+    nested_sdfg = state2.add_nested_sdfg(to_nest, {"x", "y"}, {"z"}, {"size": "m"})
 
     if unique_names:
         nested_sdfg.unique_name = sdfg_name

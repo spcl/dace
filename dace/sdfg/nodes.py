@@ -892,7 +892,7 @@ class MapEntry(EntryNode):
 
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
-        Returns a set of symbol names that are used withn the Map scope created by this MapEntry
+        Returns a set of symbol names that are used within the Map scope created by this MapEntry
 
         :param all_symbols: If False, only returns symbols that are needed as arguments (only used in generated code).
         """
@@ -925,14 +925,10 @@ class MapEntry(EntryNode):
                     )
                     free_symbols |= code_symbols
                     continue
+            elif isinstance(n, NestedSDFG):
+                free_symbols |= n.used_symbols(all_symbols)
 
-            if hasattr(n, 'used_symbols'):
-                if isinstance(n, dace.nodes.NestedSDFG):
-                    free_symbols |= n.used_symbols(all_symbols)
-                else:
-                    free_symbols |= n.used_symbols(parent_state, all_symbols)
-            else:
-                free_symbols |= n.free_symbols
+            free_symbols |= n.free_symbols
 
         # Free symbols from memlets
         for e in parent_state.all_edges(*parent_state.all_nodes_between(self, parent_state.exit_node(self))):
@@ -1505,15 +1501,56 @@ class LibraryNode(CodeNode):
             dace.serialize.set_properties_from_json(ret, json_obj, context=context)
             return ret
 
-    def expand(self, sdfg, state, *args, **kwargs) -> str:
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
         """ Create and perform the expansion transformation for this library
             node.
 
+            This method supports two interfaces:
+            1. New interface: expand(state, implementation=None, **kwargs)
+            2. Old interface: expand(sdfg, state, **kwargs) [for backward compatibility]
+
+            :param state_or_sdfg: Either a ControlFlowBlock (new interface) or SDFG (old interface)
+            :param state_or_impl: Either implementation name (new interface) or SDFGState (old interface)
+            :param kwargs: Additional expansion arguments
             :return: the name of the expanded implementation
+
+            Examples:
+                # New interface (recommended):
+                result = node.expand(state, 'pure')
+
+                # Old interface (still supported):
+                result = node.expand(sdfg, state)
         """
         from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
+        import warnings
 
-        implementation = self.implementation
+        # Handle both old and new signatures for backward compatibility
+        from dace.sdfg.state import SDFGState
+
+        if isinstance(state_or_sdfg, SDFGState):
+            # New interface: expand(state, implementation=None, **kwargs)
+            actual_state = state_or_sdfg
+            sdfg = actual_state.parent_graph
+            implementation = state_or_impl
+            expansion_kwargs = kwargs
+        else:
+            # Old interface: expand(sdfg, state, **kwargs)
+            warnings.warn("The expand(sdfg, state) interface is deprecated. Use expand(state, implementation) instead.",
+                          DeprecationWarning,
+                          stacklevel=2)
+            sdfg = state_or_sdfg
+            actual_state = state_or_impl
+            expansion_kwargs = kwargs
+            implementation = None
+            # In old interface, implementation might be passed as keyword arg
+            if 'implementation' in kwargs:
+                implementation = kwargs.pop('implementation')
+
+        # Use provided implementation or fall back to current node implementation
+        if implementation is not None:
+            target_implementation = implementation
+        else:
+            target_implementation = self.implementation
         library_name = getattr(type(self), '_dace_library_name', '')
         try:
             if library_name:
@@ -1527,41 +1564,41 @@ class LibraryNode(CodeNode):
         if config_implementation is not None:
             try:
                 config_override = Config.get("library", library_name, "override")
-                if config_override and implementation in self.implementations:
-                    if implementation is not None:
+                if config_override and target_implementation in self.implementations:
+                    if target_implementation is not None:
                         warnings.warn("Overriding explicitly specified "
-                                      "implementation {} for {} with {}.".format(implementation, self.label,
+                                      "implementation {} for {} with {}.".format(target_implementation, self.label,
                                                                                  config_implementation))
-                    implementation = config_implementation
+                    target_implementation = config_implementation
             except KeyError:
                 config_override = False
         # If not explicitly set, try the node default
-        if implementation is None:
-            implementation = type(self).default_implementation
+        if target_implementation is None:
+            target_implementation = type(self).default_implementation
             # If no node default, try library default
-            if implementation is None:
+            if target_implementation is None:
                 import dace.library  # Avoid cyclic dependency
                 lib = dace.library._DACE_REGISTERED_LIBRARIES[type(self)._dace_library_name]
-                implementation = lib.default_implementation
+                target_implementation = lib.default_implementation
                 # Try the default specified in the config
-                if implementation is None:
-                    implementation = config_implementation
+                if target_implementation is None:
+                    target_implementation = config_implementation
                     # Otherwise we don't know how to expand
-                    if implementation is None:
+                    if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
-        if implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
-        transformation_type = type(self).implementations[implementation]
-        cfg_id = state.parent_graph.cfg_id
-        state_id = state.block_id
-        subgraph = {transformation_type._match_node: state.node_id(self)}
+        if target_implementation not in self.implementations.keys():
+            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, target_implementation))
+        transformation_type = type(self).implementations[target_implementation]
+        cfg_id = actual_state.parent_graph.cfg_id
+        state_id = actual_state.block_id
+        subgraph = {transformation_type._match_node: actual_state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
-        if not transformation.can_be_applied(state, 0, sdfg):
+        if not transformation.can_be_applied(actual_state, 0, sdfg):
             raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)
-        transformation.apply(state, sdfg, *args, **kwargs)
-        return implementation
+        transformation.apply(actual_state, sdfg, **expansion_kwargs)
+        return target_implementation
 
     @classmethod
     def register_implementation(cls, name, transformation_type):

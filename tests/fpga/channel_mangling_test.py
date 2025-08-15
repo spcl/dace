@@ -120,7 +120,7 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
     tmp = state.add_write("device_tmp")
 
     # add nested sdfg with symbol mapping
-    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x"}, {"y"})
+    nested_sdfg = state.add_nested_sdfg(to_nest, {"x"}, {"y"})
     state.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet("device_X[0:N]"))
     state.add_memlet_path(nested_sdfg, tmp, src_conn="y", memlet=Memlet("device_tmp[0:N]"))
 
@@ -134,7 +134,7 @@ def make_nested_sdfg_fpga(dtype=dace.float32):
     y = state2.add_write("device_Y")
 
     # add nested sdfg with symbol mapping
-    nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x"}, {"y"})
+    nested_sdfg = state2.add_nested_sdfg(to_nest, {"x"}, {"y"})
     state2.add_memlet_path(tmp_read, nested_sdfg, dst_conn="x", memlet=Memlet("device_tmp[0:N]"))
     state2.add_memlet_path(nested_sdfg, y, src_conn="y", memlet=Memlet("device_Y[0:N]"))
 
