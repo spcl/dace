@@ -275,6 +275,7 @@ class DefaultSoftmaxBackward(BackwardImplementation):
         # sums = ReduceSum(prod, axes=[dim], keepdims=1)
         reduce_sum_node = donnx.ONNXReduceSum("reduce_sum",
                                               keepdims=1, optional={"axes"})
+        reduce_sum_node.axes = dim
         nstate.add_node(reduce_sum_node)
 
         # Setup the axes input for the ReduceSum node

@@ -514,6 +514,7 @@ class PureBatchNormalization(ONNXForward):
             mean_access = nstate.add_access(mean_name)
             
             mean_op = ONNXReduceMean("compute_mean", keepdims=0)
+            mean_op.axes = reduce_axes
             nstate.add_node(mean_op)
             mean_op.add_in_connector("data")
             mean_op.add_in_connector("axes")
@@ -1084,9 +1085,10 @@ class PureGlobalAveragePool(ONNXForward):
 
         # Create axes array for reduction over spatial dimensions (2, 3)
         axes_name = "axes"
-        axes_values = [2, 3]  # Reduce over spatial dimensions
-        axes_arr_shape = [len(axes_values)]
+        rank = len(X_desc.shape)            # e.g., (N, C, H, W) -> 4
+        axes_values = list(range(2, rank))
         axes_arr_dtype = dace.int64
+        axes_arr_shape = [len(axes_values)]
         _, axes_desc = nsdfg.add_array(axes_name, axes_arr_shape, axes_arr_dtype, transient=True)
         axes_node = nstate.add_access(axes_name)
 
@@ -1102,6 +1104,7 @@ class PureGlobalAveragePool(ONNXForward):
 
         # Create ONNXReduceMean node
         reduce_mean_op = ONNXReduceMean("reduce_mean", keepdims=1)
+        reduce_mean_op.axes = axes_values
         nstate.add_node(reduce_mean_op)
         reduce_mean_op.add_in_connector("data")
         reduce_mean_op.add_in_connector("axes")

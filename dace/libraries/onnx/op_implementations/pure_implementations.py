@@ -1528,6 +1528,7 @@ class PureSoftmax(ONNXForward):
         # Step 1: ReduceMax along the specified axis
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXReduceMax
         reduce_max_node = ONNXReduceMax(f"reduce_max_{uid}", keepdims=1)
+        reduce_max_node.axes = axis
         nstate.add_node(reduce_max_node)
         reduce_max_node.add_in_connector("data")
         reduce_max_node.add_in_connector("axes")
@@ -1572,6 +1573,7 @@ class PureSoftmax(ONNXForward):
         # Step 4: ReduceSum along the specified axis to get sum of exponentials
         from dace.libraries.onnx.nodes.onnx_op_registry import ONNXReduceSum
         reduce_sum_node = ONNXReduceSum(f"reduce_sum_{uid}", keepdims=1)
+        reduce_sum_node.axes = axis
         nstate.add_node(reduce_sum_node)
         reduce_sum_node.add_in_connector("data")
         reduce_sum_node.add_in_connector("axes")
@@ -2049,7 +2051,7 @@ class PureReduceMean(ONNXForward):
                 axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
         except ValueError:
             pass
-        if axes:
+        if axes is not None:
             if len(axes) == 1:
                 axes = axes[0]
             else:
@@ -2644,7 +2646,7 @@ class PureReduceSum(ONNXForward):
                 axes = sdfg._parent_onnx_model.clean_weights[in_edge_with_name(node, state, "axes").src.data].numpy()
         except ValueError:
             pass
-        if axes:
+        if axes is not None:
             if len(axes) == 1:
                 axes = axes[0]
             else:
