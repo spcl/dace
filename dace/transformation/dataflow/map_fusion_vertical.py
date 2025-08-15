@@ -1812,6 +1812,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
     ) -> None:
         inner_sdfg: dace.SDFG = nsdfg.sdfg
         inner_desc = inner_sdfg.arrays[inner_data]
+        outer_sdfg: dace.SDFG = nsdfg.sdfg.parent_sdfg
 
         # NOTE: The current implementation of this function assumes that there is no
         #   recursive propagation of the change in strides needed.
@@ -1822,36 +1823,51 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         elif isinstance(inner_desc, data.Array) and inner_desc.shape == (1, ):
             return
 
-        # We now compute the new strides of the inner data descriptor. Since we know already that
-        #  the inner data and what is passed from the outside are the same we just use the same
-        #  strides inside as outside. While transforming an inner symbol to the corresponding outer
-        #  symbol is easy, the reverse is not. Thus we will generate a new symbol whose value is
-        #  set to the value of the outer stride.
+        # We now compute the new strides and shape of the inner data descriptor. Since we already
+        #  know that the inner data and what is passed from the outside is the same, we use this
+        #  information. We will simply set strides/shape to what it is on the outside. To avoid
+        #  side effects we will create new unique symbols such that there is no clash.
+        #  This function will return the new strides/shape but it will update the symbol mapping
+        #  and the symbol registry of the mapped SDFG.
+        def compute_new_shape_or_stride(inner_values, outer_values, pattern):
+            new_inner_values: List[int] = []
+            for i, (inner_value, outer_value) in enumerate(zip(inner_values, outer_values)):
+                if str(outer_value).isdigit():
+                    new_inner_values.append(outer_value)
+                else:
+                    new_inner_value_sym = f"map_fusion_nsdfg_{pattern}_mapping_{inner_data}_{outer_edge.data.data}_{i}"
+                    assert new_inner_value_sym not in nsdfg.symbol_mapping
+                    assert new_inner_value_sym not in outer_sdfg.symbols
+                    nsdfg.symbol_mapping[new_inner_value_sym] = outer_value
+                    new_inner_values.append(symbolic.pystr_to_symbolic(new_inner_value_sym))
+
+                    # Now we need the type of the new symbol.
+                    if str(outer_value) in outer_sdfg.symbols:
+                        # The symbol is known in the parent SDFG, so use that type.
+                        new_inner_value_type = outer_sdfg.symbols[str(outer_value)]
+                    else:
+                        # NOTE: This code is copied from `SDFGState.add_nested_sdfg()`, according
+                        #   to the description this is not a very good implementation.
+                        from dace.codegen.tools.type_inference import infer_expr_type
+                        new_inner_value_type = infer_expr_type(outer_value, outer_sdfg.symbols) or dtypes.typeclass(int)
+                    inner_sdfg.add_symbol(new_inner_value_sym, new_inner_value_type)
+            return new_inner_values
+
         assert len(reduced_intermediate_desc.shape) == len(inner_desc.shape)
-        new_inner_strides: List[int] = []
-        symbol_mapping = nsdfg.symbol_mapping
-        for i, (inner_strides, outer_strides) in enumerate(zip(inner_desc.strides, reduced_intermediate_desc.strides)):
-            if str(outer_strides).isdigit():
-                new_inner_strides.append(outer_strides)
-            else:
-                inner_strides_sym = f"map_fusion_nsdfg_strides_mapping_{inner_data}_{outer_edge.data.data}_{i}"
-                assert inner_strides_sym not in symbol_mapping
-                symbol_mapping[inner_strides_sym] = outer_strides
-                new_inner_strides.append(symbolic.pystr_to_symbolic(inner_strides_sym))
+        new_inner_strides = compute_new_shape_or_stride(
+            inner_values=inner_desc.strides,
+            outer_values=reduced_intermediate_desc.strides,
+            pattern="strides",
+        )
+        new_inner_shape = compute_new_shape_or_stride(
+            inner_values=inner_desc.shape,
+            outer_values=reduced_intermediate_desc.shape,
+            pattern="shape",
+        )
 
-        # Now replace the shape. We are using the same scheme as for the strides.
-        new_inner_shape: List[int] = []
-        symbol_mapping = nsdfg.symbol_mapping
-        for i, (inner_shape, outer_shape) in enumerate(zip(inner_desc.shape, reduced_intermediate_desc.shape)):
-            if str(outer_shape).isdigit():
-                new_inner_shape.append(outer_shape)
-            else:
-                inner_shape_sym = f"map_fusion_nsdfg_shape_mapping_{inner_data}_{outer_edge.data.data}_{i}"
-                assert inner_shape_sym not in symbol_mapping
-                symbol_mapping[inner_shape_sym] = outer_shape
-                new_inner_shape.append(symbolic.pystr_to_symbolic(inner_shape_sym))
-
-        # This will also update the dependent quantities.
+        # NOTE: This will also update dependent quantities such as the total size. However,
+        #   because the inner data is not allocated (since it is passed from the outside),
+        #   this should not be a problem.
         inner_desc.set_shape(
             new_shape=tuple(new_inner_shape),
             strides=tuple(new_inner_strides),
