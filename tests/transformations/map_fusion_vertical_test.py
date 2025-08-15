@@ -2264,7 +2264,49 @@ def _make_map_fusion_nested_sdfg_slicing(
     c2e_dim: Union[int, str],
 ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapExit, nodes.AccessNode, nodes.MapEntry, nodes.NestedSDFG,
            nodes.AccessNode]:
-    sdfg = dace.SDFG(unique_name("nested_sdfg"))
+
+    def make_reducing_nsdfg(c2e_dim, mapped_stride) -> dace.SDFG:
+        sdfg = dace.SDFG(unique_name("reducing_nested_sdfg"))
+        init_state = sdfg.add_state(is_start_block=True)
+        reducing_state = sdfg.add_state_after(init_state)
+
+        if isinstance(c2e_dim, str):
+            sdfg.add_symbol(c2e_dim, dace.int32)
+
+        sdfg.add_scalar(
+            "_out",
+            dtype=dace.int32,
+            transient=False,
+        )
+        sdfg.add_array(
+            "_in",
+            shape=(c2e_dim, ),
+            dtype=dace.int32,
+            strides=(mapped_stride, ),
+            transient=False,
+        )
+
+        init_tlet = init_state.add_tasklet(
+            "init",
+            inputs=set(),
+            outputs={"__out"},
+            code="__out = 0",
+        )
+        init_state.add_edge(init_tlet, "__out", init_state.add_access("_out"), None, dace.Memlet("_out[0]"))
+
+        reducing_state.add_mapped_tasklet(
+            "reduction",
+            map_ranges={"__i": f"0:{c2e_dim}"},
+            inputs={"__in": dace.Memlet("_in[__i]")},
+            code="__out = __in",
+            outputs={"__out": dace.Memlet("_out[0]", wcr='lambda x, y: x + y')},
+            external_edges=True,
+        )
+        sdfg.validate()
+
+        return sdfg
+
+    sdfg = dace.SDFG(unique_name("map_fusion_nested_sdfg_slicing_sdfg"))
     state = sdfg.add_state(is_start_block=True)
 
     for x in [nb_cells, nb_levels, c2e_dim]:
@@ -2349,26 +2391,27 @@ def _make_map_fusion_nested_sdfg_slicing(
 
     me2, mx2 = state.add_map("map2", ndrange={"__iCell": f"0:{nb_cells}", "__iK": f"0:{nb_levels}"})
 
-    edge_reduction = state.add_reduce(
-        wcr='lambda x, y: x + y',
-        axes=None,
-        identity=0,
+    reduction_nsdfg = state.add_nested_sdfg(
+        sdfg=make_reducing_nsdfg(
+            c2e_dim=c2e_dim,
+            mapped_stride=sdfg.arrays["intermediate"].strides[1],
+        ),
+        inputs={"_in"},
+        outputs={"_out"},
+        symbol_mapping={},  # Will be populated automatically.
     )
 
     state.add_edge(intermediate, None, me2, "IN_intermediate",
                    dace.Memlet(f"intermediate[0:{nb_cells}, 0:{c2e_dim}, 0:{nb_levels}]"))
     me2.add_scope_connectors("intermediate")
 
-    state.add_edge(me2, "OUT_intermediate", edge_reduction, None,
+    state.add_edge(me2, "OUT_intermediate", reduction_nsdfg, "_in",
                    dace.Memlet(f"intermediate[__iCell, 0:{c2e_dim}, __iK]"))
-    state.add_edge(edge_reduction, None, accumulator, None, dace.Memlet("accumulator[0]"))
+    state.add_edge(reduction_nsdfg, "_out", accumulator, None, dace.Memlet("accumulator[0]"))
 
     state.add_edge(accumulator, None, mx2, "IN_result", dace.Memlet("[0] -> result_data[__iCell, __iK]"))
     mx2.add_scope_connectors("result")
     state.add_edge(mx2, "OUT_result", result_data, None, dace.Memlet(f"result_data[0:{nb_cells}, 0:{nb_levels}]"))
-
-    edge_reduction.expand(sdfg, state)
-    reduction_nsdfg = count_nodes(state, nodes.NestedSDFG, True)[0]
 
     sdfg.validate()
 
