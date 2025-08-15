@@ -2273,7 +2273,7 @@ def _make_map_fusion_nested_sdfg_slicing(
     if isinstance(c2e_dim, str):
         c2e_dim = dace_symbolic.pystr_to_symbolic(c2e_dim)
 
-    def make_hood_nsdfg(nb_cells, nb_levels, c2e_dim, local_hood_single_stride, strict_dataflow) -> dace.SDFG:
+    def make_hood_nsdfg(local_hood_single_stride) -> dace.SDFG:
         sdfg = dace.SDFG(unique_name("hood_sdfg"))
         state = sdfg.add_state(is_start_block=True)
 
@@ -2341,7 +2341,7 @@ def _make_map_fusion_nested_sdfg_slicing(
 
         return sdfg
 
-    def make_reducing_nsdfg(c2e_dim, mapped_stride, strict_dataflow) -> dace.SDFG:
+    def make_reducing_nsdfg(inner_value_single_stride) -> dace.SDFG:
         sdfg = dace.SDFG(unique_name("reducing_nested_sdfg"))
         init_state = sdfg.add_state(is_start_block=True)
         reducing_state = sdfg.add_state_after(init_state)
@@ -2356,10 +2356,10 @@ def _make_map_fusion_nested_sdfg_slicing(
         )
         if strict_dataflow:
             input_shape = (1, c2e_dim, 1)
-            input_strides = (0, mapped_stride, 0)
+            input_strides = (0, inner_value_single_stride, 0)
         else:
             input_shape = (c2e_dim, )
-            input_strides = (mapped_stride, )
+            input_strides = (inner_value_single_stride, )
 
         sdfg.add_array(
             "_in",
@@ -2385,6 +2385,7 @@ def _make_map_fusion_nested_sdfg_slicing(
             outputs={"__out": dace.Memlet("_out[0]", wcr='lambda x, y: x + y')},
             external_edges=True,
         )
+
         sdfg.validate()
 
         return sdfg
@@ -2440,11 +2441,7 @@ def _make_map_fusion_nested_sdfg_slicing(
     me1.add_scope_connectors("c2e")
 
     hood_nsdfg = state.add_nested_sdfg(
-        sdfg=make_hood_nsdfg(nb_cells=nb_cells,
-                             nb_levels=nb_levels,
-                             c2e_dim=c2e_dim,
-                             local_hood_single_stride=sdfg.arrays["intermediate"].strides[1],
-                             strict_dataflow=strict_dataflow),
+        sdfg=make_hood_nsdfg(local_hood_single_stride=sdfg.arrays["intermediate"].strides[1]),
         inputs={"c2e", "cell_data"},
         outputs={"local_hood"},
         symbol_mapping={},
@@ -2460,11 +2457,7 @@ def _make_map_fusion_nested_sdfg_slicing(
     me2, mx2 = state.add_map("map2", ndrange={"__iCell": f"0:{nb_cells}", "__iK": f"0:{nb_levels}"})
 
     reduction_nsdfg = state.add_nested_sdfg(
-        sdfg=make_reducing_nsdfg(
-            c2e_dim=c2e_dim,
-            mapped_stride=sdfg.arrays["intermediate"].strides[1],
-            strict_dataflow=strict_dataflow,
-        ),
+        sdfg=make_reducing_nsdfg(inner_value_single_stride=sdfg.arrays["intermediate"].strides[1]),
         inputs={"_in"},
         outputs={"_out"},
         symbol_mapping={},  # Will be populated automatically.
@@ -2546,7 +2539,7 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
     assert isinstance(outer_reduction_node, nodes.AccessNode)
     outer_reduction = outer_reduction_node.desc(sdfg)
 
-    _transfrom = lambda x: tuple(dace_symbolic.pystr_to_symbolic(xx) for xx in x)
+    _to_symb = lambda x: tuple(dace_symbolic.pystr_to_symbolic(xx) for xx in x)
 
     def _extract(nsdfg, inner_value, is_shape):
         if strict_dataflow:
@@ -2562,13 +2555,13 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         assert str(c2e_dim) != inner_symbolic_value
         assert str(nsdfg.symbol_mapping[inner_symbolic_value]) == str(c2e_dim)
         if strict_dataflow:
-            return _transfrom((1, inner_symbolic_value, 1)) if is_shape else _transfrom((inner_symbolic_value, 1, 1))
+            return _to_symb((1, inner_symbolic_value, 1)) if is_shape else _to_symb((inner_symbolic_value, 1, 1))
         else:
-            return _transfrom((inner_symbolic_value, ))
+            return _to_symb((inner_symbolic_value, ))
 
     if strict_dataflow:
-        exp_outer_reduction_shape = _transfrom((1, c2e_dim, 1))
-        exp_outer_reduction_strides = _transfrom((c2e_dim, 1, 1))
+        exp_outer_reduction_shape = _to_symb((1, c2e_dim, 1))
+        exp_outer_reduction_strides = _to_symb((c2e_dim, 1, 1))
 
         if symbolic_size:
             exp_inner_reduction_shape = _extract(reduction_nsdfg, inner_reduction.shape, True)
@@ -2576,22 +2569,22 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
             exp_inner_local_hood_shape = _extract(hood_nsdfg, inner_local_hood.shape, True)
             exp_inner_local_hood_strides = _extract(hood_nsdfg, inner_local_hood.strides, False)
         else:
-            exp_inner_reduction_strides = _transfrom((c2e_dim, 1, 1))
-            exp_inner_reduction_shape = _transfrom((1, c2e_dim, 1))
+            exp_inner_reduction_strides = _to_symb((c2e_dim, 1, 1))
+            exp_inner_reduction_shape = _to_symb((1, c2e_dim, 1))
             exp_inner_local_hood_strides = exp_inner_reduction_strides
             exp_inner_local_hood_shape = exp_inner_reduction_shape
     else:
-        exp_outer_reduction_shape = _transfrom((c2e_dim, ))
-        exp_outer_reduction_strides = _transfrom((1, ))
-        exp_inner_reduction_strides = _transfrom((1, ))
-        exp_inner_local_hood_strides = _transfrom((1, ))
+        exp_outer_reduction_shape = _to_symb((c2e_dim, ))
+        exp_outer_reduction_strides = _to_symb((1, ))
+        exp_inner_reduction_strides = _to_symb((1, ))
+        exp_inner_local_hood_strides = _to_symb((1, ))
 
         if symbolic_size:
             exp_inner_reduction_shape = _extract(reduction_nsdfg, inner_reduction.shape, True)
             exp_inner_local_hood_shape = _extract(hood_nsdfg, inner_local_hood.shape, True)
         else:
-            exp_inner_reduction_shape = _transfrom((c2e_dim, ))
-            exp_inner_local_hood_shape = _transfrom((c2e_dim, ))
+            exp_inner_reduction_shape = _to_symb((c2e_dim, ))
+            exp_inner_local_hood_shape = _to_symb((c2e_dim, ))
 
     assert exp_outer_reduction_shape == outer_reduction.shape
     assert exp_outer_reduction_strides == outer_reduction.strides
