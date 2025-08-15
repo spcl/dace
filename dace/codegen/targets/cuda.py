@@ -157,7 +157,7 @@ class CUDACodeGen(TargetCodeGenerator):
                                       CUDACodeGen,
                                       'CUDA',
                                       target_type=target_type)
-        """
+        
         # Identify kernels with inserted GPU_ThreadBlock-scheduled maps
         old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
 
@@ -169,7 +169,6 @@ class CUDACodeGen(TargetCodeGenerator):
             n
             for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
         }
-        """
 
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         for e, state in list(sdfg.all_edges_recursive()):
@@ -2071,7 +2070,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             #       overapproximation.
 
             if len(detected_block_sizes) > 1:
-                """
+
                 # Raise an error if user has manually explicitly  defined both, the gpu_block_size and explicitly
                 # threadBlock maps with conflicting block sizes.
                 # NOTE: Conflicting block sizes from the 'AddThreadBlockMap' transformation are allowed.
@@ -2084,8 +2083,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                            and not kernelmap_entry in self._kernels_with_inserted_tb_maps)
 
                 if conflicting_block_sizes:
-                """
-                if kernelmap_entry.map.gpu_block_size is not None:
                     raise ValueError('Both the `gpu_block_size` property and internal thread-block '
                                      'maps were defined with conflicting sizes for kernel '
                                      f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
