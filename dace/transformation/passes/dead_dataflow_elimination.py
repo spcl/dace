@@ -262,6 +262,21 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                     if _has_side_effects(l.src, sdfg):
                         return False
 
+                    # If data is connected to a tasklet through a pointer and more than 1 element is accessed,
+                    # we cannot eliminate the connector, as it may require dataflow analysis inside the tasklet.
+                    # TODO(later): We should consider lifting that restriction, but it requires more complex analysis
+                    # and more concrete semantics of tasklets and their connectors.
+                    if isinstance(l.src, nodes.Tasklet):
+                        ctype = infer_types.infer_out_connector_type(sdfg, state, l.src, l.src_conn)
+                        if isinstance(ctype, dtypes.pointer):
+                            is_larger = False
+                            try:
+                                is_larger = l.data.volume > 1
+                            except ValueError:
+                                is_larger = True
+                            if is_larger:
+                                return False
+
                     # If data is connected to a nested SDFG or library node as an input/output, do not remove
                     if (isinstance(l.src, (nodes.NestedSDFG, nodes.LibraryNode))
                             and any(ie.data.data == node.data for ie in state.in_edges(l.src))):

@@ -1087,7 +1087,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def entry_node(self, node: nd.Node) -> Optional[nd.EntryNode]:
         for block in self.nodes():
             if node in block.nodes():
-                return block.exit_node(node)
+                return block.entry_node(node)
         return None
 
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
@@ -1550,7 +1550,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         arrays = set(n.data for n in self.data_nodes())
         sdfg = SDFG(self.label)
         sdfg._arrays = dace.sdfg.NestedDict({k: self.sdfg.arrays[k] for k in arrays})
-        #sdfg._arrays = {k: self.sdfg.arrays[k] for k in arrays}
         sdfg.add_node(self)
 
         return sdfg._repr_html_()
@@ -1710,23 +1709,47 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def add_nested_sdfg(
         self,
         sdfg: Optional['SDFG'],
-        parent,
         inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         symbol_mapping: Dict[str, Any] = None,
         name=None,
         schedule=dtypes.ScheduleType.Default,
-        location=None,
-        debuginfo=None,
+        location: Optional[Dict[str, symbolic.SymbolicType]] = None,
+        debuginfo: Optional[dtypes.DebugInfo] = None,
         external_path: Optional[str] = None,
     ):
-        """ Adds a nested SDFG to the SDFG state. """
+        """
+        Adds a nested SDFG to the SDFG state.
+
+        :param sdfg: The SDFG to nest. Can be None if ``external_path`` is provided.
+        :param inputs: Input connectors of the nested SDFG. Can be a set of connector names
+                       (types will be auto-detected) or a dict mapping connector names to data types.
+        :param outputs: Output connectors of the nested SDFG. Can be a set of connector names
+                        (types will be auto-detected) or a dict mapping connector names to data types.
+        :param symbol_mapping: A dictionary mapping nested SDFG symbol names to expressions in the
+                               parent SDFG's scope. If None, symbols are mapped to themselves.
+        :param name: Name of the nested SDFG node. If None, uses the nested SDFG's label.
+        :param schedule: Schedule type for the nested SDFG node. Defaults to ``ScheduleType.Default``. This argument
+                         is deprecated and will be removed in the future.
+        :param location: Execution location descriptor for the nested SDFG.
+        :param debuginfo: Debug information for the nested SDFG node.
+        :param external_path: Path to an external SDFG file. Used when ``sdfg`` parameter is None.
+        :return: The created NestedSDFG node.
+        :raises ValueError: If neither sdfg nor external_path is provided, or if required symbols
+                           are missing from the symbol mapping.
+        """
         if name is None:
             name = sdfg.label
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         if sdfg is None and external_path is None:
             raise ValueError('Neither an SDFG nor an external SDFG path has been provided')
+
+        if schedule != dtypes.ScheduleType.Default:
+            warnings.warn(
+                "The 'schedule' argument is deprecated and will be removed in the future.",
+                DeprecationWarning,
+            )
 
         if sdfg is not None:
             sdfg.parent = self
@@ -1764,9 +1787,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
             # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
-            if missing_symbols and parent:
+            if missing_symbols and self.sdfg is not None:
                 # If symbols are missing, try to get them from the parent SDFG
-                parent_mapping = {s: s for s in missing_symbols if s in parent.symbols}
+                parent_mapping = {s: s for s in missing_symbols if s in self.sdfg.symbols}
                 symbol_mapping.update(parent_mapping)
                 s.symbol_mapping = symbol_mapping
                 missing_symbols = [s for s in symbols if s not in symbol_mapping]
@@ -2548,6 +2571,33 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                         continue
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
                     node.add_in_connector(edge.dst_conn)
+
+    def expand_library_node(self, node: nd.LibraryNode, implementation: str, **expansion_kwargs) -> str:
+        """
+        Expand a library node with a specific implementation.
+
+        This is a convenience method that provides a clean interface for expanding
+        library nodes from the state level. It automatically handles validation
+        and calls the library node's expand method.
+
+        :param node: The library node to expand
+        :param implementation: The implementation to use for expansion
+        :param expansion_kwargs: Additional keyword arguments for expansion
+        :return: The name of the expanded implementation
+
+        Example:
+            result = state.expand_library_node(gemm_node, 'MKL')
+        """
+        # Check that the node is actually in this state
+        if node not in self.nodes():
+            raise ValueError(f"Node {node} is not in this state")
+
+        # Check that implementation exists
+        if implementation not in node.implementations:
+            raise KeyError(f"Unknown implementation for node {type(node).__name__}: {implementation}")
+
+        # Use the new expand interface
+        return node.expand(self, implementation, **expansion_kwargs)
 
 
 @make_properties

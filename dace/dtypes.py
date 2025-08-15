@@ -5,6 +5,7 @@ import aenum
 import inspect
 import numpy
 import re
+from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
 from typing import Any
@@ -441,6 +442,10 @@ class typeclass(object):
             typename = 'bool'
         elif wrapped_type is type(None):
             wrapped_type = None
+        elif wrapped_type is Float:
+            wrapped_type = float
+        elif wrapped_type is Integer:
+            wrapped_type = int
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
@@ -1435,6 +1440,15 @@ class DebugInfo:
     def from_json(json_obj, context=None):
         return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
                          json_obj['filename'])
+
+    def __deepcopy__(self, memo) -> 'DebugInfo':
+        """Performs a `deepcopy` of `self`.
+
+        Because all members of `self` are immutable this function is essentially a shallow copy.
+        """
+        new = object.__new__(DebugInfo)
+        new.__dict__.update(self.__dict__)
+        return new
 
 
 ######################################################

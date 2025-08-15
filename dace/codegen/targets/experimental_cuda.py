@@ -431,7 +431,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             state_id, scope_entry)
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
-        state = sdfg.state(state_id)
+        state = cfg.state(state_id)
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
             callsite_stream.write('{', cfg, state_id, scope_entry)
 

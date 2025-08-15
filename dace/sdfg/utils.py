@@ -174,6 +174,64 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
                 stack.pop()
 
 
+def _find_nodes_impl(
+    node_to_start: Node,
+    state: SDFGState,
+    forward: bool,
+    seen: Optional[Set[Node]],
+) -> Set[Node]:
+    to_scan: List[Node] = [node_to_start]
+    scanned_nodes: Set[Node] = set() if seen is None else seen
+    if forward:
+        get_edges = state.out_edges
+        get_node = lambda e: e.dst
+    else:
+        get_edges = state.in_edges
+        get_node = lambda e: e.src
+    while len(to_scan) != 0:
+        node_to_scan = to_scan.pop()
+        if node_to_scan in scanned_nodes:
+            continue
+        to_scan.extend(get_node(edge) for edge in get_edges(node_to_scan) if get_node(edge) not in scanned_nodes)
+        scanned_nodes.add(node_to_scan)
+    return scanned_nodes
+
+
+def find_downstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+    """Find all downstream nodes of `node_to_start`.
+
+    The function will explore the state, similar to a BFS, just that the order in which the nodes of
+    the dataflow is explored is unspecific. It is possible to pass a `set` of nodes that should be
+    considered as already visited. It is important that the function will return the set of found
+    nodes. In case `seen` was passed that `set` will be updated in place and be returned.
+
+    :param node_to_start: Where to start the exploration of the state.
+    :param state: The state on which we operate on.
+    :param seen: The set of already seen nodes.
+
+    :note: See also `find_upstream_nodes()` in case the dataflow should be explored in the reverse direction.
+    """
+    return _find_nodes_impl(node_to_start=node_to_start, state=state, seen=seen, forward=True)
+
+
+def find_upstream_nodes(node_to_start: Node, state: SDFGState, seen: Optional[Set[Node]] = None) -> Set[Node]:
+    """Find all upstream nodes of `node_to_start`.
+
+    The function will explore the state, similar to a BFS, just that the order in which the nodes of
+    the dataflow is explored is unspecific. It is possible to pass a `set` of nodes that should be
+    considered as already visited. It is important that the function will return the set of found
+    nodes. In case `seen` was passed that `set` will be updated in place and be returned.
+
+    The main difference to `find_downstream_nodes()` is that the dataflow is traversed in reverse
+    order or "against the flow".
+
+    :param node_to_start: Where to start the exploration of the state.
+    :param state: The state on which we operate on.
+    :param seen: The set of already seen nodes.
+    """
+    return _find_nodes_impl(node_to_start=node_to_start, state=state, seen=seen, forward=False)
+
+
 class StopTraversal(Exception):
     """
     Special exception that stops DFS conditional traversal beyond the current node.
@@ -807,24 +865,32 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     if existent, else None
     """
     sdfg = state.parent
-    node = view
-    desc = sdfg.arrays[node.data]
+    previous_node = view
     result = []
+
+    desc = sdfg.arrays[previous_node.data]
+    forward = None
     while isinstance(desc, dt.View):
-        edge = get_view_edge(state, node)
+        edge = get_view_edge(state, previous_node)
         if edge is None:
             break
-        old_node = node
-        if edge.dst is view:
-            node = edge.src
+
+        if forward is None:
+            forward = edge.src is previous_node
+
+        if forward:
+            next_node = edge.dst
         else:
-            node = edge.dst
-        if node is old_node:
+            next_node = edge.src
+
+        if previous_node is next_node:
             break
-        if not isinstance(node, nd.AccessNode):
+        if not isinstance(next_node, nd.AccessNode):
             break
-        desc = sdfg.arrays[node.data]
+        desc = sdfg.arrays[next_node.data]
         result.append(edge)
+        previous_node = next_node
+
     return result
 
 
@@ -2202,7 +2268,7 @@ def get_constant_data(scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, 
                 if _incoming_memlet(state, node):
                     written_data.add(node.data)
 
-        # Need to consider map outputs and outputs too
+        # Need to consider map inputs and outputs too
         for ie in state.in_edges(scope):
             if ie.data is not None and ie.data.data is not None:
                 used_data.add(ie.data.data)
@@ -2222,14 +2288,15 @@ def get_used_symbols(
     include_symbols_for_offset_calculations: bool = False,
 ) -> Set[str]:
     """
-    Returns a set of all used symbols in the given control flow region, state, or with the map scope.
+    Returns a set of all used symbols, that have been defined by the scope or were already defined for the duration of the
+    scope in the given control flow region, state, or with the map scope.
 
     :param cfg: The control flow region, state or a map entry node to check.
     :param parent_state: The parent graph of the scope, used only for MapEntry nodes.
     :return: A set of symbol names.
     """
     return _get_used_symbols_impl(scope=scope,
-                                  constant_syms_only=True,
+                                  constant_syms_only=False,
                                   parent_state=parent_state,
                                   include_symbols_for_offset_calculations=include_symbols_for_offset_calculations)
 
@@ -2238,7 +2305,8 @@ def get_constant_symbols(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.Map
                          parent_state: Union[SDFGState, None] = None,
                          include_symbols_for_offset_calculations: bool = False) -> Set[str]:
     """
-    Returns a set of all constant symbols in the given control flow region, state, or with the map scope.
+    Returns a set of all constant symbols in the given control flow region, state, or with the map scope,
+    which have been defined by the scope (e.g. map) or defined for the duration of the scope.
     A symbol is considered constant if no interstate edge within the scope writes to it.
 
     :param cfg: The control flow region, state or a map entry node to check.
@@ -2263,10 +2331,10 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
     :return: A set of constant symbol names.
     """
 
-    def _get_assignments(cfg: ControlFlowRegion) -> Set[str]:
+    def _get_assignments(cfg: Union[ControlFlowRegion, SDFG]) -> Set[str]:
         written_symbols = set()
         for edge in cfg.all_interstate_edges():
-            if edge.data is not None and isinstance(edge.data, dace.InterstateEdge):
+            if edge.data is not None:
                 written_symbols = written_symbols.union(edge.data.assignments.keys())
         return written_symbols
 
@@ -2293,7 +2361,7 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         else:
             return offset_symbols | used_symbols
     elif isinstance(scope, nd.NestedSDFG):
-        used_symbols = scope.sdfg.used_symbols(all_symbols=True)
+        used_symbols = scope.sdfg.used_symbols(all_symbols=False)
         # Can't pass them as const if they are written to in the nested SDFG
         written_symbols = _get_assignments(scope.sdfg)
         if constant_syms_only:

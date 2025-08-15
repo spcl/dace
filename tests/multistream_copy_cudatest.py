@@ -79,7 +79,7 @@ def test_copy_sync():
     state = sdfg.add_state_after(state)
     ro = state.add_read('gpu_scal_outer')
     wo = state.add_write('output_outer')
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'gpu_scal'}, {'output'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'gpu_scal'}, {'output'})
     state.add_edge(ro, None, nsdfg_node, 'gpu_scal', dace.Memlet('gpu_scal_outer'))
     state.add_edge(nsdfg_node, 'output', wo, None, dace.Memlet('output_outer'))
 
