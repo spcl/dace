@@ -10,7 +10,7 @@ import pytest
 import gc
 import uuid
 
-from dace import SDFG, SDFGState, data as dace_data
+from dace import SDFG, SDFGState, data as dace_data, symbolic as dace_symbolic
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFusionVertical, MapExpansion
 
@@ -2262,10 +2262,11 @@ def _make_map_fusion_nested_sdfg_slicing(
     nb_cells: Union[int, str],
     nb_levels: Union[int, str],
     c2e_dim: Union[int, str],
+    strict_dataflow: bool,
 ) -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapExit, nodes.AccessNode, nodes.MapEntry, nodes.NestedSDFG,
            nodes.AccessNode]:
 
-    def make_reducing_nsdfg(c2e_dim, mapped_stride) -> dace.SDFG:
+    def make_reducing_nsdfg(c2e_dim, mapped_stride, strict_dataflow) -> dace.SDFG:
         sdfg = dace.SDFG(unique_name("reducing_nested_sdfg"))
         init_state = sdfg.add_state(is_start_block=True)
         reducing_state = sdfg.add_state_after(init_state)
@@ -2278,11 +2279,18 @@ def _make_map_fusion_nested_sdfg_slicing(
             dtype=dace.int32,
             transient=False,
         )
+        if strict_dataflow:
+            input_shape = (1, c2e_dim, 1)
+            input_strides = (0, mapped_stride, 0)
+        else:
+            input_shape = (c2e_dim, )
+            input_strides = (mapped_stride, )
+
         sdfg.add_array(
             "_in",
-            shape=(c2e_dim, ),
+            shape=input_shape,
             dtype=dace.int32,
-            strides=(mapped_stride, ),
+            strides=input_strides,
             transient=False,
         )
 
@@ -2297,7 +2305,7 @@ def _make_map_fusion_nested_sdfg_slicing(
         reducing_state.add_mapped_tasklet(
             "reduction",
             map_ranges={"__i": f"0:{c2e_dim}"},
-            inputs={"__in": dace.Memlet("_in[__i]")},
+            inputs={"__in": dace.Memlet("_in[0, __i, 0]" if strict_dataflow else "_in[__i]")},
             code="__out = __in",
             outputs={"__out": dace.Memlet("_out[0]", wcr='lambda x, y: x + y')},
             external_edges=True,
@@ -2395,6 +2403,7 @@ def _make_map_fusion_nested_sdfg_slicing(
         sdfg=make_reducing_nsdfg(
             c2e_dim=c2e_dim,
             mapped_stride=sdfg.arrays["intermediate"].strides[1],
+            strict_dataflow=strict_dataflow,
         ),
         inputs={"_in"},
         outputs={"_out"},
@@ -2422,12 +2431,6 @@ def _make_map_fusion_nested_sdfg_slicing(
 @pytest.mark.parametrize("symbolic_size", [True, False])
 def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bool):
 
-    # NOTE: If `strict_dataflow` is enabled then the reduced intermediate's shape
-    #   will be `(1, 5, 1)` but on the inside it will just be `(5,)` thus it does
-    #   not work.
-    if strict_dataflow:
-        pytest.mark.xfail("Remapping in `strict_data` mode is not supported.")
-
     if symbolic_size:
         nb_cells = "nb_cells"
         nb_levels = "nb_levels"
@@ -2438,14 +2441,20 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
         c2e_dim = 5
 
     sdfg, state, mx1, intermediate, me2, reduction_nsdfg, local_hood = _make_map_fusion_nested_sdfg_slicing(
-        nb_cells=nb_cells, nb_levels=nb_levels, c2e_dim=c2e_dim)
+        nb_cells=nb_cells, nb_levels=nb_levels, c2e_dim=c2e_dim, strict_dataflow=strict_dataflow)
 
     assert state.in_degree(reduction_nsdfg) == 1
     inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
-    assert len(inner_reduction.strides) == 1
-    assert str(inner_reduction.shape[0]) == str(c2e_dim)
-    assert inner_reduction.strides[0] == sdfg.arrays["intermediate"].strides[1]
     assert count_nodes(state, nodes.MapEntry) == 3
+
+    if strict_dataflow:
+        assert len(inner_reduction.strides) == 3
+        assert str(inner_reduction.shape[1]) == str(c2e_dim)
+        assert inner_reduction.strides[1] == sdfg.arrays["intermediate"].strides[1]
+    else:
+        assert len(inner_reduction.strides) == 1
+        assert str(inner_reduction.shape[0]) == str(c2e_dim)
+        assert inner_reduction.strides[0] == sdfg.arrays["intermediate"].strides[1]
 
     spec = {
         nb_cells: 4,
@@ -2470,18 +2479,54 @@ def test_map_fusion_nested_sdfg_slicing(symbolic_size: bool, strict_dataflow: bo
     assert count_nodes(state, nodes.MapEntry) == 2
 
     inner_reduction = reduction_nsdfg.sdfg.arrays["_in"]
-    assert len(inner_reduction.strides) == 1
 
     assert state.in_degree(reduction_nsdfg) == 1
     outer_reduction_node = next(iter(state.in_edges(reduction_nsdfg))).src
     assert isinstance(outer_reduction_node, nodes.AccessNode)
     outer_reduction = outer_reduction_node.desc(sdfg)
-    assert len(outer_reduction.shape) == 1
-    assert str(outer_reduction.shape[0]) == str(c2e_dim)
-    assert outer_reduction.strides[0] == 1
 
-    # The strides of the inner variable must be updated such that it matches what is on the outside.
-    assert inner_reduction.strides == outer_reduction.strides
+    _transfrom = lambda x: tuple(dace_symbolic.pystr_to_symbolic(xx) for xx in x)
+    if strict_dataflow:
+        exp_outer_shape = _transfrom((1, c2e_dim, 1))
+        exp_outer_strides = _transfrom((c2e_dim, 1, 1))
+
+        if symbolic_size:
+            symbol_mapping = reduction_nsdfg.symbol_mapping
+
+            inner_symbolic_shape = str(inner_reduction.shape[1])
+            assert not inner_symbolic_shape.isdigit()
+            assert str(c2e_dim) != inner_symbolic_shape
+            assert str(symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_shape = _transfrom((1, inner_symbolic_shape, 1))
+
+            inner_symbolic_strides = str(inner_reduction.strides[0])
+            assert not inner_symbolic_strides.isdigit()
+            assert str(c2e_dim) != inner_symbolic_strides
+            assert str(symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_strides = _transfrom((inner_symbolic_strides, 1, 1))
+        else:
+            exp_inner_strides = _transfrom((c2e_dim, 1, 1))
+            exp_inner_shape = _transfrom((1, c2e_dim, 1))
+    else:
+        exp_outer_shape = _transfrom((c2e_dim, ))
+        exp_outer_strides = _transfrom((1, ))
+        exp_inner_strides = _transfrom((1, ))
+
+        if symbolic_size:
+            symbol_mapping = reduction_nsdfg.symbol_mapping
+
+            inner_symbolic_shape = str(inner_reduction.shape[0])
+            assert not inner_symbolic_shape.isdigit()
+            assert str(c2e_dim) != inner_symbolic_shape
+            assert str(symbol_mapping[inner_symbolic_shape]) == str(c2e_dim)
+            exp_inner_shape = _transfrom((inner_symbolic_shape, ))
+        else:
+            exp_inner_shape = _transfrom((c2e_dim, ))
+
+    assert exp_outer_shape == outer_reduction.shape
+    assert exp_outer_strides == outer_reduction.strides
+    assert exp_inner_shape == inner_reduction.shape
+    assert exp_inner_strides == inner_reduction.strides
 
     compile_and_run_sdfg(sdfg, **res)
     assert all(np.allclose(ref[k], res[k]) for k in ref)
