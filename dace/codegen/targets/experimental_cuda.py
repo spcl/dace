@@ -32,6 +32,7 @@ from dace.transformation.passes import analysis as ap
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
 from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
 from dace.transformation.passes.gpustream.gpu_stream_topology_simplification import GPUStreamTopologySimplification
 from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
@@ -135,7 +136,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         - Adding explicit ThreadBlock Maps where missing and infer Grid and Block dimensions for
           every Kernel in the SDFG
         - Handling GPU<->GPU strided copies.
-        - TODO: update: Assigning backend GPU streams (e.g., CUDA streams) and creating the GPUStreamManager.
+        - Runs a pipeline for making GPU stream explicit at the SDFG level and handles other
+          GPU stream related initialization.
         - Handling memory pool management
         """
 
@@ -207,36 +209,30 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Define backend stream access expression (e.g., CUDA stream handle)
         gpu_stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"
 
-        # TODO: Update
+        # Prepare the Pipeline to make GPU streams explicit: Add and connect SDFG nodes
+        # with GPU stream AccessNodes where used
         stream_pipeline = Pipeline(
             [
                 NaiveGPUStreamScheduler(),
                 InsertGPUStreamsToKernels(),
+                InsertGPUStreamsToTasklets(),
                 InsertGPUStreamSyncTasklets(),
                 InsertGPUCopyTasklets(),
                 GPUStreamTopologySimplification(),
             ]
         )
         
+        # TODO: Missed copies due to InsertGPUCopyTasklet -> maybe check wheter copies were 
+        # handled above than just adding this codegen to used_targets by default
         self._dispatcher._used_targets.add(self)
         gpustream_assignments = stream_pipeline.apply_pass(sdfg, {})['NaiveGPUStreamScheduler']
 
-        # Initialize runtime GPU stream manager
         # TODO: probably to be deleted
+        # Define backend stream access expression (e.g., CUDA stream handle)        
+        gpu_stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"
+
+        # Initialize runtime GPU stream manager
         self._gpu_stream_manager = GPUStreamManager(sdfg, gpustream_assignments, gpu_stream_access_template)
-
-        # Get GPU stream persistent array name used in state struct
-        # NOTE: GPU stream array name from the configurations is prepended with an ID for consistency,
-        # since struct definition and access are handled elsewhere (e.g., framecode.py, cpu.py, cpp.py)
-        # TODO: Nicer
-        self._initialize_gpustreams = ""
-        gpu_stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(",")[0]
-        for csdfg, name, desc in sdfg.arrays_recursive(include_nested_data=True):
-            if name == gpu_stream_array_name and desc.lifetime == dtypes.AllocationLifetime.Persistent:
-                gpu_stream_field_name = f'__{csdfg.cfg_id}_{name}'
-                self._initialize_gpustreams += f"__state->{gpu_stream_field_name} = __state->gpu_context->streams;\n"
-
-
 
         #----------------- Shared Memory Synchronization related Logic -----------------
 
@@ -975,6 +971,19 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         self._frame.generate_fileheader(self._global_sdfg, fileheader, 'cuda')
 
+        # The GPU stream array is set to have a persistent allocation lifetime (see preprocess GPU stream pipeline).
+        # Thus the definition of the GPU stream array in the state struct and the access to it is handled elsewhere and
+        # in several different files (e.g., framecode.py, cpu.py, cpp.py). For the sake of consistency, we initialize it 
+        # as it is expected in the other modules. I.e. prepend with an ID for all SDFGs it is defined.
+        # Note that all the different variable names point to the same GPU stream array.
+        init_gpu_stream_vars = ""
+        gpu_stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(",")[0]
+        for csdfg, name, desc in self._global_sdfg.arrays_recursive(include_nested_data=True):
+            if name == gpu_stream_array_name and desc.lifetime == dtypes.AllocationLifetime.Persistent:
+                gpu_stream_field_name = f'__{csdfg.cfg_id}_{name}'
+                init_gpu_stream_vars += f"__state->{gpu_stream_field_name} = __state->gpu_context->streams;\n"
+                init_gpu_stream_vars += f"    "
+
         # My comment: takes codeblocks and transforms it nicely to code
         initcode = CodeIOStream()
         for sd in self._global_sdfg.all_sdfgs_recursive():
@@ -1069,7 +1078,6 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
         DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
     }}
 
-    // Here
     {other_gpustream_init}
 
     {initcode}
@@ -1123,7 +1131,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
            file_header=fileheader.getvalue(),
            nstreams=self._gpu_stream_manager.num_gpu_streams,
            nevents=self._gpu_stream_manager.num_gpu_events,
-           other_gpustream_init=self._initialize_gpustreams,
+           other_gpustream_init=init_gpu_stream_vars,
            backend=self.backend,
            backend_header=backend_header,
            pool_header=pool_header,

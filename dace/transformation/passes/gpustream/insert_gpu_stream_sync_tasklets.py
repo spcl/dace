@@ -11,6 +11,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -23,7 +24,7 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
     cases are discovered.
     """
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {NaiveGPUStreamScheduler, InsertGPUStreamsToKernels}
+        return {NaiveGPUStreamScheduler, InsertGPUStreamsToKernels, InsertGPUStreamsToTasklets}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.Memlets

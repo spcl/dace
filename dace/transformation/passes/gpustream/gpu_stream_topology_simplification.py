@@ -10,6 +10,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
 from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
 
 @properties.make_properties
@@ -25,7 +26,8 @@ class GPUStreamTopologySimplification(ppl.Pass):
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         depending_passes = {
             NaiveGPUStreamScheduler, InsertGPUStreamsToKernels, 
-            InsertGPUStreamSyncTasklets, InsertGPUCopyTasklets
+            InsertGPUStreamsToTasklets, InsertGPUStreamSyncTasklets, 
+            InsertGPUCopyTasklets
             }
         
         return depending_passes
@@ -42,7 +44,7 @@ class GPUStreamTopologySimplification(ppl.Pass):
         """
         self._merge_close_gpustream_nodes(sdfg)
 
-        self._simplify_kernel_exit_gpustreams(sdfg)
+        self._merge_gpustreams_special_case(sdfg)
         return {}
     
     def _merge_close_gpustream_nodes(self, sdfg: SDFG) -> None:
@@ -107,6 +109,9 @@ class GPUStreamTopologySimplification(ppl.Pass):
                         and state.out_degree(succ_of_gp) == 0
                     ]
 
+                    # remove duplicates
+                    node_gp_successors_streams = list(set(node_gp_successors_streams))
+
                     for gp_succ_stream in node_gp_successors_streams:
                         for edge in state.in_edges(gp_succ_stream):
                             src, src_conn, _, dst_conn, data = edge
@@ -116,21 +121,26 @@ class GPUStreamTopologySimplification(ppl.Pass):
                         # outgoing edges
                         state.remove_node(gp_succ_stream)
 
-    def _simplify_kernel_exit_gpustreams(self, sdfg: SDFG) -> None:
+    def _merge_gpustreams_special_case(self, sdfg: SDFG) -> None:
         """
-        Special-case simplification after a GPU_Device scheduled kernel MapExit.
+        Special-case simplification of GPU stream AccessNodes.
 
-        1) The MapExit feeds a GPU stream AccessNode that typically goes into a stream
-           synchronization tasklet.
-        2) The same MapExit also feeds a GPU memory copy that has separate 'input' and
-           'output' GPU stream AccessNodes.
+        This pass detects the following pattern:
+        - A GPU stream AccessNode `X` has a predecessor and a successor (i.e. at least one of both).
+        - Between the predecessor and successor lie one or more tasklets.
+        - These tasklets use their own distinct GPU stream AccessNodes (not `X`), 
+          which are connected only to the tasklet itself.
 
-        In this situation, the topology is simplified by using a single GPU stream
-        AccessNode before the memory copy and for the MapExit's GPU stream and another
-        GPU stream AccessNode after the copy.
+        To simplify the topology, redundant streams are merged:
+        - A single unified input GPU stream connects to the predecessor and replaces (merges)
+          the per-tasklet input streams.
+        - A single unified output GPU stream connects to the successor and replaces (merges)
+          the per-tasklet output streams.
 
-        Explaining what is happening in words is difficult here.
-        Inspect intermediate SDFGs on this minimal case to see what is going on:
+
+        The simplification is easier to understand visually than in words.
+        Inspect the intermediate SDFGs produced by the minimal example below
+        to see the effect of the stream merging.
 
         Example
         -------
@@ -150,104 +160,119 @@ class GPUStreamTopologySimplification(ppl.Pass):
 
         #------------------------- Preprocess: Gather Information ----------------------------
 
-        # For each GPU Stream AccessNode connected to a kernel: Determine with which Tasklet Source
-        # and taskelt sink nodes it should be merged
+        # For each GPU Stream AccessNode having a predecessor and a successor: 
+        # Determine with which Tasklet Source and which Tasklet sink nodes lie between its predecessor
+        # and its successor 
         merge_source_gpustream: Dict[Tuple[nodes.AccessNode, SDFGState], List[nodes.AccessNode]] = dict()
         merge_sink_gpustream: Dict[Tuple[nodes.AccessNode, SDFGState], List[nodes.AccessNode]] = dict()
 
         for node, state in sdfg.all_nodes_recursive():
-            # Skip non tasklets
+
+            # Skip non-tasklets
             if not isinstance(node, nodes.Tasklet):
                 continue
 
-            # Find the GPU_Device-scheduled MapExit grand-predecessor, if any
+            # The tasklets of interest should have exactly one preceeding source GPU node and one following sink GPU node
+            # If not, we skip
             node_predecessors = state.predecessors(node)
-            kernel_exit_grand_predecessor = [
-                grand_pred for pred in node_predecessors
-                for grand_pred in state.predecessors(pred)
-                if isinstance(grand_pred, nodes.MapExit) and
-                grand_pred.map.schedule == dtypes.ScheduleType.GPU_Device
-            ]
-
-            # For this case only tasklets succeeding kernelExit are relevant
-            if len(kernel_exit_grand_predecessor) == 0:
-                continue
-            
-            # Ignore such niche cases
-            if len(kernel_exit_grand_predecessor) > 1:
-                continue
-
-            # Get the Kernel Exits GPU stream
-            kernel_exit = kernel_exit_grand_predecessor[0]
-            kernel_exit_gpustream_node = [succ for succ in state.successors(kernel_exit) if isinstance(succ, nodes.AccessNode)
-                                          and succ.desc(state).dtype == dtypes.gpuStream_t][0]
-            
-            # (Copy) Tasklet should have exactly one preceeding source GPU node and one following sink GPU node
-            # If not, we skip (because this pass is here purely for nicer graphs)
-            # Also, kernel exit is assumed to be connected to a GPU Stream AccessNode (see "depends_on()")
             node_successors = state.successors(node)
             downstream_gpustream_sinks = [succ for succ in node_successors if isinstance(succ, nodes.AccessNode)
                                             and succ.desc(state).dtype == dtypes.gpuStream_t and state.out_degree(succ) == 0]
             upstream_gpustream_sources = [pre for pre in node_predecessors if isinstance(pre, nodes.AccessNode)
-                                            and pre.desc(state).dtype == dtypes.gpuStream_t and state.in_degree(pre) == 0]
-            
+                                          and pre.desc(state).dtype == dtypes.gpuStream_t and state.in_degree(pre) == 0]
+
             # Skip not considered case 
             if not (len(upstream_gpustream_sources) == len(downstream_gpustream_sinks) and len(upstream_gpustream_sources) == 1):
                 continue
+
+            # Look for potential predecessor of a "passthrough" GPU Stream AccessNode
+            # which would also be the grand-predeccessor of the current node (=tasklet)
+            candidate_predecessor = []
+            for pred in node_predecessors:
+                for grand_pred in state.predecessors(pred):
+
+                    # Current nodes grand pred is a candidate of a predecessor of a "passthrough" GPU Stream AccessNode
+                    candidate = grand_pred
+
+                    # A PassThrough GPU stream node can only have MapExits and Tasklets as candidate predecessors 
+                    if not (isinstance(candidate, nodes.MapExit) and candidate.map.schedule == dtypes.ScheduleType.GPU_Device
+                            or isinstance(candidate, nodes.Tasklet)):
+                        continue
+                    
+                    has_passthrough_gpustream = any(
+                        (isinstance(succ, nodes.AccessNode) and succ.desc(state).dtype == dtypes.gpuStream_t) 
+                        and (state.in_degree(succ) > 0 and state.out_degree(succ) > 0)
+                        for succ in state.successors(candidate)
+                        )
+
+                    if has_passthrough_gpustream:
+                        candidate_predecessor.append(candidate) 
+
+            # Not "close" passthrough GPU node exists if no candidate predecessor exists
+            if len(candidate_predecessor) == 0:
+                continue
+
+            # Niche case, more than one "close" passthrough GPU node exists: Out of scope
+            # Ignore this case (note: This Pass only makes the Graph visually nicer, so skipping has
+            # no effect on correctness)
+            if len(candidate_predecessor) > 1:
+                continue
+
+            # Get the Kernel Exits GPU stream
+            candidate_predecessor = candidate_predecessor[0]
+            passthrough_gpu_node = [succ for succ in state.successors(candidate_predecessor) if isinstance(succ, nodes.AccessNode)
+                                    and succ.desc(state).dtype == dtypes.gpuStream_t][0]
             
-            # Collect and store the merging information
-            pre_gpustream: nodes.AccessNode = upstream_gpustream_sources[0]
-            succ_gpustream: nodes.AccessNode = downstream_gpustream_sinks[0]
-            if (kernel_exit_gpustream_node, state) in merge_source_gpustream:
-                merge_source_gpustream[(kernel_exit_gpustream_node, state)].append(pre_gpustream)
-                merge_sink_gpustream[(kernel_exit_gpustream_node, state)].append(succ_gpustream)
+
+            # Collect and store the GPU stream merging information 
+            pre_gpustream: nodes.AccessNode = upstream_gpustream_sources[0] # Note: Len is 1
+            succ_gpustream: nodes.AccessNode = downstream_gpustream_sinks[0] # Note: Len is 1
+            if (passthrough_gpu_node, state) in merge_source_gpustream:
+                merge_source_gpustream[(passthrough_gpu_node, state)].append(pre_gpustream)
+                merge_sink_gpustream[(passthrough_gpu_node, state)].append(succ_gpustream)
             else:
-                merge_source_gpustream[(kernel_exit_gpustream_node, state)] = [pre_gpustream]
-                merge_sink_gpustream[(kernel_exit_gpustream_node, state)] = [succ_gpustream]
+                merge_source_gpustream[(passthrough_gpu_node, state)] = [pre_gpustream]
+                merge_sink_gpustream[(passthrough_gpu_node, state)] = [succ_gpustream]
 
 
         #------------------------- Merge the GPU Stream AccessNodes ----------------------------
-        for kernel_exit_stream, state in merge_sink_gpustream.keys():
+        for passthrough_gpu_node, state in merge_sink_gpustream.keys():
 
-            # Add new AccessNodes which merge the others loose streams
+            # Add new AccessNodes which merge the other loose streams
             unified_in_stream = state.add_access(gpustream_array_name)
             unified_out_stream = state.add_access(gpustream_array_name)
 
-            # unified_in_stream connects to KernelExit and all Source nodes of memory copy tasklets
-            # whereas unified_out_stream unifies all sink streams of memory tasklets and connects to
-            # all following nodes of kernel_exit_stream
-            for in_edge in state.in_edges(kernel_exit_stream):
+            for in_edge in state.in_edges(passthrough_gpu_node):
                 src, src_conn, _, dst_conn, memlet = in_edge
                 state.add_edge(src, src_conn, unified_in_stream, dst_conn, copy.deepcopy(memlet))
                 state.remove_edge(in_edge)
 
-            for out_edge in state.out_edges(kernel_exit_stream):
+            for out_edge in state.out_edges(passthrough_gpu_node):
                 _, src_conn, dst, dst_conn, memlet = out_edge
                 state.add_edge(unified_out_stream, src_conn, dst, dst_conn, copy.deepcopy(memlet))
                 state.remove_edge(out_edge) 
 
-            for source_stream in merge_source_gpustream[kernel_exit_stream, state]:
+            for source_stream in merge_source_gpustream[passthrough_gpu_node, state]:
                 for out_edge in state.out_edges(source_stream):
                     _, src_conn, dst, dst_conn, memlet = out_edge
                     state.add_edge(unified_in_stream, src_conn, dst, dst_conn, copy.deepcopy(memlet))
                     state.remove_edge(out_edge)
                 state.remove_node(source_stream)
 
-            for sink_stream in merge_sink_gpustream[kernel_exit_stream, state]:
+            for sink_stream in merge_sink_gpustream[passthrough_gpu_node, state]:
                 for in_edge in state.in_edges(sink_stream):
                     src, src_conn, _, dst_conn, memlet = in_edge
                     state.add_edge(src, src_conn, unified_out_stream, dst_conn, copy.deepcopy(memlet))
                     state.remove_edge(in_edge)
                 state.remove_node(sink_stream)
 
-            # Kernel exit stream is represented in the two unified streams, not needed anymore
-            state.remove_node(kernel_exit_stream)
+            state.remove_node(passthrough_gpu_node)
 
     def _remove_passthrough_gpu_stream_access_node(self, sdfg: SDFG) -> None:
         """
         Unused: This will need adaption at the codegen level.
         It is mainly unused because I don't think it makes the final SDFG
-        visually nicer.
+        visually nicer, which is the whole purpose of this Pass.
         """
 
         for node, state in sdfg.all_nodes_recursive():
