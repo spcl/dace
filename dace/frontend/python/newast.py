@@ -110,6 +110,24 @@ augassign_ops = {
     'BitAnd': '&'
 }
 
+# Mappings for determining variable name based on operator
+_UNOP_TO_NAME = {ast.UAdd: 'pos', ast.USub: 'neg', ast.Not: 'not', ast.Invert: 'inv'}
+_BINOP_TO_NAME = {
+    ast.Add: 'plus',
+    ast.Sub: 'minus',
+    ast.Mult: 'times',
+    ast.Div: 'div',
+    ast.FloorDiv: 'floordiv',
+    ast.Mod: 'mod',
+    ast.Pow: 'pow',
+    ast.LShift: 'lshift',
+    ast.RShift: 'rshift',
+    ast.BitOr: 'bitor',
+    ast.BitXor: 'bitxor',
+    ast.BitAnd: 'bitand',
+    ast.MatMult: 'matmul',
+}
+
 
 class AddTransientMethods(object):
     """ A management singleton for methods that add transient data to SDFGs. """
@@ -825,7 +843,6 @@ class TaskletTransformer(ExtNodeTransformer):
 
         if arr_type is None:
             arr_type = type(parent_array)
-            var_name = self.sdfg._find_new_name(var_name)
         if arr_type == data.Scalar:
             var_name, _ = self.sdfg.add_scalar(var_name, dtype, find_new_name=True)
         elif issubclass(arr_type, data.Array):
@@ -1403,30 +1420,14 @@ class ProgramVisitor(ExtNodeVisitor):
         # If the current AST node is an expression (e.g., a binary operation),
         # return the operands concatenated with the operator, e.g., "not_a", "a_times_b"
         if isinstance(current_ast_node, ast.UnaryOp):
-            op_map = {ast.UAdd: 'pos', ast.USub: 'neg', ast.Not: 'not', ast.Invert: 'inv'}
-            op_name = op_map.get(type(current_ast_node.op), 'unop')
+            op_name = _UNOP_TO_NAME.get(type(current_ast_node.op), 'unop')
             operand_name = self._get_name_from_node(current_ast_node.operand)
             result = f"{op_name}_{operand_name}"
             if dtypes.validate_name(result):
                 return result
 
         if isinstance(current_ast_node, ast.BinOp):
-            op_map = {
-                ast.Add: 'plus',
-                ast.Sub: 'minus',
-                ast.Mult: 'times',
-                ast.Div: 'div',
-                ast.FloorDiv: 'floordiv',
-                ast.Mod: 'mod',
-                ast.Pow: 'pow',
-                ast.LShift: 'lshift',
-                ast.RShift: 'rshift',
-                ast.BitOr: 'bitor',
-                ast.BitXor: 'bitxor',
-                ast.BitAnd: 'bitand',
-                ast.MatMult: 'matmul'
-            }
-            op_name = op_map.get(type(current_ast_node.op), 'binop')
+            op_name = _BINOP_TO_NAME.get(type(current_ast_node.op), 'binop')
             left_name = self._get_name_from_node(current_ast_node.left)
             right_name = self._get_name_from_node(current_ast_node.right)
             result = f"{left_name}_{op_name}_{right_name}"
@@ -1455,8 +1456,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 return result
 
         # If all else fails, try to see if unparsing yields a valid name.
-        if dtypes.validate_name(astutils.unparse(current_ast_node)):
-            return astutils.unparse(current_ast_node)
+        unparsed_node = astutils.unparse(current_ast_node)
+        if dtypes.validate_name(unparsed_node):
+            return unparsed_node
 
         # If the name is invalid, use temp_data_name (__tmp*)
         return default or self.sdfg.temp_data_name()
