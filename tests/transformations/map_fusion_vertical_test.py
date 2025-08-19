@@ -2742,4 +2742,4 @@ if __name__ == '__main__':
     test_map_fusion_consolidate_consume_same_range_not_allowed()
     test_map_fusion_consolidate_consume_same_range_if_not_extending()
     test_map_fusion_consolidate_consume_not_same_range_if_not_extending()
-    #test_map_fusion_nested_sdfg_slicing()
+    test_map_fusion_nested_sdfg_slicing()
