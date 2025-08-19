@@ -192,7 +192,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """ Remove all edges along a path, until memlet tree contains siblings
             that should not be removed. Removes resulting isolated nodes as
             well. Operates in place.
-            
+
             :param state: The state in which to remove edges.
             :param edge_map: Mapping from identifier to edge, used as a
                              predicate for removal.
@@ -336,6 +336,24 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if edge is not None and not InlineSDFG._check_strides(array.strides, sdfg.arrays[edge.data.data].strides,
                                                                   edge.data, nsdfg_node):
                 reshapes.add(aname)
+        # Among the nodes needing reshapes are any input/output nodes directly being used by library nodes. The shape
+        # influences the behavior of the access nodes and thus the reshapes through views are necessary.
+        for node in nstate.nodes():
+            if isinstance(node, nodes.LibraryNode):
+                for ie in nstate.in_edges(node):
+                    root = nstate.memlet_tree(ie).root().edge
+                    if isinstance(root.src, nodes.AccessNode) and root.src.data in inputs:
+                        ndesc = nsdfg.arrays[root.src.data]
+                        outer_desc = sdfg.arrays[inputs[root.src.data].data.data]
+                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                            reshapes.add(root.src.data)
+                for oe in nstate.out_edges(node):
+                    root = nstate.memlet_tree(oe).root().edge
+                    if isinstance(root.dst, nodes.AccessNode) and root.dst.data in outputs:
+                        ndesc = nsdfg.arrays[root.dst.data]
+                        outer_desc = sdfg.arrays[outputs[root.dst.data].data.data]
+                        if ndesc.shape != outer_desc.shape or ndesc.strides != outer_desc.strides:
+                            reshapes.add(root.dst.data)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
@@ -1065,8 +1083,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices),
-                                                                      list(indices)) - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) -
+                                   set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1075,10 +1093,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         _check_cand(out_candidates, state.out_edges_by_connector)
 
         # Return result, filtering out the states
-        return ({k: (dc(v), ind)
-                 for k, (v, _, ind) in in_candidates.items()
-                 if k not in ignore}, {k: (dc(v), ind)
-                                       for k, (v, _, ind) in out_candidates.items() if k not in ignore})
+        return ({
+            k: (dc(v), ind)
+            for k, (v, _, ind) in in_candidates.items() if k not in ignore
+        }, {
+            k: (dc(v), ind)
+            for k, (v, _, ind) in out_candidates.items() if k not in ignore
+        })
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
@@ -1332,7 +1353,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                 nested_sdfg.symbols[s] = type
 
         # Add the nested SDFG to the parent state and connect it
-        nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg, set(inputs.values()), set(outputs.values()))
+        nested_node = outer_state.add_nested_sdfg(nested_sdfg, set(inputs.values()), set(outputs.values()))
 
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)

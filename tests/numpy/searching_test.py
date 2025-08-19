@@ -6,6 +6,7 @@ N = 100
 
 
 def test_numpy_where():
+
     @dace.program
     def numpy_where(A: dace.float64[N]):
         return np.where(A > 0.5, A, 0.0)
@@ -16,6 +17,7 @@ def test_numpy_where():
 
 
 def test_numpy_select():
+
     @dace.program
     def numpy_where(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
         return np.select([A > 0.5, B > 0.5, C > 0.5], [A, B, C], 0.0)

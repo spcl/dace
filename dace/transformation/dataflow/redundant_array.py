@@ -4,7 +4,7 @@
 
 import copy
 import warnings
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Sequence
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -21,10 +21,14 @@ from dace.transformation import transformation as pm
 # Helper methods #############################################################
 
 
+def _subset_has_shape(subset: subsets.Subset, shape: Sequence[int]) -> bool:
+    return len(subset.size()) == len(shape) and all(m == a for m, a in zip(subset.size(), shape))
+
+
 def _validate_subsets(edge: graph.MultiConnectorEdge,
                       arrays: Dict[str, data.Data],
                       src_name: str = None,
-                      dst_name: str = None) -> Tuple[subsets.Subset]:
+                      dst_name: str = None) -> Tuple[subsets.Subset, ...]:
     """ Extracts and validates src and dst subsets from the edge. """
 
     # Find src and dst names
@@ -237,7 +241,7 @@ class RedundantArray(pm.SingleStateTransformation):
             subset = copy.deepcopy(a1_subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
-            if any(m != a for m, a in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
             # NOTE: Library node check
@@ -460,11 +464,10 @@ class RedundantArray(pm.SingleStateTransformation):
         in_array.add_out_connector('views', force=True)
         e1._src_conn = 'views'
 
-
     def _is_reshaping_memlet(
-            self,
-            graph: SDFGState,
-            edge: graph.MultiConnectorEdge,
+        self,
+        graph: SDFGState,
+        edge: graph.MultiConnectorEdge,
     ) -> bool:
         """Test if Memlet between `input_node` and `output_node` is reshaping.
 
@@ -498,7 +501,7 @@ class RedundantArray(pm.SingleStateTransformation):
         # A reshaping Memlet must read the whole source array and write the whole destination array.
         src_subset, dst_subset = _validate_subsets(edge, sdfg.arrays)
         for subset, shape in zip([dst_subset, src_subset], [dst_desc.shape, src_desc.shape]):
-            if not all(sssize == arraysize for sssize, arraysize in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
         return True
@@ -557,21 +560,17 @@ class RedundantArray(pm.SingleStateTransformation):
         from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
-            if isinstance(e.src, Reduce) or (isinstance(e.src, nodes.NestedSDFG)
+            if isinstance(e.src, Reduce) or (isinstance(e.src, (nodes.NestedSDFG, nodes.LibraryNode))
                                              and len(in_desc.shape) != len(out_desc.shape)):
                 reduction = True
 
         # If:
         # 1. A reduce node is involved; or
-        # 2. A NestedSDFG node is involved and the arrays have different dimensionality; or
+        # 2. A NestedSDFG or Library node is involved and the arrays have different dimensionality; or
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if (
-                reduction
-                or len(a_dims_to_pop) == len(in_desc.shape)
-                or any(m != a for m, a in zip(a1_subset.size(), in_desc.shape))
-        ):
+        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or not _subset_has_shape(a1_subset, in_desc.shape):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
@@ -752,7 +751,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             subset = copy.deepcopy(b1_subset)
             subset.squeeze()
             shape = [sz for sz in out_desc.shape if sz != 1]
-            if any(m != a for m, a in zip(subset.size(), shape)):
+            if not _subset_has_shape(subset, shape):
                 return False
 
             # NOTE: Library node check
@@ -959,7 +958,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
 
         # If the src subset does not cover the removed array, create a view.
-        if a_subset and any(m != a for m, a in zip(a_subset.size(), out_desc.shape)):
+        if a_subset and not _subset_has_shape(a_subset, out_desc.shape):
             # NOTE: We do not want to create another view, if the immediate
             # successors of out_array are views as well. We just remove it.
             out_successors_desc = [
@@ -1315,10 +1314,23 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
-            if len(tmp) != len(out_shape):
+            if not _subset_has_shape(tmp, out_shape):
                 return False
-            if any(m != a for m, a in zip(tmp.size(), out_shape)):
-                return False
+
+        if not permissive:
+            # Ensure the view is not an input to a library node, where it may change the behavior, and similarly is not
+            # being used to change the strides for a nested SDFG.
+            for e in graph.out_edges(out_array):
+                for sink in graph.memlet_tree(e).leaves():
+                    sink_node = sink.dst
+                    sink_conn = sink.dst_conn
+                    if isinstance(sink_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(sink_node, nodes.NestedSDFG):
+                        if sink_conn in sink_node.sdfg.arrays and isinstance(out_desc, data.ArrayView):
+                            ndesc = sink_node.sdfg.arrays[sink_conn]
+                            if ndesc.strides != out_desc.strides or ndesc.dtype != out_desc.dtype:
+                                return False
 
         return True
 
@@ -1453,10 +1465,23 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
-            if len(tmp) != len(in_shape):
+            if not _subset_has_shape(tmp, in_shape):
                 return False
-            if any(m != a for m, a in zip(tmp.size(), in_shape)):
-                return False
+
+        if not permissive:
+            # Ensure the view is not an output from a library node, where it may change the behavior, and similarly is
+            # not being used to change the strides for a nested SDFG.
+            for e in graph.in_edges(in_array):
+                for source in graph.memlet_tree(e).leaves():
+                    source_node = source.src
+                    source_conn = source.src_conn
+                    if isinstance(source_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(source_node, nodes.NestedSDFG):
+                        if source_conn in source_node.sdfg.arrays and isinstance(in_desc, data.ArrayView):
+                            ndesc = source_node.sdfg.arrays[source_conn]
+                            if ndesc.strides != in_desc.strides or ndesc.dtype != in_desc.dtype:
+                                return False
 
         return True
 
@@ -1675,7 +1700,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):
     """ Moves intermediate writes insde a Map's subgraph outside the Map.
-    
+
     Currently, the transformation supports only the case `WriteAccess -> MapExit`, where the edge has an empty Memlet.
     """
 

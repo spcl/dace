@@ -4,11 +4,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.transformation.dataflow import (MapFusion, ReduceExpansion,
-                                          TrivialMapElimination, Vectorization,
+from dace.transformation.dataflow import (MapFusionVertical, ReduceExpansion, TrivialMapElimination, Vectorization,
                                           WarpTiling)
-from dace.transformation.interstate import (GPUTransformSDFG, HoistState,
-                                            InlineSDFG, StateFusion)
+from dace.transformation.interstate import (GPUTransformSDFG, HoistState, InlineSDFG, StateFusion)
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 dn1, dn2, dn3, dr = (dace.symbol(s) for s in ('dn1', 'dn2', 'dn3', 'dr'))
@@ -43,22 +41,18 @@ def test_warp_softmax(vector_length=1):
     SubgraphFusion.apply_to(sdfg, sdfg.node(0).nodes())
     sdfg.expand_library_nodes()
     sdfg.simplify()
-    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion], validate_all=True)
+    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusionVertical], validate_all=True)
     sdfg.apply_transformations(GPUTransformSDFG, validate_all=True)
     assert sdfg.apply_transformations(WarpTiling) == 1
     sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion], validate_all=True)
-    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion], validate_all=True)
+    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusionVertical], validate_all=True)
     if vector_length != 1:
-        sdfg.apply_transformations_repeated(
-            Vectorization,
-            dict(
-                vector_len=vector_length,
-                preamble=False,
-                postamble=False,
-                strided_map=False
-            ),
-            validate_all=True
-        )
+        sdfg.apply_transformations_repeated(Vectorization,
+                                            dict(vector_len=vector_length,
+                                                 preamble=False,
+                                                 postamble=False,
+                                                 strided_map=False),
+                                            validate_all=True)
     sdfg.specialize(dict(dn1=2, dn2=16, dn3=128, dr=128))
 
     # Check validity

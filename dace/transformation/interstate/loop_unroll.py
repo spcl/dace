@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop unroll transformation """
 
 import copy
@@ -11,6 +11,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
+
 
 @make_properties
 @xf.explicit_cf_compatible
@@ -25,7 +26,8 @@ class LoopUnroll(xf.MultiStateTransformation):
         desc='Number of iterations to unroll, or zero for all iterations (loop must be constant-sized for 0)',
     )
 
-    inline_iterations = Property(dtype=bool, default=True,
+    inline_iterations = Property(dtype=bool,
+                                 default=True,
                                  desc="Whether or not to inline individual iterations' CFGs after unrolling")
 
     @classmethod
@@ -52,7 +54,7 @@ class LoopUnroll(xf.MultiStateTransformation):
     def apply(self, graph: ControlFlowRegion, sdfg):
         # Loop must be fully unrollable for now.
         if self.count != 0:
-            raise NotImplementedError # TODO(later)
+            raise NotImplementedError  # TODO(later)
 
         # Obtain loop information
         start = loop_analysis.get_init_assignment(self.loop)
@@ -71,6 +73,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         for i in range(0, loop_diff, stride):
             # Instantiate loop contents as a new control flow region with iterate value.
             current_index = start + i
+            is_symbolic |= symbolic.issymbolic(current_index)
             iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
                                                                str(i) if is_symbolic else None)
 
@@ -92,7 +95,10 @@ class LoopUnroll(xf.MultiStateTransformation):
             for it in unrolled_iterations:
                 it.inline()
 
-    def instantiate_loop_iteration(self, graph: ControlFlowRegion, loop: LoopRegion, value: symbolic.SymbolicType,
+    def instantiate_loop_iteration(self,
+                                   graph: ControlFlowRegion,
+                                   loop: LoopRegion,
+                                   value: symbolic.SymbolicType,
                                    label_suffix: Optional[str] = None) -> ControlFlowRegion:
         it_label = loop.label + '_' + loop.loop_variable + (label_suffix if label_suffix is not None else str(value))
         iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)

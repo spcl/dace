@@ -45,10 +45,10 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     Greedily fuses maps of an SDFG or graph, operating in-place.
 
     :param graph_or_subgraph: SDFG, SDFGState or Subgraph
-    :param validate_all: Validate SDFG or graph at each fusion step 
-    :param device: Device type to specialize for 
+    :param validate_all: Validate SDFG or graph at each fusion step
+    :param device: Device type to specialize for
     :param recursive: Fuse recursively within (fused and unfused) scopes
-    :param stencil: Perform stencil fusion instead of regular fusion 
+    :param stencil: Perform stencil fusion instead of regular fusion
     :param stencil_tile: StencilTiling Tile size, default if None
     :param permutations_only: Disallow splitting of maps during MultiExpansion stage
     :param expand_reductions: Expand all reduce nodes before fusion
@@ -58,10 +58,10 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         if isinstance(graph_or_subgraph, SDFG):
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
-            # Apply MapFusion for the more trivial cases
+            # Apply MapFusionVertical for the more trivial cases
             full_map_fusion_pass = FullMapFusion(
-                    strict_dataflow=True,
-                    validate_all=validate_all,
+                strict_dataflow=True,
+                validate_all=validate_all,
             )
             full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
             full_map_fusion_pileline.apply_pass(graph_or_subgraph, {})
@@ -82,10 +82,13 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            # Apply MapFusion for the more trivial cases
+            # Apply MapFusionVertical for the more trivial cases.
+            #  For backwards compatibility we only perform vertical map fusion.
             full_map_fusion_pass = FullMapFusion(
-                    strict_dataflow=True,
-                    validate_all=validate_all,
+                strict_dataflow=True,
+                validate_all=validate_all,
+                perform_horizontal_map_fusion=False,
+                perform_vertical_map_fusion=True,
             )
             full_map_fusion_pileline = ppl.Pipeline([full_map_fusion_pass])
             full_map_fusion_pileline.apply_pass(sdfg, {})
@@ -370,7 +373,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
 
 def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     """
-    Set all Default storage types that are constant sized and less than 
+    Set all Default storage types that are constant sized and less than
     the auto-tile size to the stack (as StorageType.Register).
 
     :param sdfg: The SDFG to operate on.
@@ -456,12 +459,12 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
 def make_transients_persistent(sdfg: SDFG,
                                device: dtypes.DeviceType,
                                toplevel_only: bool = True) -> Dict[int, Set[str]]:
-    """ 
+    """
     Helper function to change several storage and scheduling properties
 
-        * Makes non-view array lifetimes persistent, with some restrictions depending on the device 
-        * Reset nonatomic WCR edges on GPU 
-        
+        * Makes non-view array lifetimes persistent, with some restrictions depending on the device
+        * Reset nonatomic WCR edges on GPU
+
     The only arrays that are made persistent by default are ones that do not exist inside a scope (and thus may be
     allocated multiple times), and whose symbols are always given as parameters to the SDFG (so that they can be
     allocated in a persistent manner).
@@ -487,8 +490,8 @@ def make_transients_persistent(sdfg: SDFG,
                     continue
                 desc = dnode.desc(nsdfg)
                 # Only convert what is not a member of a non-persistent struct.
-                if (dnode.root_data != dnode.data and
-                    nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
+                if (dnode.root_data != dnode.data
+                        and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
                     continue
                 # Only convert arrays and scalars that are not registers
                 if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
@@ -560,7 +563,7 @@ def auto_optimize(sdfg: SDFG,
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
-        
+
         * Simplify
         * Auto-parallelization (loop-to-map)
         * Greedy application of SubgraphFusion

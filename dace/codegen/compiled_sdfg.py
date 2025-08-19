@@ -26,7 +26,7 @@ class ReloadableDLL(object):
     def __init__(self, library_filename, program_name):
         """
         Creates a new reloadable shared object.
-        
+
         :param library_filename: Path to library file.
         :param program_name: Name of the DaCe program (for use in finding
                              the stub library loader).
@@ -174,7 +174,7 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
 
 
 class CompiledSDFG(object):
-    """ A compiled SDFG object that can be called through Python. 
+    """ A compiled SDFG object that can be called through Python.
 
     Todo:
         Scalar return values are not handled properly, this is a code gen issue.
@@ -210,6 +210,10 @@ class CompiledSDFG(object):
         self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
 
+        if self.argnames is None and len(sdfg.arg_names) != 0:
+            warnings.warn('You passed `None` as `argnames` to `CompiledSDFG`, but the SDFG you passed has positional'
+                          ' arguments. This is allowed but deprecated.')
+
         self.has_gpu_code = False
         self.external_memory_types = set()
         for _, _, aval in self._sdfg.arrays_recursive():
@@ -242,7 +246,7 @@ class CompiledSDFG(object):
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
             encountered, the method exits early. All fields defined until then will nevertheless be available in the
             structure.
-            
+
             :return: the ctypes.Structure representation of the state struct.
         """
         if not self._libhandle:
@@ -342,7 +346,7 @@ class CompiledSDFG(object):
 
     def initialize(self, *args, **kwargs):
         """
-        Initializes the compiled SDFG without invoking it. 
+        Initializes the compiled SDFG without invoking it.
 
         :param args: Arguments to call SDFG with.
         :param kwargs: Keyword arguments to call SDFG with.
@@ -402,8 +406,10 @@ class CompiledSDFG(object):
         elif len(args) > 0 and self.argnames is not None:
             kwargs.update(
                 # `_construct_args` will handle all of its arguments as kwargs.
-                {aname: arg
-                 for aname, arg in zip(self.argnames, args)})
+                {
+                    aname: arg
+                    for aname, arg in zip(self.argnames, args)
+                })
         argtuple, initargtuple = self._construct_args(kwargs)  # Missing arguments will be detected here.
         # Return values are cached in `self._lastargs`.
         return self.fast_call(argtuple, initargtuple, do_gpu_check=True)

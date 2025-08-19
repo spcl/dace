@@ -5,7 +5,8 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.properties import ShapeProperty, make_properties
 from dace.transformation import transformation
-from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFusion, TrivialMapElimination
+from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFusionVertical, TrivialMapElimination
+
 
 @make_properties
 class BufferTiling(transformation.SingleStateTransformation):
@@ -26,11 +27,7 @@ class BufferTiling(transformation.SingleStateTransformation):
     # Returns a list of graphs that represent the pattern
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(
-            cls.map1_exit,
-            cls.array,
-            cls.map2_entry
-        )]
+        return [sdutil.node_path_graph(cls.map1_exit, cls.array, cls.map2_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         map1_exit = self.map1_exit
@@ -97,13 +94,13 @@ class BufferTiling(transformation.SingleStateTransformation):
         tile_map2_entry = graph.in_edges(map2_entry)[0].src
 
         # Fuse maps
-        some_buffer = next(iter(buffers))  # some dummy to pass to MapFusion.apply_to()
-        MapFusion.apply_to(
-                sdfg,
-                first_map_exit=tile_map1_exit,
-                array=some_buffer,
-                second_map_entry=tile_map2_entry,
-                verify=True,
+        some_buffer = next(iter(buffers))  # some dummy to pass to MapFusionVertical.apply_to()
+        MapFusionVertical.apply_to(
+            sdfg,
+            first_map_exit=tile_map1_exit,
+            array=some_buffer,
+            second_map_entry=tile_map2_entry,
+            verify=True,
         )
 
         # Optimize the simple cases

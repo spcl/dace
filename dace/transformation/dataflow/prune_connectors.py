@@ -29,6 +29,11 @@ class PruneConnectors(pm.SingleStateTransformation):
         if not prune_in and not prune_out:
             return False
 
+        # If the nested SDFG at global scope we must check if we can isolate it.
+        if graph.scope_dict()[self.nsdfg] is None:
+            if not helpers.isolate_nested_sdfg(state=graph, nsdfg_node=self.nsdfg, test_if_applicable=True):
+                return False
+
         return True
 
     def _get_prune_sets(self, state: SDFGState) -> Tuple[Set[str], Set[str]]:
@@ -63,8 +68,11 @@ class PruneConnectors(pm.SingleStateTransformation):
         # Determine which connectors can be removed.
         prune_in, prune_out = self._get_prune_sets(state)
 
-        # Fission subgraph around nsdfg into its own state to avoid data races
-        nsdfg_state = helpers.state_fission_after(state, nsdfg)
+        # If the nested SDFG is at global scope, check if it can be isolated.
+        if state.scope_dict()[nsdfg] is None:
+            _, nsdfg_state, _ = helpers.isolate_nested_sdfg(state=state, nsdfg_node=nsdfg)
+        else:
+            nsdfg_state = state
 
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
@@ -90,7 +98,7 @@ class PruneConnectors(pm.SingleStateTransformation):
 
 
 class PruneSymbols(pm.SingleStateTransformation):
-    """ 
+    """
     Removes unused symbol mappings from nested SDFGs, as well as internal
     symbols if necessary.
     """
@@ -145,10 +153,27 @@ class PruneSymbols(pm.SingleStateTransformation):
 
         return candidates
 
+    def _find_symbols_that_can_not_be_removed(self, sdfg: SDFG) -> Set[str]:
+        """Find the set of symbols that can not be removed."""
+
+        # The implementation of this function is based upon `dace.transformation.helpers.is_symbol_unused()`.
+        #  However, instead of scanning the SDFG for every symbol, this function scans the SDFG
+        #  once and then returns the collected set.
+        # TODO: Investigate if this function can be replaced by a call to `used_symbols()`.
+        #   See https://github.com/spcl/dace/pull/2080#discussion_r2226418881
+        unremovable_symbols: Set[str] = set()
+
+        for desc in sdfg.arrays.values():
+            unremovable_symbols.update(map(str, desc.free_symbols))
+        for state in sdfg.states():
+            unremovable_symbols.update(state.free_symbols)
+        for e in sdfg.all_interstate_edges():
+            unremovable_symbols.update(e.data.free_symbols)
+        return unremovable_symbols
+
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
 
         nsdfg: nodes.NestedSDFG = self.nsdfg
-
         if len(PruneSymbols._candidates(nsdfg)) > 0:
             return True
 
@@ -156,11 +181,12 @@ class PruneSymbols(pm.SingleStateTransformation):
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         nsdfg = self.nsdfg
-
         candidates = PruneSymbols._candidates(nsdfg)
+        unremovable_symbols = self._find_symbols_that_can_not_be_removed(nsdfg.sdfg)
+
         for candidate in candidates:
             del nsdfg.symbol_mapping[candidate]
 
             # If not used in SDFG, remove from symbols as well
-            if helpers.is_symbol_unused(nsdfg.sdfg, candidate):
+            if candidate not in unremovable_symbols:
                 nsdfg.sdfg.remove_symbol(candidate)

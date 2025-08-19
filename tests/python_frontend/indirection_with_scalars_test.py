@@ -37,6 +37,7 @@ def test_nested_scalar_indirection():
 
 
 def test_array_element_scalar_indirection():
+
     @dc.program
     def nested_arrayindex_indirection(A: dc.float64[20, 10], indices: dc.int32[2]):
         start = indices[0]
@@ -53,6 +54,7 @@ def test_array_element_scalar_indirection():
 
 
 def test_array_element_scalar_indirection_in_map():
+
     @dc.program
     def nested_arrayindex_indirection_map(A: dc.float64[20, 10], indices: dc.int32[4]):
         for i in dc.map[0:2]:

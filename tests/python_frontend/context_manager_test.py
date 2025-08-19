@@ -5,7 +5,9 @@ import numpy as np
 
 
 def test_context_manager_decorator():
+
     class Ctx:
+
         def __init__(self) -> None:
             self.did_start = False
             self.should_pass = False
@@ -37,7 +39,7 @@ def test_context_manager_decorator():
 
 
 def test_ctxmgr_name_clash():
-    
+
     from context_managers.context_a import my_dace_ctxmgr_program as prog_a
     from context_managers.context_b import my_dace_ctxmgr_program as prog_b
 
@@ -45,7 +47,7 @@ def test_ctxmgr_name_clash():
 
     def dace_blocker(f):
         return f
-    
+
     @dace_blocker
     def randint():
         return rng.integers(0, 2)
@@ -67,9 +69,9 @@ def test_ctxmgr_name_clash():
         else:
             prog_b()
         return i
-    
+
     sdfg = ctxmgr_name_clashing_0.to_sdfg()
-    
+
     for i, f in enumerate([ctxmgr_name_clashing_0, ctxmgr_name_clashing_1]):
 
         if i > 0:

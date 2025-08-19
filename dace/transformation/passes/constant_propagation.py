@@ -90,7 +90,7 @@ class ConstantPropagation(ppl.Pass):
                     _add_nested_datanames(name, desc)
 
             # Trace all constants and symbols through blocks
-            in_constants: BlockConstsT = { sdfg: initial_symbols }
+            in_constants: BlockConstsT = {sdfg: initial_symbols}
             pre_constants: BlockConstsT = {}
             post_constants: BlockConstsT = {}
             out_constants: BlockConstsT = {}
@@ -105,8 +105,10 @@ class ConstantPropagation(ppl.Pass):
             desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, in_constants)
 
             # Replace constants per state
-            for block, mapping in optional_progressbar(in_constants.items(), 'Propagating constants',
-                                                       n=len(in_constants), progress=self.progress):
+            for block, mapping in optional_progressbar(in_constants.items(),
+                                                       'Propagating constants',
+                                                       n=len(in_constants),
+                                                       progress=self.progress):
                 if block is sdfg:
                     continue
 
@@ -137,7 +139,7 @@ class ConstantPropagation(ppl.Pass):
                     # Replace in outgoing edges as well
                     for e in block.parent_graph.out_edges(block):
                         e.data.replace_dict(out_mapping, replace_keys=False)
-                
+
                 if isinstance(block, LoopRegion):
                     self._propagate_loop(block, post_constants, multivalue_desc_symbols)
 
@@ -145,8 +147,10 @@ class ConstantPropagation(ppl.Pass):
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
 
             # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
-            sdfg.replace_dict({k: v
-                               for k, v in result.items() if k in desc_symbols},
+            sdfg.replace_dict({
+                k: v
+                for k, v in result.items() if k in desc_symbols
+            },
                               replace_in_graph=False,
                               replace_keys=False)
 
@@ -195,8 +199,8 @@ class ConstantPropagation(ppl.Pass):
     def _propagate_loop(self, loop: LoopRegion, post_constants: BlockConstsT,
                         multivalue_desc_symbols: Set[str]) -> None:
         if loop in post_constants and post_constants[loop] is not None:
-            if loop.update_statement is not None and (loop.inverted and loop.update_before_condition or
-                                                      not loop.inverted):
+            if loop.update_statement is not None and (loop.inverted and loop.update_before_condition
+                                                      or not loop.inverted):
                 # Replace the RHS of the update experssion
                 post_mapping = {
                     k: v
@@ -232,7 +236,7 @@ class ConstantPropagation(ppl.Pass):
         for _, branch in conditional.branches:
             in_const_dict[branch] = in_consts
             self._collect_constants_for_region(branch, arrays, in_const_dict, pre_const_dict, post_const_dict,
-                                              out_const_dict)
+                                               out_const_dict)
         # Second, determine the 'post constants' (constants at the end of the conditional region) as an intersection
         # between the output constants of each of the branches.
         post_consts = {}
@@ -308,7 +312,7 @@ class ConstantPropagation(ppl.Pass):
                 # of values that may at any point be re-assigned inside the loop, since that assignment would carry over
                 # into the next iteration (including increments to the loop variable, if present).
                 assigned_in_loop = self._assignments_in_loop(cfg)
-                pre_const = { k: (v if k not in assigned_in_loop else _UnknownValue) for k, v in in_const.items() }
+                pre_const = {k: (v if k not in assigned_in_loop else _UnknownValue) for k, v in in_const.items()}
             else:
                 # In any other case, the 'pre constants' are equivalent to the 'in constants'.
                 pre_const = {}
@@ -336,8 +340,8 @@ class ConstantPropagation(ppl.Pass):
             redo = False
             # Traverse CFG topologically
             for block in optional_progressbar(cfg_analysis.blockorder_topological_sort(cfg, recursive=False),
-                                                'Collecting constants for ' + cfg.label, cfg.number_of_nodes(),
-                                                self.progress):
+                                              'Collecting constants for ' + cfg.label, cfg.number_of_nodes(),
+                                              self.progress):
                 # Get predecessors
                 in_edges = cfg.in_edges(block)
                 assignments = {}
@@ -354,8 +358,8 @@ class ConstantPropagation(ppl.Pass):
                         # If something was assigned more than once (to a different value), it's not a constant
                         # If a symbol appearing in the replacing expression of a constant is modified,
                         # the constant is not valid anymore
-                        if ((aname in assignments and aval != assignments[aname]) or
-                            symbolic.free_symbols_and_functions(aval) & edge.data.assignments.keys()):
+                        if ((aname in assignments and aval != assignments[aname])
+                                or symbolic.free_symbols_and_functions(aval) & edge.data.assignments.keys()):
                             assignments[aname] = _UnknownValue
                         else:
                             assignments[aname] = aval
@@ -433,7 +437,7 @@ class ConstantPropagation(ppl.Pass):
         else:
             out_consts.update(post_consts)
         out_const_dict[cfg] = out_consts
-        
+
     def _find_desc_symbols(self, sdfg: SDFG, constants: Dict[SDFGState, Dict[str, Any]]) -> Tuple[Set[str], Set[str]]:
         """
         Finds constant symbols that data descriptors (e.g., arrays) depend on.
@@ -466,7 +470,7 @@ class ConstantPropagation(ppl.Pass):
     def _propagate(self, symbols: Dict[str, Any], new_symbols: Dict[str, Any]) -> bool:
         """
         Updates symbols dictionary in-place with new symbols, propagating existing ones within.
-        
+
         :param symbols: The symbols dictionary to update.
         :param new_symbols: The new symbols to include (and propagate ``symbols`` into).
         :return: True if symbols was modified, False otherwise

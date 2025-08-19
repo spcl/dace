@@ -87,7 +87,6 @@ from six import StringIO
 from dace import dtypes
 from dace.codegen.tools import type_inference
 
-
 if sys.version_info < (3, 8):
     BytesConstant = ast.Bytes
     EllipsisConstant = ast.Ellipsis
@@ -100,7 +99,6 @@ else:
     NameConstant = ast.Constant
     NumConstant = ast.Constant
     StrConstant = ast.Constant
-
 
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
@@ -757,7 +755,6 @@ class CPPUnparser:
             dtype = dtypes.dtype_to_typeclass(complex)
             repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
 
-
         # Handle large integer values
         if isinstance(t_n, int):
             bits = t_n.bit_length()
@@ -926,7 +923,7 @@ class CPPUnparser:
                     power = t.right.value if sys.version_info >= (3, 8) else t.right.n
                 elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
                     if isinstance(t.right.operand, (NumConstant, ast.Constant)):
-                        power = - (t.right.operand.value if sys.version_info >= (3, 8) else t.right.operand.n)
+                        power = -(t.right.operand.value if sys.version_info >= (3, 8) else t.right.operand.n)
 
                 if power is not None and int(power) == power:
                     negative = power < 0

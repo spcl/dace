@@ -64,8 +64,7 @@ def test_stree_mpath_nested():
 
     if simplified:
         assert [type(n)
-                for n in stree.preorder_traversal()][1:] == [tn.MapScope, tn.MapScope, tn.GeneralLoopScope,
-                                                             tn.TaskletNode]
+                for n in stree.preorder_traversal()][1:] == [tn.MapScope, tn.MapScope, tn.LoopScope, tn.TaskletNode]
 
     tasklet: tn.TaskletNode = list(stree.preorder_traversal())[-1]
 
@@ -208,9 +207,9 @@ def test_dealias_interstate_edge():
     nstate2 = nsdfg.add_state()
     nsdfg.add_edge(nstate1, nstate2, dace.InterstateEdge(condition='B[1] > 0', assignments=dict(m='A[2]')))
 
-    # Connect to nested SDFG both with flipped definitions and offset memlets
+    # Connect to nested SDFG both with renaming and offset memlets
     state = sdfg.add_state()
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A', 'B'}, {})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'A', 'B'}, {})
     ra = state.add_read('A')
     rb = state.add_read('B')
     state.add_edge(ra, None, nsdfg_node, 'B', dace.Memlet('A[1:20]'))

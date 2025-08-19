@@ -3,6 +3,7 @@ from typing import Dict, Set, Tuple
 import dace
 from dace.transformation.passes.analysis import FindSingleUseData
 
+
 def perform_scan(sdfg: dace.SDFG) -> Dict[dace.SDFG, Set[str]]:
     scanner = FindSingleUseData()
     return scanner.apply_pass(sdfg, None)
@@ -15,22 +16,14 @@ def _make_all_single_use_data_but_one_unused_sdfg() -> dace.SDFG:
 
     for name in 'abcde':
         sdfg.add_array(
-                name,
-                shape=(10, 10),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, 10),
+            dtype=dace.float64,
+            transient=False,
         )
 
-    state1.add_nedge(
-            state1.add_access('a'),
-            state1.add_access('b'),
-            sdfg.make_array_memlet('a')
-    )
-    state2.add_nedge(
-            state2.add_access('c'),
-            state2.add_access('d'),
-            sdfg.make_array_memlet('c')
-    )
+    state1.add_nedge(state1.add_access('a'), state1.add_access('b'), sdfg.make_array_memlet('a'))
+    state2.add_nedge(state2.add_access('c'), state2.add_access('d'), sdfg.make_array_memlet('c'))
     sdfg.validate()
     return sdfg
 
@@ -56,22 +49,14 @@ def _make_multiple_access_same_state_sdfg() -> dace.SDFG:
 
     for name in 'abd':
         sdfg.add_array(
-                name,
-                shape=(10, 10),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, 10),
+            dtype=dace.float64,
+            transient=False,
         )
 
-    state.add_nedge(
-            state.add_access('a'),
-            state.add_access('b'),
-            sdfg.make_array_memlet('a')
-    )
-    state.add_nedge(
-            state.add_access('a'),
-            state.add_access('d'),
-            sdfg.make_array_memlet('a')
-    )
+    state.add_nedge(state.add_access('a'), state.add_access('b'), sdfg.make_array_memlet('a'))
+    state.add_nedge(state.add_access('a'), state.add_access('d'), sdfg.make_array_memlet('a'))
     sdfg.validate()
     return sdfg
 
@@ -95,23 +80,15 @@ def _make_multiple_single_access_node_same_state_sdfg() -> dace.SDFG:
 
     for name in 'abd':
         sdfg.add_array(
-                name,
-                shape=(10, 10),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, 10),
+            dtype=dace.float64,
+            transient=False,
         )
 
     a = state.add_access('a')
-    state.add_nedge(
-            a,
-            state.add_access('b'),
-            sdfg.make_array_memlet('a')
-    )
-    state.add_nedge(
-            a,
-            state.add_access('d'),
-            sdfg.make_array_memlet('a')
-    )
+    state.add_nedge(a, state.add_access('b'), sdfg.make_array_memlet('a'))
+    state.add_nedge(a, state.add_access('d'), sdfg.make_array_memlet('a'))
     assert state.out_degree(a) == 2
     sdfg.validate()
     return sdfg
@@ -138,24 +115,16 @@ def _make_multiple_access_different_states_sdfg() -> dace.SDFG:
 
     for name in 'abd':
         sdfg.add_array(
-                name,
-                shape=(10, 10),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, 10),
+            dtype=dace.float64,
+            transient=False,
         )
 
     # Note these edges are useless as `a` is written to twice. It is just to generate
     #  an additional case, i.e. the data are also written to.
-    state1.add_nedge(
-            state1.add_access('b'),
-            state1.add_access('a'),
-            sdfg.make_array_memlet('a')
-    )
-    state2.add_nedge(
-            state2.add_access('d'),
-            state2.add_access('a'),
-            sdfg.make_array_memlet('a')
-    )
+    state1.add_nedge(state1.add_access('b'), state1.add_access('a'), sdfg.make_array_memlet('a'))
+    state2.add_nedge(state2.add_access('d'), state2.add_access('a'), sdfg.make_array_memlet('a'))
     sdfg.validate()
     return sdfg
 
@@ -177,26 +146,18 @@ def _make_access_only_on_interstate_edge_sdfg() -> dace.SDFG:
 
     for name in 'abcd':
         sdfg.add_array(
-                name,
-                shape=(10, 10),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, 10),
+            dtype=dace.float64,
+            transient=False,
         )
     sdfg.add_scalar('e', dtype=dace.float64, transient=False)
 
     state1 = sdfg.add_state(is_start_block=True)
     state2 = sdfg.add_state_after(state1, assignments={'e_sym': 'e'})
 
-    state1.add_nedge(
-            state1.add_access('a'),
-            state1.add_access('b'),
-            sdfg.make_array_memlet('a')
-    )
-    state2.add_nedge(
-            state2.add_access('c'),
-            state2.add_access('d'),
-            sdfg.make_array_memlet('c')
-    )
+    state1.add_nedge(state1.add_access('a'), state1.add_access('b'), sdfg.make_array_memlet('a'))
+    state2.add_nedge(state2.add_access('c'), state2.add_access('d'), sdfg.make_array_memlet('c'))
     sdfg.validate()
     return sdfg
 
@@ -219,10 +180,10 @@ def _make_additional_access_on_interstate_edge_sdfg() -> dace.SDFG:
 
     for name in 'abcd':
         sdfg.add_array(
-                name,
-                shape=(10, 10),
-                dtype=dace.float64,
-                transient=False,
+            name,
+            shape=(10, 10),
+            dtype=dace.float64,
+            transient=False,
         )
     sdfg.add_scalar('e', dtype=dace.float64, transient=False)
     sdfg.add_scalar('f', dtype=dace.float64, transient=False)
@@ -230,21 +191,9 @@ def _make_additional_access_on_interstate_edge_sdfg() -> dace.SDFG:
     state1 = sdfg.add_state(is_start_block=True)
     state2 = sdfg.add_state_after(state1, assignments={'e_sym': 'e'})
 
-    state1.add_nedge(
-            state1.add_access('a'),
-            state1.add_access('b'),
-            sdfg.make_array_memlet('a')
-    )
-    state2.add_nedge(
-            state2.add_access('c'),
-            state2.add_access('d'),
-            sdfg.make_array_memlet('c')
-    )
-    state2.add_nedge(
-            state2.add_access('e'),
-            state2.add_access('f'),
-            dace.Memlet('f[0] -> [0]')
-    )
+    state1.add_nedge(state1.add_access('a'), state1.add_access('b'), sdfg.make_array_memlet('a'))
+    state2.add_nedge(state2.add_access('c'), state2.add_access('d'), sdfg.make_array_memlet('c'))
+    state2.add_nedge(state2.add_access('e'), state2.add_access('f'), dace.Memlet('f[0] -> [0]'))
     sdfg.validate()
     return sdfg
 
@@ -267,18 +216,14 @@ def _make_access_nested_nsdfg() -> dace.SDFG:
 
     for aname in 'ab':
         sdfg.add_array(
-                aname,
-                shape=(10,),
-                dtype=dace.float64,
-                transient=False,
+            aname,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=False,
         )
 
     state = sdfg.add_state(is_start_block=True)
-    state.add_nedge(
-            state.add_access('a'),
-            state.add_access('b'),
-            sdfg.make_array_memlet('a')
-    )
+    state.add_nedge(state.add_access('a'), state.add_access('b'), sdfg.make_array_memlet('a'))
     sdfg.validate()
     return sdfg
 
@@ -289,34 +234,33 @@ def _make_access_nested_sdfg() -> Tuple[dace.SDFG, dace.SDFG]:
 
     for aname in 'ab':
         sdfg.add_array(
-                aname,
-                shape=(10,),
-                dtype=dace.float64,
-                transient=False,
+            aname,
+            shape=(10, ),
+            dtype=dace.float64,
+            transient=False,
         )
 
     state = sdfg.add_state(is_start_block=True)
     nsdfg_node = state.add_nested_sdfg(
-            nsdfg,
-            parent=sdfg,
-            inputs={'a'},
-            outputs={'b'},
-            symbol_mapping={},
+        nsdfg,
+        inputs={'a'},
+        outputs={'b'},
+        symbol_mapping={},
     )
 
     state.add_edge(
-            state.add_access('a'),
-            None,
-            nsdfg_node,
-            'a',
-            sdfg.make_array_memlet('a'),
+        state.add_access('a'),
+        None,
+        nsdfg_node,
+        'a',
+        sdfg.make_array_memlet('a'),
     )
     state.add_edge(
-            nsdfg_node,
-            'b',
-            state.add_access('b'),
-            None,
-            sdfg.make_array_memlet('b'),
+        nsdfg_node,
+        'b',
+        state.add_access('b'),
+        None,
+        sdfg.make_array_memlet('b'),
     )
     sdfg.validate()
     return sdfg, nsdfg
@@ -340,72 +284,34 @@ def _make_conditional_block_sdfg() -> dace.SDFG:
     sdfg = dace.SDFG("conditional_block_sdfg")
 
     for name in ["a", "b", "c", "d", "cond", "cond2"]:
-        sdfg.add_scalar(
-                name,
-                dtype=dace.bool_ if name.startswith("cond") else dace.float64,
-                transient=False
-        )
+        sdfg.add_scalar(name, dtype=dace.bool_ if name.startswith("cond") else dace.float64, transient=False)
     sdfg.arrays["b"].transient = True
     sdfg.arrays["cond2"].transient = True
 
     entry_state = sdfg.add_state("entry", is_start_block=True)
-    entry_state.add_nedge(
-            entry_state.add_access("a"),
-            entry_state.add_access("b"),
-            sdfg.make_array_memlet("a")
-    )
+    entry_state.add_nedge(entry_state.add_access("a"), entry_state.add_access("b"), sdfg.make_array_memlet("a"))
     cond_tasklet: dace.nodes.Tasklet = entry_state.add_tasklet(
-            "cond_processing",
-            inputs={"__in"},
-            code="__out = not __in",
-            outputs={"__out"},
+        "cond_processing",
+        inputs={"__in"},
+        code="__out = not __in",
+        outputs={"__out"},
     )
-    entry_state.add_edge(
-            entry_state.add_access("cond"),
-            None,
-            cond_tasklet,
-            "__in",
-            dace.Memlet("cond[0]")
-    )
-    entry_state.add_edge(
-            cond_tasklet,
-            "__out",
-            entry_state.add_access("cond2"),
-            None,
-            dace.Memlet("cond2[0]")
-    )
+    entry_state.add_edge(entry_state.add_access("cond"), None, cond_tasklet, "__in", dace.Memlet("cond[0]"))
+    entry_state.add_edge(cond_tasklet, "__out", entry_state.add_access("cond2"), None, dace.Memlet("cond2[0]"))
 
     if_region = dace.sdfg.state.ConditionalBlock("if")
     sdfg.add_node(if_region)
-    sdfg.add_edge(
-            entry_state,
-            if_region,
-            dace.InterstateEdge()
-    )
+    sdfg.add_edge(entry_state, if_region, dace.InterstateEdge())
 
     then_body = dace.sdfg.state.ControlFlowRegion("then_body", sdfg=sdfg)
     tstate = then_body.add_state("true_branch", is_start_block=True)
-    tstate.add_nedge(
-            tstate.add_access("b"),
-            tstate.add_access("c"),
-            sdfg.make_array_memlet("b")
-    )
-    if_region.add_branch(
-            dace.sdfg.state.CodeBlock("cond2"),
-            then_body
-    )
+    tstate.add_nedge(tstate.add_access("b"), tstate.add_access("c"), sdfg.make_array_memlet("b"))
+    if_region.add_branch(dace.sdfg.state.CodeBlock("cond2"), then_body)
 
     else_body = dace.sdfg.state.ControlFlowRegion("else_body", sdfg=sdfg)
     fstate = else_body.add_state("false_branch", is_start_block=True)
-    fstate.add_nedge(
-            fstate.add_access("b"),
-            fstate.add_access("d"),
-            sdfg.make_array_memlet("d")
-    )
-    if_region.add_branch(
-            dace.sdfg.state.CodeBlock("not (cond2)"),
-            else_body
-    )
+    fstate.add_nedge(fstate.add_access("b"), fstate.add_access("d"), sdfg.make_array_memlet("d"))
+    if_region.add_branch(dace.sdfg.state.CodeBlock("not (cond2)"), else_body)
     sdfg.validate()
     return sdfg
 

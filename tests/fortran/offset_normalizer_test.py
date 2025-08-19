@@ -4,6 +4,7 @@ import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
 
+
 def test_fortran_frontend_offset_normalizer_1d():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
@@ -45,8 +46,9 @@ def test_fortran_frontend_offset_normalizer_1d():
 
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    for i in range(0,5):
-        assert a[i] == (50+i)* 2
+    for i in range(0, 5):
+        assert a[i] == (50 + i) * 2
+
 
 def test_fortran_frontend_offset_normalizer_2d():
     """
@@ -97,11 +99,12 @@ def test_fortran_frontend_offset_normalizer_2d():
     assert sdfg.data('d').shape[0] == 5
     assert sdfg.data('d').shape[1] == 3
 
-    a = np.full([5,3], 42, order="F", dtype=np.float64)
+    a = np.full([5, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    for i in range(0,5):
-        for j in range(0,3):
-            assert a[i, j] == (50+i) * 2 + 3 * (7 + j)
+    for i in range(0, 5):
+        for j in range(0, 3):
+            assert a[i, j] == (50 + i) * 2 + 3 * (7 + j)
+
 
 def test_fortran_frontend_offset_normalizer_2d_arr2loop():
     """
@@ -151,11 +154,12 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop():
     assert sdfg.data('d').shape[0] == 5
     assert sdfg.data('d').shape[1] == 3
 
-    a = np.full([5,3], 42, order="F", dtype=np.float64)
+    a = np.full([5, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    for i in range(0,5):
-        for j in range(0,3):
+    for i in range(0, 5):
+        for j in range(0, 3):
             assert a[i, j] == (50 + i) * 2
+
 
 if __name__ == "__main__":
 
