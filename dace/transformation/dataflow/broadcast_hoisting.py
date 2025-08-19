@@ -101,11 +101,11 @@ class BroadcastHoisting(xf.SingleStateTransformation):
         handled_edges = set()
         for node in graph.all_nodes_between(innermost_map_2, graph.exit_node(innermost_map_2)):
             for edge in graph.in_edges(node):
-                if isinstance(edge.data, Memlet) and edge.data.data == access_node.data:
+                if isinstance(edge.data, Memlet) and edge.data.data == access_node.data and idx_2 not in edge.data.free_symbols:
                     edge.data.subset = edge.data.subset + Range([(idx_2, idx_2, 1)])
                     handled_edges.add(edge)
             for edge in graph.out_edges(node):
-                if isinstance(edge.data, Memlet) and edge.data.data == access_node.data:
+                if isinstance(edge.data, Memlet) and edge.data.data == access_node.data and idx_2 not in edge.data.free_symbols:
                     edge.data.subset = edge.data.subset + Range([(idx_2, idx_2, 1)])
                     handled_edges.add(edge)
 
