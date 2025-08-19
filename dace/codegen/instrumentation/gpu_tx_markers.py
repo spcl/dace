@@ -86,13 +86,12 @@ class GPUTXMarkersProvider(InstrumentationProvider):
 
     def _is_sdfg_in_device_code(self, sdfg: SDFG) -> bool:
         """ Check if the SDFG is in device code and not top level SDFG. """
-        if sdfg.parent is None:
-            return False
-
-        for state in sdfg.parent.sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, NestedSDFG) and node.sdfg == sdfg and is_devicelevel_gpu_kernel(sdfg, state, node):
-                    return True
+        sdfg_parent_state = sdfg.parent
+        while sdfg_parent_state is not None:
+            sdfg_parent_node = sdfg.parent_nsdfg_node
+            if is_devicelevel_gpu_kernel(sdfg, sdfg_parent_state, sdfg_parent_node):
+                return True
+            sdfg_parent_state = sdfg_parent_state.parent
         return False
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
