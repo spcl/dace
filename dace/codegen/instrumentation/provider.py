@@ -184,8 +184,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_sdfg_init_begin(self, sdfg: SDFG, local_stream: CodeIOStream,
-                           global_stream: CodeIOStream) -> None:
+    def on_sdfg_init_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the beginning of SDFG initialization code generation.
 
             :param sdfg: The generated SDFG object.
@@ -194,8 +193,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_sdfg_init_end(self, sdfg: SDFG, local_stream: CodeIOStream,
-                         global_stream: CodeIOStream) -> None:
+    def on_sdfg_init_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the end of SDFG initialization code generation.
 
             :param sdfg: The generated SDFG object.
@@ -204,8 +202,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_sdfg_exit_begin(self, sdfg: SDFG, local_stream: CodeIOStream,
-                           global_stream: CodeIOStream) -> None:
+    def on_sdfg_exit_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the beginning of SDFG exit code generation.
 
             :param sdfg: The generated SDFG object.
@@ -214,8 +211,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_sdfg_exit_end(self, sdfg: SDFG, local_stream: CodeIOStream,
-                         global_stream: CodeIOStream) -> None:
+    def on_sdfg_exit_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the end of SDFG exit code generation.
 
             :param sdfg: The generated SDFG object.

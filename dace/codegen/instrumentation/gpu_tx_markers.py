@@ -167,8 +167,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(outer_stream)
 
-    def on_sdfg_init_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream,
-                           global_stream: CodeIOStream) -> None:
+    def on_sdfg_init_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
@@ -179,8 +178,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_push(f'init_{sdfg.name}', sdfg, callsite_stream)
 
-    def on_sdfg_init_end(self, sdfg: SDFG, callsite_stream: CodeIOStream,
-                            global_stream: CodeIOStream) -> None:
+    def on_sdfg_init_end(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
@@ -191,8 +189,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_pop(callsite_stream)
 
-    def on_sdfg_exit_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream,
-                           global_stream: CodeIOStream) -> None:
+    def on_sdfg_exit_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
@@ -200,8 +197,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             return
         self.print_range_push(f'exit_{sdfg.name}', sdfg, callsite_stream)
 
-    def on_sdfg_exit_end(self, sdfg: SDFG, callsite_stream: CodeIOStream,
-                            global_stream: CodeIOStream) -> None:
+    def on_sdfg_exit_end(self, sdfg: SDFG, callsite_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
         if self._is_sdfg_in_device_code(sdfg):
