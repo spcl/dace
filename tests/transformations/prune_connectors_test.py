@@ -28,8 +28,7 @@ def make_sdfg():
 
     sdfg_middle = dace.SDFG("middle")
     sdfg_middle.add_symbol("N", dace.int32)
-    nsdfg_middle = state_outer.add_nested_sdfg(sdfg_middle,
-                                               sdfg_outer, {"read_used_middle", "read_unused_middle"},
+    nsdfg_middle = state_outer.add_nested_sdfg(sdfg_middle, {"read_used_middle", "read_unused_middle"},
                                                {"write_used_middle", "write_unused_middle"},
                                                name="middle")
     state_middle = sdfg_middle.add_state("middle")
@@ -38,8 +37,7 @@ def make_sdfg():
 
     sdfg_inner = dace.SDFG("inner")
     sdfg_inner.add_symbol("N", dace.int32)
-    nsdfg_inner = state_middle.add_nested_sdfg(sdfg_inner,
-                                               sdfg_middle, {"read_used_inner", "read_unused_inner"},
+    nsdfg_inner = state_middle.add_nested_sdfg(sdfg_inner, {"read_used_inner", "read_unused_inner"},
                                                {"write_used_inner", "write_unused_inner"},
                                                name="inner")
     state_inner = sdfg_inner.add_state("inner")
@@ -111,8 +109,7 @@ def make_sdfg():
     isolated_read = state_outer.add_read("read_unused_outer")
     isolated_write = state_outer.add_write("write_unused_outer")
     isolated_sdfg = dace.SDFG("isolated_sdfg")
-    isolated_nsdfg = state_outer.add_nested_sdfg(isolated_sdfg,
-                                                 sdfg_outer, {"read_unused_isolated"}, {"write_unused_isolated"},
+    isolated_nsdfg = state_outer.add_nested_sdfg(isolated_sdfg, {"read_unused_isolated"}, {"write_unused_isolated"},
                                                  name="isolated")
     isolated_sdfg.add_array("read_unused_isolated", shape=(n, n), dtype=dace.uint16, transient=False)
     isolated_sdfg.add_array("write_unused_isolated", shape=(n, n), dtype=dace.uint16, transient=False)
@@ -231,7 +228,6 @@ def _make_read_write_sdfg(conforming_memlet: bool, ) -> Tuple[dace.SDFG, dace.no
     # Add the nested SDFG
     nsdfg = ostate.add_nested_sdfg(
         sdfg=isdfg,
-        parent=osdfg,
         inputs={"inner_A"},
         outputs={"inner_A", "inner_B"},
     )
@@ -294,7 +290,7 @@ def test_unused_retval():
     a = nstate.add_access('used')
     nstate.add_edge(nstate.add_tasklet('do', {}, {'out'}, 'out = 1'), 'out', a, None, dace.Memlet('used[0]'))
     nstate.add_nedge(a, nstate.add_write('__return'), dace.Memlet('__return[0]'))
-    nsnode = state.add_nested_sdfg(nsdfg, None, {}, {'used', '__return'})
+    nsnode = state.add_nested_sdfg(nsdfg, {}, {'used', '__return'})
     state.add_edge(nsnode, 'used', state.add_write('output'), None, dace.Memlet('output[0]'))
     state.add_edge(nsnode, '__return', state.add_write('tmp'), None, dace.Memlet('tmp[0]'))
 
@@ -322,7 +318,7 @@ def test_unused_retval_2():
     a = nstate.add_access('used')
     nstate.add_edge(nstate.add_tasklet('do', {}, {'out'}, 'out = 1'), 'out', a, None, dace.Memlet('used[0]'))
     nstate.add_nedge(a, nstate.add_write('__return'), dace.Memlet('__return[0]'))
-    nsnode = state.add_nested_sdfg(nsdfg, None, {}, {'used', '__return'})
+    nsnode = state.add_nested_sdfg(nsdfg, {}, {'used', '__return'})
     me, mx = state.add_map('doit', dict(i='0:2'))
     state.add_nedge(me, nsnode, dace.Memlet())
     state.add_memlet_path(nsnode, mx, state.add_write('output'), memlet=dace.Memlet('output[i]'), src_conn='used')
@@ -459,7 +455,7 @@ def test_prune_connectors_with_conditional_block():
     b_state.add_nedge(b_state.add_access(b), b_state.add_access(out), dace.Memlet(out))
 
     state = sdfg.add_state()
-    nsdfg_node = state.add_nested_sdfg(nsdfg, sdfg, inputs={a, b, cond}, outputs={out})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a, b, cond}, outputs={out})
     me, mx = state.add_map('map', dict(i="0:4"))
     state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
     state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))

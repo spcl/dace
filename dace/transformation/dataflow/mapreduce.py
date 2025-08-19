@@ -12,7 +12,7 @@ from dace.symbolic import symstr
 from dace.transformation import transformation as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
-from dace.transformation.dataflow.map_fusion import MapFusion
+from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 
 
 @make_properties
@@ -215,9 +215,11 @@ class MapWCRFusion(pm.SingleStateTransformation):
             }, 0)
         map_entry, _ = map_collapse.apply(graph, sdfg)
 
-        map_fusion = MapFusion()
-        map_fusion.setup_match(sdfg, self.cfg_id, self.state_id, {
-            MapFusion.first_map_exit: graph.node_id(self.tmap_exit),
-            MapFusion.second_map_entry: graph.node_id(map_entry),
-        }, 0)
+        map_fusion = MapFusionVertical()
+        map_fusion.setup_match(
+            sdfg, self.cfg_id, self.state_id, {
+                MapFusionVertical.first_map_exit: graph.node_id(self.tmap_exit),
+                MapFusionVertical.array: graph.node_id(self.in_array),
+                MapFusionVertical.second_map_entry: graph.node_id(map_entry),
+            }, 0)
         map_fusion.apply(graph, sdfg)

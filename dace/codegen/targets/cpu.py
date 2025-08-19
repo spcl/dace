@@ -976,7 +976,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return (f'dace::wcr_custom<{dtype.ctype}>:: template {func}({custom_reduction}, {ptr}, {inname})')
+        return (
+            f'const auto __dace__reduction_lambda = {custom_reduction};\ndace::wcr_custom<{dtype.ctype}>::{func}<decltype(__dace__reduction_lambda)>(__dace__reduction_lambda, {ptr}, {inname})'
+        )
 
     def process_out_memlets(self,
                             sdfg: SDFG,
@@ -1039,8 +1041,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if node == dst_node:
                 continue
 
-            # Tasklet -> array
-            if isinstance(node, nodes.CodeNode):
+            # Tasklet -> array with a memlet. Writing to array is emitted only if the memlet is not empty
+            if isinstance(node, nodes.CodeNode) and not edge.data.is_empty():
                 if not uconn:
                     raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
                         str(edge.src), str(edge.dst)))
@@ -1686,6 +1688,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = cfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
@@ -1839,6 +1842,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(nested_global_stream.getvalue())
             function_stream.write(nested_stream.getvalue())
 
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _generate_MapEntry(

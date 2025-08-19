@@ -399,6 +399,7 @@ class StripMining(transformation.SingleStateTransformation):
                     entry_out_conn['OUT_' + conn] = None
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
+                    new_memlet.other_subset = None
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
@@ -444,6 +445,7 @@ class StripMining(transformation.SingleStateTransformation):
                     exit_out_conn['OUT_' + conn] = None
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
+                    new_memlet.other_subset = None
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:

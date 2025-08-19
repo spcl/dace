@@ -167,6 +167,7 @@ def create_einsum_sdfg(sdfg: SDFG,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
                        output: Optional[str] = None,
+                       output_name: Optional[str] = None,
                        alpha: Optional[symbolic.SymbolicType] = 1.0,
                        beta: Optional[symbolic.SymbolicType] = 0.0):
     return _create_einsum_internal(sdfg,
@@ -176,6 +177,7 @@ def create_einsum_sdfg(sdfg: SDFG,
                                    dtype=dtype,
                                    optimize=optimize,
                                    output=output,
+                                   output_name=output_name,
                                    alpha=alpha,
                                    beta=beta)[0]
 
@@ -200,6 +202,7 @@ def _create_einsum_internal(sdfg: SDFG,
                             dtype: Optional[dtypes.typeclass] = None,
                             optimize: bool = False,
                             output: Optional[str] = None,
+                            output_name: Optional[str] = None,
                             nodes: Optional[Dict[str, AccessNode]] = None,
                             init_output: bool = None,
                             alpha: Optional[symbolic.SymbolicType] = None,
@@ -260,6 +263,7 @@ def _create_einsum_internal(sdfg: SDFG,
                                                           dtype=dtype,
                                                           optimize=False,
                                                           output=None,
+                                                          output_name=output_name,
                                                           nodes=input_nodes,
                                                           init_output=init_output,
                                                           alpha=alpha,
@@ -278,7 +282,10 @@ def _create_einsum_internal(sdfg: SDFG,
 
     if output is None:
         dtype = dtype or sdfg.arrays[arrays[0]].dtype
-        output, odesc = sdfg.add_temp_transient(output_shape, dtype)
+        if output_name is None:
+            output, odesc = sdfg.add_temp_transient(output_shape, dtype)
+        else:
+            output, odesc = sdfg.add_transient(output_name, output_shape, dtype, find_new_name=True)
         to_init = True
     else:
         odesc = sdfg.arrays[output]
@@ -402,7 +409,7 @@ def _create_einsum_internal(sdfg: SDFG,
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)
 
-        nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'X', 'Y'}, {'Z'}, strides)
+        nsdfg_node = state.add_nested_sdfg(nsdfg, {'X', 'Y'}, {'Z'}, strides)
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))
         state.add_edge(b, None, nsdfg_node, 'Y', Memlet.from_array(b.data, b.desc(sdfg)))
         state.add_edge(nsdfg_node, 'Z', c, None, Memlet.from_array(c.data, c.desc(sdfg)))
