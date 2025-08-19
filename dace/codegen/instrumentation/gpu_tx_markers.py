@@ -132,7 +132,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             if is_devicelevel_gpu_kernel(sdfg, state, src_node):
                 # Don't instrument device code
                 return
-            self.print_range_push(f'copy_{src_node.label}_to_{dst_node.label}', sdfg, global_stream)
+            self.print_range_push(f'copy_{src_node.label}_to_{dst_node.label}', sdfg, local_stream)
 
     def on_copy_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, src_node: nodes.Node,
                     dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], local_stream: CodeIOStream,
@@ -141,7 +141,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             if is_devicelevel_gpu_kernel(sdfg, state, src_node):
                 # Don't instrument device code
                 return
-            self.print_range_pop(global_stream)
+            self.print_range_pop(local_stream)
 
     def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
                        outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
