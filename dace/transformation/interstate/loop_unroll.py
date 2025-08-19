@@ -76,14 +76,17 @@ class LoopUnroll(xf.MultiStateTransformation):
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
-                graph.add_edge(unrolled_iterations[-1], iteration_region, sd.InterstateEdge())
+                graph.add_edge(unrolled_iterations[-1], iteration_region,
+                               sd.InterstateEdge(assignments={self.loop.loop_variable: str(current_index)}))
             unrolled_iterations.append(iteration_region)
 
         if unrolled_iterations:
             for ie in graph.in_edges(self.loop):
-                graph.add_edge(ie.src, unrolled_iterations[0], ie.data)
+                ed = graph.add_edge(ie.src, unrolled_iterations[0], ie.data)
+                ed.data.assignments[self.loop.loop_variable] = str(start)
             for oe in graph.out_edges(self.loop):
-                graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
+                ed = graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
+                ed.data.assignments[self.loop.loop_variable] = str(end)
 
         # Remove old loop.
         graph.remove_node(self.loop)
@@ -100,7 +103,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         block_map = {}
         for block in loop.nodes():
             # Using to/from JSON copies faster than deepcopy.
-            new_block = sd.SDFGState.from_json(block.to_json(), context={'sdfg': graph.sdfg})
+            new_block = type(block).from_json(block.to_json(), context={'sdfg': graph.sdfg})
             block_map[block] = new_block
             new_block.replace(loop.loop_variable, value)
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
