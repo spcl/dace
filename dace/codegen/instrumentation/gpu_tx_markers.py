@@ -159,3 +159,45 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                 # Don't instrument device code
                 return
             self.print_range_pop(outer_stream)
+
+    def on_sdfg_init_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream,
+                           global_stream: CodeIOStream) -> None:
+        if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if self._is_sdfg_in_device_code(sdfg):
+            # Don't instrument device code
+            return
+        # cannot push rocTX markers before initializing HIP
+        if self.enable_rocTX:
+            return
+        self.print_range_push(f'init_{sdfg.name}', sdfg, callsite_stream)
+
+    def on_sdfg_init_end(self, sdfg: SDFG, callsite_stream: CodeIOStream,
+                            global_stream: CodeIOStream) -> None:
+        if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if self._is_sdfg_in_device_code(sdfg):
+            # Don't instrument device code
+            return
+        # cannot push rocTX markers before initializing HIP so there's no marker to pop
+        if self.enable_rocTX:
+            return
+        self.print_range_pop(callsite_stream)
+
+    def on_sdfg_exit_begin(self, sdfg: SDFG, callsite_stream: CodeIOStream,
+                           global_stream: CodeIOStream) -> None:
+        if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if self._is_sdfg_in_device_code(sdfg):
+            # Don't instrument device code
+            return
+        self.print_range_push(f'exit_{sdfg.name}', sdfg, callsite_stream)
+
+    def on_sdfg_exit_end(self, sdfg: SDFG, callsite_stream: CodeIOStream,
+                            global_stream: CodeIOStream) -> None:
+        if sdfg.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
+            return
+        if self._is_sdfg_in_device_code(sdfg):
+            # Don't instrument device code
+            return
+        self.print_range_pop(callsite_stream)
