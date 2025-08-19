@@ -34,7 +34,12 @@ UfuncOutput = Union[str, None]
 ########################################################################
 
 
-def simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: dtypes.typeclass = None):
+def simple_call(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                inpname: str,
+                func: str,
+                restype: dtypes.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
     create_input = True
     if isinstance(inpname, (list, tuple)):  # TODO investigate this
@@ -43,7 +48,7 @@ def simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: 
         # Constant parameter
         cst = inpname
         inparr = data.create_datadescriptor(cst)
-        inpname = sdfg.temp_data_name()
+        inpname = sdfg._find_new_name('constant')
         inparr.transient = True
         sdfg.add_constant(inpname, cst, inparr)
         sdfg.add_datadesc(inpname, inparr)
@@ -56,7 +61,7 @@ def simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: 
 
     if restype is None:
         restype = inparr.dtype
-    outname, outarr = sdfg.add_temp_transient_like(inparr)
+    outname, outarr = sdfg.add_temp_transient_like(inparr, name=pv.get_target_name())
     outarr.dtype = restype
     num_elements = data._prod(inparr.shape)
     if num_elements == 1:
