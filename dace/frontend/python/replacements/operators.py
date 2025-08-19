@@ -20,7 +20,7 @@ import dace  # For evaluation of data types
 numpy_version = np.lib.NumpyVersion(np.__version__)
 
 
-def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
+def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array unary operator. """
     arr1 = sdfg.arrays[op1]
 
@@ -34,7 +34,7 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     if opcode == '~' and arr1.dtype == dtypes.bool_:
         opcode = 'not'
 
-    name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
+    name, _ = pv.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet("_%s_" % opname, {
         '__i%d' % i: '0:%s' % s
         for i, s in enumerate(arr1.shape)
@@ -45,41 +45,23 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str, opname: str, restype: dtypes.typeclass):
-    """ Implements a general element-wise array binary operator. """
-    arr1 = sdfg.arrays[op1]
-    arr2 = sdfg.arrays[op2]
-
-    out_shape, all_idx_tup, all_idx, arr1_idx, arr2_idx = broadcast_together(arr1.shape, arr2.shape)
-
-    name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
-    state.add_mapped_tasklet("_%s_" % opname,
-                             all_idx_tup, {
-                                 '__in1': Memlet.simple(op1, arr1_idx),
-                                 '__in2': Memlet.simple(op2, arr2_idx)
-                             },
-                             '__out = __in1 %s __in2' % opcode, {'__out': Memlet.simple(name, all_idx)},
-                             external_edges=True)
-    return name
-
-
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeunop(op, opcode):
 
     @oprepo.replaces_operator('Array', op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
-        return _unop(sdfg, state, op1, opcode, op)
+        return _unop(visitor, sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('View', op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
-        return _unop(sdfg, state, op1, opcode, op)
+        return _unop(visitor, sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('Scalar', op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
         restype, _ = result_type([scalar1], op)
-        op2 = sdfg.temp_data_name()
-        _, scalar2 = sdfg.add_scalar(op2, restype, transient=True)
+        op2 = visitor.get_target_name()
+        op2, scalar2 = sdfg.add_scalar(op2, restype, transient=True, find_new_name=True)
         tasklet = state.add_tasklet("_%s_" % op, {'__in'}, {'__out'}, "__out = %s __in" % opcode)
         node1 = state.add_read(op1)
         node2 = state.add_write(op2)
@@ -404,7 +386,7 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     if isinstance(right_arr, data.Scalar):
         right_idx = subsets.Range([(0, 0, 1)])
 
-    out_operand, out_arr = sdfg.add_temp_transient(out_shape, restype, left_arr.storage)
+    out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, left_arr.storage)
 
     if list(out_shape) == [1]:
         tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
@@ -466,7 +448,7 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
 
     (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
-    out_operand, out_arr = sdfg.add_temp_transient(out_shape, restype, storage)
+    out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, storage)
 
     if list(out_shape) == [1]:
         if left_arr:
@@ -536,7 +518,7 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
 
     (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
-    out_operand, out_arr = sdfg.add_temp_transient(out_shape, restype, storage)
+    out_operand, out_arr = visitor.add_temp_transient(out_shape, restype, storage)
 
     if list(out_shape) == [1]:
         if left_arr:
@@ -592,8 +574,12 @@ def _scalar_scalar_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, 
     if right_cast is not None:
         tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
 
-    out_operand = sdfg.temp_data_name()
-    _, out_scal = sdfg.add_scalar(out_operand, restype, transient=True, storage=left_scal.storage)
+    out_operand = visitor.get_target_name()
+    out_operand, out_scal = sdfg.add_scalar(out_operand,
+                                            restype,
+                                            transient=True,
+                                            storage=left_scal.storage,
+                                            find_new_name=True)
 
     tasklet = state.add_tasklet('_%s_' % operator, {'__in1', '__in2'}, {'__out'},
                                 '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]))
@@ -635,8 +621,8 @@ def _scalar_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, l
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'), o=tasklet_args[1])
 
-    out_operand = sdfg.temp_data_name()
-    _, out_scal = sdfg.add_scalar(out_operand, restype, transient=True, storage=storage)
+    out_operand = visitor.get_target_name()
+    out_operand, out_scal = sdfg.add_scalar(out_operand, restype, transient=True, storage=storage, find_new_name=True)
 
     if left_scal:
         inp_conn = {'__in1'}
@@ -688,8 +674,8 @@ def _scalar_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, lef
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'), o=tasklet_args[1])
 
-    out_operand = sdfg.temp_data_name()
-    _, out_scal = sdfg.add_scalar(out_operand, restype, transient=True, storage=storage)
+    out_operand = visitor.get_target_name()
+    out_operand, out_scal = sdfg.add_scalar(out_operand, restype, transient=True, storage=storage, find_new_name=True)
 
     if left_scal:
         inp_conn = {'__in1'}
