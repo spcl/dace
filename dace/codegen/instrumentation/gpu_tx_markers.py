@@ -91,7 +91,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             sdfg_parent_node = sdfg.parent_nsdfg_node
             if is_devicelevel_gpu_kernel(sdfg, sdfg_parent_state, sdfg_parent_node):
                 return True
-            sdfg_parent_state = sdfg_parent_state.parent
+            sdfg_parent_state = sdfg_parent_state.sdfg.parent
         return False
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
@@ -159,9 +159,9 @@ class GPUTXMarkersProvider(InstrumentationProvider):
 
     def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+        entry_node = state.entry_node(node)
         if entry_node.map.instrument != dtypes.InstrumentationType.GPU_TX_MARKERS:
             return
-        entry_node = state.entry_node(node)
         if is_devicelevel_gpu_kernel(sdfg, state, entry_node):
             # Don't instrument device code
             return
