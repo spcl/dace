@@ -67,6 +67,17 @@ def dealias_sdfg(sdfg: SDFG):
                         inv_replacements[parent_name] = [name]
                     break
 
+        # This function assumes input/outputs of the nested SDFG to be uniquely named.
+        # Let's assert this because failure to comply will result a potentially working,
+        # but potentially wrong schedule tree, which is non-trivial to debug.
+        for replacement in replacements.keys():
+            connectors = list(parent_state.edges_by_connector(parent_node, replacement))
+            if len(connectors) > 1:
+                raise ValueError(
+                    f"Expected in/out connectors of nested SDFG '{parent_node.label}' to be uniquely named. "
+                    f"Found duplicate '{replacement}' in inputs '{parent_node.in_connectors}' and "
+                    f"outputs '{parent_node.out_connectors}'.")
+
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
                 parent_arr = parent_sdfg.arrays[parent_name]
