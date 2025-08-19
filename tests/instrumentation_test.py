@@ -45,7 +45,12 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     if instrumentation in [dace.InstrumentationType.GPU_Events, dace.InstrumentationType.GPU_TX_MARKERS]:
         sdfg.apply_transformations(GPUTransformSDFG)
 
-    with dace.instrument(instrumentation, filter='*', annotate_maps=True, annotate_tasklets=True, annotate_states=True, annotate_sdfgs=True):
+    with dace.instrument(instrumentation,
+                         filter='*',
+                         annotate_maps=True,
+                         annotate_tasklets=True,
+                         annotate_states=True,
+                         annotate_sdfgs=True):
         sdfg(A=A, B=B, C=C, N=size)
 
     # Check for correctness
