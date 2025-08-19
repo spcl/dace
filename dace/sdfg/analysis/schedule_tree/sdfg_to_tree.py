@@ -44,7 +44,8 @@ def dealias_sdfg(sdfg: SDFG):
 
         replacements: Dict[str, str] = {}
         inv_replacements: Dict[str, List[str]] = {}
-        parent_edges: Dict[str, Memlet] = {}
+        parent_edges_inputs: Dict[str, Memlet] = {}
+        parent_edges_outputs: Dict[str, Memlet] = {}
         to_unsqueeze: Set[str] = set()
 
         parent_sdfg = nsdfg.parent_sdfg
@@ -54,29 +55,42 @@ def dealias_sdfg(sdfg: SDFG):
         for name, desc in nsdfg.arrays.items():
             if desc.transient:
                 continue
-            for edge in parent_state.edges_by_connector(parent_node, name):
+            for edge in parent_state.in_edges_by_connector(parent_node, name):
                 parent_name = edge.data.data
                 assert parent_name in parent_sdfg.arrays
                 if name != parent_name:
+                    parent_edges_inputs[name] = edge
+
                     replacements[name] = parent_name
-                    parent_edges[name] = edge
                     if parent_name in inv_replacements:
                         inv_replacements[parent_name].append(name)
                         to_unsqueeze.add(parent_name)
                     else:
                         inv_replacements[parent_name] = [name]
+                    # We found an incoming edge for name and we don't expect a second one.
                     break
 
-        # This function assumes input/outputs of the nested SDFG to be uniquely named.
-        # Let's assert this because failure to comply will result a potentially working,
-        # but potentially wrong schedule tree, which is non-trivial to debug.
-        for replacement in replacements.keys():
-            connectors = list(parent_state.edges_by_connector(parent_node, replacement))
-            if len(connectors) > 1:
-                raise ValueError(
-                    f"Expected in/out connectors of nested SDFG '{parent_node.label}' to be uniquely named. "
-                    f"Found duplicate '{replacement}' in inputs '{parent_node.in_connectors}' and "
-                    f"outputs '{parent_node.out_connectors}'.")
+            for edge in parent_state.out_edges_by_connector(parent_node, name):
+                parent_name = edge.data.data
+                assert parent_name in parent_sdfg.arrays
+                if name != parent_name:
+                    parent_edges_outputs[name] = edge
+
+                    if replacements.get(name, None) is not None:
+                        # There's an incoming and an outgoing connector with the same name.
+                        # Make sure both map to the same memory in the parent sdfg
+                        assert replacements[name] == parent_name
+                        assert name in inv_replacements[parent_name]
+                        break
+                    else:
+                        replacements[name] = parent_name
+                        if parent_name in inv_replacements:
+                            inv_replacements[parent_name].append(name)
+                            to_unsqueeze.add(parent_name)
+                        else:
+                            inv_replacements[parent_name] = [name]
+                        # We found an outgoing edge for name and we don't expect a second one.
+                        break
 
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
@@ -106,14 +120,18 @@ def dealias_sdfg(sdfg: SDFG):
                         # destination subset
                         if isinstance(src, nd.AccessNode) and src.data in child_names:
                             src_data = src.data
-                            new_src_memlet = unsqueeze_memlet(e.data, parent_edges[src.data].data, use_src_subset=True)
+                            new_src_memlet = unsqueeze_memlet(e.data,
+                                                              parent_edges_inputs[src.data].data,
+                                                              use_src_subset=True)
                         else:
                             src_data = None
                             new_src_memlet = None
                             # We need to take directionality of the memlet into account
                         if isinstance(dst, nd.AccessNode) and dst.data in child_names:
                             dst_data = dst.data
-                            new_dst_memlet = unsqueeze_memlet(e.data, parent_edges[dst.data].data, use_dst_subset=True)
+                            new_dst_memlet = unsqueeze_memlet(e.data,
+                                                              parent_edges_outputs[dst.data].data,
+                                                              use_dst_subset=True)
                         else:
                             dst_data = None
                             new_dst_memlet = None
@@ -132,23 +150,26 @@ def dealias_sdfg(sdfg: SDFG):
                     syms = e.data.read_symbols()
                     for memlet in e.data.get_read_memlets(nsdfg.arrays):
                         if memlet.data in child_names:
-                            repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges[memlet.data].data)
+                            repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges_inputs[memlet.data].data)
                             if memlet.data in syms:
                                 syms.remove(memlet.data)
                     for s in syms:
-                        if s in parent_edges:
+                        if s in parent_edges_inputs:
                             if s in nsdfg.arrays:
-                                repl_dict[s] = parent_edges[s].data.data
+                                repl_dict[s] = parent_edges_inputs[s].data.data
                             else:
-                                repl_dict[s] = str(parent_edges[s].data)
+                                repl_dict[s] = str(parent_edges_inputs[s].data)
                     e.data.replace_dict(repl_dict)
                 for name in child_names:
-                    edge = parent_edges[name]
-                    for e in parent_state.memlet_tree(edge):
-                        if e.data.data == parent_name:
-                            e.data.subset = subsets.Range.from_array(parent_arr)
-                        else:
-                            e.data.other_subset = subsets.Range.from_array(parent_arr)
+                    for edge in [parent_edges_inputs.get(name, None), parent_edges_outputs.get(name, None)]:
+                        if edge is None:
+                            continue
+
+                        for e in parent_state.memlet_tree(edge):
+                            if e.data.data == parent_name:
+                                e.data.subset = subsets.Range.from_array(parent_arr)
+                            else:
+                                e.data.other_subset = subsets.Range.from_array(parent_arr)
 
         if replacements:
             symbolic.safe_replace(replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
