@@ -1239,11 +1239,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage), _get_storagename(dst_storage), dims)
 
-                # Check for GlobalToGlobal copies which are not well-defined
-                if (src_storage == dtypes.StorageType.GPU_Global and dst_storage == dtypes.StorageType.GPU_Global):
+                # Check for GlobalToGlobal copies for higher dimensions which are not implemented
+                if (src_storage == dtypes.StorageType.GPU_Global and dst_storage == dtypes.StorageType.GPU_Global
+                        and dims > 1):
                     raise NotImplementedError(
-                        "GPU global memory to global memory copies need to be more explicitly specified in the code. "
-                        "Consider using shared memory, different memory scopes, or explicit synchronization patterns.")
+                        "GPU global memory to global memory copies for higher dimensions (2D, 3D) are not implemented. "
+                        "Consider moving the copy to a map using the CopyToMap transformation or manually.")
 
                 self._scope_has_collaborative_copy = True
                 accum = ''
