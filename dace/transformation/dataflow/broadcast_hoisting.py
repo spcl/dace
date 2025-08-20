@@ -6,6 +6,7 @@ from dace.sdfg import SDFGState,SDFG, nodes, utils as sdutil
 from dace.memlet import Memlet
 from dace.sdfg.state import ControlFlowRegion
 from dace.subsets import Range, Subset
+from dace.symbolic import evaluate
 
 
 @properties.make_properties
@@ -55,11 +56,16 @@ class BroadcastHoisting(xf.SingleStateTransformation):
         for edge in graph.out_edges(self.access_node):
                 read_vol += edge.data.volume
 
-        if read_vol == 0 or write_vol == 0:
-            return False
-        if read_vol <= write_vol:
-            return False
+        sym_assignments = {}
+        for sym in read_vol.free_symbols | write_vol.free_symbols:
+            sym_assignments[sym] = 10
+        read_vol_eval = evaluate(read_vol, sym_assignments)
+        write_vol_eval = evaluate(write_vol, sym_assignments)
 
+        if read_vol_eval == 0 or write_vol_eval == 0:
+            return False
+        if read_vol_eval <= write_vol_eval:
+            return False
 
         return True
 
