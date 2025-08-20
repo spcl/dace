@@ -220,8 +220,8 @@ def test_broadcast_hoisting_nested():
     _test_for_unchanged_behavior(nested_broadcast_test, ['A','C'], [2,1])
 
 
-def test_broadcast_hoisting_small_ranges():
-    """Test broadcasting with small ranges, including size 1."""
+def test_broadcast_hoisting_no_broadcast():
+    """Test broadcasting with a fake broadcast (no actual broadcast)."""
     
     @dace.program
     def small_range_test(B: dace.float32[5], C: dace.float32[5, 1]):
@@ -232,7 +232,7 @@ def test_broadcast_hoisting_small_ranges():
             for j in dace.map[0:1]:  # Single iteration map
                 C[i, j] = A[i]
     
-    _test_for_unchanged_behavior(small_range_test, ['A'], [1])
+    _test_for_unchanged_behavior(small_range_test, ['A'])
 
 
 def test_broadcast_hoisting_non_consecutive_maps():
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     test_broadcast_hoisting_strided_access()
     test_broadcast_hoisting_multiple_consumers()
     test_broadcast_hoisting_nested()
-    test_broadcast_hoisting_small_ranges()
+    test_broadcast_hoisting_no_broadcast()
     test_broadcast_hoisting_non_consecutive_maps()
     test_broadcast_hoisting_indirect_access()
     test_broadcast_hoisting_dynamic_range()

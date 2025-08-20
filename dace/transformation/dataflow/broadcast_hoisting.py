@@ -97,10 +97,8 @@ class BroadcastHoisting(xf.SingleStateTransformation):
               innermost_map_2 = next_succ
               next_succ = list(graph.successors(innermost_map_2))[0]
           
-          next_prev = innermost_map_2
-          while isinstance(next_prev, nodes.MapEntry) and len(set(next_prev.map.params) - used_indices) == 0:
-              innermost_map_2 = next_prev
-              next_prev = list(graph.predecessors(innermost_map_2))[0]
+          while isinstance(innermost_map_2, nodes.MapEntry) and len(set(innermost_map_2.map.params) - used_indices) == 0:
+              innermost_map_2 = list(graph.predecessors(innermost_map_2))[0]
 
           map_range_2: Range = innermost_map_2.map.range
           ranges_2 = None
