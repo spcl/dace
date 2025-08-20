@@ -47,7 +47,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     with dace.instrument(instrumentation,
                          filter='*',
                          annotate_maps=True,
-                         annotate_tasklets=True,
+                         annotate_tasklets=False,
                          annotate_states=True,
                          annotate_sdfgs=True):
         sdfg(A=A, B=B, C=C, N=size)
