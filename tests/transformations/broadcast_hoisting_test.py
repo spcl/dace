@@ -34,15 +34,21 @@ def _get_small_input_data(sdfg: dace.SDFG) -> dict:
         input_data[argName] = arr
     return input_data
 
-def _test_for_unchanged_behavior(prog, array_name, dim_increase = 0):
+def _test_for_unchanged_behavior(prog, array_names, dim_increases = None):
     sdfg: dace.SDFG = prog.to_sdfg(simplify=True)
     sdfg.validate()
 
     # Get the dimension of the array
-    old_array_dim = len(sdfg.arrays[array_name].shape)
+    old_array_dims = [len(sdfg.arrays[array_name].shape) for array_name in array_names]
+
+    # If dim is None, we assume no dimension increase
+    if dim_increases is None:
+        dim_increases = [0] * len(array_names)
+    else:
+        assert len(dim_increases) == len(array_names), "dim_increases must match the number of array names"
 
     # Get ground truth values if we expect dimension increase
-    if dim_increase > 0:
+    if any([d > 0 for d in dim_increases]):
         input_data = _get_small_input_data(sdfg)
         ground_truth = deepcopy(input_data)
         sdfg(**ground_truth)
@@ -53,11 +59,11 @@ def _test_for_unchanged_behavior(prog, array_name, dim_increase = 0):
     sdfg.save("test_broadcast_hoisting.sdfg")
 
     # Check that the array shape has been modified correctly
-    new_array_dim = len(sdfg.arrays[array_name].shape)
-    assert new_array_dim == old_array_dim + dim_increase
+    new_array_dims = [len(sdfg.arrays[array_name].shape) for array_name in array_names]
+    assert all(new_dim == old_dim + inc for new_dim, old_dim, inc in zip(new_array_dims, old_array_dims, dim_increases)), f"Expected new dimensions {new_array_dims} to match old dimensions {old_array_dims} with increases {dim_increases}"
 
     # Test if the behavior is unchanged if we expect dimension increase
-    if dim_increase > 0:
+    if any([d > 0 for d in dim_increases]):
         output_data = deepcopy(input_data)
         sdfg(**output_data)
         np.testing.assert_equal(output_data, ground_truth)
@@ -74,7 +80,7 @@ def test_broadcast_hoisting_basic():
             for j in dace.map[0:10]:
               C[i, j] = A[i]
 
-    _test_for_unchanged_behavior(tester, 'A', 1)
+    _test_for_unchanged_behavior(tester, ['A'], [1])
 
 
 
@@ -90,7 +96,7 @@ def test_broadcast_hoisting_non_transient():
             for j in dace.map[0:10]:
                 C[i, j] = A[i]  # Broadcast
     
-    _test_for_unchanged_behavior(non_transient_test, 'A')
+    _test_for_unchanged_behavior(non_transient_test, ['A'])
 
 
 def test_broadcast_hoisting_equal_volume():
@@ -104,7 +110,7 @@ def test_broadcast_hoisting_equal_volume():
         for i in dace.map[0:10]:
             C[i] = A[i]  # Read from A with same volume
     
-    _test_for_unchanged_behavior(equal_volume_test, 'A')
+    _test_for_unchanged_behavior(equal_volume_test, ['A'])
 
 
 def test_broadcast_hoisting_less_read_volume():
@@ -119,7 +125,7 @@ def test_broadcast_hoisting_less_read_volume():
         for i in dace.map[0:5]:
             C[i] = A[i, 0]  # Read only part of the array
     
-    _test_for_unchanged_behavior(less_read_test, 'A')
+    _test_for_unchanged_behavior(less_read_test, ['A'])
 
 
 def test_broadcast_hoisting_multiple_dims():
@@ -135,7 +141,7 @@ def test_broadcast_hoisting_multiple_dims():
                 for k in dace.map[0:10]:
                     C[i, j, k] = A[i]  # Broadcasting to two additional dimensions
     
-    _test_for_unchanged_behavior(multi_dim_test, 'A', 2)
+    _test_for_unchanged_behavior(multi_dim_test, ['A'], [2])
 
 
 def test_broadcast_hoisting_symbolic():
@@ -152,7 +158,7 @@ def test_broadcast_hoisting_symbolic():
             for j in dace.map[0:N]:
                 C[i, j] = A[i]
     
-    _test_for_unchanged_behavior(symbolic_test, 'A', 1)
+    _test_for_unchanged_behavior(symbolic_test, ['A'], [1])
 
 
 def test_broadcast_hoisting_strided_access():
@@ -167,7 +173,7 @@ def test_broadcast_hoisting_strided_access():
             for j in dace.map[0:10]:
                 C[i, j] = A[i]  # Broadcast
     
-    _test_for_unchanged_behavior(strided_test, 'A', 1)
+    _test_for_unchanged_behavior(strided_test, ['A'], [1])
 
 
 def test_broadcast_hoisting_multiple_consumers():
@@ -186,7 +192,7 @@ def test_broadcast_hoisting_multiple_consumers():
             for j in dace.map[0:5]:
                 D[i, j] = A[i] * 2
     
-    _test_for_unchanged_behavior(multiple_consumers_test, 'A', 1)
+    _test_for_unchanged_behavior(multiple_consumers_test, ['A'], [1])
 
 
 def test_broadcast_hoisting_nested():
@@ -211,8 +217,7 @@ def test_broadcast_hoisting_nested():
                 for k in dace.map[0:10]:
                     D[i, j, k] = C[i, j]
     
-    _test_for_unchanged_behavior(nested_broadcast_test, 'A', 1)
-    _test_for_unchanged_behavior(nested_broadcast_test, 'C', 1)
+    _test_for_unchanged_behavior(nested_broadcast_test, ['A','C'], [2,1])
 
 
 def test_broadcast_hoisting_small_ranges():
@@ -227,7 +232,7 @@ def test_broadcast_hoisting_small_ranges():
             for j in dace.map[0:1]:  # Single iteration map
                 C[i, j] = A[i]
     
-    _test_for_unchanged_behavior(small_range_test, 'A', 1)
+    _test_for_unchanged_behavior(small_range_test, ['A'], [1])
 
 
 def test_broadcast_hoisting_non_consecutive_maps():
@@ -248,7 +253,7 @@ def test_broadcast_hoisting_non_consecutive_maps():
             for j in dace.map[0:10]:
                 C[i, j] = A[i] * E[0]
     
-    _test_for_unchanged_behavior(non_consecutive_test, 'A', 1)
+    _test_for_unchanged_behavior(non_consecutive_test, ['A'], [1])
 
 
 def test_broadcast_hoisting_indirect_access():
@@ -266,7 +271,7 @@ def test_broadcast_hoisting_indirect_access():
                 C[i, j] = A[idx[i]]  # Indirect access
     
     # Should not transform due to indirect access
-    _test_for_unchanged_behavior(indirect_access_test, 'A')
+    _test_for_unchanged_behavior(indirect_access_test, ['A'])
 
 
 def test_broadcast_hoisting_dynamic_range():
@@ -285,7 +290,7 @@ def test_broadcast_hoisting_dynamic_range():
                 if j < 10:  # Safety check
                     C[i, j] = A[i]
     
-    _test_for_unchanged_behavior(dynamic_range_test, 'A', 1)
+    _test_for_unchanged_behavior(dynamic_range_test, ['A'], [1])
 
 
 def test_broadcast_hoisting_mixed_dimensions():
@@ -305,7 +310,7 @@ def test_broadcast_hoisting_mixed_dimensions():
                 for k in dace.map[0:8]:
                     C[i, j, k] = A[i, j]  # Broadcast along third dimension
     
-    _test_for_unchanged_behavior(mixed_dim_test, 'A', 1)
+    _test_for_unchanged_behavior(mixed_dim_test, ['A'], [1])
 
 
 if __name__ == "__main__":
