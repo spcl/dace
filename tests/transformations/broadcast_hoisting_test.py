@@ -276,9 +276,11 @@ def test_broadcast_hoisting_indirect_access():
 
 def test_broadcast_hoisting_dynamic_range():
     """Test with dynamically computed range bounds."""
-    
+
+    N = dace.symbol('N')
+
     @dace.program
-    def dynamic_range_test(B: dace.float32[10], N: dace.int32, C: dace.float32[10, 10]):
+    def dynamic_range_test(B: dace.float32[10], C: dace.float32[10, 10]):
         A = dace.define_local([10], dace.float32)
         
         for i in dace.map[0:10]:
