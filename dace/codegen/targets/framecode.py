@@ -138,6 +138,8 @@ class DaCeCodeGenerator(object):
         if backend == 'frame':
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
 
+        global_stream.write('#ifdef WITH_CUDA\n#include <nvtx3/nvToolsExt.h>\n#endif\n', sdfg)
+
         #########################################################
         # Environment-based includes
         for env in self.environments:
@@ -263,7 +265,13 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             f'''
 DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__state{params_comma})
 {{
+    #ifdef WITH_CUDA
+    nvtxRangePushA("{fname}");
+    #endif
     __program_{fname}_internal(__state{paramnames_comma});
+    #ifdef WITH_CUDA
+    nvtxRangePop();
+    #endif
 }}''', sdfg)
 
         for target in self._dispatcher.used_targets:
