@@ -5271,10 +5271,6 @@ class BackwardPassGenerator:
                                                            required_gradients=required_gradients)
             if isinstance(backward_node, nodes.CodeNode):
                 backward_node.schedule = node.schedule
-            if isinstance(backward_node,
-                          nodes.NestedSDFG) and backward_node.schedule is not dtypes.ScheduleType.Default:
-                infer_types._set_default_schedule_types(backward_node.sdfg, backward_node.schedule, True)
-                infer_types._set_default_storage_types(backward_node.sdfg, backward_node.schedule)
             return backward_node, backward_result
 
         raise AutoDiffException("Unable to differentiate node type {}. Either add a pure forward implementation "
