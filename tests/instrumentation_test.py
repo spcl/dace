@@ -8,7 +8,6 @@ import re
 import sys
 
 import dace
-from dace.codegen.instrumentation.utils import instrument_sdfg
 from dace.sdfg import nodes
 from dace.transformation.interstate import GPUTransformSDFG
 
