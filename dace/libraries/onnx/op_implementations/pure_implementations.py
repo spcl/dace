@@ -316,7 +316,6 @@ def Exp(input, output):
 def Sqrt(X, Y):
     Y[:] = dace.elementwise(lambda x: sqrt(x), X)
 
-
 @op_implementation(op="Pow", name="pure")
 class PurePow(ONNXForward):
 
@@ -337,7 +336,7 @@ class PurePow(ONNXForward):
         
         if y_value is not None and y_value.ndim == 0:
             y_value = int(y_value)
-            def prog(X, Y, Z):
+            def prog(X, Z):
                 Z[:] = X**y_value
             return program_for_node(prog, sdfg, state, node)
 
