@@ -56,7 +56,7 @@ def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule', fo
         # initialize the outputs
         for name in output_names:
             output_desc = forward_compiled.sdfg.arrays[name]
-            kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=False)
+            kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=False) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
 
         # call the SDFG
         return forward_compiled(**kwargs, **constants)
@@ -122,7 +122,7 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule', fo
             # initialize the outputs
             for name in outputs_with_forwarded_outputs:
                 output_desc = forward_compiled.sdfg.arrays[name]
-                kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=False)
+                kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=True) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
 
             # call the SDFG
             outputs = forward_compiled(**kwargs, **constants)

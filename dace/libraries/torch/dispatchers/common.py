@@ -49,7 +49,7 @@ def compile_and_init_sdfgs(
 
     if module.backward:
         forwarded_transients = {
-            name: create_output_array(symbols, desc, use_torch=True, zeros=True)
+            name: create_output_array(symbols, desc, use_torch=True, zeros=True) if name not in module.dace_model.initialized_parameters else module.dace_model.initialized_parameters[name]
             for name, desc in module._ad_inp_arrs.items()
         }
     else:
