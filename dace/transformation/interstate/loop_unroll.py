@@ -37,6 +37,7 @@ class LoopUnroll(xf.MultiStateTransformation):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         step = loop_analysis.get_loop_stride(self.loop)
+        stride = loop_analysis.get_loop_stride(self.loop)
         itervar = self.loop.loop_variable
         if start is None or end is None or step is None or itervar is None:
             return False
