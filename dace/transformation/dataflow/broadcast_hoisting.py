@@ -69,6 +69,17 @@ class BroadcastHoisting(xf.SingleStateTransformation):
             if read_vol_eval <= write_vol_eval:
                 return False
 
+        # The second map must have more parameters than the access node, otherwise it is not a broadcast
+        num_map_2_params = len(self.map_entry_2.map.params)
+        nested_map_2 = self.map_entry_2
+        next_succ = list(graph.successors(nested_map_2))[0]
+        while isinstance(next_succ, nodes.MapEntry):
+            num_map_2_params += len(next_succ.map.params)
+            nested_map_2 = next_succ
+            next_succ = list(graph.successors(nested_map_2))[0]
+        if len(self.access_node.desc(sdfg).shape) >= num_map_2_params:
+            return False
+
         # Indirect accesses would be okay, but DaCe does not perform proper slicing with nested SDFGs, thus we cannot perform this transformation if nested SDFGs are involved
         for node in graph.all_nodes_between(self.map_entry_2, graph.exit_node(self.map_entry_2)):
             if isinstance(node, nodes.NestedSDFG):

@@ -316,6 +316,25 @@ def test_broadcast_hoisting_mixed_dimensions():
     _test_for_unchanged_behavior(mixed_dim_test, ["A"], [1])
 
 
+def test_broadcast_hoisting_laplace():
+    """Test broadcasting in a more complex program like Laplace."""
+
+    N = dace.symbol("N")
+
+    @dace.program
+    def laplace(A: dace.float64[N], T: dace.int64):
+        tmp = np.zeros_like(A)
+
+        for _ in range(T):
+            for i in dace.map[1:N - 1]:
+                tmp[i] = A[i - 1] - 2 * A[i] + A[i + 1]
+
+            for i in dace.map[1:N - 1]:
+                A[i] = tmp[i - 1] - 2 * tmp[i] + tmp[i + 1]
+
+    _test_for_unchanged_behavior(laplace, ["tmp"])
+
+
 if __name__ == "__main__":
     test_broadcast_hoisting_basic()
     test_broadcast_hoisting_non_transient()
@@ -331,3 +350,4 @@ if __name__ == "__main__":
     test_broadcast_hoisting_indirect_access()
     test_broadcast_hoisting_dynamic_range()
     test_broadcast_hoisting_mixed_dimensions()
+    test_broadcast_hoisting_laplace()
