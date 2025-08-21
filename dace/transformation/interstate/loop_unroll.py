@@ -41,12 +41,18 @@ class LoopUnroll(xf.MultiStateTransformation):
         if start is None or end is None or step is None or itervar is None:
             return False
 
-        # If loop stride is not specialized or constant-sized, fail
-        if symbolic.issymbolic(step, sdfg.constants):
+        # Before, it was checked by `issymbolic()` if the loop is constant-sized. But that's buggy; e.g.:
+        # (Pdb++) symbolic.issymbolic(end - start, sdfg.constants)
+        # False
+        # (Pdb++) symbolic.evaluate(end - start, sdfg.constants)
+        # __CG_global_data__m_nflatlev(0) - 2
+        try:
+            stride = symbolic.evaluate(stride, sdfg.constants)
+            loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
+            is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
+        except TypeError:
             return False
-        # If loop range diff is not constant-sized, fail
-        if symbolic.issymbolic(end - start, sdfg.constants):
-            return False
+
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
@@ -63,8 +69,8 @@ class LoopUnroll(xf.MultiStateTransformation):
             stride = symbolic.evaluate(stride, sdfg.constants)
             loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
             is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
-        except TypeError:
-            raise TypeError('Loop difference and strides cannot be symbolic.')
+        except TypeError as e:
+            raise TypeError(f'Loop difference and strides cannot be symbolic: {e}') from e
 
         # Create states for loop subgraph
         unrolled_iterations: List[ControlFlowRegion] = []
