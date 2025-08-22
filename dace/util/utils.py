@@ -15,6 +15,7 @@ from dace import SDFG, SDFGState, dtypes
 import dace.data as dt
 from dace import dtypes
 from dace.transformation.auto.auto_optimize import set_fast_implementations
+from dace.transformation.dataflow import CopyToMap
 
 log = logging.getLogger(__name__)
 
@@ -209,8 +210,9 @@ def auto_optimize(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=True):
         # we don't apply inline first
         sdfg.apply_transformations_repeated(interstate.InlineSDFG)
         remove_unnecessary_views(sdfg)
-        sdfg.simplify()
-
+        sdfg.simplify(skip=["ArrayElimination"])
+        if cuda:
+            sdfg.apply_transformations_once_everywhere(CopyToMap)
 
 def remove_unnecessary_views(sdfg: dace.SDFG):
     """
@@ -232,17 +234,17 @@ def remove_unnecessary_views(sdfg: dace.SDFG):
                 original_node = incoming_edge.src
                 original_desc = sdfg.arrays[original_node.data]
                 
+                # Additional restrictive condition: this should only cause a problem for library nodes
+                if not isinstance(outgoing_edge.dst, nd.LibraryNode):
+                    continue
+                
                 # They need to have the same shape
-                if not original_desc.shape == view_desc.shape:
+                if original_desc.shape != view_desc.shape:
                     continue
                 
                 # The memlet subsets need to be the same for the outgoing edge and incoming edge
                 if not (incoming_edge.data.subset == outgoing_edge.data.subset and 
                         incoming_edge.data.other_subset == outgoing_edge.data.other_subset):
-                    continue
-                
-                # Additional restrictive condition: this should only cause a problem for library nodes
-                if not isinstance(outgoing_edge.dst, nd.LibraryNode):
                     continue
                 
                 # Remove the view node
