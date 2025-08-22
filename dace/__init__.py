@@ -15,6 +15,7 @@ from .memlet import Memlet
 from .symbolic import symbol
 
 # Python frontend
+from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
