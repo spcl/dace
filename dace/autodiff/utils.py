@@ -149,7 +149,7 @@ def add_empty_sdfg_for_node(
         ndesc.transient = False
         nsdfg.add_datadesc(name, ndesc)
 
-    bwd_node = context.backward_state.add_nested_sdfg(nsdfg, None, inputs,
+    bwd_node = context.backward_state.add_nested_sdfg(nsdfg, inputs,
                                                       outputs)
     for output in outputs_to_connect_from_forward:
         connect_output_from_forward(forward_node, bwd_node, context, output)
@@ -216,7 +216,7 @@ def backward_program_for_node(
     sdfg = DaceProgram(program, (), {}, False, dace.DeviceType.CPU).to_sdfg()
 
     result_node = context.backward_state.add_nested_sdfg(
-        sdfg, None, set(inputs), set(outputs))
+        sdfg, set(inputs), set(outputs))
 
     return result_node, backward_result
 

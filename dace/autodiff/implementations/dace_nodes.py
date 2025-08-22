@@ -119,7 +119,7 @@ class ReverseReduce(BackwardImplementation):
             assert isinstance(out_node, dace.nodes.AccessNode)
             out_node.setzero = True
             return context.backward_state.add_nested_sdfg(
-                sdfg, None, {rev_input_conn_name},
+                sdfg, {rev_input_conn_name},
                 {rev_output_conn_name}), result
 
         # TODO: Remove code duplication between Max and Min reductions
@@ -199,7 +199,7 @@ class ReverseReduce(BackwardImplementation):
 
             # Add the nested SDFG to the backward state
             nsdfg = context.backward_state.add_nested_sdfg(
-                sdfg, None,
+                sdfg,
                 {rev_input_conn_name, max_conn_name, max_idx_conn_name},
                 {rev_output_conn_name})
 
@@ -346,7 +346,7 @@ class ReverseReduce(BackwardImplementation):
 
             # Add the nested SDFG to the backward state
             nsdfg = context.backward_state.add_nested_sdfg(
-                sdfg, None,
+                sdfg,
                 {rev_input_conn_name, min_conn_name, min_idx_conn_name},
                 {rev_output_conn_name})
 
@@ -527,7 +527,7 @@ class ReverseReduceMax(BackwardImplementation):
             assert isinstance(out_node, dace.nodes.AccessNode)
             out_node.setzero = True
             return context.backward_state.add_nested_sdfg(
-                sdfg, None, {rev_input_conn_name},
+                sdfg, {rev_input_conn_name},
                 {rev_output_conn_name}), result
         else:
             raise AutoDiffException(

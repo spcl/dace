@@ -5357,7 +5357,6 @@ class BackwardPassGenerator:
         # Create the sdfg and return it
         nsdfg = backward_state.add_nested_sdfg(
             reverse_nsdfg,
-            None,
             inputs=inputs,
             outputs=outputs,
         )

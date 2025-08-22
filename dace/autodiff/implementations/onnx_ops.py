@@ -110,7 +110,7 @@ class DefaultEinsumBackward(BackwardImplementation):
                             memlet)
 
         result_node = context.backward_state.add_nested_sdfg(
-            nsdfg, None,
+            nsdfg,
             set(result.given_grad_names.values()).union(required_forward_inputs),
             set(result.required_grad_names.values()))
 
@@ -320,7 +320,6 @@ class DefaultSoftmaxBackward(BackwardImplementation):
         # Create nested SDFG
         result_node = context.backward_state.add_nested_sdfg(
             nsdfg,
-            None,
             # Inputs to nested SDFG
             {"output", "output_grad"},
             # Outputs from nested SDFG
@@ -768,7 +767,7 @@ class CuDNNConvBackward(BackwardImplementation):
 
         inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
         outputs = {result.required_grad_names[n] for n in sorted(required_gradients)}
-        node = context.backward_state.add_nested_sdfg(nsdfg, None, inputs, outputs)
+        node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
 
         return node, result
 
@@ -1123,7 +1122,7 @@ class CuDNNConvTransposeBackward(BackwardImplementation):
 
         inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
         outputs = {result.required_grad_names[n] for n in sorted(required_gradients)}
-        node = context.backward_state.add_nested_sdfg(nsdfg, None, inputs, outputs)
+        node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
 
         return node, result
 
@@ -1232,7 +1231,7 @@ class PyTorchConvBackward(BackwardImplementation):
 
         inputs = {result.given_grad_names["Y"]}.union(required_forward_inputs)
         outputs = {result.required_grad_names[n] for n in sorted(required_gradients)}
-        node = context.backward_state.add_nested_sdfg(nsdfg, None, inputs, outputs)
+        node = context.backward_state.add_nested_sdfg(nsdfg, inputs, outputs)
 
         return node, result
 
@@ -1493,7 +1492,7 @@ class CuDNNBatchNormBackward(BackwardImplementation):
                         dace.Memlet("reserved_size[0]"))
 
         node = context.backward_state.add_nested_sdfg(
-            nsdfg, None,
+            nsdfg,
             {"X", result.given_grad_names["Y"], "scale", "saved_mean", "saved_var", "reserved_ptr", "reserved_size"},
             {result.required_grad_names[a]
              for a in {"X", "scale", "B"}})
@@ -1996,7 +1995,7 @@ class DefaultLayerNormalizationBackward(BackwardImplementation):
             inputs.add("B")
         
         outputs = set(result.required_grad_names.values())
-        bwd_node = context.backward_state.add_nested_sdfg(nsdfg, None, inputs,
+        bwd_node = context.backward_state.add_nested_sdfg(nsdfg, inputs,
                                                           outputs)
         return bwd_node, result
 
@@ -2134,6 +2133,6 @@ class DefaultReduceSumBackward(BackwardImplementation):
             inputs.add("axes")
 
         result_node = context.backward_state.add_nested_sdfg(
-            nsdfg, None, inputs, {"data_grad"})
+            nsdfg, inputs, {"data_grad"})
 
         return result_node, result

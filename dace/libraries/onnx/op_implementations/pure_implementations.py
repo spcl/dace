@@ -1473,8 +1473,7 @@ class PureEinsum(ONNXForward):
         assert len(output_edge) == 1, "Einsum node should have exactly one output edge"
         output_edge = output_edge[0]
         beta = 1 if output_edge.data.wcr else 0
-        create_einsum_sdfg(None,
-                           nsdfg,
+        create_einsum_sdfg(nsdfg,
                            nstate,
                            node.equation.replace(" ", ""),
                            *(e.dst_conn for e in node.iter_inputs_in_onnx_order(state)),
