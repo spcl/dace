@@ -21,7 +21,6 @@ from dace.sdfg import graph as gr
 from dace.sdfg import nodes
 from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 
-
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
     from dace.sdfg.state import SDFGState
@@ -42,7 +41,7 @@ class MemletPattern(object):
 
 @registry.make_registry
 class SeparableMemletPattern(object):
-    """ Memlet pattern that can be applied to each of the dimensions 
+    """ Memlet pattern that can be applied to each of the dimensions
         separately. """
 
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
@@ -360,7 +359,7 @@ class ModuloSMemlet(SeparableMemletPattern):
 
 @registry.autoregister
 class ConstantSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that matches constant (i.e., unrelated to 
+    """ Separable memlet pattern that matches constant (i.e., unrelated to
         current scope) expressions.
     """
 
@@ -405,7 +404,7 @@ class ConstantSMemlet(SeparableMemletPattern):
 
 @registry.autoregister
 class GenericSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that detects any expression, and propagates 
+    """ Separable memlet pattern that detects any expression, and propagates
         interval bounds. Used as a last resort. """
 
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
@@ -687,12 +686,13 @@ def _annotate_loop_ranges(sdfg: 'SDFG', unannotated_cycle_states):
 
     return condition_edges
 
+
 def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
 
     Algorithm:
-    
+
         1. Clean up the state machine by splitting condition and assignment edges
            into separate edes with a dummy state in between.
         2. Detect and annotate any for-loop constructs with their corresponding loop
@@ -1165,8 +1165,8 @@ def reset_state_annotations(sdfg: 'SDFG'):
 
 
 def propagate_memlets_sdfg(sdfg: 'SDFG'):
-    """ Propagates memlets throughout an entire given SDFG. 
-    
+    """ Propagates memlets throughout an entire given SDFG.
+
         :note: This is an in-place operation on the SDFG.
     """
     # Reset previous annotations first
@@ -1223,8 +1223,8 @@ def propagate_memlets_state(sdfg: 'SDFG', state: 'SDFGState'):
 
 
 def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate_exit=True):
-    """ 
-    Propagate memlets from the given scopes outwards. 
+    """
+    Propagate memlets from the given scopes outwards.
 
     :param sdfg: The SDFG in which the scopes reside.
     :param state: The SDFG state in which the scopes reside.
@@ -1261,6 +1261,43 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
             next_scopes.add(scope.parent)
         scopes_to_process = next_scopes
         next_scopes = set()
+
+
+def propagate_memlets_map_scope(sdfg: 'SDFG', state: 'SDFGState', map_entry: nodes.MapEntry) -> None:
+    """Propagate Memlets from the given Map outside.
+
+    The main difference to `propagate_memlets_scope()` is that this function operates on Maps
+    instead of `ScopeTree` it is thus much more accessible.
+    The function will first propagate the Memlets of the nested SDFGs that are enclosed by the
+    Map. Then the propagation will start bit only for those Melets that starts with `map_entry`.
+
+    :param sdfg: The SDFG in which the scopes reside.
+    :param state: The SDFG state in which the scopes reside.
+    :param map_entry: Defining the Map scope to which propagation should be restricted.
+    """
+    if not isinstance(map_entry, nodes.MapEntry):
+        raise TypeError(
+            f'A MapEntry node must be passed to the `propagate_memlets_map_scope()` function not a `{type(map_entry).__name__}`.'
+        )
+
+    # This code is an adapted version of `propagate_memlet_state()` and as there we
+    #  propagate the Memlets of nested SDFGs, but we restrict ourselves to the
+    #  ones that are inside the scope we are in.
+    nodes_in_scope = list(state.scope_subgraph(map_entry).nodes())
+    for node in nodes_in_scope:
+        if isinstance(node, nodes.NestedSDFG):
+            propagate_memlets_sdfg(node.sdfg)
+            propagate_memlets_nested_sdfg(sdfg, state, node)
+
+    # In `propagate_memlet_state()` we would start the propagation from all lowest scopes. Here,
+    #  however, we restrict ourselves to the scopes that are enclosed by `map_entry`.
+    contained_leaf_scopes = [scope_leaf for scope_leaf in state.scope_leaves() if scope_leaf.entry in nodes_in_scope]
+    assert len(contained_leaf_scopes) > 0
+    propagate_memlets_scope(
+        sdfg,
+        state,
+        contained_leaf_scopes,
+    )
 
 
 def _propagate_node(dfg_state, node):
@@ -1322,8 +1359,8 @@ def propagate_memlet(dfg_state,
                      union_inner_edges: bool,
                      arr=None,
                      connector=None):
-    """ Tries to propagate a memlet through a scope (computes the image of 
-        the memlet function applied on an integer set of, e.g., a map range) 
+    """ Tries to propagate a memlet through a scope (computes the image of
+        the memlet function applied on an integer set of, e.g., a map range)
         and returns a new memlet object.
 
         :param dfg_state: An SDFGState object representing the graph.
@@ -1406,8 +1443,8 @@ def propagate_subset(memlets: List[Memlet],
                      rng: subsets.Subset,
                      defined_variables: Set[symbolic.SymbolicType] = None,
                      use_dst: bool = False) -> Memlet:
-    """ Tries to propagate a list of memlets through a range (computes the 
-        image of the memlet function applied on an integer set of, e.g., a 
+    """ Tries to propagate a list of memlets through a range (computes the
+        image of the memlet function applied on an integer set of, e.g., a
         map range) and returns a new memlet object.
 
         :param memlets: The memlets to propagate.
@@ -1509,11 +1546,11 @@ def propagate_subset(memlets: List[Memlet],
     return new_memlet
 
 
-def _freesyms(expr):
-    """ 
+def _freesyms(expr) -> Set:
+    """
     Helper function that either returns free symbols for sympy expressions
     or an empty set if constant.
     """
     if isinstance(expr, sympy.Basic):
         return expr.free_symbols
-    return {}
+    return set()

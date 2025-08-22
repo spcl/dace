@@ -1,9 +1,10 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import networkx as nx
 import dace
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import BreakBlock, LoopRegion
 from dace.transformation.subgraph import GPUPersistentKernel
 import pytest
 
@@ -42,26 +43,27 @@ def _make_sdfg():
 
     # Adding states
     # init data
-    s_init = bfs.add_state('init')
+    s_init = bfs.add_state('init', is_start_block=True)
+
+    # main loop
+    bfs_loop = LoopRegion('bfs_loop', 'count1[0] > 0', inverted=True)
+    bfs.add_edge(s_init, bfs_loop, dace.InterstateEdge(assignments={'depth': '1'}))
 
     # copy of the states because we don't want to copy the data
-    s_reset1 = bfs.add_state('reset1')
-    s_update1 = bfs.add_state('update1')
+    s_reset1 = bfs_loop.add_state('reset1', is_start_block=True)
+    s_update1 = bfs_loop.add_state('update1')
+    s_reset2 = bfs_loop.add_state('reset2')
+    s_update2 = bfs_loop.add_state('update2')
+    break_block = BreakBlock('break')
+    bfs_loop.add_node(break_block)
+    s_loop_end = bfs_loop.add_state('loop_end')
 
-    s_reset2 = bfs.add_state('reset2')
-    s_update2 = bfs.add_state('update2')
+    bfs_loop.add_edge(s_reset1, s_update1, dace.InterstateEdge())
+    bfs_loop.add_edge(s_update1, s_reset2, dace.InterstateEdge('count2[0] > 0', assignments={'depth': 'depth + 1'}))
+    bfs_loop.add_edge(s_update1, break_block, dace.InterstateEdge('count2[0] <= 0'))
+    bfs_loop.add_edge(s_reset2, s_update2, dace.InterstateEdge(None))
 
-    # end state to make transformation work
-    s_end = bfs.add_state('end')
-
-    # Connecting states with appropriate conditions and depth updates
-    bfs.add_edge(s_init, s_reset1, dace.InterstateEdge(None, {'depth': '1'}))
-    bfs.add_edge(s_reset1, s_update1, dace.InterstateEdge(None))
-    bfs.add_edge(s_update1, s_reset2, dace.InterstateEdge('count2[0] > 0', {'depth': 'depth + 1'}))
-    bfs.add_edge(s_update1, s_end, dace.InterstateEdge('count2[0] <= 0'))
-    bfs.add_edge(s_reset2, s_update2, dace.InterstateEdge(None))
-    bfs.add_edge(s_update2, s_reset1, dace.InterstateEdge('count1[0] > 0', {'depth': 'depth + 1'}))
-    bfs.add_edge(s_update2, s_end, dace.InterstateEdge('count1[0] <= 0'))
+    bfs_loop.add_edge(s_update2, s_loop_end, dace.InterstateEdge(assignments={'depth': 'depth + 1'}))
 
     # =============================================================
     # State: init
@@ -91,13 +93,17 @@ def _make_sdfg():
 
     tasklet = s_init.add_tasklet('set_result', {'root_idx'}, {'result_out'}, 'result_out = 0 if i == root_idx else -1')
 
-    s_init.add_memlet_path(root_in, map_entry, tasklet, dst_conn='root_idx', memlet=dace.Memlet.simple(root_in.data, '0'))
+    s_init.add_memlet_path(root_in,
+                           map_entry,
+                           tasklet,
+                           dst_conn='root_idx',
+                           memlet=dace.Memlet.simple(root_in.data, '0'))
 
     s_init.add_memlet_path(tasklet,
-                        map_exit,
-                        result_out,
-                        src_conn='result_out',
-                        memlet=dace.Memlet.simple(result_out.data, 'i'))
+                           map_exit,
+                           result_out,
+                           src_conn='result_out',
+                           memlet=dace.Memlet.simple(result_out.data, 'i'))
 
     # -------------------------------------------------------------
 
@@ -145,6 +151,7 @@ def _make_sdfg():
     bfs.fill_scope_connectors()
     bfs.validate()
     return bfs, s_init
+
 
 # -----------------------------
 # Helper functions to init data
@@ -268,7 +275,6 @@ if res[neighbor] == -1:
     state.add_memlet_path(s_frontier_io, front_out, memlet=dace.Memlet.simple(front_out.data, '0'))
 
 
-
 @pytest.mark.gpu
 def test_persistent_fusion():
     sdfg, s_init = _make_sdfg()
@@ -328,7 +334,6 @@ def test_persistent_fusion():
 def test_persistent_fusion_interstate():
     N = dace.symbol('N', dtype=dace.int64)
 
-
     @dace.program(auto_optimize=False, device=dace.DeviceType.GPU)
     def func(A: dace.float64[N], B: dace.float64[N]):
         a = 10.2
@@ -357,7 +362,7 @@ def test_persistent_fusion_interstate():
     func.f(aref, B)
 
     sdfg(A=A, B=B, N=N)
-    
+
     assert np.allclose(A, aref)
 
 

@@ -28,8 +28,7 @@ def make_sdfg():
 
     sdfg_middle = dace.SDFG("middle")
     sdfg_middle.add_symbol("N", dace.int32)
-    nsdfg_middle = state_outer.add_nested_sdfg(sdfg_middle,
-                                               sdfg_outer, {"read_used_middle", "read_unused_middle"},
+    nsdfg_middle = state_outer.add_nested_sdfg(sdfg_middle, {"read_used_middle", "read_unused_middle"},
                                                {"write_used_middle", "write_unused_middle"},
                                                name="middle")
     state_middle = sdfg_middle.add_state("middle")
@@ -38,8 +37,7 @@ def make_sdfg():
 
     sdfg_inner = dace.SDFG("inner")
     sdfg_inner.add_symbol("N", dace.int32)
-    nsdfg_inner = state_middle.add_nested_sdfg(sdfg_inner,
-                                               sdfg_middle, {"read_used_inner", "read_unused_inner"},
+    nsdfg_inner = state_middle.add_nested_sdfg(sdfg_inner, {"read_used_inner", "read_unused_inner"},
                                                {"write_used_inner", "write_unused_inner"},
                                                name="inner")
     state_inner = sdfg_inner.add_state("inner")
@@ -111,11 +109,14 @@ def make_sdfg():
     isolated_read = state_outer.add_read("read_unused_outer")
     isolated_write = state_outer.add_write("write_unused_outer")
     isolated_sdfg = dace.SDFG("isolated_sdfg")
-    isolated_nsdfg = state_outer.add_nested_sdfg(isolated_sdfg,
-                                                 sdfg_outer, {"read_unused_isolated"}, {"write_unused_isolated"},
+    isolated_nsdfg = state_outer.add_nested_sdfg(isolated_sdfg, {"read_unused_isolated"}, {"write_unused_isolated"},
                                                  name="isolated")
+    isolated_sdfg.add_array("read_unused_isolated", shape=(n, n), dtype=dace.uint16, transient=False)
+    isolated_sdfg.add_array("write_unused_isolated", shape=(n, n), dtype=dace.uint16, transient=False)
+
     isolated_sdfg.add_symbol("i", dace.int32)
     isolated_nsdfg.symbol_mapping["i"] = "i"
+    isolated_nsdfg.symbol_mapping["N"] = "N"
     isolated_entry, isolated_exit = state_outer.add_map("isolated", {"i": "0:N"})
     state_outer.add_memlet_path(isolated_read,
                                 isolated_entry,
@@ -136,12 +137,12 @@ std::ofstream of("prune_connectors_test.txt", std::ofstream::app);
 of << i << "\\n";""",
                                language=dace.Language.CPP)
 
+    sdfg_outer.validate()
+
     return sdfg_outer
 
 
-def _make_read_write_sdfg(
-    conforming_memlet: bool,
-) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
+def _make_read_write_sdfg(conforming_memlet: bool, ) -> Tuple[dace.SDFG, dace.nodes.NestedSDFG]:
     """Creates an SDFG for the `test_read_write_{1, 2}` tests.
 
     The SDFG is rather synthetic, it has an input `in_arg` and adds to every element
@@ -170,7 +171,10 @@ def _make_read_write_sdfg(
 
     ostate.add_mapped_tasklet(
         "producer",
-        map_ranges={"i": "0:4", "j": "0:4"},
+        map_ranges={
+            "i": "0:4",
+            "j": "0:4"
+        },
         inputs={"__in": dace.Memlet("in_arg[i, j]")},
         code="__out = __in + 10.",
         outputs={"__out": dace.Memlet("A[i, j]")},
@@ -189,7 +193,10 @@ def _make_read_write_sdfg(
 
     istate.add_mapped_tasklet(
         "inner_consumer",
-        map_ranges={"i": "0:4", "j": "0:4"},
+        map_ranges={
+            "i": "0:4",
+            "j": "0:4"
+        },
         inputs={},
         code="__out = 10",
         outputs={"__out": dace.Memlet("inner_A[i, j]")},
@@ -221,7 +228,6 @@ def _make_read_write_sdfg(
     # Add the nested SDFG
     nsdfg = ostate.add_nested_sdfg(
         sdfg=isdfg,
-        parent=osdfg,
         inputs={"inner_A"},
         outputs={"inner_A", "inner_B"},
     )
@@ -240,8 +246,7 @@ def test_prune_connectors(n=None):
 
     sdfg = make_sdfg()
 
-    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
-        raise RuntimeError("PruneConnectors was not applied.")
+    assert sdfg.apply_transformations_repeated(PruneConnectors) == 3
 
     arr_in = np.zeros((n, n), dtype=np.uint16)
     arr_out = np.empty((n, n), dtype=np.uint16)
@@ -253,14 +258,14 @@ def test_prune_connectors(n=None):
 
     # The pruned connectors are not removed so they have to be supplied.
     sdfg(read_used=arr_in,
-            read_unused=arr_in,
-            read_used_outer=arr_in,
-            read_unused_outer=arr_in,
-            write_used=arr_out,
-            write_unused=arr_out,
-            write_used_outer=arr_out,
-            write_unused_outer=arr_out,
-            N=n)
+         read_unused=arr_in,
+         read_used_outer=arr_in,
+         read_unused_outer=arr_in,
+         write_used=arr_out,
+         write_unused=arr_out,
+         write_used_outer=arr_out,
+         write_unused_outer=arr_out,
+         N=n)
 
     assert np.allclose(arr_out, arr_in + 1)
 
@@ -285,7 +290,7 @@ def test_unused_retval():
     a = nstate.add_access('used')
     nstate.add_edge(nstate.add_tasklet('do', {}, {'out'}, 'out = 1'), 'out', a, None, dace.Memlet('used[0]'))
     nstate.add_nedge(a, nstate.add_write('__return'), dace.Memlet('__return[0]'))
-    nsnode = state.add_nested_sdfg(nsdfg, None, {}, {'used', '__return'})
+    nsnode = state.add_nested_sdfg(nsdfg, {}, {'used', '__return'})
     state.add_edge(nsnode, 'used', state.add_write('output'), None, dace.Memlet('output[0]'))
     state.add_edge(nsnode, '__return', state.add_write('tmp'), None, dace.Memlet('tmp[0]'))
 
@@ -313,7 +318,7 @@ def test_unused_retval_2():
     a = nstate.add_access('used')
     nstate.add_edge(nstate.add_tasklet('do', {}, {'out'}, 'out = 1'), 'out', a, None, dace.Memlet('used[0]'))
     nstate.add_nedge(a, nstate.add_write('__return'), dace.Memlet('__return[0]'))
-    nsnode = state.add_nested_sdfg(nsdfg, None, {}, {'used', '__return'})
+    nsnode = state.add_nested_sdfg(nsdfg, {}, {'used', '__return'})
     me, mx = state.add_map('doit', dict(i='0:2'))
     state.add_nedge(me, nsnode, dace.Memlet())
     state.add_memlet_path(nsnode, mx, state.add_write('output'), memlet=dace.Memlet('output[i]'), src_conn='used')
@@ -398,7 +403,7 @@ def test_prune_connectors_with_dependencies():
 
     applied = sdfg.apply_transformations_repeated(PruneConnectors)
     assert applied == 1
-    assert len(sdfg.states()) == 2
+    assert len(sdfg.states()) == 3
     assert "B1" not in nsdfg_node.in_connectors
     assert "B2" not in nsdfg_node.out_connectors
 
@@ -417,6 +422,49 @@ def test_read_write():
     assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
 
 
+def test_prune_connectors_with_conditional_block():
+    """
+    Verifies that a connector to scalar data (here 'cond') in a NestedSDFG is not removed,
+    when this data is only accessed by condition expressions in ControlFlowRegion nodes.
+    """
+    sdfg = dace.SDFG('tester')
+    A, A_desc = sdfg.add_array('A', [4], dace.float64)
+    B, B_desc = sdfg.add_array('B', [4], dace.float64)
+    COND, COND_desc = sdfg.add_array('COND', [4], dace.bool_)
+    OUT, OUT_desc = sdfg.add_array('OUT', [4], dace.float64)
+
+    nsdfg = dace.SDFG('nested')
+    a, _ = nsdfg.add_scalar('a', A_desc.dtype)
+    b, _ = nsdfg.add_scalar('b', B_desc.dtype)
+    cond, _ = nsdfg.add_scalar('cond', COND_desc.dtype)
+    out, _ = nsdfg.add_scalar('out', OUT_desc.dtype)
+
+    if_region = dace.sdfg.state.ConditionalBlock("if")
+    nsdfg.add_node(if_region)
+    entry_state = nsdfg.add_state("entry", is_start_block=True)
+    nsdfg.add_edge(entry_state, if_region, dace.InterstateEdge())
+
+    then_body = dace.sdfg.state.ControlFlowRegion("then_body", sdfg=nsdfg)
+    a_state = then_body.add_state("true_branch", is_start_block=True)
+    if_region.add_branch(dace.sdfg.state.CodeBlock(cond), then_body)
+    a_state.add_nedge(a_state.add_access(a), a_state.add_access(out), dace.Memlet(out))
+
+    else_body = dace.sdfg.state.ControlFlowRegion("else_body", sdfg=nsdfg)
+    b_state = else_body.add_state("false_branch", is_start_block=True)
+    if_region.add_branch(dace.sdfg.state.CodeBlock(f"not ({cond})"), else_body)
+    b_state.add_nedge(b_state.add_access(b), b_state.add_access(out), dace.Memlet(out))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a, b, cond}, outputs={out})
+    me, mx = state.add_map('map', dict(i="0:4"))
+    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
+    state.add_memlet_path(state.add_access(COND), me, nsdfg_node, dst_conn=cond, memlet=dace.Memlet(f"{COND}[i]"))
+    state.add_memlet_path(nsdfg_node, mx, state.add_access(OUT), src_conn=out, memlet=dace.Memlet(f"{OUT}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -431,3 +479,4 @@ if __name__ == "__main__":
     test_prune_connectors_with_dependencies()
     test_read_write_1()
     test_read_write_2()
+    test_prune_connectors_with_conditional_block()

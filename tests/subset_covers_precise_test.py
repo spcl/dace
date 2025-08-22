@@ -26,7 +26,7 @@ def test_integer_overlap_same_step_no_cover():
 
 def test_integer_bounding_box_cover_coprime_step():
     """
-    Tests ranges where the boundingbox of subset1 covers the boundingbox of subset2 but 
+    Tests ranges where the boundingbox of subset1 covers the boundingbox of subset2 but
     step sizes of the subsets are coprime so subset1 does not cover subset2.
     """
     subset1 = Range.from_string("0:10:3")
@@ -48,8 +48,8 @@ def test_integer_bounding_box_cover_coprime_step():
 
 def test_integer_same_step_different_start():
     """
-    Tests range where the bounding box of subset1 covers the bounding box of subset2 
-    but since subset2 starts at an offset that is not a multiple subset1's stepsize it 
+    Tests range where the bounding box of subset1 covers the bounding box of subset2
+    but since subset2 starts at an offset that is not a multiple subset1's stepsize it
     is not contained in subset1.
     """
     subset1 = Range.from_string("0:10:3")
@@ -61,10 +61,10 @@ def test_integer_same_step_different_start():
 def test_integer_bounding_box_symbolic_step():
     """
     Tests ranges where the step is symbolic but the start and end are not.
-    For 2 subsets s1 and s2 where s1's start is equal to s2's start and both subsets' step 
-    sizes are symbolic s1.covers_precise(s2) should only return true iff s2's step size is 
+    For 2 subsets s1 and s2 where s1's start is equal to s2's start and both subsets' step
+    sizes are symbolic s1.covers_precise(s2) should only return true iff s2's step size is
     a multiple of s1's step size.
-    For 2 subsets s1 and s2 where s1's start is not equal to s2's start and both subsets' step 
+    For 2 subsets s1 and s2 where s1's start is not equal to s2's start and both subsets' step
     sizes are symbolic, s1.covers_precise(s2) should return false.
     """
     subset1 = Range.from_string("0:20:s")
@@ -84,7 +84,7 @@ def test_integer_bounding_box_symbolic_step():
 def test_ranges_symbolic_boundaries():
     """
     Tests where the boundaries of ranges are symbolic.
-    The function subset1.covers_precise(subset2) should return true only when the 
+    The function subset1.covers_precise(subset2) should return true only when the
     start, end, and step size of subset1 are multiples of those in subset2
     """
     subset1 = Range.from_string("N:M:1")
@@ -132,7 +132,7 @@ def test_range_indices():
     """
     Tests the handling of indices covering ranges and vice versa.
     Given a range r and indices i:
-    If r's bounding box covers i r.covers_precise(i) should return true iff 
+    If r's bounding box covers i r.covers_precise(i) should return true iff
     i is covered by the step of r.
     i.covers_precise(r) should only return true iff r.start == r.end == i.
     If i is not in r's bounding box i.covers_precise(r) and r.covers_precise(i)
@@ -152,6 +152,7 @@ def test_range_indices():
     subset2 = Range.from_string('0:2:1')
     assert (subset2.covers_precise(subset1) is False)
     assert (subset1.covers_precise(subset2) is False)
+
 
 def test_index_index():
     """
@@ -197,8 +198,6 @@ def test_index_index():
     subset2 = Indices.from_string('i, j')
     assert (subset2.covers_precise(subset1))
     assert (subset1.covers_precise(subset2))
-
-
 
 
 if __name__ == "__main__":

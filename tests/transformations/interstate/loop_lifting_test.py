@@ -16,7 +16,7 @@ def test_lift_regular_for_loop():
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
     start_state = sdfg.add_state('start', is_start_block=True)
     init_state = sdfg.add_state('init')
     guard_state = sdfg.add_state('guard')
@@ -40,8 +40,8 @@ def test_lift_regular_for_loop():
     final_state.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -61,7 +61,7 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
 
     entry = sdfg.add_state('entry', is_start_block=True)
     guard = sdfg.add_state('guard')
@@ -96,8 +96,8 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     exitstate.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -114,7 +114,7 @@ def test_lift_loop_llvm_canonical_while():
     N = dace.symbol('N')
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
     sdfg.add_scalar('i', dace.int32, transient=True)
 
     entry = sdfg.add_state('entry', is_start_block=True)
@@ -129,7 +129,7 @@ def test_lift_loop_llvm_canonical_while():
     sdfg.add_edge(guard, exitstate, InterstateEdge(condition='N <= 0'))
     sdfg.add_edge(guard, preheader, InterstateEdge(condition='N > 0'))
     sdfg.add_edge(preheader, body, InterstateEdge(assignments={'k': 0}))
-    sdfg.add_edge(body, latch, InterstateEdge(assignments={'j':  'j + 1'}))
+    sdfg.add_edge(body, latch, InterstateEdge(assignments={'j': 'j + 1'}))
     sdfg.add_edge(latch, body, InterstateEdge(condition='i < N - 2'))
     sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N - 2', assignments={'k': 2}))
     sdfg.add_edge(loopexit, exitstate, InterstateEdge())
@@ -153,8 +153,8 @@ def test_lift_loop_llvm_canonical_while():
     exitstate.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -172,7 +172,7 @@ def test_do_while():
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
     start_state = sdfg.add_state('start', is_start_block=True)
     init_state = sdfg.add_state('init')
     guard_state = sdfg.add_state('guard')
@@ -196,8 +196,8 @@ def test_do_while():
     final_state.add_edge(w_tasklet_3, 'out', a_access_3, None, Memlet('A[3]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
     sdfg.apply_transformations_repeated([LoopLifting])
 
@@ -214,7 +214,7 @@ def test_inverted_loop_with_additional_increment_assignment():
     N = dace.symbol('N')
     sdfg.add_scalar('i', dace.int32, transient=True)
     sdfg.add_symbol('k', dace.int32)
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_array('A', (N, ), dace.int32)
     a_state = sdfg.add_state('a_state', is_start_block=True)
     b_state = sdfg.add_state('b_state')
     c_state = sdfg.add_state('c_state')
@@ -236,8 +236,8 @@ def test_inverted_loop_with_additional_increment_assignment():
     d_state.add_edge(w_tasklet_2, 'out', a_access_2, None, Memlet('A[1]'))
 
     N = 30
-    A = np.zeros((N,)).astype(np.int32)
-    A_valid = np.zeros((N,)).astype(np.int32)
+    A = np.zeros((N, )).astype(np.int32)
+    A_valid = np.zeros((N, )).astype(np.int32)
     sdfg(A=A_valid, N=N)
 
     sdfg.apply_transformations_repeated([LoopLifting])
@@ -250,6 +250,33 @@ def test_inverted_loop_with_additional_increment_assignment():
     assert np.allclose(A_valid, A)
 
 
+def test_lift_previously_illegal_for_loop():
+    sdfg = dace.SDFG('looptest')
+    sdfg.add_array('A', [20], dace.float64)
+    init = sdfg.add_state()
+    guard = sdfg.add_state()
+    loop = sdfg.add_state()
+    end = sdfg.add_state()
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments=dict(i='0')))
+    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 20'))
+    sdfg.add_edge(loop, guard, dace.InterstateEdge(assignments=dict(i='i + 1')))
+
+    r = loop.add_read('A')
+    t = loop.add_tasklet('add', {'a'}, {'out'}, 'out = a + 5')
+    w = loop.add_write('A')
+    loop.add_edge(r, None, t, 'a', dace.Memlet('A[j]'))
+    loop.add_edge(t, 'out', w, None, dace.Memlet('A[j]'))
+
+    sdfg.apply_transformations_repeated([LoopLifting])
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = np.random.rand(20)
+    expected = A + 5
+    sdfg(A=A)
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_lift_regular_for_loop()
     test_lift_loop_llvm_canonical(True)
@@ -257,3 +284,4 @@ if __name__ == '__main__':
     test_lift_loop_llvm_canonical_while()
     test_do_while()
     test_inverted_loop_with_additional_increment_assignment()
+    test_lift_previously_illegal_for_loop()

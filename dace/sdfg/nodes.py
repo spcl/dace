@@ -60,7 +60,7 @@ class Node(object):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k == 'guid': # Skip ID
+            if k == 'guid':  # Skip ID
                 continue
             setattr(result, k, dcpy(v, memo))
         return result
@@ -126,7 +126,12 @@ class Node(object):
         self.in_connectors[connector_name] = dtype
         return True
 
-    def add_out_connector(self, connector_name: str, dtype: Any = None, force: bool = False,) -> bool:
+    def add_out_connector(
+        self,
+        connector_name: str,
+        dtype: Any = None,
+        force: bool = False,
+    ) -> bool:
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
@@ -145,10 +150,10 @@ class Node(object):
         return True
 
     def _add_scope_connectors(
-            self,
-            connector_name: str,
-            dtype: Optional[dtypes.typeclass] = None,
-            force: bool = False,
+        self,
+        connector_name: str,
+        dtype: Optional[dtypes.typeclass] = None,
+        force: bool = False,
     ) -> None:
         """ Adds input and output connector names to `self` in one step.
 
@@ -170,14 +175,14 @@ class Node(object):
                 return False
         # We force unconditionally because we have performed the tests above.
         self.add_in_connector(
-                connector_name=in_connector_name,
-                dtype=dtype,
-                force=True,
+            connector_name=in_connector_name,
+            dtype=dtype,
+            force=True,
         )
         self.add_out_connector(
-                connector_name=out_connector_name,
-                dtype=dtype,
-                force=True,
+            connector_name=out_connector_name,
+            dtype=dtype,
+            force=True,
         )
         return True
 
@@ -404,7 +409,8 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
-    ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
+    ignored_symbols = SetProperty(element_type=str,
+                                  desc='A set of symbols to ignore when computing '
                                   'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
                                   'tasklets, where only string analysis is possible; and to skip globals in Python '
                                   'tasklets that should not be given as parameters to the SDFG.')
@@ -465,7 +471,6 @@ class Tasklet(CodeNode):
         symbols_to_ignore |= self.ignored_symbols
 
         return self.code.get_free_symbols(symbols_to_ignore)
-
 
     def has_side_effects(self, sdfg) -> bool:
         """
@@ -582,7 +587,9 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    ext_sdfg_path = Property(dtype=str, default=None, allow_none=True,
+    ext_sdfg_path = Property(dtype=str,
+                             default=None,
+                             allow_none=True,
                              desc='Path to a file containing the SDFG for this nested SDFG')
     schedule = EnumProperty(dtype=dtypes.ScheduleType,
                             desc="SDFG schedule",
@@ -638,7 +645,7 @@ class NestedSDFG(CodeNode):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip GUID.
-            if k in ('guid',):
+            if k in ('guid', ):
                 continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
@@ -722,9 +729,8 @@ class NestedSDFG(CodeNode):
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
             for conn in connectors:
                 if conn in self.sdfg.symbols:
-                    raise ValueError(
-                        f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
-                        'To pass symbols use "symbol_mapping".')
+                    raise ValueError(f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
+                                     'To pass symbols use "symbol_mapping".')
                 if conn not in self.sdfg.arrays:
                     raise NameError(
                         f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
@@ -779,7 +785,6 @@ class EntryNode(Node):
         self.map.validate(sdfg, state, self)
 
     add_scope_connectors = Node._add_scope_connectors
-
 
 
 # ------------------------------------------------------------------------------
@@ -872,6 +877,59 @@ class MapEntry(EntryNode):
 
         return result
 
+    def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
+        """
+        Returns a set of symbol names that are used within the Map scope created by this MapEntry
+
+        :param all_symbols: If False, only returns symbols that are needed as arguments (only used in generated code).
+        """
+        parent_sdfg: dace.SDFG = parent_state.sdfg
+
+        new_symbols = set()
+        free_symbols = set()
+
+        # Free symbols from nodes
+        for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
+            if isinstance(n, EntryNode):
+                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+            elif isinstance(n, AccessNode):
+                # Add data descriptor symbols
+                free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
+            elif isinstance(n, Tasklet):
+                if n.language == dtypes.Language.Python:
+                    # Consider callbacks defined as symbols as free
+                    for stmt in n.code.code:
+                        for astnode in ast.walk(stmt):
+                            if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
+                                    and astnode.func.id in parent_sdfg.symbols):
+                                free_symbols.add(astnode.func.id)
+                else:
+                    # Find all string tokens and filter them to sdfg.symbols, while ignoring connectors
+                    code_symbols = dace.symbolic.symbols_in_code(
+                        n.code.as_string,
+                        potential_symbols=parent_sdfg.symbols.keys(),
+                        symbols_to_ignore=(n.in_connectors.keys() | n.out_connectors.keys() | n.ignored_symbols),
+                    )
+                    free_symbols |= code_symbols
+                    continue
+
+            if hasattr(n, 'used_symbols'):
+                free_symbols |= n.used_symbols(parent_state, all_symbols)
+            else:
+                free_symbols |= n.free_symbols
+
+        # Free symbols from memlets
+        for e in parent_state.all_edges(*parent_state.all_nodes_between(self, parent_state.exit_node(self))):
+            # If used for code generation, only consider memlet tree leaves
+            if not all_symbols and not parent_state.is_leaf_memlet(e):
+                continue
+
+            free_symbols |= e.data.used_symbols(all_symbols, e)
+
+        # Do not consider SDFG constants as symbols
+        new_symbols.update(set(parent_sdfg.constants.keys()))
+        return free_symbols - new_symbols
+
 
 @dace.serialize.serializable
 class MapExit(ExitNode):
@@ -947,7 +1005,9 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    unroll_factor = Property(dtype=int, allow_none=True, default=0,
+    unroll_factor = Property(dtype=int,
+                             allow_none=True,
+                             default=0,
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
@@ -1023,6 +1083,19 @@ class Map(object):
         if self.get_param_num() != self.range.dims():
             raise ValueError(f'There are {self.get_param_num()} parameters but the range'
                              f' has {self.range.dims()} dimensions.')
+
+        # The only thing that makes sense, at least on GPU and CPU is a positive
+        #  increment and a positive range of iteration. We could handle sequential
+        #  Maps a bit more liberal, but we should probably not.
+        if any((ss <= 0) == True for ss in self.range.size()):
+            # The CPU and GPU backend tolerate such maps.
+            warnings.warn(f'The iteration range of Map {self.label} is {self.range}, which contains a zero'
+                          ' or negative sized range, which is allowed but not recommended.'
+                          ' The Map will be turned into a no-ops.')
+        if any((inc <= 0) == True for (_, _, inc) in self.range):
+            # Should this be turned into an error?
+            warnings.warn(f'An increment of Map {self.label} was negative, which is allowerd'
+                          ' but probably not useful.')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
@@ -1413,15 +1486,56 @@ class LibraryNode(CodeNode):
             dace.serialize.set_properties_from_json(ret, json_obj, context=context)
             return ret
 
-    def expand(self, sdfg, state, *args, **kwargs) -> str:
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
         """ Create and perform the expansion transformation for this library
             node.
 
+            This method supports two interfaces:
+            1. New interface: expand(state, implementation=None, **kwargs)
+            2. Old interface: expand(sdfg, state, **kwargs) [for backward compatibility]
+
+            :param state_or_sdfg: Either a ControlFlowBlock (new interface) or SDFG (old interface)
+            :param state_or_impl: Either implementation name (new interface) or SDFGState (old interface)
+            :param kwargs: Additional expansion arguments
             :return: the name of the expanded implementation
+
+            Examples:
+                # New interface (recommended):
+                result = node.expand(state, 'pure')
+
+                # Old interface (still supported):
+                result = node.expand(sdfg, state)
         """
         from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
+        import warnings
 
-        implementation = self.implementation
+        # Handle both old and new signatures for backward compatibility
+        from dace.sdfg.state import SDFGState
+
+        if isinstance(state_or_sdfg, SDFGState):
+            # New interface: expand(state, implementation=None, **kwargs)
+            actual_state = state_or_sdfg
+            sdfg = actual_state.parent_graph
+            implementation = state_or_impl
+            expansion_kwargs = kwargs
+        else:
+            # Old interface: expand(sdfg, state, **kwargs)
+            warnings.warn("The expand(sdfg, state) interface is deprecated. Use expand(state, implementation) instead.",
+                          DeprecationWarning,
+                          stacklevel=2)
+            sdfg = state_or_sdfg
+            actual_state = state_or_impl
+            expansion_kwargs = kwargs
+            implementation = None
+            # In old interface, implementation might be passed as keyword arg
+            if 'implementation' in kwargs:
+                implementation = kwargs.pop('implementation')
+
+        # Use provided implementation or fall back to current node implementation
+        if implementation is not None:
+            target_implementation = implementation
+        else:
+            target_implementation = self.implementation
         library_name = getattr(type(self), '_dace_library_name', '')
         try:
             if library_name:
@@ -1435,41 +1549,41 @@ class LibraryNode(CodeNode):
         if config_implementation is not None:
             try:
                 config_override = Config.get("library", library_name, "override")
-                if config_override and implementation in self.implementations:
-                    if implementation is not None:
+                if config_override and target_implementation in self.implementations:
+                    if target_implementation is not None:
                         warnings.warn("Overriding explicitly specified "
-                                      "implementation {} for {} with {}.".format(implementation, self.label,
+                                      "implementation {} for {} with {}.".format(target_implementation, self.label,
                                                                                  config_implementation))
-                    implementation = config_implementation
+                    target_implementation = config_implementation
             except KeyError:
                 config_override = False
         # If not explicitly set, try the node default
-        if implementation is None:
-            implementation = type(self).default_implementation
+        if target_implementation is None:
+            target_implementation = type(self).default_implementation
             # If no node default, try library default
-            if implementation is None:
+            if target_implementation is None:
                 import dace.library  # Avoid cyclic dependency
                 lib = dace.library._DACE_REGISTERED_LIBRARIES[type(self)._dace_library_name]
-                implementation = lib.default_implementation
+                target_implementation = lib.default_implementation
                 # Try the default specified in the config
-                if implementation is None:
-                    implementation = config_implementation
+                if target_implementation is None:
+                    target_implementation = config_implementation
                     # Otherwise we don't know how to expand
-                    if implementation is None:
+                    if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
-        if implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
-        transformation_type = type(self).implementations[implementation]
-        cfg_id = state.parent_graph.cfg_id
-        state_id = state.block_id
-        subgraph = {transformation_type._match_node: state.node_id(self)}
+        if target_implementation not in self.implementations.keys():
+            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, target_implementation))
+        transformation_type = type(self).implementations[target_implementation]
+        cfg_id = actual_state.parent_graph.cfg_id
+        state_id = actual_state.block_id
+        subgraph = {transformation_type._match_node: actual_state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
-        if not transformation.can_be_applied(state, 0, sdfg):
+        if not transformation.can_be_applied(actual_state, 0, sdfg):
             raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)
-        transformation.apply(state, sdfg, *args, **kwargs)
-        return implementation
+        transformation.apply(actual_state, sdfg, **expansion_kwargs)
+        return target_implementation
 
     @classmethod
     def register_implementation(cls, name, transformation_type):

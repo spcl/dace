@@ -50,7 +50,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     def apply(self, region, pipeline_results):
         """
         Removes unreachable dataflow throughout SDFG states.
-        
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -73,19 +73,14 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         ]:
             return None
         reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
-            ap.ControlFlowBlockReachability.__name__
-        ][region.cfg_id]
-        # if "for_33" == region.label:
-        #     print("for_33")
-        #     print(reachable)
-            
+            ap.ControlFlowBlockReachability.__name__][region.cfg_id]
         access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse region backwards
         try:
-            state_order: List[SDFGState] = list(cfg.blockorder_topological_sort(region, recursive=False,
-                                                                                ignore_nonstate_blocks=True))
+            state_order: List[SDFGState] = list(
+                cfg.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=True))
         except KeyError:
             return None
         for state in reversed(state_order):
@@ -179,18 +174,10 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                                             for code in leaf.src.code.code:
                                                 ast_find.generic_visit(code)
                                         except astutils.NameFound:
-                                            # then add the hint expression 
-                                            leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body + leaf.src.code.code
-                            elif isinstance(leaf.src, nodes.AccessNode):
-                                # Check if the source is a view
-                                # TODO: investigate this further
-                                # Why is a NSDFG -> View -> Access Node results in only removing the AN
-                                if leaf.src.data in sdfg.arrays:
-                                    desc = sdfg.arrays[leaf.src.data]
-                                    if isinstance(desc, data.View):
-                                        # If the source is a view, remove the view
-                                        dead_nodes.append(leaf.src)
-                                    
+                                            # then add the hint expression
+                                            leaf.src.code.code = ast.parse(
+                                                f'{leaf.src_conn}: dace.{ctype.to_string()}\n'
+                                            ).body + leaf.src.code.code
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
@@ -220,8 +207,10 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
             # Update read sets for the predecessor states to reuse
             remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
+            remaining_data_containers = set(node.data for node in remaining_access_nodes)
             removed_data_containers = set(n.data for n in result[state]
-                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes)
+                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes
+                                          and n.data not in remaining_data_containers)
             access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
 
         return result or None
@@ -283,6 +272,21 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
                     # If data is connected to a side-effect tasklet/library node, cannot remove
                     if _has_side_effects(l.src, sdfg):
                         return False
+
+                    # If data is connected to a tasklet through a pointer and more than 1 element is accessed,
+                    # we cannot eliminate the connector, as it may require dataflow analysis inside the tasklet.
+                    # TODO(later): We should consider lifting that restriction, but it requires more complex analysis
+                    # and more concrete semantics of tasklets and their connectors.
+                    if isinstance(l.src, nodes.Tasklet):
+                        ctype = infer_types.infer_out_connector_type(sdfg, state, l.src, l.src_conn)
+                        if isinstance(ctype, dtypes.pointer):
+                            is_larger = False
+                            try:
+                                is_larger = l.data.volume > 1
+                            except ValueError:
+                                is_larger = True
+                            if is_larger:
+                                return False
 
                     # If data is connected to a nested SDFG or library node as an input/output, do not remove
                     if (isinstance(l.src, (nodes.NestedSDFG, nodes.LibraryNode))

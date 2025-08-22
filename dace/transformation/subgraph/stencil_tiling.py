@@ -579,7 +579,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                     # Prevent circular import
                     from dace.transformation.interstate.loop_unroll import LoopUnroll
 
-                    subgraph = { LoopUnroll.loop: trafo_for_loop.loop_region.block_id }
+                    subgraph = {LoopUnroll.loop: trafo_for_loop.loop_region.block_id}
                     transformation = LoopUnroll()
                     transformation.setup_match(nsdfg, nsdfg.cfg_id, -1, subgraph, 0)
                     transformation.apply(nsdfg, nsdfg)

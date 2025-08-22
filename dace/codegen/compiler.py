@@ -394,7 +394,7 @@ def load_from_file(sdfg, binary_filename):
     lib = csd.ReloadableDLL(binary_filename, sdfg.name)
 
     # Load and return the compiled function
-    return csd.CompiledSDFG(sdfg, lib)
+    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
 def get_binary_name(object_folder, object_name, lib_extension=Config.get('compiler', 'library_extension')):

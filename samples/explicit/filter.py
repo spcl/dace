@@ -31,7 +31,7 @@ def pbf(A: dace.float32[N], out: dace.float32[N], outsz: dace.uint32[1], ratio: 
 
             # Writing to the output stream uses a dynamic output memlet, annotated with -1
             b >> ostream(-1)
-            
+
             # Writing to the output size is also dynamic, and uses the sum write-conflict resolution
             osz >> outsz(-1, lambda x, y: x + y, 0)
 

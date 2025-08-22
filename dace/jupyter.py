@@ -4,13 +4,14 @@
 import os
 import urllib.request
 import urllib.error
+import socket
 
 
 def _connected():
     try:
         urllib.request.urlopen('https://spcl.github.io/dace-webclient/dist/sdfv.js', timeout=1)
         return True
-    except urllib.error.URLError:
+    except (urllib.error.URLError, TimeoutError, socket.timeout):
         return False
 
 

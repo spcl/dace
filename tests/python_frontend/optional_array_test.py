@@ -19,6 +19,7 @@ def test_type_hint():
 
 
 def test_optional_arg_hint():
+
     @dace.program
     def tester(a: Optional[dace.float64[1]], b: dace.float64[1]):
         transient = b + 1
@@ -77,6 +78,7 @@ def test_optional_dead_state(isnone):
 
 
 def test_optional_array_inference():
+
     @dace.program
     def nested(b):
         if b is not None:

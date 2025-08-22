@@ -47,9 +47,7 @@ def make_copy_to_host_state(sdfg, veclen):
 
     state.add_memlet_path(read,
                           write,
-                          memlet=dace.memlet.Memlet.simple("B",
-                                                           "0:N//{}".format(veclen),
-                                                           num_accesses=SIZE // veclen))
+                          memlet=dace.memlet.Memlet.simple("B", "0:N//{}".format(veclen), num_accesses=SIZE // veclen))
 
     return state
 
@@ -58,14 +56,8 @@ def make_fpga_state(sdfg, vectorize_connector, veclen):
 
     state = sdfg.add_state("fpga_state")
 
-    sdfg.add_array("input_buffer", (veclen, ),
-                   DTYPE,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Registers)
-    sdfg.add_array("output_buffer", (veclen, ),
-                   DTYPE,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Registers)
+    sdfg.add_array("input_buffer", (veclen, ), DTYPE, transient=True, storage=dace.StorageType.FPGA_Registers)
+    sdfg.add_array("output_buffer", (veclen, ), DTYPE, transient=True, storage=dace.StorageType.FPGA_Registers)
 
     read_input = state.add_read("A_device")
     read_buffer = state.add_access("input_buffer")

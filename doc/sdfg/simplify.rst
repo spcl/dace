@@ -45,7 +45,7 @@ minimize the number of loops until a fixed-point is reached:
 
   * We first inline SDFGs with :class:`~dace.transformation.passes.fusion_inline.InlineSDFGs`. We do this first since pre-fused states would normally only contain nested SDFGs and input/output access nodes.
   * :class:`~dace.transformation.passes.scalar_to_symbol.ScalarToSymbolPromotion` then promotes scalar values into symbolic expressions (if they can be represented as such). This clarifies access patterns in programs by making them symbolic, moving indirect memory accesses (e.g., ``A[scalar]``) out of a tasklet and into a memlet if the index is symbolically known.
-  * :class:`~dace.transformation.passes.fusion_inline.FuseStates` fuses SDFG states together if their dataflow allows it 
+  * :class:`~dace.transformation.passes.fusion_inline.FuseStates` fuses SDFG states together if their dataflow allows it
     (i.e., will not create data races). This also merges access nodes between states to form clear data dependencies.
   * After states are fused, we perform optional array inference (:class:`~dace.transformation.passes.optional_arrays.OptionalArrayInference`)
     to understand which of the underlying data cannot be ``None`` (or a null pointer). This allows eliding checks such as
@@ -61,7 +61,7 @@ minimize the number of loops until a fixed-point is reached:
     be necessary. :class:`~dace.transformation.passes.prune_symbols.RemoveUnusedSymbols` removes those symbols from the graph.
   * :class:`~dace.transformation.passes.array_elimination.ArrayElimination` performs a coarse-grained dead memory elimination
     by removing redundant copies and unnecessary arrays/views.
-  * Lastly, memlets with the same source/destination are merged by performing a union on the memlets' subsets in 
+  * Lastly, memlets with the same source/destination are merged by performing a union on the memlets' subsets in
     :class:`~dace.transformation.passes.consolidate_edges.ConsolidateEdges`.
 
 Following these passes, we end up reducing the following SDFG components: nested SDFGs, memlets, arrays and scalars,

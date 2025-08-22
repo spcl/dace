@@ -121,8 +121,8 @@ def method(f: F,
            recompile: bool = True,
            constant_functions=False,
            **kwargs) -> parser.DaceProgram:
-    """ 
-    Entry point to a data-centric program that is a method or  a ``classmethod``. 
+    """
+    Entry point to a data-centric program that is a method or  a ``classmethod``.
 
     :param f: The method to define as the entry point.
     :param auto_optimize: If True, applies automatic optimization heuristics
@@ -141,7 +141,7 @@ def method(f: F,
                                This will hardcode their return values into the
                                resulting program.
     :note: If arguments are defined with type hints, the program can be compiled
-           ahead-of-time with ``.compile()``.    
+           ahead-of-time with ``.compile()``.
     """
 
     # Create a wrapper class that can bind to the object instance
@@ -296,7 +296,7 @@ class MapMetaclass(type):
 
     @classmethod
     def __getitem__(cls, rng: Union[slice, Tuple[slice]]) -> Generator[Tuple[int], None, None]:
-        """ 
+        """
         Iterates over an N-dimensional region in parallel.
 
         :param rng: A slice or a tuple of multiple slices, representing the
@@ -308,7 +308,7 @@ class MapMetaclass(type):
 
 class map(metaclass=MapMetaclass):
     """ A Map is representation of parallel execution, containing
-        an integer set (Python range) for which its contents are run 
+        an integer set (Python range) for which its contents are run
         concurrently. Written in Python as a loop with the following
         syntax: `for i, j in dace.map[1:20, 0:N]:`.
     """
@@ -318,12 +318,12 @@ class map(metaclass=MapMetaclass):
 class consume:
 
     def __init__(self, stream: Deque[T], processing_elements: int = 1, condition: Optional[Callable[[], bool]] = None):
-        """ 
+        """
         Consume is a scope, like ``Map``, that creates parallel execution.
         Unlike `Map`, it creates a producer-consumer relationship between an
         input stream and the contents. The contents are run by the given number
         of processing elements, who will try to pop elements from the input
-        stream until a given quiescence condition is reached. 
+        stream until a given quiescence condition is reached.
 
         :param stream: The stream to pop from.
         :param processing_elements: The number of processing elements to use.
@@ -361,7 +361,7 @@ class TaskletMetaclass(type):
 
 
 class tasklet(metaclass=TaskletMetaclass):
-    """ 
+    """
     A general procedure that cannot access any memory apart from incoming
     and outgoing memlets. Memlets use the shift operator, an example of
     a tasklet is::
@@ -372,7 +372,7 @@ class tasklet(metaclass=TaskletMetaclass):
             b >> B[i, j]  # Memlet going out of the tasklet to B
 
 
-    The DaCe framework cannot analyze these tasklets for optimization. 
+    The DaCe framework cannot analyze these tasklets for optimization.
     """
 
     def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python, side_effects: bool = False):
@@ -431,21 +431,22 @@ def in_program() -> bool:
     """
     Returns True if in a DaCe program parsing context. This function can be used to test whether the current
     code runs inside the ``@dace.program`` parser.
-    
+
     :return: True if in a DaCe program parsing context, or False otherwise.
     """
     return False
+
 
 class named:
     """
     Creates a `NamedRegion` with the given label.
     """
-    def __init__(self, name: Optional[str]=None):
+
+    def __init__(self, name: Optional[str] = None):
         self.name = name
-    
+
     def __enter__(self):
         pass
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         return True
-

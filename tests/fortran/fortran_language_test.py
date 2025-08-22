@@ -65,7 +65,7 @@ def test_fortran_frontend_if1():
                       ZFAC(1)  = 2.0
                     ENDIF
                     d(1,1,1)=ZFAC(1)
-                                    
+
                     END SUBROUTINE if1_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "if1_test")
@@ -122,7 +122,7 @@ end subroutine loop1_test_function
     d = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
     sdfg(d=d)
     # Verify the checkerboard pattern.
-    assert all(bool(v) == ((i+j+k) % 2 == 1) for (i, j, k), v in np.ndenumerate(d))
+    assert all(bool(v) == ((i + j + k) % 2 == 1) for (i, j, k), v in np.ndenumerate(d))
 
 
 def test_fortran_frontend_function_statement1():
@@ -182,7 +182,7 @@ def test_fortran_frontend_pow1():
                   IF(ZSIGK(1) > 0.8) THEN
                           ZHRC(1)=RAMID(1)+(1.0-RAMID(1))*((ZSIGK(1)-0.8)/0.2)**2
                   ENDIF
-                   d(1,1,2)=ZHRC(1)                 
+                   d(1,1,2)=ZHRC(1)
                    END SUBROUTINE pow1_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow1_test")
@@ -214,7 +214,7 @@ def test_fortran_frontend_pow2():
                   IF(ZSIGK(1) > 0.8) THEN
                           ZHRC(1)=RAMID(1)+(1.0-RAMID(1))*((ZSIGK(1)-0.8)/0.01)**1.5
                   ENDIF
-                   d(1,1,2)=ZHRC(1)                 
+                   d(1,1,2)=ZHRC(1)
                    END SUBROUTINE pow2_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow2_test")
@@ -242,7 +242,7 @@ def test_fortran_frontend_sign1():
                   ZSIGK(1)=4.8
                   RAMID(1)=0.0
                   ZHRC(1)=-12.34
-                   d(1,1,2)=SIGN(ZSIGK(1),ZHRC(1))                 
+                   d(1,1,2)=SIGN(ZSIGK(1),ZHRC(1))
                    END SUBROUTINE sign1_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "sign1_test")

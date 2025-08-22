@@ -5,6 +5,7 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_frontend_bit_size():
     test_string = """
                     PROGRAM intrinsic_math_test_bit_size
@@ -37,6 +38,7 @@ def test_fortran_frontend_bit_size():
     sdfg(res=res)
 
     assert np.allclose(res, [32, 32, 32, 64])
+
 
 def test_fortran_frontend_bit_size_symbolic():
     test_string = """
@@ -80,17 +82,17 @@ def test_fortran_frontend_bit_size_symbolic():
     size3 = 7
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size, size2, size3], 42, order="F", dtype=np.int32)
-    res3 = np.full([size+size2, size2*5, size3 + size*size2], 42, order="F", dtype=np.int32)
+    res3 = np.full([size + size2, size2 * 5, size3 + size * size2], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, res3=res3, arrsize=size, arrsize2=size2, arrsize3=size3)
     print(res)
 
     assert res[0] == size
-    assert res[1] == size*size2*size3
-    assert res[2] == (size + size2) * (size2 * 5) * (size3 + size2*size)
-    assert res[3] == size * 2 
+    assert res[1] == size * size2 * size3
+    assert res[2] == (size + size2) * (size2 * 5) * (size3 + size2 * size)
+    assert res[3] == size * 2
     assert res[4] == res[0] * res[1] * res[2]
     assert res[5] == size + size2 + size3
-    assert res[6] == size + size2 + size2*5 + size3 + size*size2
+    assert res[6] == size + size2 + size2 * 5 + size3 + size * size2
 
 
 if __name__ == "__main__":

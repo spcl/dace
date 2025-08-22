@@ -5,6 +5,7 @@ import dace
 
 
 class ArrayWrapper:
+
     def __init__(self, array, **kwargs):
         self.array = array
 
@@ -14,6 +15,7 @@ class ArrayWrapper:
 
 
 def test_array_interface_input():
+
     @dace.program
     def simple_program(A: dace.float64[3, 3, 3]):
         A += 1

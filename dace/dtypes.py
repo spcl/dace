@@ -5,6 +5,7 @@ import aenum
 import inspect
 import numpy
 import re
+from sympy import Float, Integer
 from collections import OrderedDict
 from functools import wraps
 from typing import Any
@@ -425,6 +426,10 @@ class typeclass(object):
             typename = 'bool'
         elif wrapped_type is type(None):
             wrapped_type = None
+        elif wrapped_type is Float:
+            wrapped_type = float
+        elif wrapped_type is Integer:
+            wrapped_type = int
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
@@ -762,7 +767,7 @@ class vector(typeclass):
 
 class stringtype(pointer):
     """
-    A specialization of the string data type to improve 
+    A specialization of the string data type to improve
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
@@ -933,8 +938,7 @@ class compiletime:
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
-    import numpy as np
-    return np.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
+    return numpy.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 
 def ptrtocupy(ptr, inner_ctype, shape):
@@ -999,7 +1003,7 @@ class callback(typeclass):
     def is_scalar_function(self) -> bool:
         """
         Returns True if the callback is a function that returns a scalar
-        value (or nothing). Scalar functions are the only ones that can be 
+        value (or nothing). Scalar functions are the only ones that can be
         used within a `dace.tasklet` explicitly.
         """
         from dace import data
@@ -1421,6 +1425,15 @@ class DebugInfo:
         return DebugInfo(json_obj['start_line'], json_obj['start_column'], json_obj['end_line'], json_obj['end_column'],
                          json_obj['filename'])
 
+    def __deepcopy__(self, memo) -> 'DebugInfo':
+        """Performs a `deepcopy` of `self`.
+
+        Because all members of `self` are immutable this function is essentially a shallow copy.
+        """
+        new = object.__new__(DebugInfo)
+        new.__dict__.update(self.__dict__)
+        return new
+
 
 ######################################################
 # Static (utility) functions
@@ -1594,7 +1607,7 @@ def is_array(obj: Any) -> bool:
 
 def is_gpu_array(obj: Any) -> bool:
     """
-    Returns True if an object is a GPU array, i.e., implements the 
+    Returns True if an object is a GPU array, i.e., implements the
     ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
     etc.). If the interface is supported, pointers can be directly obtained using the
     ``_array_interface_ptr`` function.
