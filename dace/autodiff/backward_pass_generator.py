@@ -472,7 +472,6 @@ class BackwardPassGenerator:
         # TODO: deal with a full unroll of a loop inside this function
         self._create_stateviews_mapping()
 
-        self.sdfg.save("log_sdfgs/forward.sdfg")
         # Reverse each state in the graph
         self._reverse_states()
 
