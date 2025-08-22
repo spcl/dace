@@ -132,11 +132,14 @@ class ONNXModel:
         """
 
         onnx.checker.check_model(model)
+        # TODO: Don't save into the main directory, use temporary
         onnx.save(model, 'model_original.onnx')
         model = shape_inference.infer_shapes(model, auto_merge=auto_merge)
+        # TODO: Don't save into the main directory, use temporary files
         onnx.save(model, 'model_original_with_shapes.onnx')
         if onnx_simplify:
             model = simplify_onnx_model(model, auto_merge)
+            # TODO: Don't save into the main directory, use temporary files
             onnx.save(model, 'model_simplified.onnx')
 
         self.do_auto_optimize = auto_optimize
@@ -511,7 +514,7 @@ class ONNXModel:
             transient_kwargs[name] = create_output_array(symbols,
                                                          desc,
                                                          use_torch=True,
-                                                         zeros=False)
+                                                         zeros=True)
             self.save_transients[name] = transient_kwargs[name]
 
         compiled(**inputs, **outputs, **self.initialized_parameters, **symbols,
@@ -599,7 +602,8 @@ class ONNXModel:
             outputs[clean_name] = create_output_array(
                 inferred_symbols,
                 self.sdfg.arrays[clean_name],
-                use_torch=torch_outputs)
+                use_torch=torch_outputs,
+                zeros=True)
 
         # check that there's no overlap
         seen = set()
