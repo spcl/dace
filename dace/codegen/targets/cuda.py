@@ -2382,7 +2382,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', cfg,
                     state_id, scope_entry)
 
-
         elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
             dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)
             grid_dims, block_dims, has_tbmap, has_dtbmap, extra_gdim_offsets = self.get_kernel_dimensions(dfg_kernel)
@@ -2503,7 +2502,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                   expr=expr,
                                               ), cfg, state_id, node)
 
-
             else:  # Device map in Device map
                 brange = subsets.Range(scope_map.range[::-1])
                 kdims = brange.size()
@@ -2529,7 +2527,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-
 
                 # Generate conditions for this subgrid's execution using min and max
                 # element, e.g. skipping out-of-bounds threads
@@ -2612,7 +2609,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-
 
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
