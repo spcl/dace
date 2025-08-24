@@ -175,19 +175,24 @@ class CopyContext:
 
 
         src_name = src_node.data
+        if (src_nodedesc.transient and src_nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
+            ptr_name = f'__state->__{sdfg.cfg_id}_{src_name}'
+        else:
+            ptr_name = src_name
+
         if isinstance(src_nodedesc, data.Scalar) and src_nodedesc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
             parent_nsdfg_node = state.sdfg.parent_nsdfg_node
             if parent_nsdfg_node is not None and src_name in parent_nsdfg_node.in_connectors:
-                src_expr = f"&{src_name}"
+                src_expr = f"&{ptr_name}"
             else:
-                src_expr = src_name
+                src_expr = ptr_name
 
         elif isinstance(src_nodedesc, data.Scalar):
-            src_expr = f"&{src_name}"
+            src_expr = f"&{ptr_name}"
 
         elif isinstance(src_nodedesc, data.Array):
             src_offset = cpp.cpp_offset_expr(src_nodedesc, src_subset)
-            src_expr = f"{src_name} + {src_offset}" if src_offset != "0" else src_name
+            src_expr = f"{ptr_name} + {src_offset}" if src_offset != "0" else ptr_name
 
         else:
             raise NotImplementedError(
@@ -196,19 +201,24 @@ class CopyContext:
             )
             
         dst_name = dst_node.data
+        if (dst_nodedesc.transient and dst_nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
+            ptr_name = f'__state->__{sdfg.cfg_id}_{dst_name}'
+        else:
+            ptr_name = dst_name
+
         if isinstance(dst_nodedesc, data.Scalar) and dst_nodedesc.storage in dtypes.GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN:
             parent_nsdfg_node = state.sdfg.parent_nsdfg_node
             if parent_nsdfg_node is not None and dst_name in parent_nsdfg_node.in_connectors:
-                dst_expr = f"&{dst_name}"
+                dst_expr = f"&{ptr_name}"
             else:
-                dst_expr = dst_name
+                dst_expr = ptr_name
 
         elif isinstance(dst_nodedesc, data.Scalar):
-            dst_expr = f"&{dst_name}"
+            dst_expr = f"&{ptr_name}"
 
         elif isinstance(dst_nodedesc, data.Array):
             dst_offset = cpp.cpp_offset_expr(dst_nodedesc, dst_subset)
-            dst_expr = f"{dst_name} + {dst_offset}" if dst_offset != "0" else dst_name
+            dst_expr = f"{ptr_name} + {dst_offset}" if dst_offset != "0" else ptr_name
 
         else:
             raise NotImplementedError(
@@ -280,6 +290,10 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         cpu_storage_types = [StorageType.CPU_Heap, StorageType.CPU_ThreadLocal, StorageType.CPU_Pinned]
         if src_storage in cpu_storage_types and dst_storage in cpu_storage_types:
             return False
+        
+
+        if isinstance(src_node.desc(state), data.View) or isinstance(dst_node.desc(state), data.View):
+            return False
 
         return True
     
@@ -337,10 +351,10 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         else:
             # Memory is strided: use {backend}Memcpy2DAsync with dpitch/spitch
             # This allows copying a strided 1D region
-            dpitch = f'{dst_strides[0]} * sizeof({ctype})'
-            spitch = f'{src_strides[0]} * sizeof({ctype})'
+            dpitch = f'{symbolic_to_cpp(dst_strides[0])} * sizeof({ctype})'
+            spitch = f'{symbolic_to_cpp(src_strides[0])} * sizeof({ctype})'
             width = f'sizeof({ctype})'
-            height = copy_shape[0]
+            height = symbolic_to_cpp(copy_shape[0])
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
@@ -364,10 +378,10 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         # ----------------- Generate backend call if supported --------------------
 
         if is_contiguous_copy:
-            dpitch = f'{dst_strides[0]} * sizeof({ctype})'
-            spitch = f'{src_strides[0]} * sizeof({ctype})'
-            width = f'{copy_shape[1]} * sizeof({ctype})'
-            height = f'{copy_shape[0]}'
+            dpitch = f'{symbolic_to_cpp(dst_strides[0])} * sizeof({ctype})'
+            spitch = f'{symbolic_to_cpp(src_strides[0])} * sizeof({ctype})'
+            width = f'{symbolic_to_cpp(copy_shape[1])} * sizeof({ctype})'
+            height = f'{symbolic_to_cpp(copy_shape[0])}'
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
@@ -381,10 +395,10 @@ class OutOfKernelCopyStrategy(CopyStrategy):
             # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
             # with copy shape [I, J] and strides [J*K, K], [J, 1]
 
-            dpitch = f'{dst_strides[1]} * sizeof({ctype})'
-            spitch = f'{src_strides[1]} * sizeof({ctype})'
+            dpitch = f'{symbolic_to_cpp(dst_strides[1])} * sizeof({ctype})'
+            spitch = f'{symbolic_to_cpp(src_strides[1])} * sizeof({ctype})'
             width = f'sizeof({ctype})'
-            height = copy_shape[0] * copy_shape[1]
+            height = symbolic_to_cpp(copy_shape[0] * copy_shape[1])
             kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
@@ -431,16 +445,16 @@ class OutOfKernelCopyStrategy(CopyStrategy):
             call += f"for (int __copyidx{dim} = 0; __copyidx{dim} < {copy_shape[dim]}; ++__copyidx{dim}) {{\n"
 
         # Write Memcopy2DAsync
-        offset_src = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(src_strides[:-2]))
-        offset_dst = ' + '.join(f'(__copyidx{d} * ({s}))' for d, s in enumerate(dst_strides[:-2]))
+        offset_src = ' + '.join(f'(__copyidx{d} * ({symbolic_to_cpp(s)}))' for d, s in enumerate(src_strides[:-2]))
+        offset_dst = ' + '.join(f'(__copyidx{d} * ({symbolic_to_cpp(s)}))' for d, s in enumerate(dst_strides[:-2]))
 
         src = f'{src_expr} + {offset_src}'
         dst = f'{dst_expr} + {offset_dst}'
 
-        dpitch = f'{dst_strides[-2]} * sizeof({ctype})'
-        spitch = f'{src_strides[-2]} * sizeof({ctype})'
-        width = f'{copy_shape[-1]} * sizeof({ctype})'
-        height = copy_shape[-2]
+        dpitch = f'{symbolic_to_cpp(dst_strides[-2])} * sizeof({ctype})'
+        spitch = f'{symbolic_to_cpp(src_strides[-2])} * sizeof({ctype})'
+        width = f'{symbolic_to_cpp(copy_shape[-1])} * sizeof({ctype})'
+        height = symbolic_to_cpp(copy_shape[-2])
         kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
         # Generate call and write it

@@ -36,7 +36,8 @@ from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import 
 from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
 from dace.transformation.passes.gpustream.gpu_stream_topology_simplification import GPUStreamTopologySimplification
 from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
-from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
+#from dace.transformation.passes.shared_memory_synchronization import DefaultSharedMemorySync
+from dace.transformation.passes.shared_memory_synchronization2 import DefaultSharedMemorySync
 from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
 
@@ -373,23 +374,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             # Store kernel metadata (name, dimensions, arguments, etc.) in a KernelSpec object 
             # and save it as an attribute
-            kernel_spec =  KernelSpec(cudaCodeGen=self,
-                                      sdfg=sdfg,
-                                      cfg=cfg,
-                                      dfg_scope=dfg_scope,
-                                      state_id=state_id)
+            kernel_spec = KernelSpec(cudaCodeGen=self,
+                                     sdfg=sdfg,
+                                     cfg=cfg,
+                                     dfg_scope=dfg_scope,
+                                     state_id=state_id)
             
             self._current_kernel_spec = kernel_spec
 
-            # Update types of constant variables in the current scope
-            for dname, data_desc in kernel_spec.arglist.items():
-                ptr_name = ptr(dname, data_desc, sdfg, self._frame)
-                defined_type, ctype = self._dispatcher.defined_vars.get(ptr_name)
-
-                if dname in kernel_spec.kernel_constants:
-                    ctype = f"const {ctype}"
-                
-                self._dispatcher.defined_vars.add(ptr_name, defined_type, ctype, allow_shadowing=True)
+            # (Re)define variables for the new scope
+            self._define_variables_in_kernel_scope(sdfg, self._dispatcher)
 
             # declare and call kernel wrapper function (in the CPU-side code)
             self._declare_and_invoke_kernel_wrapper(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
@@ -444,6 +438,57 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             f"Scope generation for schedule type '{schedule_type}' is not implemented in ExperimentalCUDACodeGen. "
             "Please check for supported schedule types or implement the corresponding strategy.")
 
+    def _define_variables_in_kernel_scope(self, sdfg: SDFG, dispatcher: TargetDispatcher):
+        """
+        Define kernel-visible variables in the dispatcher's scope.
+
+        - Certain variables stored in the host-side ``__state`` struct (e.g., persistent or external
+          data) cannot be accessed directly in kernel code. They are passed as arguments instead, with 
+          pointer names resolved via ``cpp.ptr(..)``. These must be registered in the dispatcher for use 
+          in kernel context.
+
+        - KernelSpec may also mark certain variables/arguments as constants, which must be registered with 
+          the appropriate ``const`` qualifier in their ctype.
+        """
+        # Extract argument and constant definitions from the KernelSpec
+        kernel_spec: KernelSpec = self._current_kernel_spec
+        kernel_constants: Set[str] = kernel_spec.kernel_constants
+        kernel_arglist: Dict[str, dt.Data] = kernel_spec.arglist
+
+        # Save current in_device_code value for restoration later
+        restore_in_device_code = self._in_device_code 
+        for name, data_desc in kernel_arglist.items():
+    
+            # Only arrays relevant
+            if not name in sdfg.arrays:
+                continue
+
+            data_desc = sdfg.arrays[name]
+            # Get the outer/host pointer name
+            self._in_device_code = False
+            host_ptrname = cpp.ptr(name, data_desc, sdfg, self._frame)
+
+            # Get defined type and ctype for the data (use host pointer name)
+            is_global: bool = data_desc.lifetime in (dtypes.AllocationLifetime.Global, 
+                                                        dtypes.AllocationLifetime.Persistent,
+                                                        dtypes.AllocationLifetime.External)
+            defined_type, ctype = dispatcher.defined_vars.get(host_ptrname, is_global=is_global)
+
+            # Get the inner/device pointer name
+            self._in_device_code = True
+            device_ptrname = cpp.ptr(name, data_desc, sdfg, self._frame)
+
+            # Add the const qualifier if it is a constant AND is not marked as such yet
+            if name in kernel_constants:
+                if not "const " in ctype:
+                    ctype = f"const {ctype}"
+
+            # Register variable with the device pointer name for the kernel context
+            dispatcher.defined_vars.add(device_ptrname, defined_type, ctype, allow_shadowing=True)
+        
+        # Restore in_device_code field
+        self._in_device_code = restore_in_device_code
+
     def _declare_and_invoke_kernel_wrapper(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView, state_id: int,
                                             function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
@@ -495,9 +540,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         gdims = ', '.join(symbolic_to_cpp(grid_dims))
         bdims = ', '.join(symbolic_to_cpp(block_dims))
 
-        # cuda/hip stream the kernel belongs to
-        gpu_stream = self._gpu_stream_manager.get_stream_node(scope_entry)
-
         # ----------------- Kernel Launch Function Declaration -----------------------
 
         self._localcode.write(
@@ -536,8 +578,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     }}''', cfg, state_id, scope_entry)
 
         # ----------------- Kernel Launch Invocation -----------------------
+        stream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
         kargs = ', '.join(['(void *)&' + arg for arg in kernel_args_as_input])
-        _, stream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
         self._localcode.write(
             f'''
             void  *{kernel_name}_args[] = {{ {kargs} }};
@@ -703,25 +745,37 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         parent_state: SDFGState = cfg.state(state_id)
         nsdfg = node.sdfg
 
+        # New scope for defined variables
         dispatcher: TargetDispatcher = self._dispatcher
         dispatcher.defined_vars.enter_scope(node)
+
+        # Add the const qualifier to any constants not marked as such
 
         # update const data
         new_const_data = sdutil.get_constant_data(node, parent_state) - self._current_kernel_spec.kernel_constants
         for name in new_const_data:
-            desc = nsdfg.arrays[name]
+            desc = nsdfg.arrays[name]    
             ptr_name = ptr(name, desc, nsdfg, self._frame)
-            defined_type= get_defined_type(desc)
-            ctype = f"const {desc.ctype}"
+            try: 
+                defined_type, ctype = dispatcher.defined_vars.get(ptr_name, is_global=True)
+                if not "const " in desc.ctype:
+                    ctype = f"const {desc.ctype}"
+            except:
+                defined_type = get_defined_type(desc)
+                if not "const " in desc.ctype:
+                    ctype = f"const {desc.ctype}" 
             dispatcher.defined_vars.add(ptr_name, defined_type, ctype, allow_shadowing=True)
 
         # update const symbols
         new_const_symbols = sdutil.get_constant_symbols(node, parent_state) - self._current_kernel_spec.kernel_constants
         for name in new_const_symbols:
             defined_type = DefinedType.Scalar
-            ctype = f"const {nsdfg.symbols[name].ctype}"
-            dispatcher.defined_vars.add(name, defined_type, ctype, allow_shadowing=True)
-        
+            if not "const" in nsdfg.symbols[name].ctype:
+                ctype = f"const {nsdfg.symbols[name].ctype}"
+
+
+
+        # Redirect rest to CPU codegen
         self._cpu_codegen._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
         # Exit scope
@@ -776,17 +830,21 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         dataname = ptr(node.data, nodedesc, sdfg, self._frame)
 
-        # ------------------- Guard checks -------------------
+        # ------------- Guard checks & Redirect to CPU CodeGen -------------
 
         # Skip if variable is already defined
         if self._dispatcher.defined_vars.has(dataname):
             return
 
-        if isinstance(nodedesc, (dace.data.View, dace.data.Reference)):
-            return NotImplementedError("Pointers and References not implemented in ExperimentalCUDACodeGen")
-
         if isinstance(nodedesc, dace.data.Stream):
             raise NotImplementedError("allocate_stream not implemented in ExperimentalCUDACodeGen")
+        
+        elif isinstance(nodedesc, dace.data.View):
+            return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
+                                                   allocation_stream)
+        elif isinstance(nodedesc, dace.data.Reference):
+            return self._cpu_codegen.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream,
+                                                        declaration_stream, allocation_stream)
 
         # No clue what is happening here
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -1221,39 +1279,45 @@ class KernelSpec:
         # constant variable types in the dispatcher (handled at GPU codegen)
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-
         kernel_constants = kernel_const_data | kernel_const_symbols
         self._kernel_constants: Set[str] = kernel_constants
 
         # Retrieve arguments required for the kernels subgraph
         arglist: Dict[str, dt.Data] = kernel_parent_state.scope_subgraph(kernel_map_entry).arglist()
-
-        # Add also dynamic inputs required for the kernel to arglist except streams
-        # streams are only needed for the kernel wrapper and launcher function
-        stream_args = []
-        stream_args_typed = []
-        for e in dace.sdfg.dynamic_map_inputs(kernel_parent_state, kernel_map_entry):
-            data_desc = e.src.desc(sdfg)
-            var_name = str(e.dst_conn)
-
-            if data_desc.dtype == dtypes.gpuStream_t:
-                _, stream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')
-                stream_args.append(f"{var_name}")
-                stream_args_typed.append(f"gpuStream_t {stream_var_name}")
-            else:
-                var_name = str(e.dst_conn)
-                arglist[var_name] = data_desc
-                defined_type = get_defined_type(data_desc)
-                cudaCodeGen._dispatcher.defined_vars.add(var_name, defined_type, data_desc.ctype, allow_shadowing=True)
-
         self._arglist = arglist
 
-        # Format arguments for input passing and function signatures (kernel and kernel wrapper)
+        # save _in_device_code value for restoring later
+        restore_in_device_code = cudaCodeGen._in_device_code
+
+        # Certain args are called in the CUDA/HIP file or kernel funcion, in which the pointer name of the args are different
+        cudaCodeGen._in_device_code = True
         self._args_as_input = [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in arglist.items()]
         self._args_typed = [('const ' if name in kernel_constants else '') + data.as_arg(name=name) for name, data in arglist.items()]
 
-        self._kernel_wrapper_args_as_input = ['__state'] + self._args_as_input + stream_args
-        self._kernel_wrapper_args_typed = [f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] + self._args_typed + stream_args_typed
+        # Args for the kernel wrapper function
+        cudaCodeGen._in_device_code = False
+
+        # Gather GPU stream information:
+        # - Use the connector name when passing the stream to the kernel
+        # - Use the configured variable name (from Config) in the wrapper’s function signature
+        #   (this same name is also used when invoking {backend}LaunchKernel inside the wrapper)
+        gpustream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
+        gpustream_input = [e for e in dace.sdfg.dynamic_map_inputs(kernel_parent_state, kernel_map_entry) if e.src.desc(sdfg).dtype == dtypes.gpuStream_t]
+        if len(gpustream_input) > 1:
+            raise ValueError(f"There can not be more than one GPU stream assigned to a kernel, but {len(gpustream_input)} were assigned.")
+        
+        # Final wrapper arguments:
+        # - State struct (__state)
+        # - Original kernel args
+        # - GPU stream
+        self._kernel_wrapper_args_as_input = (['__state']
+                                              + [ptr(name, data, sdfg, cudaCodeGen._frame) for name, data in arglist.items()] 
+                                              + [str(gpustream_input[0].dst_conn)])
+        self._kernel_wrapper_args_typed = ([f'{mangle_dace_state_struct_name(cudaCodeGen._global_sdfg)} *__state'] 
+                                           + [('const ' if name in kernel_constants else '') + data.as_arg(name=name) for name, data in arglist.items()] 
+                                           + [f"gpuStream_t {gpustream_var_name}"])
+
+        cudaCodeGen._in_device_code = restore_in_device_code
 
         # The kernel's grid and block dimensions
         self._grid_dims, self._block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
@@ -1326,7 +1390,7 @@ class KernelSpec:
     def args_as_input(self) -> list[str]:
         """
         Returns the kernel function arguments formatted for use as inputs
-        when calling the kernel function.
+        when calling/launching the kernel function.
         """
         return self._args_as_input
 

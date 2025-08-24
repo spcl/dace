@@ -265,11 +265,9 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             #----------------- Place tasklet between node and successors, link GPU streams ----------------
 
             # 1. Put the tasklet between the node and its successors
-            for edge in state.out_edges(node):
-                src, src_conn, dst, dst_conn, memlet = edge
-                state.add_edge(src, src_conn, tasklet, None, copy.deepcopy(memlet))
-                state.add_edge(tasklet, None, dst, dst_conn, copy.deepcopy(memlet))
-                state.remove_edge(edge)
+            for succ in state.successors(node):
+                state.add_edge(tasklet, None, succ, None, dace.Memlet())
+            state.add_edge(node, None, tasklet, None, dace.Memlet())
 
             # 2. If the GPU stream array is not defined in the data descriptor store, add it first
             parent_sdfg = state.sdfg

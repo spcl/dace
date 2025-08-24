@@ -134,6 +134,8 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                 callsite_stream.write(f'{thread_id_ctype} {var_name} = {var_def};', cfg, state_id, kernel_entry_node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, thread_id_ctype)
 
+            self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
+
             # ----------------- Dispatch Subgraph code generation -----------------------
 
             self._dispatcher.dispatch_subgraph(sdfg,
@@ -143,6 +145,8 @@ class KernelScopeGenerator(ScopeGenerationStrategy):
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=True)
+            
+            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, kernel_entry_node, function_stream, callsite_stream)
 
     def _generate_kernel_signature(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: ScopeSubgraphView,
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -295,6 +299,8 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                 callsite_stream.write(f'{block_id_ctype} {var_name} = {var_def};', cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, block_id_ctype)
 
+            self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
+
             # ----------------- Guard Conditions for Block Execution -----------------------
 
             # Generate conditions for this block's execution using min and max
@@ -337,6 +343,8 @@ class ThreadBlockScopeGenerator(ScopeGenerationStrategy):
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=True)
+            
+            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
 
 class WarpScopeGenerator(ScopeGenerationStrategy):
@@ -428,6 +436,9 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
 
                 callsite_stream.write(f"{ids_ctype} {var_name} = {expr};", cfg, state_id, node)
                 self._dispatcher.defined_vars.add(var_name, DefinedType.Scalar, ids_ctype)
+            
+            
+            self.codegen._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
             # ----------------- Guard Conditions for Warp Execution -----------------------
 
@@ -461,6 +472,8 @@ class WarpScopeGenerator(ScopeGenerationStrategy):
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=True)
+            
+            self.codegen._frame.deallocate_arrays_in_scope(sdfg, cfg, node, function_stream, callsite_stream)
 
     def _handle_GPU_Warp_scope_guards(self, state_dfg: SDFGState, node: nodes.MapEntry, map_range: subsets.Range,
                                       warp_dim: int, num_threads_in_block, num_warps, kernel_stream: CodeIOStream,
@@ -575,19 +588,15 @@ class ScopeManager:
 
     def __enter__(self):
         """
-        Writes the opening bracket to the stream and allocates arrays in scope.
+        Writes the opening bracket.
         """
         self.open()
-        self.frame_codegen.allocate_arrays_in_scope(self.sdfg, self.cfg, self.entry_node, self.function_stream,
-                                                    self.callsite_stream)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         """
-        Deallocates arrays in scope and writes the closing brackets to the stream.
+        Writes the closing brackets to the stream.
         """
-        self.frame_codegen.deallocate_arrays_in_scope(self.sdfg, self.cfg, self.entry_node, self.function_stream,
-                                                      self.callsite_stream)
         for i in range(self._opened):
             line = "}"
             if self.debug:
