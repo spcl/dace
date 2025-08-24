@@ -14,6 +14,7 @@ from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
+from dace.sdfg import nodes
 
 if TYPE_CHECKING:
     import dace.sdfg.graph
@@ -429,6 +430,22 @@ class Memlet(object):
         # If subset is None, fill in with entire array
         if (self.data is not None and self.subset is None):
             self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
+
+        other_data = None
+        if self._is_data_src and isinstance(path[-1].dst, nodes.AccessNode):
+            other_data = path[-1].dst.data
+        elif not self._is_data_src and isinstance(path[0].src, nodes.AccessNode):
+            other_data = path[0].src.data
+        # If there is "other_data" (and "data") but there is no "other_subset", then set "other_subset"
+        # to the same range as "subset", if the shape of "other_data" covers the "subset" or the shape of "data".
+        if other_data is not None and self.data is not None and self.other_subset is None:
+            data_desc = sdfg.arrays[self.data]
+            other_data_desc = sdfg.arrays[other_data]
+            if len(data_desc.shape) == len(other_data_desc.shape):
+                data_subset = subsets.Range.from_array(data_desc)
+                other_data_subset = subsets.Range.from_array(other_data_desc)
+                if other_data_subset.covers(self.subset) or other_data_subset.covers(data_subset):
+                    self.other_subset = dcpy(self.subset)
 
     def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge', state: 'dace.sdfg.SDFGState'):
         self.try_initialize(state.parent, state, edge)
