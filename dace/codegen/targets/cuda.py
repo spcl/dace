@@ -2474,7 +2474,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                   varname=varname,
                                                   expr=expr,
                                               ), cfg, state_id, node)
-                        
+
                 # Emit internal array allocation here for GPU_ThreadBlock (deallocation handled at MapExit)
                 self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
@@ -2544,7 +2544,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         else:
             for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', cfg, state_id, scope_entry)
-
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
