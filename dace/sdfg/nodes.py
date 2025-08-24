@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -19,6 +19,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, LambdaPropert
 from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
+from dace.sdfg import tasklet_validation as tval
 import pydoc
 import warnings
 
@@ -455,7 +456,7 @@ class Tasklet(CodeNode):
     def name(self):
         return self._label
 
-    def validate(self, sdfg, state):
+    def validate(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState'):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid tasklet name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -464,6 +465,13 @@ class Tasklet(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        if self.language == dtypes.Language.Python and self.code.code:
+            validator = tval.ConnectorDimensionalityValidator({e.dst_conn: e.data
+                                                               for e in state.in_edges(self)},
+                                                              {e.src_conn: e.data
+                                                               for e in state.out_edges(self)}, sdfg)
+            for stmt in self.code.code:
+                validator.visit(stmt)
 
     @property
     def free_symbols(self) -> Set[str]:
