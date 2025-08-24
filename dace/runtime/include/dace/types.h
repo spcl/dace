@@ -95,10 +95,21 @@ namespace dace
     #else
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
+
+    // Define a union for float and uint32_t to help with conversions
+    union FloatUint32 {
+        float f;
+        uint32_t u;
+        FloatUint32(float f) : f(f) {}
+        FloatUint32(uint32_t u) : u(u) {}
+        operator float() const { return f; }
+        operator uint32_t() const { return u; }
+    };
+
     struct half {
         // source: https://stackoverflow.com/a/26779139/15853075
-        half(float f) {
-            uint32_t x = *((uint32_t*)&f);
+        half(FloatUint32 f) {
+            uint32_t x = f.u;
             h = ((x>>16)&0x8000)|((((x&0x7f800000)-0x38000000)>>13)&0x7c00)|((x>>13)&0x03ff);
         }
         operator float() {

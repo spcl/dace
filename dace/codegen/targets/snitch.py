@@ -316,7 +316,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         is_pointer = isinstance(conntype, dtypes.pointer)
 
         # Allocate variable type
-        memlet_type = conntype.dtype.ctype
+        memlet_type = conntype.dtype
 
         desc = sdfg.arrays[memlet.data]
         ptr = cpp.ptr(memlet.data, desc)
@@ -342,25 +342,24 @@ class SnitchCodeGen(TargetCodeGenerator):
         if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
             if output:
                 if is_pointer and var_type == DefinedType.ArrayInterface:
-                    result += "{} {} = {};".format(memlet_type, local_name, expr)
+                    result += "{} = {};".format(memlet_type.as_arg(local_name), expr)
                 elif not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
-                    result += "{} {};".format(memlet_type, local_name)
+                    result += "{};".format(memlet_type.as_arg(local_name))
                     defined = DefinedType.Scalar
 
             else:
                 if not memlet.dynamic:
                     if is_scalar:
                         # We can pre-read the value
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        result += "{} = {};".format(memlet_type.as_arg(local_name), expr)
                     else:
                         # Pointer reference
-                        result += "{} {} = {};".format(ctypedef, local_name, expr)
+                        result += "{} = {};".format(ctypedef.as_arg(local_name), expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    memlet_type = '%s const' % memlet_type
-                    result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                    result += "{} = {};".format(memlet_type.as_arg('const &' + local_name), expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
@@ -370,7 +369,7 @@ class SnitchCodeGen(TargetCodeGenerator):
             else:
                 # Just forward actions to the underlying object
                 memlet_type = ctypedef
-                result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                result += "{} = {};".format(memlet_type.as_arg('&' + local_name), expr)
                 defined = DefinedType.Stream
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
@@ -402,7 +401,7 @@ class SnitchCodeGen(TargetCodeGenerator):
             arrsize, arrsize_bytes, alloc_name, nodedesc))
 
         if isinstance(nodedesc, data.Array):
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            ctypedef = dtypes.pointer(nodedesc.dtype)
 
             # catch Threadlocal storage
             if nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -416,7 +415,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                         state_id,
                         node,
                     )
-                    self.dispatcher.defined_vars.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
+                    self.dispatcher.defined_vars.add_global(name, DefinedType.Pointer, dace.pointer(nodedesc.dtype))
                 # Allocate in each OpenMP thread
                 allocation_stream.write(
                     """

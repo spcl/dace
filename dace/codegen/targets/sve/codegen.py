@@ -270,7 +270,7 @@ class SVECodeGen(TargetCodeGenerator):
         else:
             raise util.NotSupportedError('Unsupported Code->Code edge (pointer)')
 
-        self.dispatcher.defined_vars.add(src_name, DefinedType.Scalar, ctype)
+        self.dispatcher.defined_vars.add(src_name, DefinedType.Scalar, dtypes.opaque(ctype))
         code.write(f'{ctype} {src_name};')
 
         return True
@@ -373,8 +373,7 @@ class SVECodeGen(TargetCodeGenerator):
                        nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
         if nodedesc.storage == dtypes.StorageType.SVE_Register:
-            sve_type = util.TYPE_TO_SVE[nodedesc.dtype]
-            self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar, sve_type)
+            self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar, nodedesc.dtype)
             return
 
         if util.get_sve_scope(sdfg, dfg, node) is not None and isinstance(nodedesc, data.Scalar) and isinstance(
@@ -383,8 +382,7 @@ class SVECodeGen(TargetCodeGenerator):
             # We prevent dace::vec<>'s and allocate SVE registers instead
             ptrname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
             if self.dispatcher.defined_vars.has(ptrname):
-                sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
-                self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, sve_type)
+                self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, nodedesc.dtype.vtype)
                 declaration_stream.write(f'{sve_type} {ptrname};')
             return
 
@@ -435,7 +433,7 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Generate the SVE loop header
         # The name of our loop predicate is always __pg_{param}
-        self.dispatcher.defined_vars.add('__pg_' + param, DefinedType.Scalar, 'svbool_t')
+        self.dispatcher.defined_vars.add('__pg_' + param, DefinedType.Scalar, dtypes.opaque('svbool_t'))
 
         # Declare our counting variable (e.g. i) and precompute the loop predicate for our range
         callsite_stream.write(f'{self.counter_type} {param} = {begin};')

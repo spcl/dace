@@ -1163,7 +1163,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     nodedesc.dtype.ctype, ptrname))
                 self._dispatcher.declared_arrays.add(
                     ptrname, DefinedType.Pointer,
-                    'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
+                    dtypes.opaque('hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(
+                        nodedesc.dtype.ctype)))
         elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
                                    dtypes.StorageType.FPGA_ShiftRegister)):
 
@@ -1227,9 +1228,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # defined type: decide whether this is a stream array or a single stream
             def_type = (DefinedType.StreamArray if arrsize != 1 else DefinedType.Stream)
             if is_global:
-                self._dispatcher.defined_vars.add_global(dataname, def_type, ctype)
+                self._dispatcher.defined_vars.add_global(dataname, def_type, dtypes.opaque(ctype))
             else:
-                self._dispatcher.defined_vars.add(dataname, def_type, ctype)
+                self._dispatcher.defined_vars.add(dataname, def_type, dtypes.opaque(ctype))
 
         elif isinstance(nodedesc, dt.Array):
 
@@ -1285,7 +1286,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                         self._dispatcher.defined_vars.add(
                             alloc_name, DefinedType.Pointer,
-                            'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
+                            dtypes.opaque('hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(
+                                nodedesc.dtype.ctype)))
 
             elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
                                        dtypes.StorageType.FPGA_ShiftRegister)):
@@ -1304,7 +1306,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     ctype = self.make_vector_type(nodedesc.dtype, False)
                     define_str = "{} {};".format(ctype, dataname)
                     result_decl.write(define_str)
-                    self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar, ctype)
+                    self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar, dtypes.opaque(ctype))
                 else:
                     # Language-specific
                     if (nodedesc.storage == dtypes.StorageType.FPGA_ShiftRegister):
@@ -1321,7 +1323,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             ctype = self.make_vector_type(nodedesc.dtype, False)
             result_decl.write("{} {};\n".format(ctype, dataname))
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar, ctype)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar, dtypes.opaque(ctype))
 
         else:
             raise TypeError("Unhandled data type: {}".format(type(nodedesc).__name__))
