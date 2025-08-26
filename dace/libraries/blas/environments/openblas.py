@@ -26,11 +26,14 @@ class OpenBLAS:
 
     @staticmethod
     def cmake_libraries():
+        openblas_path = ctypes.util.find_library('openblas')
+        if openblas_path:
+            return [openblas_path]
         lapacke_path = ctypes.util.find_library('lapacke')
         blas_path = ctypes.util.find_library('blas')
         if lapacke_path and blas_path:
             return [lapacke_path, blas_path]
-        return []
+        return ['lapacke', 'lapack', 'blas', 'gfortran']
 
     @staticmethod
     def is_installed():
