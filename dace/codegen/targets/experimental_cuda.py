@@ -134,32 +134,16 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Preprocess the SDFG to prepare it for GPU code generation. This includes:
+        - Handling GPU<->GPU strided copies.
         - Adding explicit ThreadBlock Maps where missing and infer Grid and Block dimensions for
           every Kernel in the SDFG
-        - Handling GPU<->GPU strided copies.
         - Runs a pipeline for making GPU stream explicit at the SDFG level and handles other
           GPU stream related initialization.
+        - TODO
         - Handling memory pool management
+
+        Note that the order of the steps matters, e.g. TODO
         """
-
-        #----------------- Add ThreadBlock Maps & Infer Kernel Grid & Block Sizes --------------------
-
-        # new_nodes - old_nodes gives us all Kernel Entry nodes that were created during the insertion
-        # of ThreadBlock maps. Note: the original Kernel Entry was transformed into a ThreadBlock map,
-        # and a new GPU_Device (i.e., Kernel) map was inserted on top of it.
-        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
-
-        # Insert default explicit GPU_ThreadBlock maps where they are missing
-        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
-
-        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
-        kernels_with_added_tb_maps = {
-            n
-            for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
-        }
-
-        # Infer GPU Grid and Block dimensions
-        self._kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, kernels_with_added_tb_maps)
 
         #------------------------- Hanlde GPU<->GPU strided copies --------------------------
 
@@ -201,6 +185,26 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                         CopyToMap.apply_to(nsdfg, save=False, annotate=False, a=e.src, b=e.dst)
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
+
+
+        #----------------- Add ThreadBlock Maps & Infer Kernel Grid & Block Sizes --------------------
+
+        # new_nodes - old_nodes gives us all Kernel Entry nodes that were created during the insertion
+        # of ThreadBlock maps. Note: the original Kernel Entry was transformed into a ThreadBlock map,
+        # and a new GPU_Device (i.e., Kernel) map was inserted on top of it.
+        old_nodes = set(node for node, _ in sdfg.all_nodes_recursive())
+
+        # Insert default explicit GPU_ThreadBlock maps where they are missing
+        sdfg.apply_transformations_once_everywhere(AddThreadBlockMap)
+
+        new_nodes = set(node for node, _ in sdfg.all_nodes_recursive()) - old_nodes
+        kernels_with_added_tb_maps = {
+            n
+            for n in new_nodes if isinstance(n, nodes.MapEntry) and n.schedule == dtypes.ScheduleType.GPU_Device
+        }
+
+        # Infer GPU Grid and Block dimensions
+        self._kernel_dimensions_map = InferGPUGridAndBlockSize().apply_pass(sdfg, kernels_with_added_tb_maps)
 
         #------------------------- GPU Stream related Logic --------------------------
 

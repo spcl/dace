@@ -255,6 +255,7 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         This function returns True if:
         - We are not currently generating kernel code
         - The copy occurs between two AccessNodes
+        - The data descriptors of source and destination are not views.
         - The storage types of either src or dst is CPU_Pinned or GPU_Device
         - We do not have a CPU-to-CPU copy
 
@@ -275,24 +276,24 @@ class OutOfKernelCopyStrategy(CopyStrategy):
             else:
                 parent_map_tuple = helpers.get_parent_map(parent_state, parent_map)
 
-        # 2. Check whether copy is between to AccessNodes
+        # 2. Check whether copy is between two AccessNodes
         if not (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)):
             return False
+        
+        # 3. The data descriptors of source and destination are not views
+        if isinstance(src_node.desc(state), data.View) or isinstance(dst_node.desc(state), data.View):
+            return False
 
-        # 3. Check that one StorageType of either src or dst is CPU_Pinned or GPU_Device
+        # 4. Check that one StorageType of either src or dst is CPU_Pinned or GPU_Device
         src_storage = copy_context.get_storage_type(src_node)
         dst_storage = copy_context.get_storage_type(dst_node)
         if not (src_storage in (StorageType.GPU_Global, StorageType.CPU_Pinned) or 
                 dst_storage in (StorageType.GPU_Global, StorageType.CPU_Pinned)):
             return False
 
-        # 4. Check that this is not a CPU to CPU copy
+        # 5. Check that this is not a CPU to CPU copy
         cpu_storage_types = [StorageType.CPU_Heap, StorageType.CPU_ThreadLocal, StorageType.CPU_Pinned]
         if src_storage in cpu_storage_types and dst_storage in cpu_storage_types:
-            return False
-        
-
-        if isinstance(src_node.desc(state), data.View) or isinstance(dst_node.desc(state), data.View):
             return False
 
         return True
@@ -323,11 +324,11 @@ class OutOfKernelCopyStrategy(CopyStrategy):
     
     def _generate_1d_copy(self, copy_context: CopyContext) -> str:
         """
-        Emits code for a 1D memory copy between host and device using GPU backend.
-        Uses {backend}MemcpyAsync for contiguous memory and uses {backend}Memcpy2DAsync
-        for strided memory copies.
-        """
+        Generates a 1D memory copy between host and device using the GPU backend.
 
+        Uses {backend}MemcpyAsync for contiguous memory. For strided memory, 
+        {backend}Memcpy2DAsync is leveraged to efficiently handle the stride along one dimension.
+        """
         # ----------- Retrieve relevant copy parameters --------------
         backend: str = common.get_gpu_backend()
 
@@ -362,22 +363,37 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         return call
     
     def _generate_2d_copy(self, copy_context: CopyContext) -> None:
-        """Generates code for a 2D copy, falling back to 1D flattening if applicable."""
+        """
+        Generates a 2D memory copy using {backend}Memcpy2DAsync.
+
+        Three main cases are handled:
+        - Copy between row-major stored arrays with contiguous rows.
+        - Copy between column-major stored arrays with contiguous columns.
+        - A special case where a 2D copy can still be represented.
+
+        Raises:
+            NotImplementedError: Raised if the source and destination strides do not match any of the handled patterns.
+            Such cases indicate an unsupported 2D copy and should be examined separately.
+            They can be implemented if valid, or a more descriptive error should be raised if the path should not occur.
+
+        Note:
+            {backend}Memcpy2DAsync supports strided copies along only one dimension (row or column), 
+            but not both simultaneously.
+        """
 
         # ----------- Extract relevant copy parameters --------------
         backend: str = common.get_gpu_backend()
 
         # Due to applicable(), src and dst node must be AccessNodes
         copy_shape, src_strides, dst_strides, src_expr, dst_expr = copy_context.get_accessnode_to_accessnode_copy_info()
-
         src_location, dst_location = copy_context.get_memory_location()
-        is_contiguous_copy = (src_strides[-1] == 1) and (dst_strides[-1] == 1)
         ctype = copy_context.get_ctype()
         gpustream = copy_context.get_assigned_gpustream()
 
         # ----------------- Generate backend call if supported --------------------
 
-        if is_contiguous_copy:
+        # Case: Row-major layout, rows are not strided.
+        if (src_strides[1] == 1) and (dst_strides[1] == 1):
             dpitch = f'{symbolic_to_cpp(dst_strides[0])} * sizeof({ctype})'
             spitch = f'{symbolic_to_cpp(src_strides[0])} * sizeof({ctype})'
             width = f'{symbolic_to_cpp(copy_shape[1])} * sizeof({ctype})'
@@ -386,14 +402,21 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
             call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
 
-        elif src_strides[-1] != 1 or dst_strides[-1] != 1:
-            # TODO: Checks this, I am not sure but the old code and its description
-            # seems to be more complicated here than necessary..
-            # But worth to mention: we essentially perform flattening
+        # Case: Column-major layout, no columns are strided.
+        elif (src_strides[0] == 1) and (dst_strides[0] == 1):
+            dpitch = f'{symbolic_to_cpp(dst_strides[1])} * sizeof({ctype})'
+            spitch = f'{symbolic_to_cpp(src_strides[1])} * sizeof({ctype})'
+            width = f'{symbolic_to_cpp(copy_shape[0])} * sizeof({ctype})'
+            height = f'{symbolic_to_cpp(copy_shape[1])}'
+            kind = f'{backend}Memcpy{src_location}To{dst_location}'
 
-            # NOTE: Special case of continuous copy
-            # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
-            # with copy shape [I, J] and strides [J*K, K], [J, 1]
+            call = f'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst_expr}, {dpitch}, {src_expr}, {spitch}, {width}, {height}, {kind}, {gpustream}));\n'
+
+        # Special case
+        elif (src_strides[0] / src_strides[1] == copy_shape[1] and dst_strides[0] / dst_strides[1] == copy_shape[1]):
+            # Consider as an example this copy: A[0:I, 0:J, K] -> B[0:I, 0:J] with
+            # copy shape [I, J], src_strides[J*K, K], dst_strides[J, 1]. This can be represented with a
+            # {backend}Memcpy2DAsync call!
 
             dpitch = f'{symbolic_to_cpp(dst_strides[1])} * sizeof({ctype})'
             spitch = f'{symbolic_to_cpp(src_strides[1])} * sizeof({ctype})'
@@ -412,7 +435,13 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         return call
 
     def _generate_nd_copy(self, copy_context: CopyContext) -> None:
-        # TODO: comment
+        """
+        Generates GPU code for copying N-dimensional arrays using 2D memory copies.
+
+        Uses {backend}Memcpy2DAsync for the last two dimensions, with nested loops
+        for any outer dimensions. Expects the copy to be contiguous and between
+        row-major storage locations.
+        """
         # ----------- Extract relevant copy parameters --------------
         backend: str = common.get_gpu_backend()
 
@@ -425,17 +454,18 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         num_dims = len(copy_shape)
 
         # ----------- Guard for unsupported Pattern --------------
-        is_contiguous_copy = (src_strides[-1] == 1) and (dst_strides[-1] == 1)
-        if not is_contiguous_copy:
+        if not (src_strides[-1] == 1) and (dst_strides[-1] == 1):
             src_node, dst_node = copy_context.src_node, copy_context.dst_node
             src_storage = copy_context.get_storage_type(src_node)
             dst_storage = copy_context.get_storage_type(dst_node)
             raise NotImplementedError(
-                "Strided GPU memory copies for N-dimensional arrays are not currently supported.\n"
+                "N-dimensional GPU memory copies, that are strided or contain column-major arrays, are currently not supported.\n"
                 f"  Source node: {src_node} (storage: {src_storage})\n"
                 f"  Destination node: {copy_context.dst_node} (storage: {dst_storage})\n"
                 f"  Source strides: {src_strides}\n"
-                f"  Destination strides: {dst_strides}\n")
+                f"  Destination strides: {dst_strides}\n"
+                f"  copy shape: {copy_shape}\n"
+                )
         
         # ----------------- Generate and write backend call(s) --------------------
 
