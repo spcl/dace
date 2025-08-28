@@ -14,6 +14,7 @@ from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUSt
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
 from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import InsertGPUStreamSyncTasklets
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -36,7 +37,7 @@ class InsertGPUCopyTasklets(ppl.Pass):
     
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         depending_passes = {
-            NaiveGPUStreamScheduler, InsertGPUStreamsToKernels, 
+            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, InsertGPUStreamsToKernels, 
             InsertGPUStreamsToTasklets, InsertGPUStreamSyncTasklets
             }
         return depending_passes
@@ -87,11 +88,6 @@ class InsertGPUCopyTasklets(ppl.Pass):
 
             # Generatae the copy call
             code = out_of_kernel_copy.generate_copy(copy_context)
-
-            # Ensure the GPU stream array exists in the current SDFG; add it if missing
-            if gpustream_array_name not in copy_sdfg.arrays:
-                copy_sdfg.add_transient(gpustream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
-                                         storage=dace.dtypes.StorageType.Register, lifetime=dace.dtypes.AllocationLifetime.Persistent)
                 
             # Prepare GPU ustream connectors and the stream to be accessed from the
             # GPU stream array

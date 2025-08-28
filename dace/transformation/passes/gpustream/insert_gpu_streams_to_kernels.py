@@ -8,6 +8,7 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -21,7 +22,7 @@ class InsertGPUStreamsToKernels(ppl.Pass):
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {NaiveGPUStreamScheduler}
+        return {NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -42,22 +43,12 @@ class InsertGPUStreamsToKernels(ppl.Pass):
         # Link kernels to their assigned GPU streams
         for sub_sdfg in sdfg.all_sdfgs_recursive():
 
-            # Track whether the GPU stream array is in tge
-            # sub_sdfg's data descriptor store
-            gpustream_array_added: bool = stream_array_name in sub_sdfg.arrays
-
             for state in sub_sdfg.states():
                 for node in state.nodes():
 
                     # Not a kernel entry - continue
                     if not (isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device):
                         continue
-                    
-                    # If GPU stream array is not yet defined in the sub_sdfg, add it
-                    if not gpustream_array_added:
-                        sub_sdfg.add_transient(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
-                                               storage=dace.dtypes.StorageType.Register, lifetime=dace.dtypes.AllocationLifetime.Persistent)
-                        gpustream_array_added = True
 
                     # Stream connector name and the used GPU Stream for the kernel
                     assigned_gpustream = stream_assignments[node]

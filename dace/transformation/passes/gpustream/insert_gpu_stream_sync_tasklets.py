@@ -12,6 +12,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -24,7 +25,8 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
     cases are discovered.
     """
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {NaiveGPUStreamScheduler, InsertGPUStreamsToKernels, InsertGPUStreamsToTasklets}
+        return {NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, 
+                InsertGPUStreamsToKernels, InsertGPUStreamsToTasklets}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Tasklets | ppl.Modifies.Memlets
@@ -124,6 +126,11 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
                 sync_state[state].add(stream_assignments[dst])
 
             elif (is_kernel_exit(src) and is_gpu_accessnode(dst, state) and
+                not is_sink_node(dst, state)):
+                sync_state[state].add(stream_assignments[src])
+                sync_state[state].add(stream_assignments[src])            
+
+            elif (is_kernel_exit(src) and is_gpu_accessnode(dst, state) and
                 is_sink_node(dst, state)):
                 sync_state[state].add(stream_assignments[dst])
 
@@ -202,9 +209,6 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             
             # 3. Connect a single GPU stream sink node (create or merge if needed)
             if len(stream_sink_nodes) == 0:
-                if stream_array_name not in state.sdfg.arrays:
-                    state.sdfg.add_transient(stream_array_name, (num_assigned_streams,), dtype=dtypes.gpuStream_t, 
-                                             storage=dtypes.StorageType.Register, lifetime=dtypes.AllocationLifetime.Persistent)
                 combined_stream_node = state.add_access(stream_array_name)
 
             else:
@@ -268,12 +272,6 @@ class InsertGPUStreamSyncTasklets(ppl.Pass):
             for succ in state.successors(node):
                 state.add_edge(tasklet, None, succ, None, dace.Memlet())
             state.add_edge(node, None, tasklet, None, dace.Memlet())
-
-            # 2. If the GPU stream array is not defined in the data descriptor store, add it first
-            parent_sdfg = state.sdfg
-            if stream_array_name not in parent_sdfg.arrays:
-                parent_sdfg.add_transient(stream_array_name, (num_assigned_streams,), dtype=dtypes.gpuStream_t, 
-                                          storage=dtypes.StorageType.Register, lifetime=dtypes.AllocationLifetime.Persistent)    
             
             # 3. Connect tasklet to GPU stream AccessNodes
             in_stream = state.add_access(stream_array_name)

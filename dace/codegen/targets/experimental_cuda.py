@@ -31,6 +31,7 @@ from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_a
 from dace.transformation.passes import analysis as ap
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
 from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
@@ -211,14 +212,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Register GPU context in state struct
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
-        # Define backend stream access expression (e.g., CUDA stream handle)
-        gpu_stream_access_template = "__state->gpu_context->streams[{gpu_stream}]"
-
         # Prepare the Pipeline to make GPU streams explicit: Add and connect SDFG nodes
         # with GPU stream AccessNodes where used
         stream_pipeline = Pipeline(
             [
                 NaiveGPUStreamScheduler(),
+                InsertGPUStreamsToSDFGs(),
                 InsertGPUStreamsToKernels(),
                 InsertGPUStreamsToTasklets(),
                 InsertGPUStreamSyncTasklets(),
@@ -270,6 +269,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             if self.backend != 'cuda':
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
+            # Keep only global arrays
+            pooled = filter(
+                lambda aname: sdfg.arrays[aname].lifetime in
+                (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.
+                 External), pooled)
+
             # Lazily compute reachability and access nodes
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
@@ -277,7 +282,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 # Find all data descriptors that will no longer be used after this state
                 last_state_arrays: Set[str] = set(
                     s for s in access_sets
@@ -606,29 +611,23 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     edge: Tuple[nodes.Node, str, nodes.Node, str,
                                 Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
 
-        from dace.codegen.targets.experimental_cuda_helpers.copy_strategies import (CopyContext, CopyStrategy,
-                                                                                    OutOfKernelCopyStrategy,
-                                                                                    SyncCollaboritveGPUCopyStrategy,
-                                                                                    AsyncCollaboritveGPUCopyStrategy,
-                                                                                    FallBackGPUCopyStrategy)
+        from dace.codegen.targets.experimental_cuda_helpers.new_copy_strategies import (
+            CopyContext,
+            OutOfKernelCopyStrategy,
+            SyncCollaboritveGPUCopyStrategy
+        )
 
-        context = CopyContext(self, self._gpu_stream_manager, state_id, src_node, dst_node, edge, sdfg, cfg, dfg,
-                              callsite_stream)
+        context = CopyContext(sdfg, cfg.state(state_id), src_node, dst_node, edge, self._gpu_stream_manager.assigned_streams)
 
-        # Order matters: fallback must come last
-        strategies: List[CopyStrategy] = [
-            OutOfKernelCopyStrategy(),
-            SyncCollaboritveGPUCopyStrategy(),
-            AsyncCollaboritveGPUCopyStrategy(),
-            FallBackGPUCopyStrategy()
-        ]
-
-        for strategy in strategies:
-            if strategy.applicable(context):
-                strategy.generate_copy(context)
-                return
-
-        raise RuntimeError("No applicable GPU memory copy strategy found (this should not happen).")
+        if OutOfKernelCopyStrategy().applicable(context):
+            return
+        
+        elif SyncCollaboritveGPUCopyStrategy().applicable(context):
+            code = SyncCollaboritveGPUCopyStrategy().generate_copy(context, self._kernel_dimensions_map)
+            callsite_stream.write(code, cfg, state_id, [src_node, dst_node])
+        else:
+            # Fallback
+            self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     #############################################################################
     # Predicates for Dispatcher
@@ -886,9 +885,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         if nodedesc.pool:
             gpu_stream_manager = self._gpu_stream_manager
-            gpu_stream = gpu_stream_manager.get_stream_node(node)
+            gpu_stream = gpu_stream_manager.assigned_streams[node]
             if gpu_stream != 'nullptr':
-                gpu_stream = f'__state->gpu_context->streams[{gpu_stream}]'
+                gpu_stream = f'__state->__0_gpu_streams[{gpu_stream}]'
             allocation_stream.write(
                 f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {gpu_stream}));\n',
                 cfg, state_id, node)
@@ -1011,7 +1010,11 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         # Main deallocation logic by storage type
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            if not nodedesc.pool:  # If pooled, will be freed somewhere else
+            if nodedesc.pool:
+                if (sdfg, dataname) not in self.pool_release:
+                    gpu_stream = "nullptr"
+                    callsite_stream.write(f'DACE_GPU_CHECK({self.backend}FreeAsync({dataname}, {gpu_stream}));\n', cfg, state_id, node)
+            else: 
                 callsite_stream.write(f'DACE_GPU_CHECK({self.backend}Free({dataname}));\n', cfg, state_id, node)
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
@@ -1038,13 +1041,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # in several different files (e.g., framecode.py, cpu.py, cpp.py). For the sake of consistency, we initialize it 
         # as it is expected in the other modules. I.e. prepend with an ID for all SDFGs it is defined.
         # Note that all the different variable names point to the same GPU stream array.
+        cnt = 0
         init_gpu_stream_vars = ""
         gpu_stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(",")[0]
         for csdfg, name, desc in self._global_sdfg.arrays_recursive(include_nested_data=True):
             if name == gpu_stream_array_name and desc.lifetime == dtypes.AllocationLifetime.Persistent:
-                gpu_stream_field_name = f'__{csdfg.cfg_id}_{name}'
-                init_gpu_stream_vars += f"__state->{gpu_stream_field_name} = __state->gpu_context->streams;\n"
-                init_gpu_stream_vars += f"    "
+                init_gpu_stream_vars = f"__state->__{csdfg.cfg_id}_{name}"
+                break
+
+
 
         # My comment: takes codeblocks and transforms it nicely to code
         initcode = CodeIOStream()
@@ -1131,16 +1136,14 @@ int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
 
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
 
-    // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
-        __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
+        {other_gpustream_init}[i] = 0;
     }}
 
-    {other_gpustream_init}
+    // Create {backend} streams
+    for(int i = 0; i < {nstreams}; ++i) {{
+        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&{other_gpustream_init}[i], {backend}StreamNonBlocking));
+    }}
 
     {initcode}
 
@@ -1155,33 +1158,15 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
     if (__err == 0)
         __err = static_cast<int>({backend}DeviceSynchronize());
 
-    // Destroy {backend} streams and events
+    // Destroy {backend} streams
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]));
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
+        DACE_GPU_CHECK({backend}StreamDestroy({other_gpustream_init}[i]));
     }}
 
     delete __state->gpu_context;
     return __err;
 }}
 
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
-{{
-    if (streamid < 0 || streamid >= {nstreams})
-        return false;
-
-    __state->gpu_context->streams[streamid] = stream;
-
-    return true;
-}}
-
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
-{{
-    for (int i = 0; i < {nstreams}; ++i)
-        __state->gpu_context->streams[i] = stream;
-}}
 
 {localcode}
 """.format(params=params_comma,
@@ -1230,6 +1215,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
             flags = Config.get("compiler", "cuda", "hip_args")
+            flags += " -G -g"
             flags += ' ' + ' '.join(
                 '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
                 for arch in hip_arch)

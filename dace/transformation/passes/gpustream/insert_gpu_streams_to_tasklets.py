@@ -7,6 +7,7 @@ from dace.config import Config
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
 
 
@@ -28,7 +29,7 @@ class InsertGPUStreamsToTasklets(ppl.Pass):
     """
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
-        return {NaiveGPUStreamScheduler, InsertGPUStreamsToKernels}
+        return {NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, InsertGPUStreamsToKernels}
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
@@ -68,12 +69,6 @@ class InsertGPUStreamsToTasklets(ppl.Pass):
                     # Tasklet does not need use its assigned GPU stream - continue
                     if not STREAM_PLACEHOLDER in node.code.as_string:
                         continue
-                    
-                    # If the GPU stream array is not yet defined in the sub_sdfg, add it
-                    if not gpustream_array_added:
-                        sub_sdfg.add_transient(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
-                                               storage=dace.dtypes.StorageType.Register, lifetime=dace.dtypes.AllocationLifetime.Persistent)
-                        gpustream_array_added = True
 
                     # Stream connector name and the used GPU Stream for the kernel
                     assigned_gpustream = stream_assignments[node]

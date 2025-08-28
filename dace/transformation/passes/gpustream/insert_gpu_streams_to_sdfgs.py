@@ -1,0 +1,142 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any, Dict, Set, Type, Union
+
+import copy
+
+import dace
+from dace import dtypes, properties, SDFG, SDFGState
+from dace.codegen import common
+from dace.config import Config
+from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpustream.gpustream_scheduling import NaiveGPUStreamScheduler
+from dace.sdfg.nodes import Node, AccessNode, MapEntry, MapExit, Tasklet
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
+
+from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import is_within_schedule_types
+
+
+from dace.sdfg import is_devicelevel_gpu
+
+STREAM_PLACEHOLDER = "__dace_current_stream"
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class InsertGPUStreamsToSDFGs(ppl.Pass):
+    """
+    TODO
+    """
+
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
+        return {NaiveGPUStreamScheduler}
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.AccessNodes | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+    
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
+
+        stream_array_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[0]
+        stream_assignments: Dict[Node, Union[int, str]] = pipeline_results['NaiveGPUStreamScheduler']
+        num_assigned_streams = max(stream_assignments.values(), default=0) + 1
+
+        # Add the GPU stream array as a transient to the top level SDFG
+        sdfg.add_transient(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
+                           storage=dace.dtypes.StorageType.CPU_Heap, lifetime=dace.dtypes.AllocationLifetime.Persistent)
+
+        gpu_stream_desc = sdfg.arrays[stream_array_name]
+        for child_sdfg in self.find_child_sdfgs_requiring_gpu_stream(sdfg):
+            
+            # If GPU stream already defined (because a more inner child sdfg defined it all the way up) skip
+            if stream_array_name in child_sdfg.arrays:
+                continue
+
+            inner_sdfg = child_sdfg
+            outer_sdfg = inner_sdfg.parent_sdfg
+            inner_sdfg.add_array(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
+                                 storage=dace.dtypes.StorageType.CPU_Heap, lifetime=dace.dtypes.AllocationLifetime.Persistent)
+
+            while stream_array_name not in outer_sdfg.arrays:
+
+                inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
+                inner_parent_state = inner_sdfg.parent
+                inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
+
+                outer_sdfg.add_array(stream_array_name, (num_assigned_streams,), dtype=dace.dtypes.gpuStream_t, 
+                                     storage=dace.dtypes.StorageType.CPU_Heap, lifetime=dace.dtypes.AllocationLifetime.Persistent)
+                inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
+                inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name, dace.Memlet(stream_array_name))
+
+                inner_sdfg = outer_sdfg
+                outer_sdfg = outer_sdfg.parent_sdfg
+
+            inner_nsdfg_node = inner_sdfg.parent_nsdfg_node
+            inner_parent_state = inner_sdfg.parent
+            inner_nsdfg_node.add_in_connector(stream_array_name, dtypes.gpuStream_t)
+            inp_gpu_stream: AccessNode = inner_parent_state.add_access(stream_array_name)
+            inner_parent_state.add_edge(inp_gpu_stream, None, inner_nsdfg_node, stream_array_name, dace.Memlet(f"{stream_array_name}[0:{num_assigned_streams}]"))
+
+            outer_sdfg = inner_sdfg.parent_sdfg
+            
+        return {}
+
+    def find_child_sdfgs_requiring_gpu_stream(self, sdfg) -> Set[SDFG]:
+        """
+        Identify all child SDFGs that require a GPU stream array in their
+        array descriptor store. A child SDFG requires a GPU stream if:
+
+        - It launches GPU kernels (MapEntry/MapExit with GPU_Device schedule).
+        - It contains special Tasklets (e.g., from library node expansion) that 
+          use the GPU stream they are assigned to in the code.
+        - It accesses GPU global memory outside device-level GPU scopes, which 
+          implies memory copies or kernel data feeds.
+
+        Parameters
+        ----------
+        sdfg : SDFG
+            The root SDFG to inspect.
+
+        Returns
+        -------
+        Set[SDFG]
+            The set of child SDFGs that need a GPU stream array in their array descriptor
+            store.
+        """
+        requiring_gpu_stream = set()
+        for child_sdfg in sdfg.all_sdfgs_recursive():
+
+            # Skip the root SDFG itself
+            if child_sdfg is sdfg:
+                continue 
+
+            for state in child_sdfg.states():
+                for node in state.nodes():
+
+                    # Case 1: Kernel launch nodes
+                    if isinstance(node, (MapEntry, MapExit)) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                        requiring_gpu_stream.add(child_sdfg)
+                        break
+
+                    # Case 2: Tasklets that use GPU stream in their code
+                    if isinstance(node, Tasklet) and STREAM_PLACEHOLDER in node.code.as_string:
+                        requiring_gpu_stream.add(child_sdfg)
+                        break
+
+                    # Case 3: Accessing GPU global memory outside device-level scopes
+                    if (
+                        isinstance(node, AccessNode)
+                        and node.desc(state).storage == dtypes.StorageType.GPU_Global
+                        and not is_devicelevel_gpu(state.sdfg, state, node)
+                    ):
+                        requiring_gpu_stream.add(child_sdfg)
+                        break
+
+                # Stop scanning this SDFG once a reason is found
+                if child_sdfg in requiring_gpu_stream:
+                    break
+
+        return requiring_gpu_stream
+                    
+
+

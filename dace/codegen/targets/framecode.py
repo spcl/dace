@@ -285,10 +285,6 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
 
             """, sdfg)
 
-        for target in self._dispatcher.used_targets:
-            if target.has_initializer:
-                callsite_stream.write(
-                    '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
@@ -303,6 +299,11 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
                 callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
+
+        for target in self._dispatcher.used_targets:
+            if target.has_initializer:
+                callsite_stream.write(
+                    '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
 
         callsite_stream.write(
             f"""
@@ -324,14 +325,6 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             callsite_stream.write(
                 '__state->report.save("%s", __HASH_%s);' % (pathlib.Path(sdfg.build_folder) / "perf", sdfg.name), sdfg)
 
-        callsite_stream.write(self._exitcode.getvalue(), sdfg)
-
-        for sd in sdfg.all_sdfgs_recursive():
-            if None in sd.exit_code:
-                callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            if 'frame' in sd.exit_code:
-                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
-
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
                 callsite_stream.write(
@@ -341,6 +334,15 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         __err = __err_{target.target_name};
     }}
 ''', sdfg)
+
+        callsite_stream.write(self._exitcode.getvalue(), sdfg)
+
+        for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+            if 'frame' in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
+
         for env in reversed(self.environments):
             finalize_code = _get_or_eval_sdfg_first_arg(env.finalize_code, sdfg)
             if finalize_code:

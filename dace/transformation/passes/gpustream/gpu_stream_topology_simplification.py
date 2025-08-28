@@ -12,6 +12,7 @@ from dace.transformation.passes.gpustream.insert_gpu_stream_sync_tasklets import
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_kernels import InsertGPUStreamsToKernels
 from dace.transformation.passes.gpustream.insert_gpu_streams_to_tasklets import InsertGPUStreamsToTasklets
 from dace.transformation.passes.insert_gpu_copy_tasklets import InsertGPUCopyTasklets
+from dace.transformation.passes.gpustream.insert_gpu_streams_to_sdfgs import InsertGPUStreamsToSDFGs
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -25,7 +26,7 @@ class GPUStreamTopologySimplification(ppl.Pass):
 
     def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         depending_passes = {
-            NaiveGPUStreamScheduler, InsertGPUStreamsToKernels, 
+            NaiveGPUStreamScheduler, InsertGPUStreamsToSDFGs, InsertGPUStreamsToKernels, 
             InsertGPUStreamsToTasklets, InsertGPUStreamSyncTasklets, 
             InsertGPUCopyTasklets
             }

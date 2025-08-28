@@ -105,7 +105,6 @@ class InferGPUGridAndBlockSize(ppl.Pass):
 
         # guard check
         if not threadblock_maps:
-            state.sdfg.save("failure.sdfg")
             raise ValueError(f"{self.__class__.__name__} expects at least one explicit nested GPU_ThreadBlock map, "
                              "as it assumes AddThreadBlockMap was applied beforehand.\n"
                              f"Check for issues in that transformation or ensure AddThreadBlockMap was applied.")

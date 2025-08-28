@@ -1,14 +1,17 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from dace import SDFG, SDFGState, data, dtypes, subsets
 from dace import memlet as mm
+from dace import symbolic
 from dace.codegen import common
 from dace.codegen.targets import cpp
+from dace.codegen.targets.cpp import unparse_cr
 from dace.codegen.targets.experimental_cuda_helpers.gpu_utils import symbolic_to_cpp
 from dace.config import Config
 from dace.dtypes import StorageType
+from dace.frontend import operations
 from dace.sdfg import nodes, scope_contains_scope
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import helpers
@@ -230,6 +233,7 @@ class CopyContext:
 
 
 class CopyStrategy(ABC):
+    """Abstract base class for memory copy strategies."""
 
     @abstractmethod
     def applicable(self, copy_context: CopyContext) -> bool:
@@ -247,6 +251,13 @@ class CopyStrategy(ABC):
     
 
 class OutOfKernelCopyStrategy(CopyStrategy):
+    """
+    Copy strategy for memory transfers that occur outside of kernel execution.
+
+    This pattern often occurs when generating host-to-device copies for kernel inputs
+    (since kernels cannot access host memory directly), and device-to-host copies
+    to retrieve results for further processing.
+    """
 
     def applicable(self, copy_context: CopyContext) -> bool:
         """
@@ -258,7 +269,6 @@ class OutOfKernelCopyStrategy(CopyStrategy):
         - The data descriptors of source and destination are not views.
         - The storage types of either src or dst is CPU_Pinned or GPU_Device
         - We do not have a CPU-to-CPU copy
-
         """
         # Retrieve needed information
         state = copy_context.state
@@ -496,3 +506,210 @@ class OutOfKernelCopyStrategy(CopyStrategy):
 
         # Return the code
         return call
+    
+
+class SyncCollaboritveGPUCopyStrategy(CopyStrategy):
+    """
+    Implements (synchronous) collaborative GPU copy operations. 
+
+    This strategy generates the appropriate code for copies performed 
+    inside GPU kernels, where multiple threads cooperate to move data 
+    between gpu memory spaces (e.g., global to shared memory). 
+    """
+
+    def applicable(self, copy_context: CopyContext) -> bool:
+        """
+        Checks if the copy is eligible for a collaborative GPU-to-GPU copy.
+
+        Conditions:
+        1. The copy is between two AccessNodes
+        2. The copy is between GPU memory StorageTypes (shared or global).
+        3. The innermost non-sequential map is a GPU_Device-scheduled map i.e. 
+           the copy occurs within a kernel but is not within a GPU_ThreadBlock map.
+        """
+        # --- Condition 1: src and dst are AccessNodes ---
+        src_node, dst_node = copy_context.src_node, copy_context.dst_node
+        if not (isinstance(src_node, nodes.AccessNode) and isinstance(dst_node, nodes.AccessNode)):
+            return False
+        
+        # --- Condition 2: GPU to GPU memory transfer ---
+        src_storage, dst_storage = copy_context.get_storage_type(src_node), copy_context.get_storage_type(dst_node)
+        gpu_storages = {dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared}
+
+        if not (src_storage in gpu_storages and dst_storage in gpu_storages):
+            return False
+        
+        # --- Condition 3: Next non-sequential Map is a GPU_Device Map ---
+        next_nonseq_parent_map = self._next_non_seq_parent_map(copy_context)
+        if next_nonseq_parent_map is None:
+            return False
+        else:
+            return next_nonseq_parent_map.map.schedule == dtypes.ScheduleType.GPU_Device
+    
+    def generate_copy(self, copy_context: CopyContext, kernel_dimensions_maps: Dict[nodes.MapEntry, Tuple[List, List]]) -> str:
+        """
+        Generates a GPU copy call as a string using DaCe's runtime CUDA copy functions.
+
+        The function determines the appropriate templated copy function from
+        `dace/libraries/runtime/include/dace/cuda/copy.cuh` and constructs
+        the call string with the necessary arguments, including kernel block
+        dimensions and optional accumulation/reduction information.
+
+        Parameters
+        ----------
+        copy_context : CopyContext
+            Helper object containing information about the copy.
+
+        kernel_dimensions_maps : Dict[nodes.MapEntry, Tuple[List, List]]
+            Kernel map (GPU_Devie scheduled map) entry nodes to (grid_dims, block_dims); 
+            block_dims needed in templating.
+
+        Returns
+        -------
+        str
+            The GPU copy call in C++ as a string.
+
+        Notes
+        -----
+        - The kernel block size could be derived, but since this function is typically called
+          from `ExperimentalCUDACodeGen`, it is provided as input to avoid recomputation.
+        - The template functions use a parameter called 'is_async', which is set to True here
+          because `ExperimentalCUDACodeGen` inserts "__syncthreads()" explicitly in tasklets.
+        """
+        # ----------- Retrieve relevant copy information --------------
+
+        # Due to applicable(), src and dst node must be AccessNodes
+        copy_shape, src_strides, dst_strides, src_expr, dst_expr = copy_context.get_accessnode_to_accessnode_copy_info()
+        sdfg = copy_context.sdfg
+        dtype = copy_context.src_node.desc(sdfg).dtype
+        ctype = dtype.ctype
+
+        # Get copy function name (defined in runtime library)
+        num_dims = len(copy_shape)
+        src_node, dst_node = copy_context.src_node, copy_context.dst_node
+        src_storage, dst_storage = copy_context.get_storage_type(src_node), copy_context.get_storage_type(dst_node)
+        src_storage_name = self._get_storagename(src_storage)
+        dst_storage_name = self._get_storagename(dst_storage)
+        function_name = f"dace::{src_storage_name}To{dst_storage_name}{num_dims}D"
+
+        # Extract WCR info (accumulation template + optional custom reduction)
+        accum, custom_reduction = self._get_accumulation_info(copy_context)
+        custom_reduction = [custom_reduction] if custom_reduction else []
+
+        # Get parent kernel block dimensions (guaranteed GPU_Device) and sync flag
+        parent_kernel = self._next_non_seq_parent_map(copy_context)
+        block_dims = ", ".join(symbolic_to_cpp(kernel_dimensions_maps[parent_kernel][1]))
+        synchronized = "true" # Legacy 'is_async'; sync barriers handled by passes (see docstring)
+
+        # ------------------------- Generate copy call ----------------------------
+
+        if any(symbolic.issymbolic(s, copy_context.sdfg.constants) for s in copy_shape):
+            args_list = ([src_expr] + src_strides + [dst_expr] + custom_reduction + dst_strides + copy_shape)
+            args = ", ".join(symbolic_to_cpp(args_list))
+            call = f"{function_name}Dynamic<{ctype}, {block_dims}, {synchronized}>{accum}({args});"
+
+        elif function_name == "dace::SharedToGlobal1D":
+            copy_size = ', '.join(symbolic_to_cpp(copy_shape))
+            accum = accum or '::Copy'
+            args_list = ([src_expr] + src_strides + [dst_expr] + dst_strides + custom_reduction)
+            args = ", ".join(symbolic_to_cpp(args_list))
+            call = f"{function_name}<{ctype}, {block_dims}, {copy_size}, {synchronized}>{accum}({args});"
+
+        else:
+            copy_size = ', '.join(symbolic_to_cpp(copy_shape))
+            args_list = ([src_expr] + src_strides + [dst_expr] + custom_reduction)
+            args = ", ".join(symbolic_to_cpp(args_list))
+            dst_strides_unpacked = ", ".join(symbolic_to_cpp(dst_strides))
+            call = f"{function_name}<{ctype}, {block_dims}, {copy_size}, {dst_strides_unpacked}, {synchronized}>{accum}({args});"
+        
+        return call
+
+    def _get_accumulation_info(self, copy_context: CopyContext) -> Tuple[str, str]:
+        """
+        Extracts write-conflict resolution (WCR) information from the copy context
+        and returns the accumulation/reduction template components needed for the 
+        final templated function call in `generate_copy()`.
+
+        This method processes WCR information from the memlet and generates the 
+        appropriate C++ template strings for both predefined and custom reductions.
+
+        Parameters
+        ----------
+        copy_context : CopyContext
+            Copy context containing the copy operation details, including
+            the memlet with WCR information.
+
+        Returns
+        -------
+        Tuple[str, str]
+            A tuple containing:
+            - accum : str  
+            Template accumulation string for the function call. Empty string if no WCR,  
+            `"::template Accum<ReductionType>"` for predefined reductions, or `"::template Accum"` for custom reductions.  
+            - custom_reduction : str  
+            C++ formatted custom reduction code string. Empty string for no WCR or predefined reductions,  
+            unparsed custom reduction code for custom reductions.
+        """
+        sdfg = copy_context.sdfg
+        dtype = copy_context.src_node.desc(sdfg).dtype
+        memlet = copy_context.edge.data
+        wcr = memlet.wcr
+        reduction_type = operations.detect_reduction_type(wcr)
+
+        if wcr is None:
+            accum, custom_reduction = "", ""
+
+        elif reduction_type != dtypes.ReductionType.Custom:
+            # Use predefined reduction
+            reduction_type_str = str(reduction_type).split(".")[-1]  # e.g., "Sum"
+            accum = f"::template Accum<dace::ReductionType::{reduction_type_str}>"
+            custom_reduction = ""
+
+        else:
+            accum = "::template Accum" 
+            custom_reduction = unparse_cr(sdfg, wcr, dtype)
+
+        return accum, custom_reduction
+
+    def _get_storagename(self, storage: dtypes.StorageType):
+        """
+        Returns a string containing the name of the storage location.
+
+        Example: dtypes.StorageType.GPU_Shared will return "Shared".
+        """
+        storage_name = str(storage)
+        return storage_name[storage_name.rindex('_') + 1:]
+    
+    def _next_non_seq_parent_map(self, copy_context: CopyContext) -> Optional[nodes.MapEntry]:
+        """
+        Traverse up the parent map chain from the deeper of src_node or dst_node 
+        in `copy_context` and return the first parent MapEntry whose schedule 
+        is not sequential.
+
+        Parameters
+        ----------
+        copy_context : CopyContext
+            Context information about the memory copy.
+
+        Returns
+        -------
+        Optional[nodes.MapEntry]
+            The first non-sequential parent MapEntry encountered, or None if no 
+            such parent exists.
+        """
+        src_node, dst_node = copy_context.src_node, copy_context.dst_node
+        state = copy_context.state
+        scope_dict = state.scope_dict()
+
+        # Determine which node (src or dst) is in the deeper scope
+        deeper_node = dst_node if scope_contains_scope(scope_dict, src_node, dst_node) else src_node
+        current_node = deeper_node
+        while (current_node is None or not isinstance(current_node, nodes.MapEntry)
+               or current_node.map.schedule == dtypes.ScheduleType.Sequential):
+            parent = helpers.get_parent_map(state, current_node)
+            if parent is None:
+                current_node = None
+                break
+            current_node, state = parent
+
+        return current_node
