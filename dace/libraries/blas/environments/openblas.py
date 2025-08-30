@@ -26,10 +26,14 @@ class OpenBLAS:
 
     @staticmethod
     def cmake_libraries():
+        openblas_path = ctypes.util.find_library('openblas')
         lapacke_path = ctypes.util.find_library('lapacke')
+        if openblas_path and lapacke_path:
+            return [openblas_path, lapacke_path]
+        cblas_path = ctypes.util.find_library('cblas')
         blas_path = ctypes.util.find_library('blas')
-        if lapacke_path and blas_path:
-            return [lapacke_path, blas_path]
+        if lapacke_path and blas_path and cblas_path:
+            return [lapacke_path, blas_path, cblas_path]
         return []
 
     @staticmethod
