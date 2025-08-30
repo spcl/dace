@@ -485,10 +485,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
-                                  'detected and was allocated on heap instead of '
+                                  'detected and was allocated on the heap instead of '
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
-                    warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
+                    warnings.warn("Array {} with size {} detected and was allocated on the heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
                                       name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
                                       Config.get("compiler", "max_stack_array_size")))
@@ -572,6 +572,10 @@ class CPUCodeGen(TargetCodeGenerator):
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
         arrsize = nodedesc.total_size
+        arrsize_bytes = None
+        if not isinstance(nodedesc.dtype, dtypes.opaque):
+            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
             alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
@@ -584,7 +588,9 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
+              or (nodedesc.storage == dtypes.StorageType.Register and
+                  (symbolic.issymbolic(arrsize, sdfg.constants) or
+                   (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
             callsite_stream.write("delete[] %s;\n" % alloc_name, cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
