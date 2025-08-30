@@ -282,7 +282,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     cmake_variables = collections.OrderedDict()
     cmake_packages = set()
     cmake_includes = set()
-    cmake_libraries = list()
+    cmake_libraries = set()
     cmake_compile_flags = set()
     cmake_link_flags = set()
     cmake_files = set()
@@ -308,8 +308,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
             cmake_variables[var] = env_variables[var]
         cmake_packages |= set(_get_or_eval(env.cmake_packages))
         cmake_includes |= set(_get_or_eval(env.cmake_includes))
-        for lib in _get_or_eval(env.cmake_libraries):
-            cmake_libraries.append(lib)
+        cmake_libraries |= set(_get_or_eval(env.cmake_libraries))
         cmake_compile_flags |= set(_get_or_eval(env.cmake_compile_flags))
         cmake_link_flags |= set(_get_or_eval(env.cmake_link_flags))
         # Make path absolute
@@ -340,7 +339,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         "-DDACE_ENV_VAR_VALUES=\"{}\"".format(";".join(cmake_variables.values())),
         "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(sorted(cmake_packages))),
         "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(sorted(cmake_includes))),
-        "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(cmake_libraries)),
+        "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(sorted(cmake_libraries))),
         "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(" ".join(cmake_compile_flags)),
         # "-DDACE_ENV_LINK_FLAGS=\"{}\"".format(" ".join(cmake_link_flags)),
         "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(sorted(cmake_files))),
