@@ -141,7 +141,7 @@ if(DACE_ENABLE_CUDA)
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
   enable_language(CUDA)
-  list(APPEND DACE_LIBS CUDA::cudart)
+  list(APPEND DACE_LIBS CUDA::cudart CUDA::nvtx3)
   add_definitions(-DWITH_CUDA)
 
   if (MSVC_IDE)
@@ -167,6 +167,21 @@ if(DACE_ENABLE_HIP)
 
   # Add libraries such as rocBLAS
   link_directories(${HIP_PATH}/../lib)
+  if(ROCM_PATH)
+    find_path(ROCTX_INCLUDE_DIR roctx.h HINTS ${ROCM_PATH}/include/roctracer ${ROCM_PATH}/roctracer/include)
+    if(NOT ROCTX_INCLUDE_DIR)
+      message(WARNING "Could not find roctx.h in ${ROCM_PATH}/include/roctracer or ${ROCM_PATH}/roctracer/include")
+    endif()
+  endif()
+  if(ROCM_PATH AND ROCTX_INCLUDE_DIR)
+    find_path(ROCTX_LIBRARY_DIR "libroctx64.so" HINTS ${ROCM_PATH}/lib)
+    if(NOT ROCTX_LIBRARY_DIR)
+      message(WARNING "Could not find libroctx64.so in ${ROCM_PATH}/lib")
+    else()
+      list(APPEND DACE_LIBS "-lroctx64 -L${ROCTX_LIBRARY_DIR}")
+      include_directories(SYSTEM ${ROCTX_INCLUDE_DIR})
+    endif()
+  endif()
 endif()
 
 # Function for performing deferred variable expansion

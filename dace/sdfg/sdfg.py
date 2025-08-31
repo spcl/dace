@@ -1027,8 +1027,12 @@ class SDFG(ControlFlowRegion):
         :return: A path to the latest instrumentation report, or None if one does not exist.
         """
         path = os.path.join(self.build_folder, 'perf')
-        files = [f for f in os.listdir(path) if f.startswith('report-')]
-        if len(files) == 0:
+        try:
+            files = [f for f in os.listdir(path) if f.startswith('report-')]
+        except FileNotFoundError:
+            return None
+
+        if not files:
             return None
 
         return os.path.join(path, sorted(files, reverse=True)[0])
