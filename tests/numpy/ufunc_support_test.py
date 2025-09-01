@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-import dace.frontend.python.replacements as repl
+import dace.frontend.python.replacements.ufunc as repl
 from common import compare_numpy_output
 
 N = dace.symbol('N', dtype=dace.int32)

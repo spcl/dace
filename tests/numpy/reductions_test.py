@@ -86,14 +86,17 @@ def test_argmax_1_int64(A: dace.int64[10, 5, 3]):
 
 
 def test_return_both():
-    from dace.frontend.python.replacements import _argminmax
+    from dace.frontend.python.replacements.reduction import _argminmax
+    from dace.frontend.python.newast import ProgramVisitor
 
     sdfg = dace.SDFG("test_return_both")
     state = sdfg.add_state()
 
     sdfg.add_array("IN", [10, 5, 3], dace.float64)
 
-    _, (outval, outidx) = _argminmax(None, sdfg, state, "IN", 1, "min", return_both=True)
+    pv = ProgramVisitor('test_return_both', '<unknown>', 0, 0, {}, {}, {}, {}, {}, {}, {}, {})
+    pv.sdfg = sdfg
+    _, (outval, outidx) = _argminmax(pv, sdfg, state, "IN", 1, "min", return_both=True)
 
     IN = np.random.rand(10, 5, 3)
     OUT_IDX = np.zeros((10, 3), dtype=np.int32)

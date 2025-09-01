@@ -7,8 +7,7 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
-                                              to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts)
 from .. import environments
 import numpy as np
@@ -47,7 +46,7 @@ class ExpandGemmPure(ExpandTransformation):
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
+        ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
@@ -80,7 +79,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=cdata[1].storage)
 
         if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
@@ -92,9 +91,6 @@ class ExpandGemmPure(ExpandTransformation):
         else:
             init_state = sdfg.add_state(node.label + "_initstate")
             state = sdfg.add_state_after(init_state, node.label + "_state")
-
-        if '_cin' in node.in_connectors:
-            sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
         mul_out, mul_out_array = "_c", array_c
         output_nodes = None
@@ -131,7 +127,7 @@ class ExpandGemmPure(ExpandTransformation):
                 "__i%d" % i: "0:%s" % s
                 for i, s in enumerate([M, N])
             }, {
-                "__c": dace.Memlet.simple("_cin", memlet_idx),
+                "__c": dace.Memlet.simple("_c", memlet_idx),
             },
                                           add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
                                           external_edges=True)
@@ -165,7 +161,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
         alpha = f'{dtype.ctype}({node.alpha})'
@@ -392,6 +388,10 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
             tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
 
+            # Remove _conn_c from in connectors if it exists
+            if "_conn_c" in tasklet.in_connectors:
+                tasklet.remove_in_connector("_conn_c")
+
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
@@ -464,7 +464,7 @@ class ExpandGemmPBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, _, _, _), (_, bdesc, bshape, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
 
         if not equal_valued(0, node.beta):
@@ -519,8 +519,8 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         :return:
         """
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
-         (edge_c, outer_array_c, shape_c, strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
+         (edge_c, outer_array_c, shape_c, strides_c, _, _)) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -589,13 +589,9 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         new_state = new_sdfg.add_state("compute")
 
         # Add data descriptors
-
         new_sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         new_sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         new_sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
-
-        if not equal_valued(0, node.beta):
-            new_sdfg.add_array("_cin", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         def make_read_A(state):
 
@@ -679,7 +675,7 @@ to_kernel = data""")
 
             pipe = state.add_read("C_pipe")
             if not equal_valued(0, node.beta):
-                mem_read = state.add_read("_cin")
+                mem_read = state.add_read("_c")
             mem = state.add_write("_c")
 
             entry_map, exit_map = state.add_map("write_C", {
@@ -718,7 +714,7 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
                                       entry_map,
                                       tasklet,
                                       dst_conn="prev_c",
-                                      memlet=dace.Memlet(f"_cin[n0 * {P} + n1, tm * {T} + m]",
+                                      memlet=dace.Memlet(f"_c[n0 * {P} + n1, tm * {T} + m]",
                                                          dynamic=True,
                                                          allow_oob=True))
 
@@ -984,7 +980,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     beta = properties.Property(allow_none=False,
                                default=0,
                                desc="A scalar which will be multiplied with C before adding C")
-    cin = properties.Property(dtype=bool, default=True, desc="Whether to have a _cin connector when beta != 0")
+    cin = properties.Property(dtype=bool, default=True, desc="Whether to have a _c in connector when beta != 0")
     algorithm = properties.Property(dtype=str,
                                     allow_none=True,
                                     default=None,
@@ -1004,7 +1000,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, transA=False, transB=False, alpha=1, beta=0, cin=True):
         super().__init__(name,
                          location=location,
-                         inputs=({"_a", "_b", "_cin"} if not equal_valued(0, beta) and cin else {"_a", "_b"}),
+                         inputs=({"_a", "_b", "_c"} if not equal_valued(0, beta) and cin else {"_a", "_b"}),
                          outputs={"_c"})
         self.transA = True if transA else False
         self.transB = True if transB else False
@@ -1019,17 +1015,11 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         size2 = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size0 = subset.size()
+                size0 = memlet.subset.size()
             if dst_conn == '_b':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size1 = subset.size()
+                size1 = memlet.subset.size()
             if dst_conn == '_c':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size2 = subset.size()
+                size2 = memlet.subset.size()
 
         if self.transA:
             size0 = list(reversed(size0))
@@ -1049,9 +1039,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                           UserWarning)
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
-        out_subset = dc(out_memlet.subset)
-        out_subset.squeeze()
-        size3 = out_subset.size()
+        size3 = out_memlet.subset.size()
         if size2 is not None:
             res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
             fail = any([r is False for r in res])
@@ -1099,6 +1087,6 @@ def gemm_libnode(pv: 'ProgramVisitor',
 
     if not equal_valued(0, beta):
         C_in = state.add_read(C)
-        state.add_edge(C_in, None, libnode, '_cin', mm.Memlet(C))
+        state.add_edge(C_in, None, libnode, '_c', mm.Memlet(C))
 
     return []

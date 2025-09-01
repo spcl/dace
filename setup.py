@@ -78,8 +78,10 @@ setup(name='dace',
           'typing-compat; python_version < "3.8"', 'packaging'
       ] + cmake_requires,
       extras_require={
-          'testing':
-          ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert'],
+          'testing': [
+              'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',
+              'pytest-timeout'
+          ],
           'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
           'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
       },
@@ -91,5 +93,6 @@ setup(name='dace',
               'sdfg-diff = dace.cli.sdfg_diff:main',
               'fcfd = dace.cli.fcdc:main',
               'daceprof = dace.cli.daceprof:main',
+              'dace-external-transformation-registry = dace.cli.external_transformation_registry:main',
           ],
       })

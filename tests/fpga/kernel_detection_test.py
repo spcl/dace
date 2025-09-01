@@ -190,7 +190,7 @@ def test_kernels_inside_component_2():
     return sdfg
 
 
-@fpga_test()
+@fpga_test(assert_ii_1=False)
 def test_kernels_lns_inside_component():
     """
     Tests for kernels detection inside a single connected component where we

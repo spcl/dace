@@ -190,8 +190,7 @@ def make_fpga_sdfg():
 
     to_nest = make_vec_add_sdfg()
     # add nested sdfg with symbol mapping
-    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg, {"_device_x", "_device_y"}, {"_device_z"},
-                                                 {"size": "n"})
+    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, {"_device_x", "_device_y"}, {"_device_z"}, {"size": "n"})
 
     non_fpga_state.add_memlet_path(in_device_x,
                                    nested_sdfg,
@@ -210,8 +209,7 @@ def make_fpga_sdfg():
 
     to_nest = make_vec_add_sdfg()
     # add nested sdfg with symbol mapping
-    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg, {"_device_x", "_device_y"}, {"_device_z"},
-                                                 {"size": "n"})
+    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, {"_device_x", "_device_y"}, {"_device_z"}, {"size": "n"})
 
     non_fpga_state.add_memlet_path(out_device_z,
                                    nested_sdfg,
@@ -341,8 +339,7 @@ def make_fpga_sdfg_independent():
 
     to_nest = make_vec_add_sdfg()
     # add nested sdfg with symbol mapping
-    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg, {"_device_x", "_device_y"}, {"_device_z"},
-                                                 {"size": "n"})
+    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, {"_device_x", "_device_y"}, {"_device_z"}, {"size": "n"})
 
     non_fpga_state.add_memlet_path(in_device_x,
                                    nested_sdfg,
@@ -361,8 +358,7 @@ def make_fpga_sdfg_independent():
 
     to_nest = make_vec_mul_sdfg()
     # add nested sdfg with symbol mapping
-    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg, {"_device_x", "_device_y"}, {"_device_z"},
-                                                 {"size": "n"})
+    nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, {"_device_x", "_device_y"}, {"_device_z"}, {"size": "n"})
 
     non_fpga_state.add_memlet_path(in_device_v,
                                    nested_sdfg,

@@ -250,6 +250,33 @@ def test_inverted_loop_with_additional_increment_assignment():
     assert np.allclose(A_valid, A)
 
 
+def test_lift_previously_illegal_for_loop():
+    sdfg = dace.SDFG('looptest')
+    sdfg.add_array('A', [20], dace.float64)
+    init = sdfg.add_state()
+    guard = sdfg.add_state()
+    loop = sdfg.add_state()
+    end = sdfg.add_state()
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments=dict(i='0')))
+    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 20'))
+    sdfg.add_edge(loop, guard, dace.InterstateEdge(assignments=dict(i='i + 1')))
+
+    r = loop.add_read('A')
+    t = loop.add_tasklet('add', {'a'}, {'out'}, 'out = a + 5')
+    w = loop.add_write('A')
+    loop.add_edge(r, None, t, 'a', dace.Memlet('A[j]'))
+    loop.add_edge(t, 'out', w, None, dace.Memlet('A[j]'))
+
+    sdfg.apply_transformations_repeated([LoopLifting])
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = np.random.rand(20)
+    expected = A + 5
+    sdfg(A=A)
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_lift_regular_for_loop()
     test_lift_loop_llvm_canonical(True)
@@ -257,3 +284,4 @@ if __name__ == '__main__':
     test_lift_loop_llvm_canonical_while()
     test_do_while()
     test_inverted_loop_with_additional_increment_assignment()
+    test_lift_previously_illegal_for_loop()

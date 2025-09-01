@@ -199,22 +199,28 @@ class Memlet(object):
         return ret
 
     def __deepcopy__(self, memo):
+        """Performs a deep copy of `self`.
+
+        Note for performance reasons the immutable objects of `self` will not be copied.
+        Furthermore, all references to SDFGs, state and edges are set to `None`.
+        """
         node = object.__new__(Memlet)
 
-        # Set properties
-        node._volume = dcpy(self._volume, memo=memo)
+        # Immutable objects are: Python strings, integer, boolean but also SymPy expressions, i.e. symbols.
+        node._volume = self._volume
         node._dynamic = self._dynamic
         node._subset = dcpy(self._subset, memo=memo)
         node._other_subset = dcpy(self._other_subset, memo=memo)
-        node._data = dcpy(self._data, memo=memo)
+        node._data = self._data
         node._wcr = dcpy(self._wcr, memo=memo)
-        node._wcr_nonatomic = dcpy(self._wcr_nonatomic, memo=memo)
+        node._wcr_nonatomic = self._wcr_nonatomic
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
-        node._is_data_src = self._is_data_src
-
         node._guid = generate_element_id(node)
+
+        # TODO: Since we set the `.sdfg` and friends to `None` we should probably also set this to `None`.
+        node._is_data_src = self._is_data_src
 
         # Nullify graph references
         node._sdfg = None
@@ -534,6 +540,9 @@ class Memlet(object):
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
+        # NOTE: We do not check here is the subsets have a negative size, because such as subset
+        #  is valid, in certain cases, for example if an AccessNode is connected to a MapEntry,
+        #  because the Map is not executed. Thus we do the check in the `validate_state()` function.
 
     def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
         """
