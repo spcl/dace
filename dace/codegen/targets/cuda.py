@@ -2219,9 +2219,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     if not has_dtbmap:
                         kernel_stream.write('{', cfg, state_id, scope_entry)
 
-                    
         # Emit internal array allocation (deallocation handled at MapExit)
-        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream, kernel_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, kernel_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
@@ -2616,7 +2615,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         ##########################################################
 
         # Emit internal array allocation (deallocation handled at MapExit)
-        self._frame.allocate_arrays_in_scope(sdfg, scope_entry, function_stream, callsite_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
         # need to handle subgraphs appropriately if they contain
         # dynamic thread block maps
