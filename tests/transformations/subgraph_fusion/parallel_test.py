@@ -56,34 +56,34 @@ def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M], C: dace.flo
 
 def test_p1():
 
-    N.set(20)
-    M.set(30)
-    O.set(50)
-    P.set(40)
-    Q.set(42)
-    R.set(25)
+    N = 20
+    M = 30
+    O = 50
+    P = 40
+    Q = 42
+    R = 25
 
     sdfg = subgraph_fusion_parallel.to_sdfg()
     sdfg.simplify()
     state = sdfg.nodes()[0]
 
-    A = np.random.rand(N.get()).astype(np.float64)
-    B = np.random.rand(M.get()).astype(np.float64)
-    C = np.random.rand(O.get()).astype(np.float64)
-    D = np.random.rand(M.get()).astype(np.float64)
-    E = np.random.rand(N.get()).astype(np.float64)
-    F = np.random.rand(P.get()).astype(np.float64)
-    G = np.random.rand(M.get()).astype(np.float64)
-    H = np.random.rand(P.get()).astype(np.float64)
-    I = np.random.rand(N.get()).astype(np.float64)
-    J = np.random.rand(R.get()).astype(np.float64)
-    X = np.random.rand(N.get()).astype(np.float64)
-    Y = np.random.rand(M.get()).astype(np.float64)
-    Z = np.random.rand(P.get()).astype(np.float64)
-    o1 = np.random.rand(N.get(), M.get(), O.get())
-    o2 = np.random.rand(M.get(), N.get(), P.get())
-    o3 = np.random.rand(P.get(), N.get(), R.get())
-    o4 = np.random.rand(N.get(), M.get(), P.get())
+    A = np.random.rand(N).astype(np.float64)
+    B = np.random.rand(M).astype(np.float64)
+    C = np.random.rand(O).astype(np.float64)
+    D = np.random.rand(M).astype(np.float64)
+    E = np.random.rand(N).astype(np.float64)
+    F = np.random.rand(P).astype(np.float64)
+    G = np.random.rand(M).astype(np.float64)
+    H = np.random.rand(P).astype(np.float64)
+    I = np.random.rand(N).astype(np.float64)
+    J = np.random.rand(R).astype(np.float64)
+    X = np.random.rand(N).astype(np.float64)
+    Y = np.random.rand(M).astype(np.float64)
+    Z = np.random.rand(P).astype(np.float64)
+    o1 = np.random.rand(N, M, O)
+    o2 = np.random.rand(M, N, P)
+    o3 = np.random.rand(P, N, R)
+    o4 = np.random.rand(N, M, P)
 
     csdfg = sdfg.compile()
     csdfg(A=A,

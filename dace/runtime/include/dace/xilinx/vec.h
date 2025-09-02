@@ -12,6 +12,6 @@ using vec =
 
 // Don't distinguish aligned and unaligned on FPGA
 template <typename T, unsigned width>
-using vecu = vec<T, width>; 
+using vecu = vec<T, width>;
 
 } // End namespace dace

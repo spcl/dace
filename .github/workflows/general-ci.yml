@@ -2,9 +2,15 @@ name: General Tests
 
 on:
   push:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
   pull_request:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -12,15 +18,15 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.7,'3.10']
+        python-version: ['3.9','3.13']
         simplify: [0,1,autoopt]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
@@ -31,8 +37,10 @@ jobs:
         sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage codecov
+        pip install flake8 pytest-xdist coverage
         pip install -e ".[testing]"
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov
 
     - name: Test dependencies
       run: |
@@ -51,8 +59,8 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack and not datainstrument"
-        codecov
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack and not datainstrument and not long"
+        ./codecov
 
     - name: Test OpenBLAS LAPACK
       run: |
@@ -67,13 +75,13 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
-        codecov
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        ./codecov
 
     - name: Run other tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_serialization=1
+        export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
@@ -81,4 +89,8 @@ jobs:
         ./tests/polybench_test.sh
         ./tests/xform_test.sh
         coverage combine .; coverage report; coverage xml
-        codecov
+
+    - uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        verbose: true

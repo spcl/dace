@@ -1,10 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
 from dace.dtypes import Language
-from dace.properties import CodeProperty
+from dace.properties import CodeProperty, CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 import dace
 from dace.sdfg.propagation import propagate_states
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def state_check_executions(state, expected, expected_dynamic=False):
@@ -16,7 +18,8 @@ def state_check_executions(state, expected, expected_dynamic=False):
         raise RuntimeError('Expected static executions, got dynamic')
 
 
-def test_conditional_fake_merge():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_conditional_fake_merge(with_regions):
     sdfg = dace.SDFG('fake_merge')
 
     state_init = sdfg.add_state('init')
@@ -40,213 +43,179 @@ def test_conditional_fake_merge():
     sdfg.add_edge(state_c, state_e,
                   InterstateEdge(condition=CodeProperty.from_string('not (j < 10)', language=Language.Python)))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     state_check_executions(state_d, 1, True)
     state_check_executions(state_e, 1, True)
 
 
-def test_conditional_full_merge():
-    @dace.program(dace.int32, dace.int32, dace.int32)
-    def conditional_full_merge(a, b, c):
-        if a < 10:
-            if b < 10:
-                c = 0
-            else:
-                c = 1
-        c += 1
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_conditional_full_merge(with_regions):
+    sdfg = dace.SDFG('conditional_full_merge')
 
-    sdfg = conditional_full_merge.to_sdfg(simplify=False)
+    sdfg.add_scalar('a', dace.int32)
+    sdfg.add_scalar('b', dace.int32)
+
+    init_state = sdfg.add_state('init_state')
+    if_guard_1 = sdfg.add_state('if_guard_1')
+    l_branch_1 = sdfg.add_state('l_branch_1')
+    if_guard_2 = sdfg.add_state('if_guard_2')
+    l_branch = sdfg.add_state('l_branch')
+    r_branch = sdfg.add_state('r_branch')
+    if_merge_1 = sdfg.add_state('if_merge_1')
+    if_merge_2 = sdfg.add_state('if_merge_2')
+
+    sdfg.add_edge(init_state, if_guard_1, dace.InterstateEdge())
+    sdfg.add_edge(if_guard_1, l_branch_1, dace.InterstateEdge(condition=CodeBlock('a < 10')))
+    sdfg.add_edge(l_branch_1, if_guard_2, dace.InterstateEdge())
+    sdfg.add_edge(if_guard_1, if_merge_1, dace.InterstateEdge(condition=CodeBlock('not (a < 10)')))
+    sdfg.add_edge(if_guard_2, l_branch, dace.InterstateEdge(condition=CodeBlock('b < 10')))
+    sdfg.add_edge(if_guard_2, r_branch, dace.InterstateEdge(condition=CodeBlock('not (b < 10)')))
+    sdfg.add_edge(l_branch, if_merge_2, dace.InterstateEdge())
+    sdfg.add_edge(r_branch, if_merge_2, dace.InterstateEdge())
+    sdfg.add_edge(if_merge_2, if_merge_1, dace.InterstateEdge())
+
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
-    state = sdfg.start_state
-    state_check_executions(state, 1)
+    state_check_executions(init_state, 1)
 
     # Check the first if guard, `a < 10`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1)
-    # Get edges to the true and fals branches.
-    oedges = sdfg.out_edges(state)
-    true_branch_edge = None
-    false_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(a < 10)':
-            true_branch_edge = edge
-        elif edge.data.label == '(not (a < 10))':
-            false_branch_edge = edge
-    if false_branch_edge is None or true_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    state_check_executions(if_guard_1, 1)
     # Check the true branch.
-    state = true_branch_edge.dst
-    state_check_executions(state, 1, expected_dynamic=True)
+    state_check_executions(l_branch_1, 1, expected_dynamic=True)
     # Check the next if guard, `b < 20`
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1, expected_dynamic=True)
-    # Get edges to the true and fals branches.
-    oedges = sdfg.out_edges(state)
-    true_branch_edge = None
-    false_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(b < 10)':
-            true_branch_edge = edge
-        elif edge.data.label == '(not (b < 10))':
-            false_branch_edge = edge
-    if false_branch_edge is None or true_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    state_check_executions(if_guard_2, 1, expected_dynamic=True)
     # Check the true branch.
-    state = true_branch_edge.dst
-    state_check_executions(state, 1, expected_dynamic=True)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1, expected_dynamic=True)
+    state_check_executions(l_branch_1, 1, expected_dynamic=True)
     # Check the false branch.
-    state = false_branch_edge.dst
-    state_check_executions(state, 1, expected_dynamic=True)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1, expected_dynamic=True)
-
+    state_check_executions(r_branch, 1, expected_dynamic=True)
     # Check the first branch merge state.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1, expected_dynamic=True)
-
+    state_check_executions(if_merge_2, 1, expected_dynamic=True)
     # Check the second branch merge state.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1)
-
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1)
+    state_check_executions(if_merge_1, 1)
 
 
-def test_while_inside_for():
-    @dace.program(dace.int32)
-    def while_inside_for(a):
-        for i in range(20):
-            j = 0
-            while j < 20:
-                a += 5
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_while_inside_for(with_regions):
+    sdfg = dace.SDFG('while_inside_for')
 
-    sdfg = while_inside_for.to_sdfg(simplify=False)
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_symbol('j', dace.int32)
+
+    init_state = sdfg.add_state('init')
+    guard_1 = sdfg.add_state('guard_1')
+    loop_1 = sdfg.add_state('loop_1')
+    end_1 = sdfg.add_state('end_1')
+    guard_2 = sdfg.add_state('guard_2')
+    loop_2 = sdfg.add_state('loop_2')
+    end_2 = sdfg.add_state('end_2')
+
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < 20)')))
+    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock('i < 20')))
+    sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge())
+    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+
+    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock('not (j < 20)')))
+    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock('j < 20')))
+    sdfg.add_edge(loop_2, guard_2, dace.InterstateEdge())
+
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
-    state = sdfg.start_state
-    state_check_executions(state, 1)
+    state_check_executions(init_state, 1)
 
     # Check the for loop guard, `i in range(20)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 21)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(i < 20)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (i < 20))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    if with_regions:
+        state_check_executions(guard_1, 20)
+    else:
+        state_check_executions(guard_1, 21)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 1)
+    state_check_executions(end_1, 1)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, 20)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 20)
+    state_check_executions(loop_1, 20)
 
     # Check the while guard, `j < 20`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 0, expected_dynamic=True)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(j < 20)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (j < 20))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    state_check_executions(guard_2, 0, expected_dynamic=True)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 20)
+    state_check_executions(end_2, 20)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, 0, expected_dynamic=True)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 0, expected_dynamic=True)
+    state_check_executions(loop_2, 0, expected_dynamic=True)
 
 
-def test_for_with_nested_full_merge_branch():
-    @dace.program(dace.int32)
-    def for_with_nested_full_merge_branch(a):
-        for i in range(20):
-            if i < 10:
-                a += 2
-            else:
-                a += 1
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_for_with_nested_full_merge_branch(with_regions):
+    sdfg = dace.SDFG('for_full_merge')
 
-    sdfg = for_with_nested_full_merge_branch.to_sdfg(simplify=False)
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_scalar('a', dace.int32)
+
+    init_state = sdfg.add_state('init')
+    guard_1 = sdfg.add_state('guard_1')
+    if_guard = sdfg.add_state('if_guard')
+    l_branch = sdfg.add_state('l_branch')
+    r_branch = sdfg.add_state('r_branch')
+    if_merge = sdfg.add_state('if_merge')
+    end_1 = sdfg.add_state('end_1')
+
+    lra = l_branch.add_access('a')
+    lt = l_branch.add_tasklet('t1', {'i1'}, {'o1'}, 'o1 = i1 + 5')
+    lwa = l_branch.add_access('a')
+    l_branch.add_edge(lra, None, lt, 'i1', dace.Memlet('a[0]'))
+    l_branch.add_edge(lt, 'o1', lwa, None, dace.Memlet('a[0]'))
+
+    rra = r_branch.add_access('a')
+    rt = r_branch.add_tasklet('t2', {'i1'}, {'o1'}, 'o1 = i1 + 10')
+    rwa = r_branch.add_access('a')
+    r_branch.add_edge(rra, None, rt, 'i1', dace.Memlet('a[0]'))
+    r_branch.add_edge(rt, 'o1', rwa, None, dace.Memlet('a[0]'))
+
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < 20)')))
+    sdfg.add_edge(guard_1, if_guard, dace.InterstateEdge(condition=CodeBlock('i < 20')))
+    sdfg.add_edge(if_guard, l_branch, dace.InterstateEdge(condition=CodeBlock('not (a < 10)')))
+    sdfg.add_edge(if_guard, r_branch, dace.InterstateEdge(condition=CodeBlock('a < 10')))
+    sdfg.add_edge(l_branch, if_merge, dace.InterstateEdge())
+    sdfg.add_edge(r_branch, if_merge, dace.InterstateEdge())
+    sdfg.add_edge(if_merge, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
-    state = sdfg.start_state
-    state_check_executions(state, 1)
+    state_check_executions(init_state, 1)
 
     # For loop, check loop guard, `for i in range(20)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 21)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(i < 20)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (i < 20))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    if with_regions:
+        state_check_executions(guard_1, 20)
+    else:
+        state_check_executions(guard_1, 21)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 1)
+    state_check_executions(end_1, 1)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, 20)
-
-    # Check the branch guard, `if i < 10`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 20)
-    # Get edges to both sides of the conditional split.
-    oedges = sdfg.out_edges(state)
-    condition_met_edge = None
-    condition_broken_edge = None
-    for edge in oedges:
-        if edge.data.label == '(i < 10)':
-            condition_met_edge = edge
-        elif edge.data.label == '(not (i < 10))':
-            condition_broken_edge = edge
-    if condition_met_edge is None or condition_broken_edge is None:
-        raise RuntimeError('Couldn\'t identify conditional guard edges')
+    state_check_executions(if_guard, 20)
     # Check the 'true' branch.
-    state = condition_met_edge.dst
-    state_check_executions(state, 20, expected_dynamic=True)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 20, expected_dynamic=True)
+    state_check_executions(r_branch, 20, expected_dynamic=True)
     # Check the 'false' branch.
-    state = condition_broken_edge.dst
-    state_check_executions(state, 20, expected_dynamic=True)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 20, expected_dynamic=True)
-
+    state_check_executions(l_branch, 20, expected_dynamic=True)
     # Check where the branches meet again.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 20)
+    state_check_executions(if_merge, 20)
 
 
-def test_for_inside_branch():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_for_inside_branch(with_regions):
     sdfg = dace.SDFG('for_in_branch')
 
     state_init = sdfg.add_state('init')
@@ -274,15 +243,22 @@ def test_for_inside_branch():
         'j': 'j + 1',
     }))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     state_check_executions(branch_guard, 1, False)
-    state_check_executions(loop_guard, 11, True)
+    if with_regions:
+        state_check_executions(loop_guard, 10, True)
+    else:
+        state_check_executions(loop_guard, 11, True)
     state_check_executions(loop_state, 10, True)
     state_check_executions(branch_merge, 1, False)
 
 
-def test_full_merge_inside_loop():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_full_merge_inside_loop(with_regions):
     sdfg = dace.SDFG('full_merge_inside_loop')
 
     state_init = sdfg.add_state('init')
@@ -312,255 +288,245 @@ def test_full_merge_inside_loop():
         'i': 'i + 1',
     }))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
-    state_check_executions(loop_guard, 11, False)
+    if with_regions:
+        state_check_executions(loop_guard, 10, False)
+    else:
+        state_check_executions(loop_guard, 11, False)
     state_check_executions(branch_guard, 10, False)
     state_check_executions(branch_state, 10, True)
     state_check_executions(branch_merge, 10, False)
     state_check_executions(loop_end, 1, False)
 
 
-def test_while_with_nested_full_merge_branch():
-    @dace.program(dace.int32)
-    def while_with_nested_full_merge_branch(a):
-        while a < 20:
-            if a < 10:
-                a += 2
-            else:
-                a += 1
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_while_with_nested_full_merge_branch(with_regions):
+    sdfg = dace.SDFG('while_full_merge')
 
-    sdfg = while_with_nested_full_merge_branch.to_sdfg(simplify=False)
+    sdfg.add_scalar('a', dace.int32)
+
+    init_state = sdfg.add_state('init')
+    guard_1 = sdfg.add_state('guard_1')
+    if_guard = sdfg.add_state('if_guard')
+    l_branch = sdfg.add_state('l_branch')
+    r_branch = sdfg.add_state('r_branch')
+    if_merge = sdfg.add_state('if_merge')
+    end_1 = sdfg.add_state('end_1')
+
+    lra = l_branch.add_access('a')
+    lt = l_branch.add_tasklet('t1', {'i1'}, {'o1'}, 'o1 = i1 + 5')
+    lwa = l_branch.add_access('a')
+    l_branch.add_edge(lra, None, lt, 'i1', dace.Memlet('a[0]'))
+    l_branch.add_edge(lt, 'o1', lwa, None, dace.Memlet('a[0]'))
+
+    rra = r_branch.add_access('a')
+    rt = r_branch.add_tasklet('t2', {'i1'}, {'o1'}, 'o1 = i1 + 10')
+    rwa = r_branch.add_access('a')
+    r_branch.add_edge(rra, None, rt, 'i1', dace.Memlet('a[0]'))
+    r_branch.add_edge(rt, 'o1', rwa, None, dace.Memlet('a[0]'))
+
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge())
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (a < 20)')))
+    sdfg.add_edge(guard_1, if_guard, dace.InterstateEdge(condition=CodeBlock('a < 20')))
+    sdfg.add_edge(if_guard, l_branch, dace.InterstateEdge(condition=CodeBlock('not (a < 10)')))
+    sdfg.add_edge(if_guard, r_branch, dace.InterstateEdge(condition=CodeBlock('a < 10')))
+    sdfg.add_edge(l_branch, if_merge, dace.InterstateEdge())
+    sdfg.add_edge(r_branch, if_merge, dace.InterstateEdge())
+    sdfg.add_edge(if_merge, guard_1, dace.InterstateEdge())
+
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
-    state = sdfg.start_state
-    state_check_executions(state, 1)
+    state_check_executions(init_state, 1)
 
     # While loop, check loop guard, `while a < N`. Must be dynamic unbounded.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 0, expected_dynamic=True)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(a < 20)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (a < 20))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    state_check_executions(guard_1, 0, expected_dynamic=True)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 1)
+    state_check_executions(end_1, 1)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, 0, expected_dynamic=True)
-
-    # Check the branch guard, `if a < 10`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 0, expected_dynamic=True)
-    # Get edges to both sides of the conditional split.
-    oedges = sdfg.out_edges(state)
-    condition_met_edge = None
-    condition_broken_edge = None
-    for edge in oedges:
-        if edge.data.label == '(a < 10)':
-            condition_met_edge = edge
-        elif edge.data.label == '(not (a < 10))':
-            condition_broken_edge = edge
-    if condition_met_edge is None or condition_broken_edge is None:
-        raise RuntimeError('Couldn\'t identify conditional guard edges')
+    state_check_executions(if_guard, 0, expected_dynamic=True)
     # Check the 'true' branch.
-    state = condition_met_edge.dst
-    state_check_executions(state, 0, expected_dynamic=True)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 0, expected_dynamic=True)
+    state_check_executions(r_branch, 0, expected_dynamic=True)
     # Check the 'false' branch.
-    state = condition_broken_edge.dst
-    state_check_executions(state, 0, expected_dynamic=True)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 0, expected_dynamic=True)
-
+    state_check_executions(l_branch, 0, expected_dynamic=True)
     # Check where the branches meet again.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 0, expected_dynamic=True)
+    state_check_executions(if_merge, 0, expected_dynamic=True)
 
 
-def test_3_fold_nested_loop_with_symbolic_bounds():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_3_fold_nested_loop_with_symbolic_bounds(with_regions):
     N = dace.symbol('N')
     M = dace.symbol('M')
     K = dace.symbol('K')
 
-    @dace.program(dace.int32)
-    def nested_3_symbolic(a):
-        for i in range(N):
-            for j in range(M):
-                for k in range(K):
-                    a += 5
+    sdfg = dace.SDFG('nest_3_symbolic')
 
-    sdfg = nested_3_symbolic.to_sdfg(simplify=False)
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_symbol('j', dace.int32)
+    sdfg.add_symbol('k', dace.int32)
+
+    init_state = sdfg.add_state('init')
+    guard_1 = sdfg.add_state('guard_1')
+    loop_1 = sdfg.add_state('loop_1')
+    end_1 = sdfg.add_state('end_1')
+    guard_2 = sdfg.add_state('guard_2')
+    loop_2 = sdfg.add_state('loop_2')
+    end_2 = sdfg.add_state('end_2')
+    guard_3 = sdfg.add_state('guard_3')
+    end_3 = sdfg.add_state('end_3')
+    loop_3 = sdfg.add_state('loop_3')
+
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < N)')))
+    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock('i < N')))
+    sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge(assignments={'j': 0}))
+    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+
+    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock('not (j < M)')))
+    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock('j < M')))
+    sdfg.add_edge(loop_2, guard_3, dace.InterstateEdge(assignments={'k': 0}))
+    sdfg.add_edge(end_3, guard_2, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+
+    sdfg.add_edge(guard_3, end_3, dace.InterstateEdge(condition=CodeBlock('not (k < K)')))
+    sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock('k < K')))
+    sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
-    state = sdfg.start_state
-    state_check_executions(state, 1)
+    state_check_executions(init_state, 1)
 
-    # 1st level loop, check loop guard, `for i in range(20)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, N + 1)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(i < N)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (i < N))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    # 1st level loop, check loop guard, `for i in range(N)`.
+    if with_regions:
+        state_check_executions(guard_1, N)
+    else:
+        state_check_executions(guard_1, N + 1)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 1)
+    state_check_executions(end_1, 1)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, N)
+    state_check_executions(loop_1, N)
 
-    # 2nd level nested loop, check loog guard, `for j in range(i, 20)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, M * N + N)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(j < M)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (j < M))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    # 2nd level nested loop, check loog guard, `for j in range(M)`.
+    if with_regions:
+        state_check_executions(guard_2, M * N)
+    else:
+        state_check_executions(guard_2, M * N + N)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, N)
+    state_check_executions(end_2, N)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, M * N)
+    state_check_executions(loop_2, M * N)
 
-    # 3rd level nested loop, check loog guard, `for k in range(i, j)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, M * N * K + M * N)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(k < K)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (k < K))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    # 3rd level nested loop, check loop guard, `for k in range(K)`.
+    if with_regions:
+        state_check_executions(guard_3, M * N * K)
+    else:
+        state_check_executions(guard_3, M * N * K + M * N)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, M * N)
+    state_check_executions(end_3, M * N)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, M * N * K)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, M * N * K)
+    state_check_executions(loop_3, M * N * K)
 
 
-def test_3_fold_nested_loop():
-    @dace.program(dace.int32[20, 20])
-    def nested_3(A):
-        for i in range(20):
-            for j in range(i, 20):
-                for k in range(i, j):
-                    A[k, j] += 5
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_3_fold_nested_loop(with_regions):
+    sdfg = dace.SDFG('nest_3')
 
-    sdfg = nested_3.to_sdfg(simplify=False)
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_symbol('j', dace.int32)
+    sdfg.add_symbol('k', dace.int32)
+
+    init_state = sdfg.add_state('init')
+    guard_1 = sdfg.add_state('guard_1')
+    loop_1 = sdfg.add_state('loop_1')
+    end_1 = sdfg.add_state('end_1')
+    guard_2 = sdfg.add_state('guard_2')
+    loop_2 = sdfg.add_state('loop_2')
+    end_2 = sdfg.add_state('end_2')
+    guard_3 = sdfg.add_state('guard_3')
+    end_3 = sdfg.add_state('end_3')
+    loop_3 = sdfg.add_state('loop_3')
+
+    sdfg.add_edge(init_state, guard_1, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard_1, end_1, dace.InterstateEdge(condition=CodeBlock('not (i < 20)')))
+    sdfg.add_edge(guard_1, loop_1, dace.InterstateEdge(condition=CodeBlock('i < 20')))
+    sdfg.add_edge(loop_1, guard_2, dace.InterstateEdge(assignments={'j': 'i'}))
+    sdfg.add_edge(end_2, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+
+    sdfg.add_edge(guard_2, end_2, dace.InterstateEdge(condition=CodeBlock('not (j < 20)')))
+    sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock('j < 20')))
+    sdfg.add_edge(loop_2, guard_3, dace.InterstateEdge(assignments={'k': 'i'}))
+    sdfg.add_edge(end_3, guard_2, dace.InterstateEdge(assignments={'j': 'j + 1'}))
+
+    sdfg.add_edge(guard_3, end_3, dace.InterstateEdge(condition=CodeBlock('not (k < j)')))
+    sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock('k < j')))
+    sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
-    state = sdfg.start_state
-    state_check_executions(state, 1)
+    state_check_executions(init_state, 1)
 
     # 1st level loop, check loop guard, `for i in range(20)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 21)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(i < 20)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (i < 20))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    if with_regions:
+        state_check_executions(guard_1, 20)
+    else:
+        # When using a state-machine-style loop, the guard is executed N+1 times for N loop iterations.
+        state_check_executions(guard_1, 21)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 1)
+    state_check_executions(end_1, 1)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, 20)
+    state_check_executions(loop_1, 20)
 
     # 2nd level nested loop, check loog guard, `for j in range(i, 20)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 230)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(j < 20)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (j < 20))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    if with_regions:
+        state_check_executions(guard_2, 210)
+    else:
+        state_check_executions(guard_2, 230)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 20)
+    state_check_executions(end_2, 20)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, 210)
+    state_check_executions(loop_2, 210)
 
-    # 3rd level nested loop, check loog guard, `for k in range(i, j)`.
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1540)
-    # Get edges to inside and outside the loop.
-    oedges = sdfg.out_edges(state)
-    end_branch_edge = None
-    for_branch_edge = None
-    for edge in oedges:
-        if edge.data.label == '(k < j)':
-            for_branch_edge = edge
-        elif edge.data.label == '(not (k < j))':
-            end_branch_edge = edge
-    if end_branch_edge is None or for_branch_edge is None:
-        raise RuntimeError('Couldn\'t identify guard edges')
+    # 3rd level nested loop, check loop guard, `for k in range(i, j)`.
+    if with_regions:
+        state_check_executions(guard_3, 1330)
+    else:
+        state_check_executions(guard_3, 1540)
     # Check loop-end branch.
-    state = end_branch_edge.dst
-    state_check_executions(state, 210)
+    state_check_executions(end_3, 210)
     # Check inside the loop.
-    state = for_branch_edge.dst
-    state_check_executions(state, 1330)
-    state = sdfg.out_edges(state)[0].dst
-    state_check_executions(state, 1330)
+    state_check_executions(loop_3, 1330)
 
 
 if __name__ == "__main__":
-    test_3_fold_nested_loop()
-    test_3_fold_nested_loop_with_symbolic_bounds()
-    test_while_with_nested_full_merge_branch()
-    test_for_with_nested_full_merge_branch()
-    test_for_inside_branch()
-    test_while_inside_for()
-    test_conditional_full_merge()
-    test_conditional_fake_merge()
-    test_full_merge_inside_loop()
+    test_3_fold_nested_loop(False)
+    test_3_fold_nested_loop_with_symbolic_bounds(False)
+    test_while_with_nested_full_merge_branch(False)
+    test_for_with_nested_full_merge_branch(False)
+    test_for_inside_branch(False)
+    test_while_inside_for(False)
+    test_conditional_full_merge(False)
+    test_conditional_fake_merge(False)
+    test_full_merge_inside_loop(False)
+    test_3_fold_nested_loop(True)
+    test_3_fold_nested_loop_with_symbolic_bounds(True)
+    test_while_with_nested_full_merge_branch(True)
+    test_for_with_nested_full_merge_branch(True)
+    test_for_inside_branch(True)
+    test_while_inside_for(True)
+    test_conditional_full_merge(True)
+    test_conditional_fake_merge(True)
+    test_full_merge_inside_loop(True)

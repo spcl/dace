@@ -5,8 +5,11 @@ from dace.sdfg import utils as sdutil
 from dace import SDFG, properties
 from typing import Optional
 
+from dace.transformation.transformation import explicit_cf_compatible
+
 
 @properties.make_properties
+@explicit_cf_compatible
 class ConsolidateEdges(ppl.Pass):
     """
     Removes extraneous edges with memlets that refer to the same data containers within the same scope.
@@ -27,7 +30,7 @@ class ConsolidateEdges(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """
         Consolidates edges on the given SDFG.
-        
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a

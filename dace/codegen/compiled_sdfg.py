@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Callable, Dict, List, Tuple, Optional, Type
+from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union
 import warnings
 
 import numpy as np
@@ -22,17 +22,17 @@ class ReloadableDLL(object):
     A reloadable shared object (or dynamically linked library), which
     bypasses Python's dynamic library reloading issues.
     """
+
     def __init__(self, library_filename, program_name):
         """
         Creates a new reloadable shared object.
-        
+
         :param library_filename: Path to library file.
         :param program_name: Name of the DaCe program (for use in finding
                              the stub library loader).
         """
-        self._stub_filename = os.path.join(
-            os.path.dirname(os.path.realpath(library_filename)),
-            'libdacestub_%s.%s' % (program_name, Config.get('compiler', 'library_extension')))
+        self._stub_filename = os.path.join(os.path.dirname(os.path.realpath(library_filename)),
+                                           f'libdacestub_{program_name}.{Config.get("compiler", "library_extension")}')
         self._library_filename = os.path.realpath(library_filename)
         self._stub = None
         self._lib = None
@@ -46,7 +46,7 @@ class ReloadableDLL(object):
 
         func = self._stub.get_symbol(self._lib, ctypes.c_char_p(name.encode()))
         if func is None:
-            raise KeyError('Function %s not found in library %s' % (name, os.path.basename(self._library_filename)))
+            raise KeyError(f'Function {name} not found in library {os.path.basename(self._library_filename)}')
 
         return ctypes.CFUNCTYPE(restype)(func)
 
@@ -104,15 +104,14 @@ class ReloadableDLL(object):
 
             is_loaded = self._stub.is_library_loaded(lib_cfilename)
             if is_loaded == 1:
-                warnings.warn('Library %s already loaded, renaming file' % self._library_filename)
+                warnings.warn(f'Library {self._library_filename} already loaded, renaming file')
                 try:
                     shutil.copyfile(self._library_filename, self._library_filename + '_')
                     self._library_filename += '_'
                 except shutil.Error:
-                    raise cgx.DuplicateDLLError('Library %s is already loaded somewhere else ' %
-                                                os.path.basename(self._library_filename) +
-                                                'and cannot be unloaded. Please use a different name ' +
-                                                'for the SDFG/program.')
+                    raise cgx.DuplicateDLLError(f'Library {os.path.basename(self._library_filename)}'
+                                                'is already loaded somewhere else and cannot be unloaded. '
+                                                'Please use a different name for the SDFG/program.')
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
@@ -125,7 +124,7 @@ class ReloadableDLL(object):
                 result = subprocess.run(['ld', self._library_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 stderr = result.stderr.decode('utf-8')
                 reason = 'Reason:\n' + '\n'.join([l for l in stderr.split('\n') if '_start' not in l])
-            raise RuntimeError('Could not load library %s. %s' % (os.path.basename(self._library_filename), reason))
+            raise RuntimeError(f'Could not load library {os.path.basename(self._library_filename)}. {reason}')
 
     def unload(self):
         """ Unloads the internal library using the stub. """
@@ -146,27 +145,40 @@ class ReloadableDLL(object):
         self.unload()
 
 
-def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
+def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
     """
     If the given array implements ``__array_interface__`` (see
     ``dtypes.is_array``), returns the base host or device pointer to the
     array's allocated memory.
 
     :param array: Array object that implements NumPy's array interface.
-    :param array_type: Data descriptor of the array (used to get storage
-                       location to determine whether it's a host or GPU device
-                       pointer).
+    :param array_type: Storage location of the array, used to determine whether
+                       it is a host or device pointer (e.g. GPU).
     :return: A pointer to the base location of the allocated buffer.
     """
     if hasattr(array, 'data_ptr'):
         return array.data_ptr()
-    if array_type.storage == dtypes.StorageType.GPU_Global:
-        return array.__cuda_array_interface__['data'][0]
+    if isinstance(array, ctypes.Array):
+        return ctypes.addressof(array)
+
+    if storage == dtypes.StorageType.GPU_Global:
+        try:
+            return array.__cuda_array_interface__['data'][0]
+        except AttributeError:
+            # Special case for CuPy with HIP
+            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
+                return array.data.ptr
+            raise
+
     return array.__array_interface__['data'][0]
 
 
 class CompiledSDFG(object):
-    """ A compiled SDFG object that can be called through Python. """
+    """ A compiled SDFG object that can be called through Python.
+
+    Todo:
+        Scalar return values are not handled properly, this is a code gen issue.
+    """
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
         from dace.sdfg import SDFG
@@ -181,6 +193,7 @@ class CompiledSDFG(object):
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._init.restype = ctypes.c_void_p
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
+        self._exit.restype = ctypes.c_int
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
         # Cache SDFG return values
@@ -196,6 +209,24 @@ class CompiledSDFG(object):
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
         self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
+
+        if self.argnames is None and len(sdfg.arg_names) != 0:
+            warnings.warn('You passed `None` as `argnames` to `CompiledSDFG`, but the SDFG you passed has positional'
+                          ' arguments. This is allowed but deprecated.')
+
+        self.has_gpu_code = False
+        self.external_memory_types = set()
+        for _, _, aval in self._sdfg.arrays_recursive():
+            if aval.storage in dtypes.GPU_STORAGES:
+                self.has_gpu_code = True
+                break
+            if aval.lifetime == dtypes.AllocationLifetime.External:
+                self.external_memory_types.add(aval.storage)
+        if not self.has_gpu_code:
+            for node, _ in self._sdfg.all_nodes_recursive():
+                if getattr(node, 'schedule', False) in dtypes.GPU_SCHEDULES:
+                    self.has_gpu_code = True
+                    break
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
         """
@@ -215,13 +246,16 @@ class CompiledSDFG(object):
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
             encountered, the method exits early. All fields defined until then will nevertheless be available in the
             structure.
-            
+
             :return: the ctypes.Structure representation of the state struct.
         """
+        if not self._libhandle:
+            raise ValueError('Library was not initialized')
 
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
 
     def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid import cycle
         # the path of the main sdfg file containing the state struct
         main_src_path = os.path.join(os.path.dirname(os.path.dirname(self._lib._library_filename)), "src", "cpu",
                                      self._sdfg.name + ".cpp")
@@ -230,7 +264,7 @@ class CompiledSDFG(object):
         code_flat = code.replace("\n", " ")
 
         # try to find the first struct definition that matches the name we are looking for in the sdfg file
-        match = re.search(f"struct {self._sdfg.name}_t {{(.*?)}};", code_flat)
+        match = re.search(f"struct {mangle_dace_state_struct_name(self._sdfg)} {{(.*?)}};", code_flat)
         if match is None or len(match.groups()) != 1:
             return None
 
@@ -256,6 +290,43 @@ class CompiledSDFG(object):
 
         return State
 
+    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
+        """
+        Returns the total external memory size to be allocated for this SDFG.
+
+        :return: A dictionary mapping storage types to the number of bytes necessary
+                 to allocate for the SDFG to work properly.
+        """
+        if not self._initialized:
+            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
+                             'querying external memory size.')
+
+        result: Dict[dtypes.StorageType, int] = {}
+        for storage in self.external_memory_types:
+            func = self._lib.get_symbol(f'__dace_get_external_memory_size_{storage.name}')
+            func.restype = ctypes.c_size_t
+            result[storage] = func(self._libhandle, *self._lastargs[1])
+
+        return result
+
+    def set_workspace(self, storage: dtypes.StorageType, workspace: Any):
+        """
+        Sets the workspace for the given storage type to the given buffer.
+
+        :param storage: The storage type to fill.
+        :param workspace: An array-convertible object (through ``__[cuda_]array_interface__``,
+                          see ``_array_interface_ptr``) to use for the workspace.
+        """
+        if not self._initialized:
+            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
+                             'setting external memory.')
+        if storage not in self.external_memory_types:
+            raise ValueError(f'Compiled SDFG does not specify external memory of {storage}')
+
+        func = self._lib.get_symbol(f'__dace_set_external_memory_{storage.name}', None)
+        ptr = _array_interface_ptr(workspace, storage)
+        func(self._libhandle, ctypes.c_void_p(ptr), *self._lastargs[1])
+
     @property
     def filename(self):
         return self._lib._library_filename
@@ -275,7 +346,7 @@ class CompiledSDFG(object):
 
     def initialize(self, *args, **kwargs):
         """
-        Initializes the compiled SDFG without invoking it. 
+        Initializes the compiled SDFG without invoking it.
 
         :param args: Arguments to call SDFG with.
         :param kwargs: Keyword arguments to call SDFG with.
@@ -295,25 +366,97 @@ class CompiledSDFG(object):
 
     def finalize(self):
         if self._exit is not None:
-            self._exit(self._libhandle)
+            res: int = self._exit(self._libhandle)
             self._initialized = False
+            if res != 0:
+                raise RuntimeError(
+                    f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}')
+
+    def _get_error_text(self, result: Union[str, int]) -> str:
+        from dace.codegen import common  # Circular import
+        if self.has_gpu_code:
+            if isinstance(result, int):
+                result = common.get_gpu_runtime().get_error_string(result)
+            return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
+                    'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
+        else:
+            return result
 
     def __call__(self, *args, **kwargs):
-        # Update arguments from ordered list
-        if len(args) > 0 and self.argnames is not None:
-            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        """
+        Forwards the Python call to the compiled ``SDFG``.
 
+        The order of the positional arguments is expected to be the same as in
+        the ``argnames`` member. The function will roughly perform the
+        following tasks:
+        - Change the order of the Python arguments into the one required by
+          the binary.
+        - Performing some basic sanity checks.
+        - Transforming the Python arguments into their ``C`` equivalents.
+        - Allocate the memory for the return values.
+        - Call the ``C` function.
+
+        :note: The memory for the return values is only allocated the first
+               time this function is called. Thus, this function will always
+               return the same objects. To force the allocation of new memory
+               you can call ``clear_return_values()`` in advance.
+        """
+        if self.argnames is None and len(args) != 0:
+            raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
+        elif len(args) > 0 and self.argnames is not None:
+            kwargs.update(
+                # `_construct_args` will handle all of its arguments as kwargs.
+                {
+                    aname: arg
+                    for aname, arg in zip(self.argnames, args)
+                })
+        argtuple, initargtuple = self._construct_args(kwargs)  # Missing arguments will be detected here.
+        # Return values are cached in `self._lastargs`.
+        return self.fast_call(argtuple, initargtuple, do_gpu_check=True)
+
+    def fast_call(
+        self,
+        callargs: Tuple[Any, ...],
+        initargs: Tuple[Any, ...],
+        do_gpu_check: bool = False,
+    ) -> Union[Tuple[Any, ...], Any]:
+        """
+        Calls the underlying binary functions directly and bypassing
+        argument sanitation.
+
+        This is a faster, but less user friendly version of ``__call__()``.
+        While ``__call__()`` will transforms its Python arguments such that
+        they can be forwarded, this function assumes that this processing
+        was already done by the user.
+
+        :param callargs:        Arguments passed to the actual computation.
+        :param initargs:        Arguments passed to the initialization function.
+        :param do_gpu_check:    Check if errors happened on the GPU.
+
+        :note: You may use `_construct_args()` to generate the processed arguments.
+        """
+        from dace.codegen import common  # Circular import
         try:
-            argtuple, initargtuple = self._construct_args(kwargs)
-
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
-                self._initialize(initargtuple)
-            
-            with hooks.invoke_compiled_sdfg_call_hooks(self, argtuple):
+                self._initialize(initargs)
+
+            with hooks.invoke_compiled_sdfg_call_hooks(self, callargs):
                 if self.do_not_execute is False:
-                    self._cfunc(self._libhandle, *argtuple)
+                    self._cfunc(self._libhandle, *callargs)
+
+            # Optionally get errors from call
+            if do_gpu_check and self.has_gpu_code:
+                try:
+                    lasterror = common.get_gpu_runtime().get_last_error_string()
+                except RuntimeError as ex:
+                    warnings.warn(f'Could not get last error from GPU runtime: {ex}')
+                    lasterror = None
+
+                if lasterror is not None:
+                    raise RuntimeError(
+                        f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}')
 
             return self._convert_return_values()
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
@@ -328,18 +471,23 @@ class CompiledSDFG(object):
         self._lib.unload()
 
     def _construct_args(self, kwargs) -> Tuple[Tuple[Any], Tuple[Any]]:
-        """ Main function that controls argument construction for calling
-            the C prototype of the SDFG.
-
-            Organizes arguments first by `sdfg.arglist`, then data descriptors
-            by alphabetical order, then symbols by alphabetical order.
         """
-        # Return value initialization (for values that have not been given)
+        Main function that controls argument construction for calling
+        the C prototype of the SDFG.
+
+        Organizes arguments first by ``sdfg.arglist``, then data descriptors
+        by alphabetical order, then symbols by alphabetical order.
+
+        :note: If not initialized this function will initialize the memory for
+               the return values, however, it might also reallocate said memory.
+        :note: This function will also update the internal argument cache.
+        """
         self._initialize_return_values(kwargs)
+
+        # Add the return values to the arguments, since they are part of the C signature.
         for desc, arr in zip(self._retarray_shapes, self._return_arrays):
             kwargs[desc[0]] = arr
 
-        # Argument construction
         sig = self._sig
         typedict = self._typedict
         if len(kwargs) > 0:
@@ -354,37 +502,66 @@ class CompiledSDFG(object):
                     argnames.append(a)
                 except KeyError:
                     raise KeyError("Missing program argument \"{}\"".format(a))
+
         else:
+            if len(sig) > 0:
+                raise KeyError(f"Missing program arguments: {', '.join(sig)}")
             arglist = []
             argtypes = []
             argnames = []
             sig = []
+
         # Type checking
+        no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
         for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
-            if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
+            is_array = dtypes.is_array(arg)
+            is_ndarray = isinstance(arg, np.ndarray)
+            is_dtArray = isinstance(atype, dt.Array)
+            if not is_array and is_dtArray:
                 if isinstance(arg, list):
-                    print('WARNING: Casting list argument "%s" to ndarray' % a)
+                    print(f'WARNING: Casting list argument "{a}" to ndarray')
                 elif arg is None:
                     if atype.optional is False:  # If array cannot be None
                         raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
                     # Otherwise, None values are passed as null pointers below
+                elif isinstance(arg, ctypes._Pointer):
+                    pass
+                elif isinstance(arg, str):
+                    # Cast to bytes
+                    arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
                 else:
-                    raise TypeError('Passing an object (type %s) to an array in argument "%s"' %
-                                    (type(arg).__name__, a))
-            elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
-                # GPU scalars are pointers, so this is fine
-                if atype.storage != dtypes.StorageType.GPU_Global:
-                    raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
-            elif not isinstance(atype, dt.Array) and not isinstance(atype.dtype, dtypes.callback) and not isinstance(
-                    arg,
-                (atype.dtype.type, sp.Basic)) and not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype):
-                if isinstance(arg, int) and atype.dtype.type == np.int64:
+                    raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
+            elif is_array and not is_dtArray:
+                # GPU scalars and return values are pointers, so this is fine
+                if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
+                    raise TypeError(f'Passing an array to a scalar (type {atype.dtype.ctype}) in argument "{a}"')
+            elif (is_dtArray and is_ndarray and not isinstance(atype, dt.ContainerArray)
+                  and atype.dtype.as_numpy_dtype() != arg.dtype):
+                # Make exception for vector types
+                if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
+                    pass
+                else:
+                    print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {atype.dtype.type.__name__} array')
+            elif is_dtArray and is_ndarray and arg.base is not None and not '__return' in a and no_view_arguments:
+                raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
+                                'programs is not allowed in order to retain analyzability. '
+                                'Please make a copy with "numpy.copy(...)". If you know what '
+                                'you are doing, you can override this error in the '
+                                'configuration by setting compiler.allow_view_arguments '
+                                'to True.')
+            elif (not isinstance(atype, (dt.Array, dt.Structure)) and not isinstance(atype.dtype, dtypes.callback)
+                  and not isinstance(arg, (atype.dtype.type, sp.Basic))
+                  and not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype)):
+                is_int = isinstance(arg, int)
+                if is_int and atype.dtype.type == np.int64:
+                    pass
+                elif (is_int and atype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
+                    pass
+                elif (is_int and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
                     pass
-                elif (isinstance(arg, int) and atype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
-                    pass
-                elif (isinstance(arg, int) and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
+                elif isinstance(arg, bool) and atype.dtype.type == np.bool_:
                     pass
                 elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
                     if arg is None:
@@ -395,24 +572,7 @@ class CompiledSDFG(object):
                 else:
                     warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
                     arglist[i] = atype.dtype.type(arg)
-            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
-                  and atype.dtype.as_numpy_dtype() != arg.dtype):
-                # Make exception for vector types
-                if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
-                    pass
-                else:
-                    print('WARNING: Passing %s array argument "%s" to a %s array' %
-                          (arg.dtype, a, atype.dtype.type.__name__))
-            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray) and arg.base is not None
-                  and not '__return' in a and not Config.get_bool('compiler', 'allow_view_arguments')):
-                raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
-                                'programs is not allowed in order to retain analyzability. '
-                                'Please make a copy with "numpy.copy(...)". If you know what '
-                                'you are doing, you can override this error in the '
-                                'configuration by setting compiler.allow_view_arguments '
-                                'to True.')
 
-        # Explicit casting
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             # Call a wrapper function to make NumPy arrays from pointers.
             if isinstance(argtype.dtype, dtypes.callback):
@@ -425,44 +585,32 @@ class CompiledSDFG(object):
                 arglist[index] = ctypes.c_void_p(0)
 
         # Retain only the element datatype for upcoming checks and casts
-        arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
+        arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
 
-        sdfg = self._sdfg
-
-        # Obtain SDFG constants
-        constants = sdfg.constants
-
-        # Remove symbolic constants from arguments
+        constants = self.sdfg.constants
         callparams = tuple((arg, actype, atype, aname)
                            for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
-                           if not symbolic.issymbolic(arg) or (hasattr(arg, 'name') and arg.name not in constants))
+                           if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
 
-        # Replace symbols with their values
-        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
-                           for arg, actype, atype, aname in callparams)
-
-        # Construct init args, which only consist of the symbols
         symbols = self._free_symbols
         initargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            actype(arg) if not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)) else arg
             for arg, actype, atype, aname in callparams if aname in symbols)
 
-        # Replace arrays with their base host/device pointers
-        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
-                         atype) if dtypes.is_array(arg) else (arg, actype, atype)
-                        for arg, actype, atype, _ in callparams)
-
         try:
-            newargs = tuple(
-                actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
-        except TypeError:
-            # Pinpoint bad argument
-            for i, (arg, actype, _) in enumerate(newargs):
-                try:
-                    if not isinstance(arg, ctypes._SimpleCData):
-                        actype(arg)
-                except TypeError as ex:
-                    raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
+            # Replace arrays with their base host/device pointers
+            newargs = [None] * len(callparams)
+            for i, (arg, actype, atype, _) in enumerate(callparams):
+                if dtypes.is_array(arg):
+                    newargs[i] = ctypes.c_void_p(_array_interface_ptr(
+                        arg, atype.storage))  # `c_void_p` is subclass of `ctypes._SimpleCData`.
+                elif not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)):
+                    newargs[i] = actype(arg)
+                else:
+                    newargs[i] = arg
+
+        except TypeError as ex:
+            raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
 
         self._lastargs = newargs, initargs
         return self._lastargs
@@ -497,7 +645,8 @@ class CompiledSDFG(object):
     def _initialize_return_values(self, kwargs):
         # Obtain symbol values from arguments and constants
         syms = dict()
-        syms.update({k: v for k, v in kwargs.items() if k not in self.sdfg.arrays})
+        sdfg_arrays = self.sdfg.arrays
+        syms.update({k: v for k, v in kwargs.items() if k not in sdfg_arrays})
         syms.update(self.sdfg.constants)
 
         # Clear references from last call (allow garbage collection)
@@ -543,9 +692,9 @@ class CompiledSDFG(object):
                 arr = self._create_array(*shape_desc)
                 self._return_arrays.append(arr)
 
-
     def _convert_return_values(self):
         # Return the values as they would be from a Python function
+        # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
         if self._return_arrays is None or len(self._return_arrays) == 0:
             return None
         elif len(self._return_arrays) == 1:

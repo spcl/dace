@@ -7,24 +7,29 @@ functionality to registered code generators based on user-defined predicates.
 from dace.codegen.prettycode import CodeIOStream
 import aenum
 from dace import config, data as dt, dtypes, nodes, registry
+from dace.memlet import Memlet
 from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
-from typing import Dict, Set, Tuple, Union
+from dace.sdfg.graph import MultiConnectorEdge
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
-    
+
         :see: DefinedMemlets
     """
-    Pointer = ()
-    Scalar = ()
-    Stream = ()
-    StreamArray = ()
-    FPGA_ShiftRegister = ()
-    ArrayInterface = ()
+    Pointer = ()  # Pointer
+    Scalar = ()  # A copyable scalar moved by value (e.g., POD)
+    Object = ()  # An object moved by reference
+    Stream = ()  # A stream object moved by reference and accessed via a push/pop API
+    StreamArray = ()  # An array of Streams
+    FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
+    ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
 
 
 class DefinedMemlets:
@@ -32,6 +37,7 @@ class DefinedMemlets:
         referenced correctly in nested scopes and SDFGs.
         The ones defined in the first (top) scope, refer to global variables.
     """
+
     def __init__(self):
         self._scopes = [(None, {}, True), (None, {}, True)]
 
@@ -51,10 +57,8 @@ class DefinedMemlets:
             return False
 
     def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
-        last_visited_scope = None
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent
-            last_visited_scope = scope
             if ancestor > 0:
                 ancestor -= 1
                 continue
@@ -99,7 +103,7 @@ class DefinedMemlets:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
-    def add_global(self, name: str, dtype: DefinedType, ctype: str):
+    def add_global(self, name: str, dtype: DefinedType, ctype: str) -> None:
         """
         Adds a global variable (top scope)
         """
@@ -108,11 +112,9 @@ class DefinedMemlets:
 
         self._scopes[0][1][name] = (dtype, ctype)
 
-    def remove(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
-        last_visited_scope = None
+    def remove(self, name: str, ancestor: int = 0, is_global: bool = False) -> None:
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent
-            last_visited_scope = scope
             if ancestor > 0:
                 ancestor -= 1
                 continue
@@ -142,6 +144,24 @@ class DefinedMemlets:
 class TargetDispatcher(object):
     """ Dispatches sub-SDFG generation (according to scope),
         storage<->storage copies, and storage<->tasklet copies to targets. """
+
+    _array_dispatchers: Dict[dtypes.StorageType, target.TargetCodeGenerator]
+    _map_dispatchers: Dict[dtypes.ScheduleType, target.TargetCodeGenerator]
+
+    _copy_dispatchers: Dict[Tuple[dtypes.StorageType, dtypes.StorageType, dtypes.ScheduleType],
+                            List[Tuple[Callable, target.TargetCodeGenerator]]]
+    _generic_copy_dispatcher: Dict[Tuple[dtypes.StorageType, dtypes.StorageType, dtypes.ScheduleType],
+                                   target.TargetCodeGenerator]
+
+    _node_dispatchers: List[Tuple[Callable, target.TargetCodeGenerator]]
+    _generic_node_dispatcher: Optional[target.TargetCodeGenerator]
+
+    _state_dispatchers: List[Tuple[Callable, target.TargetCodeGenerator]]
+    _generic_state_dispatcher: Optional[target.TargetCodeGenerator]
+
+    _declared_arrays: DefinedMemlets
+    _defined_vars: DefinedMemlets
+
     def __init__(self, framecode):
         # Avoid import loop
         from dace.codegen.targets import framecode as fc
@@ -154,20 +174,14 @@ class TargetDispatcher(object):
         self.instrumentation: Dict[Union[dtypes.InstrumentationType, dtypes.DataInstrumentationType],
                                    instrumentation.InstrumentationProvider] = {}
 
-        self._array_dispatchers: Dict[dtypes.StorageType, target.TargetCodeGenerator] = {}
-        self._map_dispatchers: Dict[dtypes.ScheduleType, target.TargetCodeGenerator] = {}
-        self._copy_dispatchers = {}  # Type: (dtypes.StorageType src,
-        #                                     dtypes.StorageType dst,
-        #                                     dtypes.ScheduleType dst_schedule)
-        #                                     -> List[(predicate, TargetCodeGenerator)]
-        self._generic_copy_dispatchers = {}  # Type: (dtypes.StorageType src,
-        #                                     dtypes.StorageType dst,
-        #                                     dtypes.ScheduleType dst_schedule)
-        #                                     -> TargetCodeGenerator
-        self._node_dispatchers = []  # [(predicate, dispatcher)]
-        self._generic_node_dispatcher = None  # Type: TargetCodeGenerator
-        self._state_dispatchers = []  # [(predicate, dispatcher)]
-        self._generic_state_dispatcher = None  # Type: TargetCodeGenerator
+        self._array_dispatchers = {}
+        self._map_dispatchers = {}
+        self._copy_dispatchers = {}
+        self._generic_copy_dispatchers = {}
+        self._node_dispatchers = []
+        self._generic_node_dispatcher = None
+        self._state_dispatchers = []
+        self._generic_state_dispatcher = None
 
         self._declared_arrays = DefinedMemlets()
         self._defined_vars = DefinedMemlets()
@@ -175,7 +189,7 @@ class TargetDispatcher(object):
     @property
     def declared_arrays(self) -> DefinedMemlets:
         """ Returns a list of declared variables.
-        
+
             This is used for variables that must have their declaration and
             allocation separate. It includes all such variables that have been
             declared by the dispatcher.
@@ -185,7 +199,7 @@ class TargetDispatcher(object):
     @property
     def defined_vars(self) -> DefinedMemlets:
         """ Returns a list of defined variables.
-        
+
             This includes all variables defined by the dispatcher.
         """
         return self._defined_vars
@@ -215,7 +229,8 @@ class TargetDispatcher(object):
         """
 
         if not hasattr(dispatcher, "generate_state"):
-            raise TypeError("State dispatcher \"{}\" does not " "implement \"generate_state\"".format(dispatcher))
+            raise TypeError("State dispatcher \"{}\" does not "
+                            "implement \"generate_state\"".format(dispatcher))
         if predicate is None:
             self._generic_state_dispatcher = dispatcher
         else:
@@ -229,7 +244,9 @@ class TargetDispatcher(object):
         """ Returns a list of state dispatchers with predicates. """
         return list(self._state_dispatchers)
 
-    def register_node_dispatcher(self, dispatcher, predicate=None):
+    def register_node_dispatcher(self,
+                                 dispatcher: target.TargetCodeGenerator,
+                                 predicate: Optional[Callable] = None) -> None:
         """ Registers a code generator that processes a single node, calling
             ``generate_node``.
 
@@ -241,7 +258,8 @@ class TargetDispatcher(object):
             :see: TargetCodeGenerator
         """
         if not hasattr(dispatcher, "generate_node"):
-            raise TypeError("Node dispatcher must " "implement \"generate_node\"")
+            raise TypeError("Node dispatcher must "
+                            "implement \"generate_node\"")
         if predicate is None:
             self._generic_node_dispatcher = dispatcher
         else:
@@ -255,7 +273,8 @@ class TargetDispatcher(object):
         """ Returns a list of node dispatchers with predicates. """
         return list(self._node_dispatchers)
 
-    def register_map_dispatcher(self, schedule_type, func):
+    def register_map_dispatcher(self, schedule_type: Union[List[dtypes.ScheduleType], dtypes.ScheduleType],
+                                func: target.TargetCodeGenerator) -> None:
         """ Registers a function that processes a scope, used when calling
             ``dispatch_subgraph`` and ``dispatch_scope``.
 
@@ -269,13 +288,15 @@ class TargetDispatcher(object):
                 self.register_map_dispatcher(stype, func)
             return
 
-        if not isinstance(schedule_type, dtypes.ScheduleType): raise TypeError
-        if not isinstance(func, target.TargetCodeGenerator): raise TypeError
+        if not isinstance(schedule_type, dtypes.ScheduleType):
+            raise TypeError
+        if not isinstance(func, target.TargetCodeGenerator):
+            raise TypeError
         if schedule_type in self._map_dispatchers:
             raise ValueError('Schedule already mapped to ' + str(self._map_dispatchers[schedule_type]))
         self._map_dispatchers[schedule_type] = func
 
-    def register_array_dispatcher(self, storage_type, func):
+    def register_array_dispatcher(self, storage_type: dtypes.StorageType, func: target.TargetCodeGenerator) -> None:
         """ Registers a function that processes data allocation,
             initialization, and deinitialization. Used when calling
             ``dispatch_allocate/deallocate/initialize``.
@@ -294,7 +315,12 @@ class TargetDispatcher(object):
         if not isinstance(func, target.TargetCodeGenerator): raise TypeError
         self._array_dispatchers[storage_type] = func
 
-    def register_copy_dispatcher(self, src_storage, dst_storage, dst_schedule, func, predicate=None):
+    def register_copy_dispatcher(self,
+                                 src_storage: dtypes.StorageType,
+                                 dst_storage: dtypes.StorageType,
+                                 dst_schedule: dtypes.ScheduleType,
+                                 func: target.TargetCodeGenerator,
+                                 predicate: Optional[Callable] = None) -> None:
         """ Registers code generation of data-to-data (or data from/to
             tasklet, if src/dst storage is StorageType.Register) copy
             functions. Can also be target-schedule specific, or
@@ -331,7 +357,7 @@ class TargetDispatcher(object):
 
         self._copy_dispatchers[dispatcher].append((predicate, func))
 
-    def get_state_dispatcher(self, sdfg, state):
+    def get_state_dispatcher(self, sdfg: SDFG, state: SDFGState) -> target.TargetCodeGenerator:
         # Check if the state satisfies any predicates that delegate to a
         # specific code generator
         satisfied_dispatchers = [
@@ -346,22 +372,23 @@ class TargetDispatcher(object):
 
         return self._generic_state_dispatcher
 
-    def dispatch_state(self, sdfg, state, function_stream, callsite_stream):
+    def dispatch_state(self, state: SDFGState, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Dispatches a code generator for an SDFG state. """
 
         self.defined_vars.enter_scope(state)
-        disp = self.get_state_dispatcher(sdfg, state)
-        disp.generate_state(sdfg, state, function_stream, callsite_stream)
+        disp = self.get_state_dispatcher(state.sdfg, state)
+        disp.generate_state(state.sdfg, state.parent_graph, state, function_stream, callsite_stream)
         self.defined_vars.exit_scope(state)
 
     def dispatch_subgraph(self,
-                          sdfg,
-                          dfg,
-                          state_id,
-                          function_stream,
-                          callsite_stream,
-                          skip_entry_node=False,
-                          skip_exit_node=False):
+                          sdfg: SDFG,
+                          cfg: ControlFlowRegion,
+                          dfg: StateSubgraphView,
+                          state_id: int,
+                          function_stream: CodeIOStream,
+                          callsite_stream: CodeIOStream,
+                          skip_entry_node: bool = False,
+                          skip_exit_node: bool = False):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
 
@@ -383,16 +410,18 @@ class TargetDispatcher(object):
                 continue
 
             if isinstance(v, nodes.MapEntry):
-                scope_subgraph = sdfg.node(state_id).scope_subgraph(v)
+                state = cfg.state(state_id)
+                scope_subgraph = state.scope_subgraph(v)
 
-                self.dispatch_scope(v.map.schedule, sdfg, scope_subgraph, state_id, function_stream, callsite_stream)
+                self.dispatch_scope(v.map.schedule, sdfg, cfg, scope_subgraph, state_id, function_stream,
+                                    callsite_stream)
 
                 # Skip scope subgraph nodes
                 nodes_to_skip.update(scope_subgraph.nodes())
             else:
-                self.dispatch_node(sdfg, dfg, state_id, v, function_stream, callsite_stream)
+                self.dispatch_node(sdfg, cfg, dfg, state_id, v, function_stream, callsite_stream)
 
-    def get_node_dispatcher(self, sdfg, state, node):
+    def get_node_dispatcher(self, sdfg: SDFG, state: SDFGState, node: nodes.Node):
         satisfied_dispatchers = [dispatcher for pred, dispatcher in self._node_dispatchers if pred(sdfg, state, node)]
         num_satisfied = len(satisfied_dispatchers)
         if num_satisfied > 1:
@@ -404,7 +433,8 @@ class TargetDispatcher(object):
             # Otherwise use the generic code generator
             return self._generic_node_dispatcher
 
-    def dispatch_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+    def dispatch_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                      function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches a code generator for a single node. """
 
         # If this node depends on any environments, register this for
@@ -414,29 +444,33 @@ class TargetDispatcher(object):
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
-        state = sdfg.node(state_id)
+        state = cfg.state(state_id)
         disp = self.get_node_dispatcher(sdfg, state, node)
         self._used_targets.add(disp)
-        disp.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        disp.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
-    def get_scope_dispatcher(self, schedule):
+    def get_scope_dispatcher(self, schedule: dtypes.ScheduleType) -> target.TargetCodeGenerator:
         return self._map_dispatchers[schedule]
 
-    def dispatch_scope(self, map_schedule, sdfg, sub_dfg, state_id, function_stream, callsite_stream):
+    def dispatch_scope(self, map_schedule: dtypes.ScheduleType, sdfg: SDFG, cfg: ControlFlowRegion,
+                       sub_dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream) -> None:
         """ Dispatches a code generator function for a scope in an SDFG
             state. """
 
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])
-        self._map_dispatchers[map_schedule].generate_scope(sdfg, sub_dfg, state_id, function_stream, callsite_stream)
+        self._map_dispatchers[map_schedule].generate_scope(sdfg, cfg, sub_dfg, state_id, function_stream,
+                                                           callsite_stream)
         self.defined_vars.exit_scope(entry_node)
 
-    def get_array_dispatcher(self, storage: dtypes.StorageType):
+    def get_array_dispatcher(self, storage: dtypes.StorageType) -> target.TargetCodeGenerator:
         return self._array_dispatchers[storage]
 
     def dispatch_allocate(self,
                           sdfg: SDFG,
+                          cfg: ControlFlowRegion,
                           dfg: ScopeSubgraphView,
                           state_id: int,
                           node: nodes.AccessNode,
@@ -444,38 +478,46 @@ class TargetDispatcher(object):
                           function_stream: prettycode.CodeIOStream,
                           callsite_stream: prettycode.CodeIOStream,
                           declare: bool = True,
-                          allocate: bool = True):
+                          allocate: bool = True) -> None:
         """ Dispatches a code generator for data allocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             declaration_stream = CodeIOStream()
             callsite_stream = self.frame._initcode
+        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+            declaration_stream = CodeIOStream()
+            callsite_stream = CodeIOStream()
         else:
             declaration_stream = callsite_stream
 
         if declare and not allocate:
-            self._array_dispatchers[datadesc.storage].declare_array(sdfg, dfg, state_id, node, datadesc,
+            self._array_dispatchers[datadesc.storage].declare_array(sdfg, cfg, dfg, state_id, node, datadesc,
                                                                     function_stream, declaration_stream)
         elif allocate:
-            self._array_dispatchers[datadesc.storage].allocate_array(sdfg, dfg, state_id, node, datadesc,
+            self._array_dispatchers[datadesc.storage].allocate_array(sdfg, cfg, dfg, state_id, node, datadesc,
                                                                      function_stream, declaration_stream,
                                                                      callsite_stream)
 
-    def dispatch_deallocate(self, sdfg: SDFG, dfg: ScopeSubgraphView, state_id: int, node: nodes.AccessNode,
-                            datadesc: dt.Data, function_stream: prettycode.CodeIOStream,
-                            callsite_stream: prettycode.CodeIOStream):
+    def dispatch_deallocate(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: ScopeSubgraphView, state_id: int,
+                            node: nodes.AccessNode, datadesc: dt.Data, function_stream: prettycode.CodeIOStream,
+                            callsite_stream: prettycode.CodeIOStream) -> None:
         """ Dispatches a code generator for a data deallocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             callsite_stream = self.frame._exitcode
+        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+            return
 
-        self._array_dispatchers[datadesc.storage].deallocate_array(sdfg, dfg, state_id, node, datadesc, function_stream,
-                                                                   callsite_stream)
+        self._array_dispatchers[datadesc.storage].deallocate_array(sdfg, cfg, dfg, state_id, node, datadesc,
+                                                                   function_stream, callsite_stream)
 
     # Dispatches copy code for a memlet
-    def get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, state):
+    def get_copy_dispatcher(self, src_node: Union[nodes.CodeNode, nodes.AccessNode],
+                            dst_node: Union[nodes.CodeNode, nodes.AccessNode,
+                                            nodes.EntryNode], edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+                            state: SDFGState) -> Optional[target.TargetCodeGenerator]:
         """
         (Internal) Returns a code generator that should be dispatched for a
         memory copy operation.
@@ -550,25 +592,34 @@ class TargetDispatcher(object):
 
         return target
 
-    def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
+    def dispatch_copy(self, src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+                      cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
+                      output_stream: CodeIOStream) -> None:
         """ Dispatches a code generator for a memory copy operation. """
-        state = sdfg.node(state_id)
+        if edge.data.is_empty():
+            return
+        state = cfg.state(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
         if target is None:
             return
 
         # Dispatch copy
         self._used_targets.add(target)
-        target.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
+        target.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
 
     # Dispatches definition code for a memlet that is outgoing from a tasklet
-    def dispatch_output_definition(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
+    def dispatch_output_definition(self, src_node: nodes.Node, dst_node: nodes.Node, edge, sdfg: SDFG,
+                                   cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                                   function_stream: CodeIOStream, output_stream: CodeIOStream) -> None:
         """
         Dispatches a code generator for an output memlet definition in a tasklet.
         """
-        state = sdfg.node(state_id)
+        state = cfg.state(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
+        if target is None:
+            raise ValueError(
+                f'Could not dispatch copy code generator for {src_node} -> {dst_node} in state {state.label}')
 
         # Dispatch
         self._used_targets.add(target)
-        target.define_out_memlet(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
+        target.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)

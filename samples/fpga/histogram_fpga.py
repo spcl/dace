@@ -9,7 +9,6 @@ import numpy as np
 W = dace.symbol("W")
 H = dace.symbol("H")
 num_bins = dace.symbol("num_bins")
-num_bins.set(256)
 dtype = dace.float32
 
 
@@ -119,10 +118,10 @@ def make_nested_sdfg(parent):
     return sdfg
 
 
-def make_sdfg(specialize):
+def make_sdfg(specialize, h, w):
 
     if specialize:
-        sdfg = dace.SDFG("histogram_fpga_{}x{}".format(H.get(), W.get()))
+        sdfg = dace.SDFG("histogram_fpga_{}x{}".format(h, w))
     else:
         sdfg = dace.SDFG("histogram_fpga")
 
@@ -130,7 +129,7 @@ def make_sdfg(specialize):
 
     state = sdfg.add_state("compute")
     nested_sdfg = make_nested_sdfg(state)
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_in"}, {"hist_out"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, {"A_in"}, {"hist_out"})
     a_device = state.add_array("A_device", (H, W), dtype, transient=True, storage=dace.dtypes.StorageType.FPGA_Global)
     hist_device = state.add_array("hist_device", (num_bins, ),
                                   dace.uint32,
@@ -161,23 +160,25 @@ if __name__ == "__main__":
                         help="Fix all symbols at compile time/in hardware")
     args = vars(parser.parse_args())
 
+    nbins = 256
+
     if args["specialize"]:
-        H.set(args["H"])
-        W.set(args["W"])
-        histogram = make_sdfg(True)
-        histogram.specialize(dict(H=H, W=W, num_bins=num_bins))
+        h = args["H"]
+        w = args["W"]
+        histogram = make_sdfg(True, h, w)
+        histogram.specialize(dict(H=h, W=w, num_bins=nbins))
     else:
         histogram = make_sdfg(False)
         histogram.specialize(dict(num_bins=num_bins))
-        H.set(args["H"])
-        W.set(args["W"])
+        h = args["H"]
+        w = args["W"]
 
-    print("Histogram {}x{} ({}specialized)".format(H.get(), W.get(), "" if args["specialize"] else "not "))
+    print("Histogram {}x{} ({}specialized)".format(h, w, "" if args["specialize"] else "not "))
 
     A = dace.ndarray([H, W], dtype=dtype)
     hist = dace.ndarray([num_bins], dtype=dace.uint32)
 
-    A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(h, w).astype(dace.float32.type)
     hist[:] = dace.uint32(0)
 
     if args["specialize"]:
@@ -186,9 +187,9 @@ if __name__ == "__main__":
         histogram(A=A, H=H, W=W, hist=hist)
 
     if dace.Config.get_bool('profiling'):
-        dace.timethis('histogram', 'numpy', (H.get() * W.get()), np.histogram, A, num_bins)
+        dace.timethis('histogram', 'numpy', (h * w), np.histogram, A, num_bins)
 
-    diff = np.linalg.norm(np.histogram(A, bins=num_bins.get(), range=(0.0, 1.0))[0][1:-1] - hist[1:-1])
+    diff = np.linalg.norm(np.histogram(A, bins=nbins, range=(0.0, 1.0))[0][1:-1] - hist[1:-1])
 
     print("Difference:", diff)
     if diff > 1e-5:

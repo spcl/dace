@@ -211,17 +211,18 @@ def run_vadv(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-def test_cpu():
+def test_cpu(monkeypatch):
+    # NOTE: Serialization fails because of "k - k" expression simplified to "0"
+    monkeypatch.setenv("DACE_testing_serialization", 0)
     run_vadv(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Compiler error")
 @pytest.mark.gpu
 def test_gpu():
     run_vadv(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Variable not defined")
+@pytest.mark.skip(reason="Xilinx internal compiler error")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_vadv(dace.dtypes.DeviceType.FPGA)

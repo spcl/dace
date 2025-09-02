@@ -1,7 +1,30 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import sys
 from collections import defaultdict
 from typing import Tuple
+
+if sys.version_info < (3, 8):
+    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+    BytesConstant = ast.Bytes
+    EllipsisConstant = ast.Ellipsis
+    NameConstant = ast.NameConstant
+    NumConstant = ast.Num
+    StrConstant = ast.Str
+else:
+    _simple_ast_nodes = (ast.Constant, ast.Name)
+    BytesConstant = ast.Constant
+    EllipsisConstant = ast.Constant
+    NameConstant = ast.Constant
+    NumConstant = ast.Constant
+    StrConstant = ast.Constant
+
+if sys.version_info < (3, 9):
+    Index = ast.Index
+    ExtSlice = ast.ExtSlice
+else:
+    Index = type(None)
+    ExtSlice = type(None)
 
 
 class SubscriptConverter(ast.NodeTransformer):
@@ -24,6 +47,7 @@ class SubscriptConverter(ast.NodeTransformer):
       }
     }
     """
+
     def __init__(self, offset: Tuple[int] = None, dtype=None):
         """
         :param offset: Apply the given offset tuple to every index found.
@@ -67,9 +91,9 @@ class SubscriptConverter(ast.NodeTransformer):
         # This can be a bunch of different things, varying between Python 3.8
         # and Python 3.9, so try hard to unpack it into an index we can use.
         index_tuple = node.slice
-        if isinstance(index_tuple, (ast.Subscript, ast.Index)):
+        if isinstance(index_tuple, (ast.Subscript, Index)):
             index_tuple = index_tuple.value
-        if isinstance(index_tuple, (ast.Constant, ast.Num)):
+        if isinstance(index_tuple, (ast.Constant, NumConstant)):
             index_tuple = (index_tuple, )
         if isinstance(index_tuple, ast.Tuple):
             index_tuple = index_tuple.elts

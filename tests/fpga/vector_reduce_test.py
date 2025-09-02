@@ -28,10 +28,10 @@ def vector_reduce(x: dace.float32[N], s: dace.scalar(dace.float32)):
 @fpga_test()
 def test_vector_reduce():
 
-    N.set(24)
+    N = 24
 
     # Initialize arrays: X, Y and Z
-    X = np.random.rand(N.get()).astype(dace.float32.type)
+    X = np.random.rand(N).astype(dace.float32.type)
     s = dace.scalar(dace.float32)
 
     sdfg = vector_reduce.to_sdfg()
@@ -42,7 +42,7 @@ def test_vector_reduce():
     s_exp = 0.0
     for x in X:
         s_exp += x
-    diff = np.linalg.norm(s_exp - s) / N.get()
+    diff = np.linalg.norm(s_exp - s) / N
     assert diff <= 1e-5
 
     return sdfg

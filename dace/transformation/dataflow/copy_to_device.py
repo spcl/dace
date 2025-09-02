@@ -4,13 +4,13 @@
 
 from copy import deepcopy as dcpy
 from dace import data, properties, symbolic, dtypes
-from dace.sdfg import graph, nodes
+from dace.sdfg import nodes, SDFG
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
 
-def change_storage(sdfg, storage):
-    for state in sdfg.nodes():
+def change_storage(sdfg: SDFG, storage: dtypes.StorageType):
+    for state in sdfg.states():
         for node in state.nodes():
             if isinstance(node, nodes.AccessNode):
                 node.desc(sdfg).storage = storage

@@ -1,10 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.memlet import Memlet
-import dace.libraries.blas as blas
 import dace.libraries.lapack as lapack
+import dace.libraries.standard as std
 import numpy as np
 import pytest
+
+from dace.memlet import Memlet
 
 ###############################################################################
 
@@ -34,9 +35,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         xo = state.add_access("x" + suffix)
         xin = state.add_access("xt" + suffix)
         xout = state.add_access("xt" + suffix)
-        transpose_in = blas.nodes.transpose.Transpose("transpose_in", dtype=dtype)
+        transpose_in = std.Transpose("transpose_in", dtype=dtype)
         transpose_in.implementation = "cuBLAS"
-        transpose_out = blas.nodes.transpose.Transpose("transpose_out", dtype=dtype)
+        transpose_out = std.Transpose("transpose_out", dtype=dtype)
         transpose_out.implementation = "cuBLAS"
         state.add_nedge(xhi, xi, Memlet.from_array(*xhost_arr))
         state.add_nedge(xo, xho, Memlet.from_array(*xhost_arr))
@@ -50,7 +51,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     pivots = state.add_access("pivots" + suffix)
     result = state.add_access("result" + suffix)
 
-    getrf_node = lapack.nodes.getrf.Getrf("getrf")
+    getrf_node = lapack.Getrf("getrf")
     getrf_node.implementation = implementation
 
     state.add_memlet_path(xin, getrf_node, dst_conn="_xin", memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n * n))

@@ -1,11 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Pipelined, AXI-handshake compliant example that increments b from a up to 100.
+
+    It is intended for running simulation xilinx targets.
 """
 
 import dace
-import argparse
-
 import numpy as np
 
 # add symbol
@@ -59,7 +59,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
             state <= state_next;
     end
 
-    always_comb 
+    always_comb
     begin
         state_next = state;
         case(state)
@@ -132,21 +132,21 @@ sdfg.validate()
 ######################################################################
 
 if __name__ == '__main__':
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='simulation'):
+        # init data structures
+        num_elements = dace.symbolic.evaluate(N, sdfg.constants)
+        a = np.random.randint(0, 100, num_elements).astype(np.int32)
+        b = np.array([0] * num_elements).astype(np.int32)
 
-    # init data structures
-    num_elements = dace.symbolic.evaluate(N, sdfg.constants)
-    a = np.random.randint(0, 100, num_elements).astype(np.int32)
-    b = np.array([0] * num_elements).astype(np.int32)
+        # show initial values
+        print("a={}, b={}".format(a, b))
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
+        # call program
+        sdfg(A=a, B=b)
 
-    # call program
-    sdfg(A=a, B=b)
+        # show result
+        print("a={}, b={}".format(a, b))
 
-    # show result
-    print("a={}, b={}".format(a, b))
-
-    assert b[
-        0] == 100  # TODO: implement detection of #elements to process, s.t. we can extend the assertion to the whole array
-    assert np.all(map((lambda x: x == 0), b[1:-1]))  # should still be at the init value (for the moment)
+        assert b[
+            0] == 100  # TODO: implement detection of #elements to process, s.t. we can extend the assertion to the whole array
+        assert np.all(map((lambda x: x == 0), b[1:-1]))  # should still be at the init value (for the moment)

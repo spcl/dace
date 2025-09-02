@@ -79,7 +79,7 @@ namespace dace
     {
         static DACE_DFI unsigned int get()
         {
-            return threadIdx.x + threadIdx.y * BLOCK_WIDTH + 
+            return threadIdx.x + threadIdx.y * BLOCK_WIDTH +
                 threadIdx.z * BLOCK_WIDTH * BLOCK_HEIGHT;
         }
     };
@@ -133,17 +133,17 @@ namespace dace
     //#define DEBUG_PRINT(...) do { if(threadIdx.x + threadIdx.y == 0 && blockIdx.x + blockIdx.y + blockIdx.z == 0 && threadIdx.z == 1) printf(__VA_ARGS__);  } while(0)
     //#define BLOCK_PRINT(...) do { if(blockIdx.x + blockIdx.y + blockIdx.z == 0) printf(__VA_ARGS__);  } while(0)
 
-    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, 
-              int COPY_ZLEN, int COPY_YLEN, int COPY_XLEN, 
+    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
+              int COPY_ZLEN, int COPY_YLEN, int COPY_XLEN,
               int DST_ZSTRIDE, int DST_YSTRIDE, int DST_XSTRIDE,
               bool ASYNC>
     static DACE_DFI void GlobalToShared3D(
             const T *ptr, int src_zstride,
             int src_ystride, int src_xstride, T *smem)
-    {       
+    {
         // Linear thread ID
         int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
-        
+
         constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
         constexpr int TOTAL_XYZ = COPY_XLEN * COPY_YLEN * COPY_ZLEN;
         constexpr int TOTAL_XY = COPY_XLEN * COPY_YLEN;
@@ -400,7 +400,7 @@ namespace dace
             1, COPY_XLEN, 1, 1, DST_XSTRIDE, ASYNC>(
                 ptr, 1, 1, src_xstride, smem);
     }
-    
+
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
               int COPY_YLEN, int COPY_XLEN, int DST_YSTRIDE, int DST_XSTRIDE,
               bool ASYNC>
@@ -408,8 +408,8 @@ namespace dace
             const T *ptr, int src_ystride, int src_xstride,
             T *smem)
     {
-        GlobalToShared3D<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, 1, 
-                         COPY_YLEN, COPY_XLEN, 1, DST_YSTRIDE, DST_XSTRIDE, 
+        GlobalToShared3D<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, 1,
+                         COPY_YLEN, COPY_XLEN, 1, DST_YSTRIDE, DST_XSTRIDE,
                          ASYNC>(
             ptr, 1, src_ystride, src_xstride, smem);
     }
@@ -736,63 +736,80 @@ namespace dace
         int COPY_XLEN, bool ASYNC>
     struct SharedToGlobal1D
     {
-        template <typename WCR>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE, WCR wcr)
-        {
-            if (!ASYNC)
-                __syncthreads();
+        static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
+        static constexpr int TOTAL = COPY_XLEN;
+        static constexpr int WRITES = TOTAL / BLOCK_SIZE;
+        static constexpr int REM_WRITES = TOTAL % BLOCK_SIZE;
 
+        static DACE_DFI void Copy(const T *smem, int src_xstride, T *ptr, int dst_xstride)
+        {
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
-            constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
-            constexpr int TOTAL = COPY_XLEN;
-            constexpr int WRITES = TOTAL / BLOCK_SIZE;
-            constexpr int REM_WRITES = TOTAL % BLOCK_SIZE;
+
+            #pragma unroll
+            for (int i = 0; i < WRITES; ++i) {
+                *(ptr + (ltid + i * BLOCK_SIZE) * dst_xstride) =
+                    *(smem + (ltid + i * BLOCK_SIZE) * src_xstride);
+            }
+
+            if (REM_WRITES != 0 && ltid < REM_WRITES) {
+                *(ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride) =
+                    *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride);
+            }
+
+            if (!ASYNC)
+                __syncthreads();
+        }
+
+        template <typename WCR>
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride, WCR wcr)
+        {
+            // Linear thread ID
+            int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
                 wcr_custom<T>::template reduce(
-                    wcr, ptr + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE,
+                    wcr, ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
                     wcr_custom<T>::template reduce(
-                        ptr + (ltid + WRITES * BLOCK_SIZE)* DST_XSTRIDE,
+                        ptr + (ltid + WRITES * BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
+
+            if (!ASYNC)
+                __syncthreads();
         }
 
         template <ReductionType REDTYPE>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE)
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride)
         {
-            if (!ASYNC)
-                __syncthreads();
-            
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
-            constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
-            constexpr int TOTAL = COPY_XLEN;
-            constexpr int WRITES = TOTAL / BLOCK_SIZE;
-            constexpr int REM_WRITES = TOTAL % BLOCK_SIZE;
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
                 wcr_fixed<REDTYPE, T>::template reduce_atomic(
-                    ptr + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE,
+                    ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
                     wcr_fixed<REDTYPE, T>::template reduce_atomic(
-                        ptr + (ltid + WRITES*BLOCK_SIZE)* DST_XSTRIDE,
+                        ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
+
+            if (!ASYNC)
+                __syncthreads();
         }
     };
-    
+
     // TODO: Make like SharedToGlobal1D
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
         int COPY_YLEN, int COPY_XLEN, int DST_YSTRIDE, int DST_XSTRIDE,
@@ -854,7 +871,7 @@ namespace dace
 	}
     }
 
-  
+
 }  // namespace dace
 
 

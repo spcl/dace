@@ -17,14 +17,14 @@ jobs:
     steps:
       - name: trigger reason
         run: echo "Trigger Reason:" ${{ github.event.inputs.reason }}
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: checkout submodules
         run: git submodule update --init --recursive
       - name: install apt packages
         run: sudo apt-get update && sudo apt-get -y install git make autoconf g++ flex bison libfl2 libfl-dev
       - name: compile verilator
         run: git clone https://github.com/verilator/verilator.git && cd verilator && git fetch origin && if [ ! "${{ matrix.verilator_version }}" == "master" ]; then  git checkout v${{ matrix.verilator_version }}; fi && autoconf && ./configure && make -j2 && sudo make install
-      - uses: actions/setup-python@v2
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.8'
           architecture: 'x64'

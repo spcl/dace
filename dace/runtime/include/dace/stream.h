@@ -39,16 +39,16 @@ namespace dace {
     template<typename T, bool IS_POW2>
     void FreeGPUArrayStreamView(GPUStream<T, IS_POW2>& stream)
     {
-        DACE_CUDA_CHECK(gpuFree(stream.m_start));
-        DACE_CUDA_CHECK(gpuFree(stream.m_end));
-        DACE_CUDA_CHECK(gpuFree(stream.m_pending));
+        gpuFree(stream.m_start);
+        gpuFree(stream.m_end);
+        gpuFree(stream.m_pending);
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         FreeGPUArrayStreamView(stream);
-        DACE_CUDA_CHECK(gpuFree(stream.m_data));
+        gpuFree(stream.m_data);
     }
 }  // namespace dace
 #endif
@@ -134,7 +134,7 @@ namespace dace {
             m_queue.enqueue_bulk(s.m_array, s.m_elements);
             m_elements += s.m_elements;
         }
-    
+
         inline bool push_try(T const& val) {
             bool result = m_queue.try_enqueue(val);
             if (result)
@@ -338,7 +338,7 @@ namespace dace {
 
     template <int CHUNKSIZE>
     struct Consume {
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename Functor>
         static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                             Functor&& contents) {
@@ -359,7 +359,7 @@ namespace dace {
             for (auto& t : threads) t.join();
         }
 
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename CondFunctor, typename Functor>
         static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                                  CondFunctor&& quiescence, Functor&& contents) {
@@ -384,7 +384,7 @@ namespace dace {
     // Specialization for consumption of 1 element
     template<>
     struct Consume<1> {
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename Functor>
         static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                             Functor&& contents) {
@@ -404,7 +404,7 @@ namespace dace {
             for (auto& t : threads) t.join();
         }
 
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename CondFunctor, typename Functor>
         static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                                  CondFunctor&& quiescence, Functor&& contents) {

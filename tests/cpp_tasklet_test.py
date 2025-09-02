@@ -4,6 +4,7 @@ import dace
 
 @dace.program(dace.uint32[2], dace.uint32[1])
 def cpp_tasklet(A, B):
+
     @dace.tasklet('CPP')
     def index2():
         a << A[0]

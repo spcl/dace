@@ -22,16 +22,16 @@ def ttest(A: dace.float32[M, N, K], B: dace.float32[M, N, K]):
 
 
 def test():
-    M.set(13)
-    N.set(8)
-    K.set(25)
-    A = np.random.rand(M.get(), N.get(), K.get()).astype(np.float32)
-    B = np.random.rand(M.get(), N.get(), K.get()).astype(np.float32)
+    M = 13
+    N = 8
+    K = 25
+    A = np.random.rand(M, N, K).astype(np.float32)
+    B = np.random.rand(M, N, K).astype(np.float32)
 
     realB = B - 5 * A - 1.0
     ttest(A, B)
 
-    diff = np.linalg.norm(B - realB) / (M.get() * K.get() * N.get())
+    diff = np.linalg.norm(B - realB) / (M * K * N)
     print('Difference:', diff)
     assert diff <= 1e-5
 

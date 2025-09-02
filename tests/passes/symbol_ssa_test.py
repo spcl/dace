@@ -8,6 +8,7 @@ from dace.transformation.pass_pipeline import FixedPointPipeline
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.passes.analysis import SymbolScopeDict
 
+
 def test_loop_iter_symbol_reused_split():
     """
     Test the symbol write scopes pass with reused loop iteration variables where the exit condition of the first loop

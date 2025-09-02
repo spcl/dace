@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple
+import copy
 
 import dace
 from dace import dtypes, symbolic
@@ -8,21 +9,29 @@ from dace.config import Config
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import StateSubgraphView
 
-NodeType = 'dace.sdfg.nodes.Node'
-EntryNodeType = 'dace.sdfg.nodes.EntryNode'
-ExitNodeType = 'dace.sdfg.nodes.ExitNode'
-ScopeDictType = Dict[NodeType, List[NodeType]]
+ScopeDictType = Dict[nd.Node, List[nd.Node]]
 
 
 class ScopeTree(object):
     """ A class defining a scope, its parent and children scopes, and
         scope entry/exit nodes. """
 
-    def __init__(self, entrynode: EntryNodeType, exitnode: ExitNodeType):
+    def __init__(self, entrynode: nd.EntryNode, exitnode: nd.ExitNode):
         self.parent: 'ScopeTree' = None
         self.children: List['ScopeTree'] = []
-        self.entry: EntryNodeType = entrynode
-        self.exit: ExitNodeType = exitnode
+        self.entry: nd.EntryNode = entrynode
+        self.exit: nd.ExitNode = exitnode
+
+    def __copy__(self):
+        """Performs a "recursive shallow copy" of `self`."""
+        cls = self.__class__
+        result = cls.__new__(cls)
+        result.__dict__.update(self.__dict__)
+
+        # Recursively shallow copy the children.
+        result.children = [copy.copy(child) for child in self.children]
+
+        return result
 
 
 class ScopeSubgraphView(StateSubgraphView):
@@ -127,8 +136,8 @@ def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
     return {node_id_or_none(k): [node_id_or_none(vi) for vi in v] for k, v in scope_dict.items()}
 
 
-def scope_contains_scope(sdict: ScopeDictType, node: NodeType, other_node: NodeType) -> bool:
-    """ 
+def scope_contains_scope(sdict: ScopeDictType, node: nd.Node, other_node: nd.Node) -> bool:
+    """
     Returns true iff scope of `node` contains the scope of  `other_node`.
     """
     curnode = other_node
@@ -140,7 +149,7 @@ def scope_contains_scope(sdict: ScopeDictType, node: NodeType, other_node: NodeT
     return False
 
 
-def _scope_path(sdict: ScopeDictType, scope: NodeType) -> List[NodeType]:
+def _scope_path(sdict: ScopeDictType, scope: nd.Node) -> List[nd.Node]:
     result = []
     curnode = scope
     while curnode is not None:
@@ -149,7 +158,7 @@ def _scope_path(sdict: ScopeDictType, scope: NodeType) -> List[NodeType]:
     return result
 
 
-def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType, scope_b: NodeType) -> NodeType:
+def common_parent_scope(sdict: ScopeDictType, scope_a: nd.Node, scope_b: nd.Node) -> nd.Node:
     """
     Finds a common parent scope for both input scopes, or None if the scopes
     are in different connected components.
@@ -181,11 +190,11 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType, scope_b: NodeTy
     return common
 
 
-def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType,
+def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node,
                 schedules: List[dtypes.ScheduleType]) -> bool:
-    """ Tests whether a node in an SDFG is contained within a certain set of 
+    """ Tests whether a node in an SDFG is contained within a certain set of
         scope schedules.
-        
+
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
@@ -214,7 +223,7 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: Node
 
 def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
                        state: 'dace.sdfg.SDFGState',
-                       node: NodeType,
+                       node: nd.Node,
                        with_gpu_default: bool = False) -> bool:
     """ Tests whether a node in an SDFG is contained within GPU device-level code.
 
@@ -235,7 +244,7 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
     )
 
 
-def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
+def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:
     """ Tests whether a node in an SDFG is contained within an actual GPU kernel.
         The main difference from :func:`is_devicelevel_gpu` is that it returns False for NestedSDFGs that have a GPU
         device-level schedule, but are not within an actual GPU kernel.
@@ -251,7 +260,7 @@ def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGStat
         return is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)
 
 
-def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
+def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:
     """ Tests whether a node in an SDFG is contained within FPGA device-level
         code.
 
@@ -262,18 +271,18 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', no
     """
     from dace.sdfg.utils import is_fpga_kernel
     return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
-            or (state and is_fpga_kernel(sdfg, state)))
+            or (state is not None and is_fpga_kernel(sdfg, state)))
 
 
 def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
-                           node: NodeType) -> Tuple[symbolic.SymExpr]:
+                           node: nd.Node) -> Tuple[symbolic.SymExpr]:
     """ Returns the current thread-block size if the given node is enclosed in
         a GPU kernel, or None otherwise.
-        
+
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
-        :return: A tuple of sizes or None if the node is not in device-level 
+        :return: A tuple of sizes or None if the node is not in device-level
                  code.
     """
     from dace.sdfg import nodes as nd

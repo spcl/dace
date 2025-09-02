@@ -12,16 +12,13 @@ from dace.transformation.subgraph import SubgraphFusion
 from util import expand_maps, expand_reduce, fusion
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
-N.set(50)
-M.set(60)
-O.set(70)
 
-A = np.random.rand(N.get()).astype(np.float64)
-B = np.random.rand(M.get()).astype(np.float64)
-C = np.random.rand(O.get()).astype(np.float64)
-out1 = np.ndarray((N.get(), M.get()), np.float64)
+A = np.random.rand(50).astype(np.float64)
+B = np.random.rand(60).astype(np.float64)
+C = np.random.rand(70).astype(np.float64)
+out1 = np.ndarray((50, 60), np.float64)
 out2 = np.ndarray((1), np.float64)
-out3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+out3 = np.ndarray((50, 60, 70), np.float64)
 
 
 @dace.program
@@ -98,17 +95,17 @@ def subgraph_fusion_complex(A: dace.float64[N], B: dace.float64[M], C: dace.floa
 
 def _test_quantitatively(sdfg, graph):
 
-    A = np.random.rand(N.get()).astype(np.float64)
-    B = np.random.rand(M.get()).astype(np.float64)
-    C = np.random.rand(O.get()).astype(np.float64)
-    out1_base = np.ndarray((N.get(), M.get()), np.float64)
+    A = np.random.rand(50).astype(np.float64)
+    B = np.random.rand(60).astype(np.float64)
+    C = np.random.rand(70).astype(np.float64)
+    out1_base = np.ndarray((50, 60), np.float64)
     out2_base = np.ndarray((1), np.float64)
-    out3_base = np.ndarray((N.get(), M.get(), O.get()), np.float64)
-    out1 = np.ndarray((N.get(), M.get()), np.float64)
+    out3_base = np.ndarray((50, 60, 70), np.float64)
+    out1 = np.ndarray((50, 60), np.float64)
     out2 = np.ndarray((1), np.float64)
-    out3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+    out3 = np.ndarray((50, 60, 70), np.float64)
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C, out1=out1_base, out2=out2_base, out3=out3_base, N=N, M=M, O=O)
+    csdfg(A=A, B=B, C=C, out1=out1_base, out2=out2_base, out3=out3_base, N=50, M=60, O=70)
     del csdfg
 
     expand_reduce(sdfg, graph)
@@ -120,7 +117,7 @@ def _test_quantitatively(sdfg, graph):
     fusion(sdfg, graph)
     sdfg.validate()
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C, out1=out1, out2=out2, out3=out3, N=N, M=M, O=O)
+    csdfg(A=A, B=B, C=C, out1=out1, out2=out2, out3=out3, N=50, M=60, O=70)
     del csdfg
 
     assert np.allclose(out1, out1_base)

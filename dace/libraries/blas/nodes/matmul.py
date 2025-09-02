@@ -1,8 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace import properties
+from dace import properties, symbolic
 from copy import deepcopy as dc
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 import warnings
 
 
@@ -12,40 +12,31 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
     res_rhs = None
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
-            subset = dc(edge.data.subset)
-            squeezed = subset.squeeze()
-            size = subset.size()
-
-            # Avoid over-squeezing
-            if len(size) < 2 and len(edge.data.subset) == 2:
-                subset = dc(edge.data.subset)
-                size = subset.size()
-                squeezed = list(range(len(size)))
-
+            size = edge.data.subset.size()
+            squeezed = dc(edge.data.subset)
+            squeezed_dims = squeezed.squeeze()
+            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
-            res = edge, outer_array, size, strides
+            strides = list(outer_array.strides)
+            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
             else:
                 res_rhs = res
         elif edge.src_conn == name_out:
-            subset = dc(edge.data.subset)
-            squeezed = subset.squeeze()
-            size = subset.size()
-
-            # Avoid over-squeezing
-            if len(size) < 2 and len(edge.data.subset) == 2:
-                subset = dc(edge.data.subset)
-                size = subset.size()
-                squeezed = list(range(len(size)))
-
+            size = edge.data.subset.size()
+            squeezed = dc(edge.data.subset)
+            squeezed_dims = squeezed.squeeze()
+            squeezed_size = squeezed.size()
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
-            res_out = edge, outer_array, size, strides
+            strides = list(outer_array.strides)
+            squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
+            res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides
     for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
-            raise ValueError("Matrix multiplication connector " "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector "
+                             "\"{}\" not found.".format(name))
     return res_lhs, res_rhs, res_out
 
 
@@ -54,7 +45,7 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     Detects whether a matrix multiplication is a batched matrix multiplication
     and returns its parameters (strides, batch size), or an empty dictionary if
     batched multiplication is not detected.
-    
+
     :param a: Data descriptor for the first tensor.
     :param b: Data descriptor for the second tensor.
     :param c: Data descriptor for the output tensor (optional).
@@ -62,7 +53,8 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
              and c); and b (batch size).
     """
     if len(a_shape) > 3 or len(b_shape) > 3 or (c_shape and len(c_shape) > 3):
-        raise ValueError('Tensor dimensions too large for (batched) matrix ' 'multiplication')
+        raise ValueError('Tensor dimensions too large for (batched) matrix '
+                         'multiplication')
     if len(a_shape) <= 2 and len(b_shape) <= 2:
         return {}
 
@@ -72,8 +64,13 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
         batch = a_shape[0]
         stride_a = a_strides[0]
     if len(b_shape) == 3:
-        if batch and batch != b_shape[0]:
-            raise ValueError('Batch size mismatch for matrix multiplication')
+        if batch is not None:
+            res = symbolic.equal(batch, b_shape[0])
+            if res is None:
+                warnings.warn(f'Batch size of first tensor ({batch}) may not match second tensor ({b_shape[0]})',
+                              UserWarning)
+            elif not res:
+                raise ValueError('Batch size mismatch for matrix multiplication')
         batch = b_shape[0]
         stride_b = b_strides[0]
     if c_shape and len(c_shape) == 3:
@@ -94,7 +91,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     from dace.codegen.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride), (_, _, bshape, bstride), (_, _, cshape, cstride) = _get_matmul_operands(node, state, sdfg)
+    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _,
+                                                                   _) = _get_matmul_operands(node, state, sdfg)
 
     if getattr(node, 'transA', False):
         ashape = list(reversed(ashape))
@@ -150,13 +148,16 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         a, b, c = _get_matmul_operands(node, state, sdfg)
-        size_a = a[2]
-        size_b = b[2]
-        if len(size_a) == 2 and len(size_b) == 2:
+        size_a = a[4]
+        size_b = b[4]
+        size_c = c[4]
+        if len(size_c) == 2 and ((len(size_a) == 2 and len(size_b) == 2) or (len(a[2]) == 2 and len(b[2]) == 2)):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
             beta = node.beta
             cin = True
+            if '_cin' not in node.in_connectors:
+                cin = False
             if c[0].data.wcr:
                 from dace.frontend import operations
                 redtype = operations.detect_reduction_type(c[0].data.wcr)
@@ -164,7 +165,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                     beta = 1.0
                     cin = False
                 else:
-                    warnings.warn("Unsupported WCR in output of MatMul " "library node: {}".format(c[0].data.wcr))
+                    warnings.warn("Unsupported WCR in output of MatMul "
+                                  "library node: {}".format(c[0].data.wcr))
             gemm = Gemm(node.name + 'gemm', location=node.location, alpha=node.alpha, beta=beta, cin=cin)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
@@ -224,5 +226,7 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
                                default=0,
                                desc="A scalar which will be multiplied with C before adding C")
 
-    def __init__(self, name, location=None):
+    def __init__(self, name, location=None, alpha=1, beta=0):
+        self.alpha = alpha
+        self.beta = beta
         super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})

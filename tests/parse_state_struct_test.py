@@ -11,23 +11,25 @@ import numpy as np
 import dace
 import dace.library
 from dace import dtypes
-from dace.codegen import codeobject, targets, compiler, compiled_sdfg
+from dace.codegen import codeobject, targets, compiler, compiled_sdfg, common
 
 
 @pytest.fixture
 def cuda_helper():
+    return _cuda_helper()
 
-    helper_code = """
+
+def _cuda_helper():
+
+    helper_code = f"""
     #include <dace/dace.h>
-    
-    extern "C" {
-        int host_to_gpu(void* gpu, void* host, size_t size) {
-            auto result = cudaMemcpy(gpu, host, size, cudaMemcpyHostToDevice);
-            DACE_CUDA_CHECK(cudaGetLastError());
-            DACE_CUDA_CHECK(cudaDeviceSynchronize());
+
+    extern "C" {{
+        DACE_EXPORTED int host_to_gpu(void* gpu, void* host, size_t size) {{
+            auto result = {common.get_gpu_backend()}Memcpy(gpu, host, size, {common.get_gpu_backend()}MemcpyHostToDevice);
             return result;
-        } 
-    } 
+        }}
+    }}
     """
     program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
 
@@ -41,6 +43,7 @@ def cuda_helper():
     checker_dll = compiled_sdfg.ReloadableDLL(compiler.get_binary_name(BUILD_PATH, "cuda_helper"), "cuda_helper")
 
     class CudaHelper:
+
         def __init__(self):
             self.dll = checker_dll
             checker_dll.load()
@@ -64,6 +67,7 @@ def cuda_helper():
 
 @pytest.mark.gpu
 def test_preallocate_transients_in_state_struct(cuda_helper):
+
     @dace.program
     def persistent_transient(A: dace.float32[3, 3]):
         persistent_transient = dace.define_local([3, 5],
@@ -83,9 +87,13 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     state_struct = compiledsdfg.get_state_struct()
 
     # copy the B array into the transient ptr
-    ptr = getattr(state_struct, f'__{sdfg.sdfg_id}_persistent_transient')
+    ptr = getattr(state_struct, f'__{sdfg.cfg_id}_persistent_transient')
     cuda_helper.host_to_gpu(ptr, B.copy())
     result = np.zeros_like(B)
     compiledsdfg(A=A, __return=result)
 
     assert np.allclose(result, A @ B)
+
+
+if __name__ == '__main__':
+    test_preallocate_transients_in_state_struct(_cuda_helper())

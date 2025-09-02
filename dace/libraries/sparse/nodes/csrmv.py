@@ -27,12 +27,12 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.DTYPE_TO_TYPECLASS[dtype].to_string(),
+            type=dace.dtype_to_typeclass(dtype).to_string(),
             real=cast_value.real,
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.DTYPE_TO_TYPECLASS[dtype].to_string(), value)
+        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
 def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
@@ -69,7 +69,8 @@ def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError("Matrix multiplication connector " "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector "
+                             "\"{}\" not found.".format(name))
     return result
 
 
@@ -111,8 +112,10 @@ class ExpandCSRMVPure(ExpandTransformation):
 
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
-                'csrmv_init', {'_o%d' % i: '0:%s' % symstr(d)
-                               for i, d in enumerate(shape_c)}, {},
+                'csrmv_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(shape_c)
+                }, {},
                 'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
         elif node.beta == 1.0:
@@ -133,9 +136,10 @@ class ExpandCSRMVPure(ExpandTransformation):
             nsdfg.add_datadesc('_cin', cin_desc)
 
             init_state.add_mapped_tasklet(
-                'csrmv_init', {'_o%d' % i: '0:%s' % symstr(d)
-                               for i, d in enumerate(cdesc.shape)},
-                {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
+                'csrmv_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(cdesc.shape)
+                }, {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 f'_out = {node.beta} * _in',
                 {'_out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 external_edges=True)

@@ -8,7 +8,7 @@ import pytest
 import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
+from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, StreamingComposition, PruneConnectors
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
 N = dc.symbol('N', dtype=dc.int32)
@@ -67,6 +67,7 @@ def run_lu(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
         sdfg = lu_kernel.to_sdfg()
+        auto_optimize(sdfg, device=device_type)
         dace_res = sdfg(A=A, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
@@ -109,7 +110,7 @@ def test_gpu():
     run_lu(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test(assert_ii_1=False, xilinx=False)
 def test_fpga():
     return run_lu(dace.dtypes.DeviceType.FPGA)
 

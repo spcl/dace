@@ -1,20 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Subgraph Transformation Helper API """
-from dace import dtypes, registry, symbolic, subsets
-from dace.sdfg import nodes, utils
-from dace.memlet import Memlet
-from dace.sdfg import replace, SDFG, SDFGState
-from dace.properties import make_properties, Property
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace import subsets
+from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 
-from collections import defaultdict
 import copy
-from typing import List, Union, Dict, Tuple, Set
-
-import dace.libraries.standard as stdlib
-
-import itertools
+from typing import List, Dict, Set
 
 # ****************
 # Helper functions
@@ -54,8 +45,8 @@ def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dic
         :param maps:            List of maps
         :param common_ranges: Common ranges extracted via
                                 common_map_base_ranges()
-        :param offset: If true, offsets each range to 0  
-                       before checking 
+        :param offset: If true, offsets each range to 0
+                       before checking
         :return: Dict that maps each map to a vector with
                  the same length as number of map loops.
                  The vector contains, in order, an index

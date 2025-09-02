@@ -14,9 +14,9 @@ def comments(A: dace.float32[N], B: dace.float32[N]):
 
 
 def test_comments():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     comments(A, B)
     assert np.allclose(A, B)
 
@@ -29,9 +29,9 @@ def explicit_line_joining(A: dace.float32[N], B: dace.float32[N]):
 
 
 def test_explicit_line_joining():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     explicit_line_joining(A, B)
     assert np.allclose(A, B)
 
@@ -48,9 +48,9 @@ def implicit_line_joining(A: dace.float32[N], B: dace.float32[N]):
 
 
 def test_implicit_line_joining():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(),), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N,), dtype=np.float32)
     implicit_line_joining(A, B)
     assert np.allclose(A, B)
 
@@ -77,9 +77,9 @@ def blank_lines(A: dace.float32[N], B: dace.float32[N]):
 
 
 def test_blank_lines():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     blank_lines(A, B)
     assert np.allclose(A, B)
 

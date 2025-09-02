@@ -1,11 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Two sequential RTL tasklets connected through a memlet.
+
+    It is intended for running simulation xilinx targets.
 """
 
 import dace
-import argparse
-
 import numpy as np
 
 # add sdfg
@@ -32,7 +32,7 @@ always@(posedge ap_aclk) begin
         m_axis_b_tdata <= 0;
         s_axis_a_tready <= 1'b1;
         state <= READY;
-    end else if (s_axis_a_tvalid && state == READY) begin // case: load a 
+    end else if (s_axis_a_tvalid && state == READY) begin // case: load a
         m_axis_b_tdata <= s_axis_a_tdata;
         s_axis_a_tready <= 1'b0;
         state <= BUSY;
@@ -41,7 +41,7 @@ always@(posedge ap_aclk) begin
     else
         m_axis_b_tdata <= m_axis_b_tdata;
         state <= DONE;
-end    
+end
 
 assign m_axis_b_tvalid = (m_axis_b_tdata >= 80) ? 1'b1:1'b0;
 """,
@@ -59,7 +59,7 @@ always@(posedge ap_aclk) begin
         m_axis_c_tdata <= 0;
         s_axis_b_tready <= 1'b1;
         state <= READY;
-    end else if (s_axis_b_tvalid && state == READY) begin // case: load a 
+    end else if (s_axis_b_tvalid && state == READY) begin // case: load a
         m_axis_c_tdata <= s_axis_b_tdata;
         s_axis_b_tready <= 1'b0;
         state <= BUSY;
@@ -68,9 +68,9 @@ always@(posedge ap_aclk) begin
     else
         m_axis_c_tdata <= m_axis_c_tdata;
         state <= DONE;
-end    
+end
 
-assign m_axis_c_tvalid = (m_axis_c_tdata >= 100) ? 1'b1:1'b0;   
+assign m_axis_c_tvalid = (m_axis_c_tdata >= 100) ? 1'b1:1'b0;
 """,
                              language=dace.Language.SystemVerilog)
 
@@ -92,21 +92,21 @@ sdfg.validate()
 ######################################################################
 
 if __name__ == '__main__':
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='simulation'):
+        # init data structures
+        a = np.random.randint(0, 80, 1).astype(np.int32)
+        b = np.array([0]).astype(np.int32)
+        c = np.array([0]).astype(np.int32)
 
-    # init data structures
-    a = np.random.randint(0, 80, 1).astype(np.int32)
-    b = np.array([0]).astype(np.int32)
-    c = np.array([0]).astype(np.int32)
+        # show initial values
+        print("a={}, b={}, c={}".format(a, b, c))
 
-    # show initial values
-    print("a={}, b={}, c={}".format(a, b, c))
+        # call program
+        sdfg(A=a, B=b, C=c)
 
-    # call program
-    sdfg(A=a, B=b, C=c)
+        # show result
+        print("a={}, b={}, c={}".format(a, b, c))
 
-    # show result
-    print("a={}, b={}, c={}".format(a, b, c))
-
-    # check result
-    assert b == 80
-    assert c == 100
+        # check result
+        assert b == 80
+        assert c == 100

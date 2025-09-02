@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
+from typing import Optional
 
 N = dace.symbol('N')
 
@@ -12,34 +14,26 @@ def keyword_false(A: dace.float32[N], B: dace.float32[N], C: dace.bool):
 
 
 def test_keyword_false():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     C = False
-    try:
-        keyword_false(A, B, C)
-    except Exception as e:
-        print(e)
-        return False
+    keyword_false(A, B, C)
     assert np.allclose(A, B)
 
 
 @dace.program
-def keyword_none(A: dace.float32[N], B: dace.float32[N], C: dace.pointer(dace.int32)):
+def keyword_none(A: dace.float32[N], B: dace.float32[N], C: Optional[dace.int32[20]]):
     if C is None:
         B[:] = A[:]
 
 
 def test_keyword_none():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     C = None
-    try:
-        keyword_none(A, B, C)
-    except Exception as e:
-        print(e)
-        return False
+    keyword_none(A, B, C)
     assert np.allclose(A, B)
 
 
@@ -50,15 +44,11 @@ def keyword_true(A: dace.float32[N], B: dace.float32[N], C: dace.bool):
 
 
 def test_keyword_true():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     C = True
-    try:
-        keyword_true(A, B, C)
-    except Exception as e:
-        print(e)
-        return False
+    keyword_true(A, B, C)
     assert np.allclose(A, B)
 
 
@@ -69,16 +59,12 @@ def keyword_and(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.bo
 
 
 def test_keyword_and():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     C = True
     D = True
-    try:
-        keyword_and(A, B, C, D)
-    except Exception as e:
-        print(e)
-        return False
+    keyword_and(A, B, C, D)
     assert np.allclose(A, B)
 
 
@@ -94,17 +80,13 @@ def keyword_assert(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace
 
 
 def test_keyword_assert():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     C = True
     D = True
-    try:
+    with pytest.raises(Exception):
         keyword_assert(A, B, C, D)
-    except Exception as e:
-        print(e)
-        return True
-    assert np.allclose(A, B)
 
 
 @dace.program
@@ -118,15 +100,11 @@ def keyword_ifelse(A: dace.float32[N], B: dace.float32[N], C: dace.int32):
 
 
 def test_keyword_ifelse():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     C = np.int32(2)
-    try:
-        keyword_ifelse(A, B, C)
-    except Exception as e:
-        print(e)
-        return False
+    keyword_ifelse(A, B, C)
     assert np.allclose(A, B)
 
 
@@ -137,14 +115,10 @@ def keyword_for(A: dace.float32[N], B: dace.float32[N]):
 
 
 def test_keyword_for():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
-    try:
-        keyword_for(A, B)
-    except Exception as e:
-        print(e)
-        return False
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
+    keyword_for(A, B)
     assert np.allclose(A, B)
 
 
@@ -162,14 +136,10 @@ def keyword_while(A: dace.float32[N], B: dace.float32[N]):
 
 
 def test_keyword_while():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
-    try:
-        keyword_while(A, B)
-    except Exception as e:
-        print(e)
-        return False
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
+    keyword_while(A, B)
     assert np.allclose(A, B)
 
 
@@ -189,14 +159,10 @@ def keyword_return(A: dace.float32[N]):
 
 
 def test_keyword_return():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
-    try:
-        B[:] = keyword_return(A)
-    except Exception as e:
-        print(e)
-        return False
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
+    B[:] = keyword_return(A)
     assert np.allclose(A, B)
 
 
@@ -207,16 +173,12 @@ def keyword_notor(A: dace.float32[N], B: dace.float32[N], C: dace.bool, D: dace.
 
 
 def test_keyword_notor():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
     C = False
     D = True
-    try:
-        keyword_notor(A, B, C, D)
-    except Exception as e:
-        print(e)
-        return False
+    keyword_notor(A, B, C, D)
     assert np.allclose(A, B)
 
 
@@ -228,15 +190,11 @@ def keyword_lambda(A: dace.float32[N], B: dace.float32[N]):
 
 
 def test_keyword_lambda():
-    N.set(128)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros((N.get(), ), dtype=np.float32)
-    try:
+    N = 128
+    A = np.random.rand(N).astype(np.float32)
+    B = np.zeros((N, ), dtype=np.float32)
+    with pytest.raises(Exception):
         keyword_lambda(A, B)
-    except Exception as e:
-        print(e)
-        return True
-    assert np.allclose(A, B)
 
 
 if __name__ == "__main__":

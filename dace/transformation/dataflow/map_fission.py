@@ -1,19 +1,21 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Map Fission transformation. """
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
-from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
+from dace import sdfg as sd, memlet as mm, subsets, data as dt
 from dace.codegen import control_flow as cf
+from dace.properties import CodeBlock
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
+@transformation.explicit_cf_compatible
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,
@@ -23,7 +25,7 @@ class MapFission(transformation.SingleStateTransformation):
         semantics after fission.
 
         There are two cases that match map fission:
-        
+
             1. A map with an arbitrary subgraph with more than one computational
                (i.e., non-access) node. The use of arrays connecting the
                computational nodes must be limited to the subgraph, and non
@@ -64,7 +66,7 @@ class MapFission(transformation.SingleStateTransformation):
         return ns
 
     @staticmethod
-    def _border_arrays(sdfg, parent, subgraph):
+    def _border_arrays(sdfg: sd.SDFG, parent, subgraph):
         """ Returns a set of array names that are local to the fission
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
@@ -122,12 +124,16 @@ class MapFission(transformation.SingleStateTransformation):
                 return False
 
             # Get NestedSDFG control flow components
-            cf_comp = helpers.find_sdfg_control_flow(nsdfg_node.sdfg)
-            if len(cf_comp) == 1:
-                child = list(cf_comp.values())[0][1]
-                conditions = []
-                if isinstance(child, (cf.ForScope, cf.WhileScope, cf.IfScope)):
-                    conditions.append(child.condition if isinstance(child, (cf.ForScope, cf.IfScope)) else child.test)
+            nsdfg_node.sdfg.reset_cfg_list()
+            if len(nsdfg_node.sdfg.nodes()) == 1:
+                child = nsdfg_node.sdfg.nodes()[0]
+                conditions: List[CodeBlock] = []
+                if isinstance(child, LoopRegion):
+                    conditions.append(child.loop_condition)
+                elif isinstance(child, ConditionalBlock):
+                    for c, _ in child.branches:
+                        if c is not None:
+                            conditions.append(c)
                 for cond in conditions:
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
@@ -137,7 +143,7 @@ class MapFission(transformation.SingleStateTransformation):
                                 return False
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
-            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
+            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
 
             subgraphs = list(nsdfg_node.sdfg.nodes())
 
@@ -174,7 +180,7 @@ class MapFission(transformation.SingleStateTransformation):
                 # Find all nodes not in subgraph
                 not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
                 not_subgraph.update(
-                    set(n.data for s in sdfg.nodes() if s != graph for n in s.nodes()
+                    set(n.data for s in sdfg.states() if s != graph for n in s.nodes()
                         if isinstance(n, nodes.AccessNode)))
 
                 for _, component_out in components:

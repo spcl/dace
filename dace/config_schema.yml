@@ -164,6 +164,29 @@ required:
                     of the code generator that generated it. Used for debugging
                     code generation.
 
+            codegen_state_struct_suffix:
+                type: str
+                default: "_state_t"
+                title: Suffix used by the code generator to mangle the state struct.
+                description: >
+                    For every SDFG the code generator is is processing a state struct is generated.
+                    The typename of this struct is derived by appending this value to the SDFG's name.
+                    Note that the suffix may only contains letters, digits and underscores.
+
+            format_code:
+                type: bool
+                default: false
+                title: Format code with `clang-format`
+                description: >
+                    Formats the generated code with `clang-format` before saving the files.
+
+            format_config_file:
+                type: str
+                default: ""
+                title: Path the clang-format file
+                description: >
+                    Clang-format file to be used by clang-format, only used if format_code is true
+
             default_data_types:
                 type : str
                 default: Python
@@ -249,7 +272,7 @@ required:
 
                     openmp_sections:
                         type: bool
-                        default: true
+                        default: false
                         title: Use OpenMP sections
                         description: >
                             If set to true, multiple connected components will
@@ -280,8 +303,8 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '-std=c++14 -Xcompiler -fPIC -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-std=c++14 -O3 --use_fast_math'
+                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default_Windows: '-O3 --use_fast_math'
 
                     hip_args:
                         type: str
@@ -395,6 +418,47 @@ required:
                             For more information, see ``cudaMemPoolAttrReleaseThreshold`` in the CUDA toolkit
                             documentation.
 
+                    block_size_limit:
+                        type: int
+                        title: Maximum thread-block size in code generation
+                        default: 1024
+                        description: >
+                            Threshold for the GPU code generator to fail in generating a kernel with
+                            a specified overall larger block size. Default value is derived from hardware
+                            limits on common GPUs.
+
+                    block_size_lastdim_limit:
+                        type: int
+                        title: Maximum last dimension thread-block size in code generation
+                        default: 64
+                        description: >
+                            Threshold for the GPU code generator to fail in generating a kernel with
+                            a specified larger block size in the third dimension. Default value is
+                            derived from hardware limits on common GPUs.
+
+                    thread_id_type:
+                        type: str
+                        title: Thread/block index data type
+                        default: int32
+                        description: >
+                            Defines the data type for a thread and block index in the generated code.
+                            The type is based on the type-classes in ``dace.dtypes``. For example,
+                            ``uint64`` is equivalent to ``dace.uint64``. Change this setting when large
+                            index types are needed to address memory offsets that are beyond the 32-bit
+                            range, or to reduce memory usage.
+
+                    allow_implicit_memlet_to_map:
+                        type: bool
+                        title: Allow the implicit conversion of Memlets to Maps during code generation.
+                        default: true
+                        description: >
+                            If ``true`` the code generator will implicitly convert Memlets that cannot be
+                            represented by a native library call, such as ``cudaMemcpy()`` into Maps that
+                            explicitly copy the data around. If this value is ``false`` the code generator
+                            will raise an exception if such a Memlet is encountered. This allows the user
+                            to have full control over all Maps in the SDFG.
+
+
             #############################################
             # General FPGA flags
             fpga:
@@ -435,7 +499,7 @@ required:
                         title: Detect parts of an SDFG that can run in parallel
                         description: >
                             If set to false, DaCe will place each weakly connected
-                            component found in an SDFG state in a different Kernel/Processing Element. 
+                            component found in an SDFG state in a different Kernel/Processing Element.
                             If true, a heuristic will further inspect each independent component
                             for other parallelism opportunities (e.g., branches of the SDFG
                             that can be executed in parallel), creating the corresponding kernels.
@@ -501,7 +565,7 @@ required:
                         type: str
                         title: Synthesis arguments
                         description: High-level synthesis C++ flags
-                        default: "-std=c++11"
+                        default: "-std=c++14"
 
                     build_flags:
                         type: str
@@ -761,7 +825,7 @@ required:
                 default: false
                 title: Check arguments on SDFG call
                 description: >
-                    Perform an early type check on arguments passed to an SDFG when called directly (from 
+                    Perform an early type check on arguments passed to an SDFG when called directly (from
                     ``SDFG.__call__``). Another type check is performed when calling compiled SDFGs.
 
             avoid_wcr:
@@ -796,18 +860,18 @@ required:
         title: Compiled cache entry naming policy
         description: >
             Determine the name of the generated ``.dacecache`` folder:
-            
-            
+
+
             * ``name`` uses the name of the SDFG directly, causing it to be
             overridden by other programs using the same SDFG name.
-            
+
             * ``hash`` uses a mangled name based on the hash of the SDFG, such that
             any change to the SDFG will generate a different cache folder.
-            
+
             * ``unique`` uses a name based on the currently running Python process
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invocations of Python.
-            
+
             * ``single`` uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
@@ -865,6 +929,16 @@ required:
             be called before every compiled SDFG's generated code is invoked. Used
             for functionality such as low-level profiling.
 
+    external_transformations_path:
+        type: str
+        default: '$HOME/dace_transformations/external_transformations'
+        default_Windows: '%USERPROFILE%\\dace_transformations\\external_transformations'
+        title: External transformations path
+        description: >
+            Path to a directory containing external transformations that are not
+            included in the main DaCe package. This path is added to the Python path
+            and can be used to import custom transformation modules.
+
     #############################################
     # Experimental features
 
@@ -879,6 +953,13 @@ required:
                 title: Undefined Symbol Check
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
+
+            check_race_conditions:
+                type: bool
+                default: false
+                title: Check race conditions
+                description: >
+                    Check for potential race conditions during validation.
 
     #############################################
     # Features for unit testing
@@ -903,6 +984,14 @@ required:
                 description: >
                     When an exception is raised in a deserialization process (e.g., due to missing library node),
                     by default a warning is issued. If this setting is True, the exception will be raised as-is.
+
+            serialize_all_fields:
+                type: bool
+                default: false
+                title: Serialize all unmodified fields in SDFG files
+                description: >
+                    If False (default), saving an SDFG keeps only the modified non-default properties. If True,
+                    saves all fields.
 
     #############################################
     # DaCe library settings

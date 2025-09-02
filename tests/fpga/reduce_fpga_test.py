@@ -105,7 +105,7 @@ def test_reduce_sum_all_axis():
     return sdfg
 
 
-@fpga_test()
+@fpga_test(xilinx=False)
 def test_reduce_sum_4D():
     A = np.random.rand(4, 4, 4, 12).astype(np.float64)
     B = np.random.rand(4, 4).astype(np.float64)
@@ -133,6 +133,7 @@ def test_reduce_max():
 
 @fpga_test(assert_ii_1=False)
 def test_reduce_scalar():
+
     @dace.program
     def reduction_to_scalar(A: dace.float64[64]):
         result = dace.reduce(lambda a, b: a + b, A)

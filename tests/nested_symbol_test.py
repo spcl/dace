@@ -4,7 +4,6 @@ import numpy as np
 import warnings
 
 N = dace.symbol('N')
-N.set(12345)
 
 
 @dace.program

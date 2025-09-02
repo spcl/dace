@@ -20,7 +20,7 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
         _, tmp1 = sdfg.add_transient('tmp1', [N - 4, N - 4, N - i], dtype=dace.float64, storage=storage)
     _, tmp2 = sdfg.add_transient('tmp2', [1], dtype=dace.float64, storage=storage)
 
-    begin_state = sdfg.add_state("begin", is_start_state=True)
+    begin_state = sdfg.add_state("begin", is_start_block=True)
     guard_state = sdfg.add_state("guard")
     body1_state = sdfg.add_state("body1")
     body2_state = sdfg.add_state("body2")
@@ -45,7 +45,7 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
         body2_state.add_nedge(read_a, read_tmp1, dace.Memlet(f'A[2:{N}-2, 2:{N}-2, i:{N}]'))
     else:
         read_tmp1 = body2_state.add_read('tmp1')
-    rednode = standard.Reduce(wcr='lambda a, b : a + b', identity=0)
+    rednode = standard.Reduce('sum', wcr='lambda a, b : a + b', identity=0)
     if storage == dace.dtypes.StorageType.GPU_Global:
         rednode.implementation = 'CUDA (device)'
     elif storage == dace.dtypes.StorageType.FPGA_Global:
@@ -154,7 +154,7 @@ def test_symbol_dependent_pinned_array():
     assert (np.allclose(B, B_ref))
 
 
-@pytest.mark.skip  # @pytest.mark.gpu
+@pytest.mark.skip('Invalid address accessed in kernel')  # @pytest.mark.gpu
 def test_symbol_dependent_gpu_view():
     # NOTE: This test cannot produce the correct result since the input
     # data of the reduction are not contiguous and cub:reduce doesn't support
@@ -173,7 +173,7 @@ def test_symbol_dependent_gpu_view():
     assert (np.allclose(B, B_ref))
 
 
-@pytest.mark.skip
+@pytest.mark.skip('FPGA compiler error')
 def test_symbol_dependent_fpga_global_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
@@ -190,6 +190,7 @@ def test_symbol_dependent_fpga_global_array():
 
 
 def test_symbol_dependent_array_in_map():
+
     @dace.program
     def symbol_dependent_array_in_map(A: dace.float32[10]):
         out = np.ndarray(10, dtype=np.float32)

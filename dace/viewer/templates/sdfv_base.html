@@ -1,0 +1,127 @@
+<!-- Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved. -->
+
+<!DOCTYPE html>
+<html lang="en" class="sdfv">
+
+<head>
+    {% block head %}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}SDFV: SDFG Viewer{% endblock %}</title>
+
+    {% block scripts_head %}
+    <script src="{{dir|safe}}./webclient/external_lib/pdfkit.standalone.js"></script>
+    <script src="{{dir|safe}}./webclient/external_lib/blob-stream.js"></script>
+    <script src="{{dir|safe}}./webclient/external_lib/canvas2pdf.js"></script>
+
+    <script defer src="{{dir|safe}}./webclient/dist/sdfv.js"></script>
+    {% endblock %}
+    {% endblock %}
+</head>
+
+<body class="sdfv">
+    {% block content %}
+    <div class="w3-sidebar" style="display:none;right:0;" id="sidebar">
+        <div class="dragbar" id="dragbar"></div>
+        <div class="sidebar-inner">
+            <button id="menuclose" class="w3-sidebar-close">
+                Close &times;
+            </button>
+            <h3 id="sidebar-header">
+                Nothing selected
+            </h3>
+            <div id="sidebar-contents"></div>
+        </div>
+    </div>
+    <div class="container-fluid" id="header-container">
+        <div class="row g-2 mb-2">
+            <div class="col-auto">
+                <input type="file" id="sdfg-file-input"
+                    accept=".sdfg,.json,.sdfgz,.sdfg.gz"
+                    class="form-control form-control-sm">
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-sm btn-light" id="reload">
+                    Refresh
+                </button>
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-sm btn-light" id="outline">
+                    SDFG Outline
+                </button>
+            </div>
+            <div class="col-auto">
+                <input type="file" accept=".json" id="instrumentation-report-file-input"
+                       style="display: none;">
+                <button id="load-instrumentation-report-btn"
+                    class="btn btn-sm btn-light"
+                    onclick="document.getElementById('instrumentation-report-file-input').click();">
+                    Load Instrumentation Report
+                </button>
+            </div>
+        </div>
+        <div class="row g-2">
+            <div class="col-auto">
+                <div class="input-group">
+                    <input id="search" type="text" class="form-control form-control-sm"
+                        placeholder="Search in graph elements">
+                    <button id="search-btn" class="btn btn-sm btn-light">
+                        Search
+                    </button>
+                </div>
+            </div>
+            <div class="col-auto d-flex align-items-center">
+                <div class="form-check form-switch">
+                    <input type="checkbox" id="search-case" class="form-check-input">
+                    <label for="search-case" class="form-check-label">
+                        Case Sensitive
+                    </label>
+                </div>
+            </div>
+            <div class="col-auto">
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-light dropdown-toggle" type="button"
+                        data-bs-toggle="dropdown">
+                        Advanced Search
+                    </button>
+                    <form class="dropdown-menu p-1">
+                        <textarea id="advsearch" style="font-family: monospace"
+                            class="form-control mb-2">(graph, element) => {
+// Create a predicate that returns true for a match
+// For example, finding transient arrays below
+if (element && element.data.node) {
+    let arrname = element.data.node.attributes.data;
+    if (arrname) {
+    let arr = element.sdfg.attributes._arrays[arrname];
+    if (arr && arr.attributes.transient)
+        return true;
+    }
+}
+return false;
+};</textarea>
+                        <button id="advsearch-btn" class="btn btn-light">
+                            Search
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div class="col-auto d-flex align-items-center">
+                <div id="task-info-field">
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="contents"></div>
+    <div id="diff-container" style="display: none;">
+        <div id="diff-contents-A" class="diff-contents">
+        </div>
+        <div id="diff-contents-B" class="diff-contents">
+        </div>
+    </div>
+    {% endblock %}
+    {% block scripts_after %}
+    {% endblock %}
+    </div>
+</body>
+
+</html>

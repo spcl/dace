@@ -4,6 +4,7 @@ from dace.sdfg.graph import *
 
 
 class TestOrderedGraphs(unittest.TestCase):
+
     def test_ordered_digraph(self):
         g = OrderedDiGraph()
         g.add_edge(0, 7, "abc")
@@ -95,16 +96,25 @@ class TestOrderedGraphs(unittest.TestCase):
         e6 = h.add_edge(6, 7, None)
         e7 = h.add_edge(6, 8, None)
         e8 = h.add_edge(2, 6, None)
-        bfs_edges = h.bfs_edges(0)
-        self.assertEqual(next(bfs_edges), e0)
-        self.assertEqual(next(bfs_edges), e1)
-        self.assertEqual(next(bfs_edges), e2)
-        self.assertEqual(next(bfs_edges), e4)
-        self.assertEqual(next(bfs_edges), e5)
-        self.assertEqual(next(bfs_edges), e8)
-        self.assertEqual(next(bfs_edges), e3)
-        self.assertEqual(next(bfs_edges), e6)
-        self.assertEqual(next(bfs_edges), e7)
+        edge_bfs = h.edge_bfs(0)
+        self.assertEqual(next(edge_bfs), e0)
+        self.assertEqual(next(edge_bfs), e1)
+        self.assertEqual(next(edge_bfs), e2)
+        self.assertEqual(next(edge_bfs), e4)
+        self.assertEqual(next(edge_bfs), e5)
+        self.assertEqual(next(edge_bfs), e8)
+        self.assertEqual(next(edge_bfs), e3)
+        self.assertEqual(next(edge_bfs), e6)
+        self.assertEqual(next(edge_bfs), e7)
+
+    def test_dfs_edges(self):
+
+        sdfg = dace.SDFG('test_dfs_edges')
+        before, _, _ = sdfg.add_loop(sdfg.add_state(), sdfg.add_state(), sdfg.add_state(), 'i', '0', 'i < 10', 'i + 1')
+
+        visited_edges = list(sdfg.dfs_edges(before))
+        assert len(visited_edges) == len(set(visited_edges))
+        assert all(e in visited_edges for e in sdfg.edges())
 
 
 if __name__ == "__main__":

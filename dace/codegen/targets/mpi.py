@@ -1,13 +1,19 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import TYPE_CHECKING
 import dace
 from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
+from dace.codegen.targets.cpp import mangle_dace_state_struct_name
 from dace.sdfg import nodes, SDFG
 from dace.config import Config
 
 from dace.codegen import cppunparse
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
+
+if TYPE_CHECKING:
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
 @registry.autoregister_params(name='mpi')
@@ -17,7 +23,7 @@ class MPICodeGen(TargetCodeGenerator):
     title = 'MPI'
     language = 'cpp'
 
-    def __init__(self, frame_codegen, sdfg: SDFG):
+    def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._global_sdfg = sdfg
@@ -45,10 +51,10 @@ int __dace_comm_rank = 0;
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_mpi({sdfg.name}_t *__state{params});
-DACE_EXPORTED void __dace_exit_mpi({sdfg.name}_t *__state);
+DACE_EXPORTED int __dace_init_mpi({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_mpi({sdfg_state_name} *__state);
 
-int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
+int __dace_init_mpi({sdfg_state_name} *__state{params}) {{
     int isinit = 0;
     if (MPI_Initialized(&isinit) != MPI_SUCCESS)
         return 1;
@@ -66,14 +72,18 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
     return 0;
 }}
 
-void __dace_exit_mpi({sdfg.name}_t *__state) {{
+int __dace_exit_mpi({sdfg_state_name} *__state) {{
     MPI_Comm_free(&__dace_mpi_comm);
     MPI_Finalize();
 
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
+    return 0;
 }}
-""".format(params=params_comma, sdfg=sdfg, file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
+""".format(params=params_comma,
+           sdfg=sdfg,
+           sdfg_state_name=mangle_dace_state_struct_name(sdfg),
+           file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
         return [codeobj]
 
     @staticmethod
@@ -94,35 +104,37 @@ void __dace_exit_mpi({sdfg.name}_t *__state) {{
     def has_finalizer(self):
         return True
 
-    def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
+    def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
+                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Take care of map header
         assert len(dfg_scope.source_nodes()) == 1
-        map_header = dfg_scope.source_nodes()[0]
+        map_header: nodes.MapEntry = dfg_scope.source_nodes()[0]
 
-        function_stream.write('extern int __dace_comm_size, __dace_comm_rank;', sdfg, state_id, map_header)
+        function_stream.write('extern int __dace_comm_size, __dace_comm_rank;', cfg, state_id, map_header)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
-        callsite_stream.write('{', sdfg, state_id, map_header)
+        callsite_stream.write('{', cfg, state_id, map_header)
 
         if len(map_header.map.params) > 1:
             raise NotImplementedError('Multi-dimensional MPI maps are not supported')
 
-        state = sdfg.node(state_id)
+        state = cfg.state(state_id)
         symtypes = map_header.new_symbols(sdfg, state, state.symbols_defined_at(map_header))
 
         for var, r in zip(map_header.map.params, map_header.map.range):
             begin, end, skip = r
 
-            callsite_stream.write('{\n', sdfg, state_id, map_header)
+            callsite_stream.write('{\n', cfg, state_id, map_header)
             callsite_stream.write(
                 '%s %s = %s + __dace_comm_rank * (%s);\n' %
                 (symtypes[var], var, cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True)),
-                 cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))), sdfg, state_id, map_header)
+                 cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))), cfg, state_id, map_header)
 
-        self._frame.allocate_arrays_in_scope(sdfg, map_header, function_stream, callsite_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, map_header, function_stream, callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
+                                           cfg,
                                            dfg_scope,
                                            state_id,
                                            function_stream,

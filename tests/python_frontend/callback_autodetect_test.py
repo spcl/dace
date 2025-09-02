@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import time
 from dace import config
+from dace.frontend.python.common import DaceSyntaxError
 
 N = dace.symbol('N')
 
@@ -142,7 +143,6 @@ def modcallback(A: dace.float64[N, N], B: dace.float64[N]):
 
 
 def test_callback_from_module():
-    N.set(24)
     A = np.random.rand(24, 24)
     B = np.random.rand(24)
     modcallback(A, B)
@@ -164,7 +164,7 @@ def tasklet_callback(A: dace.float64[N, N], B: dace.float64[N, N]):
             b = sq(a)
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_callback_tasklet():
     A = np.random.rand(24, 24)
     B = np.random.rand(24, 24)
@@ -320,7 +320,7 @@ def test_callback_samename():
 
 
 # Cannot run test without cupy
-@pytest.mark.skip
+@pytest.mark.gpu
 def test_gpu_callback():
     import cupy as cp
 
@@ -344,7 +344,7 @@ def test_gpu_callback():
 
 
 def test_bad_closure():
-    """ 
+    """
     Testing functions that should not be in the closure (must be implemented as
     callbacks).
     """
@@ -907,7 +907,39 @@ def test_custom_generator_with_break():
     assert np.allclose(aa, expected)
 
 
-@pytest.mark.skip
+def test_disallowed_callback_in_condition():
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return 42
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        if arr[0] < callbackfunc(arr):
+            return arr + 1
+        else:
+            return arr
+
+    with pytest.raises(DaceSyntaxError, match="Trying to operate on a callback"):
+        callback_in_condition.to_sdfg()
+
+
+def test_disallowed_callback_slice():
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return 42
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        a = callbackfunc(arr)
+        return arr + a[:20]
+
+    with pytest.raises(DaceSyntaxError, match="cannot be sliced"):
+        callback_in_condition.to_sdfg()
+
+
+@pytest.mark.skip('Test requires GUI')
 def test_matplotlib_with_compute():
     """
     Stacked bar plot example from Matplotlib using callbacks and pyobjects.
@@ -952,7 +984,7 @@ if __name__ == '__main__':
     test_reorder()
     test_reorder_nested()
     test_callback_samename()
-    # test_gpu_callback()
+    test_gpu_callback()
     test_bad_closure()
     test_object_with_nested_callback()
     test_two_parameters_same_name()
@@ -979,4 +1011,6 @@ if __name__ == '__main__':
     test_pyobject_return_tuple()
     test_custom_generator()
     test_custom_generator_with_break()
+    test_disallowed_callback_in_condition()
+    test_disallowed_callback_slice()
     # test_matplotlib_with_compute()

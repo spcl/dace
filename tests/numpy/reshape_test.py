@@ -9,6 +9,7 @@ N = dace.symbol('N')
 
 def test_reshape():
     """ Array->View->Tasklet """
+
     @dace.program
     def reshp(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]):
         C = np.reshape(A, [8, 3])
@@ -24,6 +25,7 @@ def test_reshape():
 
 def test_reshape_dst():
     """ Tasklet->View->Array """
+
     @dace.program
     def reshpdst(A: dace.float64[2, 3, 4], B: dace.float64[8, 3]):
         C = np.reshape(B, [2, 3, 4])
@@ -60,7 +62,7 @@ def test_reshape_dst_explicit():
 
 @pytest.mark.parametrize('memlet_dst', (False, True))
 def test_reshape_copy(memlet_dst):
-    """ 
+    """
     Symmetric case of Array->View->Array. Should be translated to a reference
     and a copy.
     """
@@ -108,6 +110,7 @@ def test_reshape_copy_scoped():
 
 def test_reshape_subset():
     """ Tests reshapes on subsets of arrays. """
+
     @dace.program
     def reshp(A: dace.float64[2, 3, 4], B: dace.float64[12]):
         C = np.reshape(A[1, :, :], [12])
@@ -146,7 +149,8 @@ def test_reshape_subset_explicit():
     assert np.allclose(expected, B)
 
 
-def test_reinterpret():
+def test_reinterpret_smaller():
+
     @dace.program
     def reint(A: dace.int32[N]):
         C = A.view(dace.int16)
@@ -161,18 +165,34 @@ def test_reinterpret():
     assert np.allclose(expected, A)
 
 
+def test_reinterpret_larger():
+
+    @dace.program
+    def reint(A: dace.int16[N]):
+        C = A.view(dace.int32)
+        C[:] += 1
+
+    A = np.random.randint(0, 32767, size=[10], dtype=np.int16)
+    expected = np.copy(A)
+    B = expected.view(np.int32)
+    B[:] += 1
+
+    reint(A)
+    assert np.allclose(expected, A)
+
+
 def test_reinterpret_invalid():
+
     @dace.program
     def reint_invalid(A: dace.float32[5]):
         C = A.view(dace.float64)
         C[:] += 1
 
     A = np.random.rand(5).astype(np.float32)
-    try:
+    with pytest.raises(ValueError,
+                       match="When changing to a larger dtype, its size must be a divisor of the total size "
+                       "in bytes of the last axis of the array."):
         reint_invalid(A)
-        raise AssertionError('Program should not be compilable')
-    except ValueError:
-        pass
 
 
 if __name__ == "__main__":
@@ -184,5 +204,6 @@ if __name__ == "__main__":
     test_reshape_copy_scoped()
     test_reshape_subset()
     test_reshape_subset_explicit()
-    test_reinterpret()
+    test_reinterpret_smaller()
+    test_reinterpret_larger()
     test_reinterpret_invalid()

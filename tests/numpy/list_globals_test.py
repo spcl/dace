@@ -22,6 +22,7 @@ def test_global_func_access_global_list():
 
 
 def test_local_func_access_global_list():
+
     @dace
     def local_list_program(A: dace.int32[3, 2, 4]):
         return np.transpose(A, axes=global_axes)
@@ -43,7 +44,7 @@ def test_local_list():
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_local_list_with_slice():
     local_axes = [1, 2, 0, 100]
 

@@ -33,7 +33,7 @@ def _test_determine_alloc(lifetime: dace.AllocationLifetime, unused: bool = Fals
     nstate.add_memlet_path(nstate.add_read('A'), ime, t1, memlet=dace.Memlet('A[i]'))
     nstate.add_memlet_path(t2, imx, nstate.add_write('B'), memlet=dace.Memlet('B[0]', wcr='lambda a,b: a+b'))
     #########################################################################
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A'}, {'B'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'A'}, {'B'})
     state.add_memlet_path(state.add_read('A'), me, nsdfg_node, dst_conn='A', memlet=dace.Memlet('A[0:N]'))
     state.add_memlet_path(nsdfg_node, mx, state.add_write('B'), src_conn='B', memlet=dace.Memlet('B[0:N]'))
 
@@ -44,11 +44,11 @@ def _test_determine_alloc(lifetime: dace.AllocationLifetime, unused: bool = Fals
 
 
 def _check_alloc(id, name, codegen, scope):
-    # for sdfg_id, _, node in codegen.to_allocate[scope]:
-    #     if id == sdfg_id and name == node.data:
+    # for cfg_id, _, node in codegen.to_allocate[scope]:
+    #     if id == cfg_id and name == node.data:
     #         return True
     for sdfg, _, node, _, _, _ in codegen.to_allocate[scope]:
-        if sdfg.sdfg_id == id and name == node.data:
+        if sdfg.cfg_id == id and name == node.data:
             return True
     return False
 
@@ -130,7 +130,7 @@ def test_persistent_gpu_copy_regression():
     nstate.add_edge(a_trans, None, nstate.add_write("noutput"), None, nsdfg.make_array_memlet("transient_heap"))
 
     a_gpu = state.add_read("input_gpu")
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {"ninput"}, {"noutput"})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {"ninput"}, {"noutput"})
     wR = state.add_write("__return")
 
     state.add_edge(state.add_read("input"), None, a_gpu, None, sdfg.make_array_memlet("input"))
@@ -398,6 +398,31 @@ def test_persistent_array_access():
     assert np.allclose(a[3], 5)
 
 
+def test_persistent_loop_bound():
+    """
+    Code originates from Issue #1550.
+    Tests both ``for`` and OpenMP parallel ``for`` loop bounds with persistent storage.
+    """
+    N = dace.symbol('N')
+
+    @dace.program(auto_optimize=True)
+    def tester(L: dace.float64[N, N], index: dace.uint64, active_size: dace.uint64):
+        for i in range(index, active_size - 1):
+            L[i + 1][i] = 1.0
+
+            for j in range(i, dace.int64(active_size - 1)):
+                L[j + 1][i] = 2.0
+
+    l = np.random.rand(10, 10)
+    index = 2
+    active_size = 7
+    l_ref = np.copy(l)
+    tester.f(l_ref, index, active_size)
+    tester(l, index, active_size)
+
+    assert np.allclose(l, l_ref)
+
+
 def test_double_nested_persistent_write():
     sdfg = dace.SDFG('npw_inner')
     sdfg.add_array('pers', [20], dace.float64)
@@ -409,13 +434,13 @@ def test_double_nested_persistent_write():
     osdfg.add_transient('pers', [20], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
     state = osdfg.add_state()
     me, mx = state.add_map('mapit', dict(i='0:20'))
-    nsdfg = state.add_nested_sdfg(sdfg, None, {}, {'pers'})
+    nsdfg = state.add_nested_sdfg(sdfg, {}, {'pers'})
     state.add_nedge(me, nsdfg, dace.Memlet())
     state.add_memlet_path(nsdfg, mx, state.add_write('pers'), src_conn='pers', memlet=dace.Memlet('pers[0:20]'))
 
     oosdfg = dace.SDFG('npw_outer')
     state = oosdfg.add_state()
-    nsdfg = state.add_nested_sdfg(osdfg, None, {}, {})
+    nsdfg = state.add_nested_sdfg(osdfg, {}, {})
 
     oosdfg.compile()
 
@@ -451,10 +476,16 @@ def test_branched_allocation(mode):
     sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
     sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
 
-    tasklet1 = state_br1.add_tasklet(name="br1", inputs=[], outputs=["out"], \
-            code="out = 1;", language=dace.Language.CPP)
-    tasklet2 = state_br2.add_tasklet(name="br2", inputs=[], outputs=["out"], \
-            code="out = 1;", language=dace.Language.CPP)
+    tasklet1 = state_br1.add_tasklet(name="br1",
+                                     inputs=[],
+                                     outputs=["out"],
+                                     code="out = 1;",
+                                     language=dace.Language.CPP)
+    tasklet2 = state_br2.add_tasklet(name="br2",
+                                     inputs=[],
+                                     outputs=["out"],
+                                     code="out = 1;",
+                                     language=dace.Language.CPP)
 
     arr_A = state_br1.add_write("A")
     memlet = dace.Memlet(expr="A[1]")
@@ -480,7 +511,7 @@ def test_branched_allocation(mode):
     sdfg.compile()
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Dynamic array resize is not yet supported')
 def test_scope_multisize():
     """ An array that needs to be allocated multiple times with different sizes. """
     sdfg = dace.SDFG('test')
@@ -576,6 +607,7 @@ if __name__ == '__main__':
     test_persistent_scalar()
     test_persistent_scalar_in_map()
     test_persistent_array_access()
+    test_persistent_loop_bound()
     test_double_nested_persistent_write()
     test_branched_allocation('global')
     test_branched_allocation('singlevalue')

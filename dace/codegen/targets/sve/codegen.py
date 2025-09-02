@@ -76,8 +76,8 @@ class SVECodeGen(TargetCodeGenerator):
         res = super().get_generated_codeobjects()
         return res
 
-    def copy_memory(self, sdfg: SDFG, dfg: SDFGState, state_id: int, src_node: nodes.Node, dst_node: nodes.Node,
-                    edge: gr.MultiConnectorEdge[mm.Memlet], function_stream: CodeIOStream,
+    def copy_memory(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, src_node: nodes.Node,
+                    dst_node: nodes.Node, edge: gr.MultiConnectorEdge[mm.Memlet], function_stream: CodeIOStream,
                     callsite_stream: CodeIOStream) -> None:
 
         # Check whether it is a known reduction that is possible in SVE
@@ -103,7 +103,7 @@ class SVECodeGen(TargetCodeGenerator):
 
         return super().copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)
 
-    def generate_node(self, sdfg: SDFG, state: SDFGState, state_id: int, node: nodes.Node,
+    def generate_node(self, sdfg: SDFG, cfg: state.ControlFlowRegion, state: SDFGState, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         self.add_header(function_stream)
 
@@ -134,7 +134,7 @@ class SVECodeGen(TargetCodeGenerator):
                 requires_wb.append(edge)
 
         # Tasklet code
-        self.unparse_tasklet(sdfg, state, state_id, node, function_stream, callsite_stream)
+        self.unparse_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream)
 
         # Writeback from temporary registers to memory
         for edge in requires_wb:
@@ -365,12 +365,12 @@ class SVECodeGen(TargetCodeGenerator):
         else:
             raise util.NotSupportedError('Only writeback to Tasklets and AccessNodes is supported')
 
-    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: data.Data,
-                      global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
-        self.cpu_codegen.declare_array(sdfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream)
+    def declare_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
+                      nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
+        self.cpu_codegen.declare_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream)
 
-    def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: data.Data,
-                       global_stream: CodeIOStream, declaration_stream: CodeIOStream,
+    def allocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
+                       nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
         if nodedesc.storage == dtypes.StorageType.SVE_Register:
             sve_type = util.TYPE_TO_SVE[nodedesc.dtype]
@@ -388,15 +388,17 @@ class SVECodeGen(TargetCodeGenerator):
                 declaration_stream.write(f'{sve_type} {ptrname};')
             return
 
-        self.cpu_codegen.allocate_array(sdfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,
+        self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,
                                         allocation_stream)
 
-    def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: data.Data,
-                         function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        return self.cpu_codegen.deallocate_array(sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream)
+    def deallocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int,
+                         node: nodes.Node, nodedesc: data.Data, function_stream: CodeIOStream,
+                         callsite_stream: CodeIOStream) -> None:
+        return self.cpu_codegen.deallocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                                 callsite_stream)
 
-    def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView, state_id: int, function_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream):
+    def generate_scope(self, sdfg: dace.SDFG, cfg: state.ControlFlowRegion, scope: ScopeSubgraphView, state_id: int,
+                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         entry_node = scope.source_nodes()[0]
         current_map = entry_node.map
         self.current_map = current_map
@@ -420,12 +422,12 @@ class SVECodeGen(TargetCodeGenerator):
         self.dispatcher.defined_vars.enter_scope(scope)
 
         # Define all dynamic input connectors of the map entry
-        state_dfg = sdfg.node(state_id)
+        state_dfg = cfg.state(state_id)
         for e in dace.sdfg.dynamic_map_inputs(state_dfg, entry_node):
             if e.data.data != e.dst_conn:
                 callsite_stream.write(
                     self.cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                       e.dst.in_connectors[e.dst_conn]), sdfg, state_id, entry_node)
+                                                       e.dst.in_connectors[e.dst_conn]), cfg, state_id, entry_node)
 
         param = current_map.params[0]
         rng = current_map.range[0]
@@ -456,6 +458,7 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Dispatch the subgraph generation
         self.dispatcher.dispatch_subgraph(sdfg,
+                                          cfg,
                                           scope,
                                           state_id,
                                           function_stream,
@@ -475,9 +478,9 @@ class SVECodeGen(TargetCodeGenerator):
         self.dispatcher.defined_vars.exit_scope(scope)
         callsite_stream.write('}')
 
-    def unparse_tasklet(self, sdfg: SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
-                        function_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        state_dfg: SDFGState = sdfg.nodes()[state_id]
+    def unparse_tasklet(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: state.StateSubgraphView, state_id: int,
+                        node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        state_dfg = cfg.state(state_id)
 
         callsite_stream.write('\n///////////////////')
         callsite_stream.write(f'// Tasklet code ({node.label})')
@@ -486,9 +489,10 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Constants and other defined symbols
         defined_symbols = state_dfg.symbols_defined_at(node)
-        defined_symbols.update(
-            {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-             for k, v in sdfg.constants.items()})
+        defined_symbols.update({
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        })
 
         # All memlets of that node
         memlets = {}
@@ -508,6 +512,6 @@ class SVECodeGen(TargetCodeGenerator):
                                                          util.get_loop_predicate(sdfg, dfg, node), self.counter_type,
                                                          defined_symbols, self.stream_associations,
                                                          self.wcr_associations)
-            callsite_stream.write(result.getvalue(), sdfg, state_id, node)
+            callsite_stream.write(result.getvalue(), cfg, state_id, node)
 
         callsite_stream.write('///////////////////\n\n')

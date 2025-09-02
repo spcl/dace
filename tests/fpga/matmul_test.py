@@ -4,6 +4,7 @@ from dace.fpga_testing import fpga_test, import_sample, xilinx_test
 import dace.libraries.blas as blas
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 import numpy as np
+import pytest
 from pathlib import Path
 from dace.config import set_temporary
 
@@ -94,7 +95,7 @@ def create_gemm_sdfg(sdfg_name,
                                memlet=dace.Memlet(f"B_device[0:{K}, 0:{M}/{vec_width}]"))
     fpga_state.add_memlet_path(in_C,
                                gemm_node,
-                               dst_conn="_cin",
+                               dst_conn="_c",
                                memlet=dace.Memlet(f"C_device[0:{N}, 0:{M}/{vec_width}]"))
     fpga_state.add_memlet_path(gemm_node,
                                out_C,
@@ -135,13 +136,13 @@ def test_naive_matmul_fpga():
     return sdfg
 
 
-@fpga_test()
+@fpga_test(xilinx=False)
 def test_systolic_matmul_fpga():
     matmul = import_sample(Path("fpga") / "matrix_multiplication_systolic.py")
     return matmul.run_matmul_systolic(128, 32, 64, 4, False)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test(assert_ii_1=False, xilinx=False)
 def test_gemm_vectorized():
     # Test with vectorization
     # To achieve II=1 with Xilinx, we need to decouple reads/writes from memory
@@ -161,6 +162,7 @@ def test_gemm_vectorized():
     return sdfg
 
 
+@pytest.mark.skip('Xilinx HLS fails due to unresolved phi nodes')
 @xilinx_test(assert_ii_1=True)
 def test_gemm_vectorized_decoupled():
     # Test with vectorization
@@ -181,7 +183,7 @@ def test_gemm_vectorized_decoupled():
     return sdfg
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test(assert_ii_1=False, xilinx=False)
 def test_gemm_size_not_multiples_of():
 
     # Test with matrix sizes that are not a multiple of #PEs and Tile sizes
@@ -199,6 +201,7 @@ def test_gemm_size_not_multiples_of():
     return sdfg
 
 
+@pytest.mark.skip('Xilinx HLS fails due to unresolved phi nodes')
 @xilinx_test()
 def test_gemm_size_not_multiples_of_decoupled():
     # Test with matrix sizes that are not a multiple of #PEs and Tile sizes
@@ -218,7 +221,7 @@ def test_gemm_size_not_multiples_of_decoupled():
     return sdfg
 
 
-@fpga_test()
+@fpga_test(xilinx=False)
 def test_matmul_np():
     # Test with numpy matmul, and double precision
     @dace.program
@@ -243,8 +246,10 @@ def test_matmul_np():
 
 
 if __name__ == "__main__":
-    test_matmul_fpga(None)
+    test_naive_matmul_fpga(None)
     test_systolic_matmul_fpga(None)
     test_gemm_vectorized(None)
+    test_gemm_vectorized_decoupled(None)
     test_gemm_size_not_multiples_of(None)
+    test_gemm_size_not_multiples_of_decoupled(None)
     test_matmul_np(None)

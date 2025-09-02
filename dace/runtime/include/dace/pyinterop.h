@@ -6,7 +6,7 @@
 
 // Various classes to simplify interoperability with python in code converted to C++
 
-class range 
+class range
 {
 public:
     class iterator
@@ -51,6 +51,11 @@ static DACE_HDFI U Max(U val, T... vals) {
 template <typename T>
 static DACE_HDFI T Abs(T val) {
     return abs(val);
+}
+template <typename T, typename U>
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(bool condition, const T& iftrue, const U& iffalse)
+{
+    return condition ? iftrue : iffalse;
 }
 
 #endif  // __DACE_INTEROP_H

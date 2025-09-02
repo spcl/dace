@@ -1,14 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import itertools
+from typing import List, Dict
+import warnings
 
-from typing import List, Tuple, Dict
-
-from dace import dtypes, config, registry, symbolic, nodes, sdfg, data
-from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
+from dace import dtypes, config, registry, symbolic, nodes, data, SDFG
+from dace.sdfg import graph, find_input_arraynode, find_output_arraynode
 from dace.codegen import codeobject, dispatcher, prettycode
 from dace.codegen.targets import target, framecode
 from dace.codegen.common import sym2cpp
+from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 
 
 @registry.autoregister_params(name='rtl')
@@ -20,11 +21,11 @@ class RTLCodeGen(target.TargetCodeGenerator):
     languages = [dtypes.Language.SystemVerilog]
     n_unrolled: Dict[str, int] = {}
 
-    def __init__(self, frame_codegen: framecode.DaCeCodeGenerator, sdfg: sdfg.SDFG):
+    def __init__(self, frame_codegen: framecode.DaCeCodeGenerator, sdfg: SDFG):
         # store reference to sdfg
-        self.sdfg: sdfg.SDFG = sdfg
+        self.sdfg = sdfg
         # store reference to frame code generator
-        self.frame: framecode.DaCeCodeGenerator = frame_codegen
+        self.frame = frame_codegen
         self._frame = self.frame
         # get dispatcher to register callbacks for allocation/nodes/.. code generators
         self.dispatcher: dispatcher.TargetDispatcher = frame_codegen.dispatcher
@@ -46,8 +47,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.hardware_target: bool = config.Config.get("compiler", "xilinx", "mode").startswith("hardware")
         self.frequencies: str = config.Config.get("compiler", "xilinx", "frequency")
 
-    def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
-                      function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
+    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                      function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream) -> None:
         # check instance type
         if isinstance(node, nodes.Tasklet):
             """
@@ -56,30 +57,32 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 (2) generate tasklet->out
                 (3) generate tasklet
             """
+            callsite_stream.write('{', cfg, state_id, dfg.node_id(node))
             # generate code to handle data input to the tasklet
             for edge in dfg.in_edges(node):
                 # find input array
                 src_node = find_input_arraynode(dfg, edge)
                 # dispatch code gen (copy_memory)
-                self.dispatcher.dispatch_copy(src_node, node, edge, sdfg, dfg, state_id, function_stream,
+                self.dispatcher.dispatch_copy(src_node, node, edge, sdfg, cfg, dfg, state_id, function_stream,
                                               callsite_stream)
             # generate code to handle data output from the tasklet
             for edge in dfg.out_edges(node):
                 # find output array
                 dst_node = find_output_arraynode(dfg, edge)
                 # dispatch code gen (define_out_memlet)
-                self.dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, dfg, state_id, function_stream,
-                                                           callsite_stream)
+                self.dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, cfg, dfg, state_id,
+                                                           function_stream, callsite_stream)
             # generate tasklet code
-            self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            self.unparse_tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            callsite_stream.write('}', cfg, state_id, dfg.node_id(node))
         else:
             raise RuntimeError(
                 "Only tasklets are handled here, not {}. This should have been filtered by the predicate".format(
                     type(node)))
 
-    def copy_memory(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, src_node: nodes.Node,
-                    dst_node: nodes.Node, edge: graph.MultiConnectorEdge, function_stream: prettycode.CodeIOStream,
-                    callsite_stream: prettycode.CodeIOStream):
+    def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                    src_node: nodes.Node, dst_node: nodes.Node, edge: graph.MultiConnectorEdge,
+                    function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream) -> None:
         """
             Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
         """
@@ -100,8 +103,23 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 elif isinstance(arr, data.Scalar):
                     line: str = "{} {} = {};".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                                                      edge.src.data)
+                elif isinstance(arr, data.Stream):
+                    # TODO Streams are currently unsupported, as the proper
+                    # behaviour has to be implemented to avoid deadlocking. It
+                    # is only a warning, as the RTL backend is partially used
+                    # by the Xilinx backend, which may hit this case, but will
+                    # discard the errorneous code.
+                    warnings.warn(
+                        'Streams are currently unsupported by the RTL backend.' \
+                        'This may produce errors or deadlocks in the generated code.'
+                    )
+                    line: str = "// WARNING: Unsupported read from ({}) variable '{}' from stream '{}'." \
+                        " This may lead to a deadlock if used in code.\n".format(
+                            dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src_conn)
+                    line += "{} {} = {}.pop();".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
+                                                       edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
-            rtl_name = self.unique_name(edge.dst, sdfg.nodes()[state_id], sdfg)
+            rtl_name = self.unique_name(edge.dst, cfg.state(state_id))
             self.n_unrolled[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
             line: str = f'{dst_node.in_connectors[edge.dst_conn]} {edge.dst_conn} = &{edge.data.data}[{edge.src.map.params[0]}*{edge.data.volume}];'
         else:
@@ -109,8 +127,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
         # write accessor to file
         callsite_stream.write(line)
 
-    def define_out_memlet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, src_node: nodes.Node,
-                          dst_node: nodes.Node, edge: graph.MultiConnectorEdge,
+    def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          src_node: nodes.Node, dst_node: nodes.Node, edge: graph.MultiConnectorEdge,
                           function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
         """
             Generate output copy code (handled within the rtl tasklet code).
@@ -477,18 +495,19 @@ model->s_axis_{name}_tdata = {name}[0];'''
         evals = ' && '.join([f'out_ptr_{name} < num_elements_{name}' for name in tasklet.out_connectors])
         return evals
 
-    def unique_name(self, node: nodes.RTLTasklet, state, sdfg):
-        return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
+    def unique_name(self, node: nodes.RTLTasklet, state: SDFGState):
+        return "{}_{}_{}_{}".format(node.name, state.parent_graph.cfg_id, state.block_id, state.node_id(node))
 
-    def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
-                        function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
+    def unparse_tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                        node: nodes.Node, function_stream: prettycode.CodeIOStream,
+                        callsite_stream: prettycode.CodeIOStream):
 
         # extract data
-        state = sdfg.nodes()[state_id]
+        state = cfg.state(state_id)
         tasklet = node
 
         # construct variables paths
-        unique_name: str = self.unique_name(tasklet, state, sdfg)
+        unique_name: str = self.unique_name(tasklet, state)
 
         # Collect all of the input and output connectors into buses and scalars
         buses = {}  # {tasklet_name: (array_name, output_from_rtl, bytes, veclen)}
@@ -688,7 +707,7 @@ std::cout << std::flush;
 ''' if self.verilator_debug else '',
                 debug_sim_end="\nstd::cout << \"SIM {name} END\" << std::endl;" if self.verilator_debug else "",
             ),
-                                  sdfg=sdfg,
+                                  cfg=cfg,
                                   state_id=state_id,
                                   node_id=node)
 

@@ -21,10 +21,7 @@ args = [
 outputs = [(1, 'B')]
 
 
-def init_array(A, B, alpha):
-    n = N.get()
-    m = M.get()
-
+def init_array(A, B, alpha, n, m):
     alpha[0] = datatype(1.5)
 
     for i in range(m):
@@ -37,8 +34,10 @@ def init_array(A, B, alpha):
 
 @dace.program(datatype[M, M], datatype[M, N], datatype[1])
 def trmm(A, B, alpha):
+
     @dace.mapscope
     def compute(j: _[0:N]):
+
         @dace.mapscope
         def computecol(i: _[0:M]):
             tmp = dace.define_local_scalar(datatype)

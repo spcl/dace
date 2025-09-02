@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 from functools import partial
+from itertools import chain, repeat
 
 from contextlib import contextmanager
 from timeit import default_timer as timer
@@ -10,6 +11,7 @@ import numpy as np
 import sympy
 import os
 import sys
+import warnings
 
 from dace import dtypes
 from dace.config import Config
@@ -28,12 +30,20 @@ class CompiledSDFGProfiler:
 
     times: List[Tuple['SDFG', List[float]]]  #: The list of SDFGs and times for each SDFG called within the context.
 
-    def __init__(self, repetitions: int = 0, warmup: int = 0) -> None:
+    def __init__(
+        self,
+        repetitions: int = 0,
+        warmup: int = 0,
+        tqdm_leave: bool = True,
+        print_results: bool = True,
+    ) -> None:
         # Avoid import loop
         from dace.codegen.instrumentation import report
 
         self.repetitions = repetitions or int(Config.get('treps'))
         self.warmup = warmup
+        self.tqdm_leave = tqdm_leave
+        self.print_results = print_results
         if self.repetitions < 1:
             raise ValueError('Number of repetitions must be at least 1')
         if self.warmup < 0:
@@ -47,34 +57,43 @@ class CompiledSDFGProfiler:
     def __call__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
         from dace.codegen.instrumentation import report  # Avoid import loop
 
-        start = timer()
+        # zeros to overwrite start time, followed by indices for each repetition
+        iterator = chain(repeat(0, self.warmup), range(1, self.repetitions + 1))
 
-        times = [start] * (self.repetitions + 1)
-        ret = None
-        print('\nProfiling...')
-
-        iterator = range(self.warmup + self.repetitions)
         if Config.get_bool('profiling_status'):
             try:
                 from tqdm import tqdm
-                iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
-            except ImportError:
-                print('WARNING: Cannot show profiling progress, missing optional '
-                      'dependency tqdm...\n\tTo see a live progress bar please install '
-                      'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
-                      'this warning) set `profiling_status` to false in the dace '
-                      'config (~/.dace.conf).')
 
-        offset = 1 - self.warmup
+                iterator = tqdm(
+                    iterator,
+                    desc='Profiling',
+                    total=(self.warmup + self.repetitions),
+                    file=sys.stdout,
+                    leave=self.tqdm_leave,
+                )
+            except ImportError:
+                warnings.warn('Cannot show profiling progress, missing optional dependency '
+                              'tqdm...\n\tTo see a live progress bar please install tqdm '
+                              '(`pip install tqdm`)\n\tTo disable this feature (and this '
+                              'warning) set `profiling_status` to false in the dace config '
+                              '(~/.dace.conf).')
+                print('\nProfiling...')
+        else:
+            print('\nProfiling...')
+
         start_time = int(time.time())
+
+        times = np.ndarray(self.repetitions + 1, dtype=np.float64)
         times[0] = timer()
+
         for i in iterator:
             # Call function
             compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
-            if i >= self.warmup:
-                times[i + offset] = timer()
 
-        diffs = np.array([(times[i] - times[i - 1])*1e3 for i in range(1, self.repetitions + 1)])
+            times[i] = timer()
+
+        # compute pairwise differences and convert to milliseconds
+        diffs = np.diff(times) * 1e3
 
         # Add entries to the instrumentation report
         self.report.name = self.report.name or start_time
@@ -88,8 +107,9 @@ class CompiledSDFGProfiler:
         self.report.durations[(0, -1, -1)][f'Python call to {compiled_sdfg.sdfg.name}'][-1].extend(diffs)
 
         # Print profiling results
-        time_msecs = np.median(diffs)
-        print(compiled_sdfg.sdfg.name, time_msecs, 'ms')
+        if self.print_results:
+            time_msecs = np.median(diffs)
+            print(compiled_sdfg.sdfg.name, time_msecs, 'ms')
 
         # Save every call separately
         self.times.append((compiled_sdfg.sdfg, diffs))
@@ -105,11 +125,11 @@ class CompiledSDFGProfiler:
         # Restore state after skipping contents
         compiled_sdfg.do_not_execute = old_dne
 
-        return ret
+        return None
 
 
 def detect_reduction_type(wcr_str, openmp=False):
-    """ Inspects a lambda function and tries to determine if it's one of the 
+    """ Inspects a lambda function and tries to determine if it's one of the
         built-in reductions that frameworks such as MPI can provide.
 
         :param wcr_str: A Python string representation of the lambda function.
@@ -238,7 +258,7 @@ def reduce(op, in_array, out_array=None, axis=None, identity=None):
 
 def elementwise(func, in_array, out_array=None):
     """ Applies a function to each element of the array
-    
+
         :param in_array: array to apply to.
         :param out_array: output array to write the result to. If `None`, a new array will be returned
         :param func: lambda function to apply to each element.

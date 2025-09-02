@@ -48,7 +48,7 @@ def main():
         sdfg = SDFGOptimizer(sdfg).optimize()
 
     # Compile SDFG
-    sdfg.compile(outpath)
+    sdfg.compile(outpath, return_program_handle=False)
 
     # Copying header file to optional path
     if outpath is not None:

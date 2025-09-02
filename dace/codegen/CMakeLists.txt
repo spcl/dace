@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.17)
 project(dace_program)
 
 # General options
@@ -8,6 +8,9 @@ set(DACE_SRC_DIR "" CACHE STRING "Root directory of generated code files")
 set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of the source directory")
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(HLSLIB_PART_NAME "${DACE_XILINX_PART_NAME}")
+
+# CUDA
+set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
 
 # FPGA specific
 set(DACE_FPGA_AUTOBUILD_BITSTREAM OFF CACHE STRING "Automatically build bitstreams if they are not present.")
@@ -60,7 +63,7 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})
     else()
       set(DACE_ENABLE_CUDA ON)
-      set(DACE_CUDA_FILES ${DACE_CUDA_FILES} ${DACE_FILE})
+      set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
     endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "xilinx")
     set(DACE_ENABLE_XILINX ON)
@@ -103,24 +106,42 @@ include_directories(${DACE_RUNTIME_DIR}/include)
 # Global DaCe external dependencies
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+
+list(APPEND DACE_LIBS Threads::Threads)
+list(APPEND DACE_LIBS OpenMP::OpenMP_CXX)
+
 add_definitions(-DDACE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\")
-set(DACE_LIBS ${DACE_LIBS} ${CMAKE_THREAD_LIBS_INIT} ${OpenMP_CXX_LIBRARIES})
+
 if(DACE_ENABLE_MPI)
   find_package(MPI REQUIRED)
-  include_directories(${MPI_CXX_INCLUDE_PATH})
-  set(DACE_LIBS ${DACE_LIBS} ${MPI_CXX_LIBRARIES})
+  list(APPEND DACE_LIBS MPI::MPI_CXX)
 endif()
+
 if(DACE_ENABLE_CUDA)
-  find_package(CUDA REQUIRED)
-  set(CUDA_PROPAGATE_HOST_FLAGS OFF)
-  include_directories(${CUDA_INCLUDE_DIRS})
-  if (MSVC_IDE)
-    link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib/x64)
-  else()
-    link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
+  set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
+
+  find_package(CUDAToolkit REQUIRED)
+  set(CMAKE_CUDA_STANDARD 14)
+  set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+
+  # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
+  if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
+      execute_process(COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" "--run"
+                      "${CMAKE_SOURCE_DIR}/tools/get_cuda_arch.cpp"
+                      OUTPUT_VARIABLE _local_arch RESULT_VARIABLE _arch_res)
+
+    if(_arch_res EQUAL 0)
+      set(LOCAL_CUDA_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local GPUs for compilation")
+      message(STATUS "Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
+    else()
+      set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
+      message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
+    endif()
   endif()
-  set(DACE_LIBS ${DACE_LIBS} ${CUDA_LIBRARIES})
+
+  set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
+  enable_language(CUDA)
+  list(APPEND DACE_LIBS CUDA::cudart)
   add_definitions(-DWITH_CUDA)
 
   if (MSVC_IDE)
@@ -242,40 +263,10 @@ if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
   include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
 
-# Create CUDA object files
-if(DACE_ENABLE_CUDA)
-  # Get local CUDA architectures
-  if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
-      execute_process(COMMAND "${CUDA_NVCC_EXECUTABLE}" "-ccbin" "${CMAKE_CXX_COMPILER}" "--run"
-                      "${CMAKE_SOURCE_DIR}/tools/get_cuda_arch.cpp"
-                      OUTPUT_VARIABLE _arch_out RESULT_VARIABLE _arch_res
-                      ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
-
-      if(_arch_res EQUAL 0)
-        string(REGEX REPLACE "\n" ";" _arch_out "${_arch_out}")
-        list(GET _arch_out -1 _local_arch)
-        string(REGEX REPLACE " " ";" _local_arch "${_local_arch}")
-        set(LOCAL_CUDA_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local GPUs for compilation")
-        message(STATUS "Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
-      else()
-        set(LOCAL_CUDA_ARCHITECTURES "" CACHE STRING "Detected local GPUs for compilation")
-        message(STATUS "No local CUDA-capable GPUs found")
-      endif()
-  endif()
-
-  # Add flags to compile for local CUDA architectures
-  foreach(var ${LOCAL_CUDA_ARCHITECTURES})
-    list(APPEND CUDA_NVCC_FLAGS -gencode arch=compute_${var},code=sm_${var})
-  endforeach()
-
-  cuda_include_directories(${DACE_RUNTIME_DIR}/include)
-  cuda_compile(DACE_CUDA_OBJECTS ${DACE_CUDA_FILES})
-  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_CUDA_OBJECTS})
-endif() # DACE_ENABLE_CUDA
-
-
 # Create HIP object files
 if(DACE_ENABLE_HIP)
+  enable_language(HIP)
+
   # Get local AMD architectures
   if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
     # Compile and run a test program
@@ -315,8 +306,8 @@ if(DACE_ENABLE_HIP)
   set(DACE_LIBS ${DACE_LIBS} hip::host)
 
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
-  hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
-  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
+  set_source_files_properties(${DACE_HIP_FILES} PROPERTIES LANGUAGE HIP)
+  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
 endif() # DACE_ENABLE_HIP
 
 # create verilator RTL simulation objects
@@ -380,21 +371,12 @@ if(DACE_ENABLE_RTL)
     endif()
 
     # add verilated.cpp source
-    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp")
+    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp" "${VERILATOR_ROOT}/include/verilated_threads.cpp" )
 
     foreach(RTL_FILE ${DACE_RTL_FILES})
 
       # extract design name
       get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
-
-      # add verilated .cpp files to the dace cpp source file var
-      set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
-      set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
-      # add file generated by verilator >=v4.036
-      if("${verilator_VERSION}" VERSION_GREATER_EQUAL "4.036")
-          set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Slow.cpp")
-      endif()
-      set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
 
       # add verilated design
       add_library("${RTL_FILE_NAME}" OBJECT)
@@ -405,6 +387,8 @@ if(DACE_ENABLE_RTL)
 
       # verilate design
       verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
+      file(GLOB VSRC_FILES "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/*.cpp")
+      set(DACE_CPP_FILES "${DACE_CPP_FILES}" ${VSRC_FILES} "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
 
       # add object library for linking
       set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
@@ -580,7 +564,7 @@ include("targets/mlir/mlir.cmake")
 
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
-target_link_libraries(${DACE_PROGRAM_NAME} ${DACE_LIBS})
+target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 
 # Add additional required files
 if(DACE_ENABLE_INTELFPGA)
@@ -599,6 +583,7 @@ if(DACE_ENABLE_INTELFPGA)
                         DEPENDS ${DACE_PROGRAM_NAME}_hardware.aocx)
   endif()
 endif()
+
 if(DACE_ENABLE_XILINX)
   if(DACE_XILINX_MODE STREQUAL "software_emulation" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
     add_custom_target(autobuild_bitstream ALL
@@ -619,7 +604,7 @@ endif()
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
-target_link_libraries(dacestub_${DACE_PROGRAM_NAME} ${CMAKE_THREAD_LIBS_INIT} ${OpenMP_CXX_LIBRARIES})
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
 
 # Windows-specific fixes
 if (MSVC_IDE)

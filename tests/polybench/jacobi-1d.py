@@ -50,8 +50,7 @@ def jacobi1d(A, B):  #, N, tsteps):
             b = 0.33333 * (a1 + a2 + a3)
 
 
-def init_array(A, B):  #, N, tsteps):
-    n = N.get()
+def init_array(A, B, n, tsteps):
     for i in range(n):
         A[i] = datatype(i + 2) / n
         B[i] = datatype(i + 3) / n

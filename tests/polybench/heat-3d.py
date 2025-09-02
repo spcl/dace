@@ -53,8 +53,7 @@ def heat3d(A, B):  #, N, tsteps):
                 a
 
 
-def init_array(A, B):  #, N, tsteps):
-    n = N.get()
+def init_array(A, B, n, tsteps):
     for i in range(n):
         for j in range(n):
             for k in range(n):

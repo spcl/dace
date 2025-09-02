@@ -12,6 +12,7 @@ H = dace.symbol('H')
 
 @dace.program(dace.float32[W, H], dace.float32[H, W, H], dace.float32[3], dace.float32[1])
 def confres_test(A, B, red1, red2):
+
     @dace.map(_[0:H - 1, 0:W - 1])
     def compute(i, j):
         a << A[j, i]
@@ -32,18 +33,18 @@ def confres_test(A, B, red1, red2):
 
 
 def test():
-    W.set(20)
-    H.set(20)
+    W = 20
+    H = 20
 
-    print('Conflict Resolution Test %dx%d' % (W.get(), H.get()))
+    print('Conflict Resolution Test %dx%d' % (W, H))
 
     A = dace.ndarray([W, H], dtype=dace.float32)
     B = dace.ndarray([H, W, H], dtype=dace.float32)
     red1 = dace.ndarray([3], dtype=dace.float32)
     red2 = dace.ndarray([1], dtype=dace.float32)
 
-    A[:] = np.random.rand(H.get(), W.get()).astype(dace.float32.type)
-    B[:] = np.random.rand(H.get(), W.get(), H.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(H, W).astype(dace.float32.type)
+    B[:] = np.random.rand(H, W, H).astype(dace.float32.type)
     red1[:] = dace.float32(0)
     red2[:] = dace.float32(0)
 

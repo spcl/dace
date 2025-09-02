@@ -11,8 +11,10 @@ W = dace.symbol('W')
 
 @dace.program(dace.float64[H, W], dace.float64[H, W])
 def cudahello(V, Vout):
+
     @dace.mapscope(_[0:H:8, 0:W:32])
     def multiplication(i, j):
+
         @dace.map(_[0:8, 0:32])
         def mult_block(bi, bj):
             in_V << V[i + bi, j + bj]
@@ -21,19 +23,19 @@ def cudahello(V, Vout):
 
 
 def _test(sdfg):
-    W.set(128)
-    H.set(64)
+    W = 128
+    H = 64
 
-    print('Vector double CUDA (shared memory 2D) %dx%d' % (W.get(), H.get()))
+    print('Vector double CUDA (shared memory 2D) %dx%d' % (W, H))
 
     V = dace.ndarray([H, W], dace.float64)
     Vout = dace.ndarray([H, W], dace.float64)
-    V[:] = np.random.rand(H.get(), W.get()).astype(dace.float64.type)
+    V[:] = np.random.rand(H, W).astype(dace.float64.type)
     Vout[:] = dace.float64(0)
 
     sdfg(V=V, Vout=Vout, H=H, W=W)
 
-    diff = np.linalg.norm(2 * V - Vout) / (H.get() * W.get())
+    diff = np.linalg.norm(2 * V - Vout) / (H * W)
     print("Difference:", diff)
     assert diff <= 1e-5
 
@@ -61,6 +63,7 @@ def test_gpu_localstorage():
 
 @pytest.mark.gpu
 def test_gpu_2localstorage():
+
     @dace.program
     def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
         for i, j in dace.map[0:H:8, 0:W:32]:
@@ -90,6 +93,7 @@ def test_gpu_2localstorage():
 
 @pytest.mark.gpu
 def test_gpu_2shared_for():
+
     @dace.program
     def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
         for i, j in dace.map[0:H:8, 0:W:32]:

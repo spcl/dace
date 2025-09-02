@@ -1,13 +1,14 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 import numpy as np
+
 from dace import Memlet
-from dace.libraries.blas.nodes import Transpose
-from dace.libraries.lapack.nodes import Getrf, Getrs
+from dace.libraries.lapack import Getrf, Getrs
+from dace.libraries.standard import Transpose
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.lapack import environments
 from dace.libraries.blas import environments as blas_environments
@@ -191,7 +192,8 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         shape_bin = squeezed_bin.size()
         shape_out = squeezed_out.size()
         if shape_ain[0] != shape_ain[1]:
-            raise ValueError("linalg.solve only supported with first input a " "square matrix")
+            raise ValueError("linalg.solve only supported with first input a "
+                             "square matrix")
         if shape_ain[-1] != shape_bin[0]:
             raise ValueError("A column must be equal to B rows")
         if not np.array_equal(shape_bin, shape_out):

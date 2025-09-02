@@ -1,0 +1,105 @@
+name: NASA/NOAA pyFV3 repository build test
+
+# Temporarily disabled for main, and instead applied to a specific DaCe v1 maintenance branch (v1/maintenance). Once
+# the FV3 bridge has been adapted to DaCe v1, this will need to be reverted back to apply to main.
+on:
+  push:
+    #branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
+  pull_request:
+    #branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
+  merge_group:
+    #branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
+
+defaults:
+    run:
+      shell: bash
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+    build_and_validate_pyFV3:
+      if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+      runs-on: ubuntu-latest
+      strategy:
+          matrix:
+              python-version: [3.11.7]
+
+      steps:
+      - uses: actions/checkout@v4
+        with:
+              repository: 'NOAA-GFDL/PyFV3'
+              ref: 'ci/DaCe'
+              submodules: 'recursive'
+              path: 'pyFV3'
+      - uses: actions/checkout@v4
+        with:
+            path: 'dace'
+            submodules: 'recursive'
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+              python-version: ${{ matrix.python-version }}
+      - name: Install library dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev libboost-all-dev
+          gcc --version
+      # Because Github doesn't allow us to do a git checkout in code
+      # we use a trick to checkout DaCe first (not using the external submodule)
+      # install the full suite via requirements_dev, then re-install the correct DaCe
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip wheel setuptools
+          pip install -e ./pyFV3[develop]
+          pip install -e ./dace
+      - name: Download data
+        run: |
+          cd pyFV3
+          mkdir -p test_data
+          cd test_data
+          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.D_SW.tar.gz
+          tar -xzvf 8.1.3_c12_6ranks_standard.D_SW.tar.gz
+          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
+          tar -xzvf 8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
+          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.Remapping.tar.gz
+          tar -xzvf 8.1.3_c12_6ranks_standard.Remapping.tar.gz
+          cd ../..
+      # Clean up caches between run for stale un-expanded SDFG to trip the build system (NDSL side issue)
+      - name: "Regression test: Riemman Solver on D-grid (RiemSolver3)"
+        env:
+          FV3_DACEMODE: BuildAndRun
+          PACE_CONSTANTS: GFS
+          PACE_LOGLEVEL: Debug
+        run: |
+          pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
+              --backend=dace:cpu --which_modules=Riem_Solver3 \
+              --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
+              ./pyFV3/tests/savepoint
+          rm -r ./.gt_cache_FV3_A
+      - name: "Regression test: Shallow water lagrangian dynamics on D-grid (D_SW) (on rank 0 only)"
+        env:
+          FV3_DACEMODE: BuildAndRun
+          PACE_CONSTANTS: GFS
+          PACE_LOGLEVEL: Debug
+        run: |
+          pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
+              --backend=dace:cpu --which_modules=D_SW --which_rank=0 \
+              --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
+              ./pyFV3/tests/savepoint
+          rm -r ./.gt_cache_FV3_A
+      - name: "Regression test: Remapping (on rank 0 only)"
+        env:
+          FV3_DACEMODE: BuildAndRun
+          PACE_CONSTANTS: GFS
+          PACE_LOGLEVEL: Debug
+        run: |
+          pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
+              --backend=dace:cpu --which_modules=Remapping --which_rank=0 \
+              --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
+              ./pyFV3/tests/savepoint
+          rm -r ./.gt_cache_FV3_A

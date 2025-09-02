@@ -21,6 +21,7 @@ def _instrument(sdfg: dace.SDFG, instr: dace.DataInstrumentationType, ignore: Op
 
 @pytest.mark.datainstrument
 def test_dump():
+
     @dace.program
     def tester(A: dace.float64[20, 20]):
         tmp = A + 1
@@ -43,6 +44,7 @@ def test_dump():
 
 @pytest.mark.gpu
 def test_dump_gpu():
+
     @dace.program
     def tester(A: dace.float64[20, 20]):
         tmp = A + 1
@@ -68,6 +70,7 @@ def test_dump_gpu():
 
 @pytest.mark.datainstrument
 def test_restore():
+
     @dace.program
     def tester(A: dace.float64[20, 20]):
         return A + 5
@@ -92,6 +95,7 @@ def test_restore():
 
 @pytest.mark.gpu
 def test_restore_gpu():
+
     @dace.program
     def tester(A: dace.float64[20, 20]):
         return A + 5
@@ -119,6 +123,7 @@ def test_restore_gpu():
 
 @pytest.mark.datainstrument
 def test_dinstr_versioning():
+
     @dace.program
     def dinstr(A: dace.float64[20], B: dace.float64[20]):
         B[:] = A + 1
@@ -145,6 +150,7 @@ def test_dinstr_versioning():
 
 @pytest.mark.datainstrument
 def test_dinstr_in_loop():
+
     @dace.program
     def dinstr(A: dace.float64[20]):
         tmp = np.copy(A)
@@ -167,6 +173,7 @@ def test_dinstr_in_loop():
 
 @pytest.mark.datainstrument
 def test_dinstr_strided():
+
     @dace.program
     def dinstr(A: dace.float64[20, 20]):
         tmp = A + 1
@@ -221,6 +228,7 @@ def test_dinstr_symbolic():
 
 @pytest.mark.datainstrument
 def test_dinstr_hooks():
+
     @dace
     def sample(a: dace.float64, b: dace.float64):
         arr = a + b
@@ -242,6 +250,7 @@ def test_dinstr_hooks():
 
 @pytest.mark.datainstrument
 def test_dinstr_in_loop_conditional_cpp():
+
     @dace.program
     def dinstr(A: dace.float64[20]):
         tmp = np.copy(A)
@@ -271,6 +280,7 @@ def test_dinstr_in_loop_conditional_cpp():
 
 @pytest.mark.datainstrument
 def test_dinstr_in_loop_conditional_python():
+
     @dace.program
     def dinstr(A: dace.float64[20]):
         tmp = np.copy(A)
@@ -302,6 +312,7 @@ def test_dinstr_in_loop_conditional_python():
 
 @pytest.mark.datainstrument
 def test_symbol_dump():
+
     @dace.program
     def dinstr(A: dace.float64[20]):
         for i in range(19):
@@ -317,13 +328,14 @@ def test_symbol_dump():
 
     assert len(dreport.keys()) == 1
     assert 'i' in dreport.keys()
-    assert len(dreport['i']) == 22
-    desired = [0] + list(range(0, 20))
-    assert np.allclose(dreport['i'][:21], desired)
+    assert len(dreport['i']) == 19
+    desired = list(range(0, 19))
+    assert np.allclose(dreport['i'], desired)
 
 
 @pytest.mark.datainstrument
 def test_symbol_dump_conditional():
+
     @dace.program
     def dinstr(A: dace.float64[20]):
         for i in range(19):
@@ -353,7 +365,10 @@ def test_symbol_restore():
         for i in range(j):
             A[i] = 0
 
-    sdfg = dinstr.to_sdfg(simplify=True)
+    # Simplification is turned off to avoid killing the initial start state, since symbol instrumentation can for now
+    # only be triggered on SDFG states.
+    # TODO(later): Make it so symbols can be instrumented on any Control flow block
+    sdfg = dinstr.to_sdfg(simplify=False)
     sdfg.start_state.symbol_instrument = dace.DataInstrumentationType.Save
     A = np.ones((20, ))
     sdfg(A, j=15)

@@ -4,9 +4,12 @@ from dace.transformation.dataflow import CopyToMap
 import copy
 import pytest
 import numpy as np
+import re
+from typing import Tuple, Optional
 
 
 def _copy_to_map(storage: dace.StorageType):
+
     @dace
     def somecopy(a, b):
         b[:] = a
@@ -24,6 +27,7 @@ def _copy_to_map(storage: dace.StorageType):
 
 
 def _flatten_to_map(storage: dace.StorageType):
+
     @dace
     def somecopy(a, b):
         b[:] = a.flatten()
@@ -103,8 +107,14 @@ def test_preprocess():
 
 
 if __name__ == '__main__':
+
     test_copy_to_map()
-    test_copy_to_map_gpu()
     test_flatten_to_map()
-    test_flatten_to_map_gpu()
-    test_preprocess()
+    try:
+        import cupy
+        test_copy_to_map_gpu()
+        test_flatten_to_map_gpu()
+        test_preprocess()
+    except ModuleNotFoundError as E:
+        if "'cupy'" not in str(E):
+            raise

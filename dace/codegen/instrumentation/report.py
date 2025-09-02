@@ -16,7 +16,7 @@ UUIDType = Tuple[int, int, int]
 def _uuid_to_dict(uuid: UUIDType) -> Dict[str, int]:
     result = {}
     if uuid[0] != -1:
-        result['sdfg_id'] = uuid[0]
+        result['cfg_id'] = uuid[0]
     if uuid[1] != -1:
         result['state_id'] = uuid[1]
     if uuid[2] != -1:
@@ -77,19 +77,20 @@ class InstrumentationReport(object):
 
     Instrumentation reports are stored as JSON files, in the Chrome Tracing format.
     """
+
     @staticmethod
     def get_event_uuid_and_other_info(event) -> Tuple[UUIDType, Dict[str, Any]]:
         uuid = (-1, -1, -1)
         other_info = {}
         if 'args' in event:
             args = event['args']
-            if 'sdfg_id' in args and args['sdfg_id'] is not None:
-                uuid = (args['sdfg_id'], -1, -1)
+            if 'cfg_id' in args and args['cfg_id'] is not None:
+                uuid = (args['cfg_id'], -1, -1)
                 if 'state_id' in args and args['state_id'] is not None:
                     uuid = (uuid[0], args['state_id'], -1)
                     if 'id' in args and args['id'] is not None:
                         uuid = (uuid[0], uuid[1], args['id'])
-            other_info = {k: v for k, v in args.items() if k not in ('sdfg_id', 'state_id', 'id')}
+            other_info = {k: v for k, v in args.items() if k not in ('cfg_id', 'state_id', 'id')}
         return uuid, other_info
 
     def __init__(self, filename: str):
@@ -392,7 +393,7 @@ class InstrumentationReport(object):
 
     def as_csv(self) -> Tuple[str, str]:
         """
-        Generates a CSV version of the report.        
+        Generates a CSV version of the report.
 
         :return: A tuple of two strings: (durations CSV, counters CSV).
         """
@@ -411,7 +412,8 @@ class InstrumentationReport(object):
                         cnt = len(runtimes)
                         mint, meant, mediant, maxt = np.min(nptimes), np.mean(nptimes), np.median(nptimes), np.max(
                             nptimes)
-                        durations_csv.write(f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
+                        durations_csv.write(
+                            f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
 
         # Create counters CSV
         if len(self.counters) > 0:

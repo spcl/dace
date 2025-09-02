@@ -19,6 +19,7 @@ def test_native_unroll():
 
 def test_dace_unroll():
     """ Tests that unrolling functionality works within DaCe programs. """
+
     @dace.program
     def tounroll(A: dace.float64[1]):
         for i in dace.unroll(range(1, 4)):
@@ -36,6 +37,7 @@ def test_dace_unroll():
 
 def test_dace_unroll_multistatement():
     """ Tests unrolling functionality with multiple statements. """
+
     @dace.program
     def tounroll(A: dace.float64[1]):
         for i in dace.unroll(range(1, 4)):
@@ -55,6 +57,7 @@ def test_dace_unroll_multistatement():
 
 def test_dace_unroll_break():
     """ Tests unrolling functionality with control flow statements. """
+
     @dace.program
     def tounroll(A: dace.float64[1]):
         for i in dace.unroll(range(1, 4)):
@@ -73,6 +76,7 @@ def test_dace_unroll_generator():
     Tests that dace does not unroll arbitrary generators by default, but does
     so if explicitly defined with dace.unroll.
     """
+
     def mygenerator():
         for i in range(5):
             yield i * i
@@ -99,6 +103,7 @@ def test_dace_unroll_generator():
 
 def test_auto_unroll_tuple():
     """ Tests that unrolling functionality works automatically on tuples. """
+
     @dace.program
     def tounroll(A: dace.float64[1], B: dace.float64[2], C: dace.float64[1]):
         for arr in (A, B[1], C, B[0]):
@@ -118,6 +123,7 @@ def test_auto_unroll_dictionary():
     """
     Tests that unrolling functionality works automatically on dictionaries.
     """
+
     @dace.program
     def tounroll(A: dace.float64[1], d: dace.compiletime):
         for val in d:
@@ -133,6 +139,7 @@ def test_auto_unroll_dictionary_method():
     """
     Tests that unrolling functionality works automatically on dict methods.
     """
+
     @dace.program
     def tounroll(A: dace.float64[1], d: dace.compiletime):
         for val in d.values():
@@ -146,6 +153,7 @@ def test_auto_unroll_dictionary_method():
 
 # Raise error if ndarray is the generator and dace.unroll was not specified
 def test_ndarray_generator():
+
     @dace.program
     def tounroll(A: dace.float64[1], values: dace.float64[5]):
         for val in values:
@@ -159,6 +167,7 @@ def test_ndarray_generator():
 
 
 def test_tuple_elements_enumerate():
+
     @dace.program
     def tounroll(A: dace.float64[3]):
         for i, val in enumerate([1, 2, 3]):
@@ -167,6 +176,52 @@ def test_tuple_elements_enumerate():
     a = np.zeros([3])
     tounroll(a)
     assert np.allclose(a, np.array([1, 2, 3]))
+
+
+def test_list_global_enumerate():
+    tracer_variables = ["vapor", "rain", "nope"]
+
+    @dace.program
+    def enumerate_parsing(
+            A,
+            tracers: dace.compiletime,  # Dict[str, np.float64]
+    ):
+        for i, q in enumerate(tracer_variables[0:2]):
+            tracers[q][:] = A  # type:ignore
+
+    a = np.ones([3])
+    q = {
+        "vapor": np.zeros([3]),
+        "rain": np.zeros([3]),
+        "nope": np.zeros([3]),
+    }
+    enumerate_parsing(a, q)
+    assert np.allclose(q["vapor"], np.array([1, 1, 1]))
+    assert np.allclose(q["rain"], np.array([1, 1, 1]))
+    assert np.allclose(q["nope"], np.array([0, 0, 0]))
+
+
+def test_tuple_global_enumerate():
+    tracer_variables = ("vapor", "rain", "nope")
+
+    @dace.program
+    def enumerate_parsing(
+            A,
+            tracers: dace.compiletime,  # Dict[str, np.float64]
+    ):
+        for i, q in enumerate(tracer_variables[0:2]):
+            tracers[q][:] = A  # type:ignore
+
+    a = np.ones([3])
+    q = {
+        "vapor": np.zeros([3]),
+        "rain": np.zeros([3]),
+        "nope": np.zeros([3]),
+    }
+    enumerate_parsing(a, q)
+    assert np.allclose(q["vapor"], np.array([1, 1, 1]))
+    assert np.allclose(q["rain"], np.array([1, 1, 1]))
+    assert np.allclose(q["nope"], np.array([0, 0, 0]))
 
 
 def test_tuple_elements_zip():
@@ -213,8 +268,11 @@ def test_unroll_threshold(thres):
 
 
 def test_deepcopy():
+
     class Nocopy(SDFGConvertible):
+
         def __sdfg__(self, *args, **kwargs):
+
             @dace
             def bla(a: dace.float64[20]):
                 return a
@@ -244,6 +302,7 @@ def test_deepcopy():
 
 
 class Wrapper:
+
     def __init__(self) -> None:
         self._an_array = np.ones((12), np.float64)
 
@@ -273,6 +332,7 @@ def test_arrays_keys_closure():
 
 
 def test_arrays_keys_daceconstant():
+
     @dace.program
     def prog(d: dace.compiletime):
         for arr in d.keys():
@@ -301,6 +361,7 @@ def test_arrays_values():
 
 
 def test_objects():
+
     @dace.program
     def nested(arr, scal):
         arr[:] = arr[:] * scal

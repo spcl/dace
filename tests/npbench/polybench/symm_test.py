@@ -94,7 +94,6 @@ def test_cpu():
     run_symm(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Compilation error")
 @pytest.mark.gpu
 def test_gpu():
     run_symm(dace.dtypes.DeviceType.GPU)

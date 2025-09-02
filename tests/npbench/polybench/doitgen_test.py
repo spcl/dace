@@ -5,11 +5,9 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.transformation.auto.auto_optimize import auto_optimize
 
 # Data set sizes
 # NQ, NR, NP
@@ -30,7 +28,7 @@ def doitgen_kernel(A: dc.float64[NR, NQ, NP], C4: dc.float64[NP, NP]):
     # Ideal - not working because Matmul with dim > 3 unsupported
     # A[:] = np.reshape(np.reshape(A, (NR, NQ, 1, NP)) @ C4, (NR, NQ, NP))
     for r in range(NR):
-        A[r, :, :] = np.reshape(np.reshape(A[r], (NQ, 1, NP)) @ C4, (NQ, NP))
+        A[r, :, :] = np.reshape(np.reshape(A[r], (NQ, NP)) @ C4, (NQ, NP))
 
 
 def initialize(NR, NQ, NP, datatype=np.float64):
@@ -89,7 +87,6 @@ def test_cpu():
     run_doitgen(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="GPU Auto-Opt error")
 @pytest.mark.gpu
 def test_gpu():
     run_doitgen(dace.dtypes.DeviceType.GPU)

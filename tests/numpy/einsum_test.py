@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import dace
+from dace import symbolic
 import numpy as np
 
 M = dace.symbol('M')
@@ -8,6 +9,7 @@ N = dace.symbol('N')
 
 
 def test_general_einsum():
+
     @dace.program
     def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M], C: dace.float64[M]):
         return np.einsum('ij,ji,i->', A, B, C)
@@ -20,6 +22,7 @@ def test_general_einsum():
 
 
 def test_matmul():
+
     @dace.program
     def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M]):
         return np.einsum('ik,kj', A, B)
@@ -30,6 +33,7 @@ def test_matmul():
 
 
 def test_batch_matmul():
+
     @dace.program
     def einsumtest(A: dace.float64[4, M, N], B: dace.float64[4, N, M]):
         return np.einsum('bik,bkj->bij', A, B)
@@ -40,6 +44,7 @@ def test_batch_matmul():
 
 
 def test_opteinsum_sym():
+
     @dace.program
     def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
                    D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
@@ -175,6 +180,7 @@ def test_lift_einsum_reduce():
     sdfg(A, B)
     assert np.allclose(B, np.einsum('ijk->', A))
 
+
 def test_lift_einsum_reduce_partial():
     from dace.libraries.standard.nodes.reduce import Reduce
     from dace.libraries.blas.nodes.einsum import Einsum
@@ -197,7 +203,7 @@ def test_lift_einsum_reduce_partial():
     # Specialize to ensure Reduce node is there
     sdfg.expand_library_nodes(recursive=False)
     rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
-    assert tuple(rnode.axes) == (1,)
+    assert tuple(rnode.axes) == (1, )
 
     sdfg(A, B)
     assert np.allclose(B, np.einsum('ijk->ik', A))
@@ -256,18 +262,18 @@ def test_lift_einsum_beta():
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, Einsum):
             assert node.einsum_str == 'ij,jk->ik'
-            assert node.alpha == 1.0
-            assert node.beta == 1.0
+            assert symbolic.equal_valued(1, node.alpha)
+            assert symbolic.equal_valued(1, node.beta)
 
     assert np.allclose(sdfg(A, B), C)
 
 
-@pytest.mark.parametrize('symbolic', (False, True))
-def test_lift_einsum_alpha_beta(symbolic):
+@pytest.mark.parametrize('symbolic_alpha', (False, True))
+def test_lift_einsum_alpha_beta(symbolic_alpha):
     from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
 
-    alph = dace.symbol('alph') if symbolic else 2
+    alph = dace.symbol('alph') if symbolic_alpha else 2
 
     @dace.program
     def tester(A, B):
@@ -290,11 +296,29 @@ def test_lift_einsum_alpha_beta(symbolic):
         if isinstance(node, Einsum):
             assert node.einsum_str == 'ij,jk->ik'
             assert node.alpha == alph
-            assert node.beta == 1.0
+            assert symbolic.equal_valued(1, node.beta)
 
-    if not symbolic:
+    if not symbolic_alpha:
         C = 1 + 2 * A @ B
         assert np.allclose(sdfg(A, B), C)
+
+
+def test_c_transposed():
+    N, F_in, F_out = 2, 3, 3
+
+    @dace.program
+    def fn(a, b, c):
+        c[:] = np.einsum('nm,nf->fm', a, b)
+
+    a = np.random.rand(N, F_in)
+    b = np.random.rand(N, F_out)
+    c_expected = np.zeros((F_out, F_in))
+    c = np.zeros((F_out, F_in))
+
+    fn.f(a, b, c_expected)
+    fn(a, b, c)
+
+    assert np.allclose(c, c_expected)
 
 
 if __name__ == '__main__':
@@ -312,3 +336,4 @@ if __name__ == '__main__':
     test_lift_einsum_beta()
     test_lift_einsum_alpha_beta(False)
     test_lift_einsum_alpha_beta(True)
+    test_c_transposed()

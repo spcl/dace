@@ -8,12 +8,12 @@ M = dace.symbol("M")
 K = dace.symbol("K")
 
 
-def make_sdfg(specialized):
+def make_sdfg(specialized, n, k, m):
 
     if specialized:
-        sdfg = dace.SDFG("mm_fpga_pipelined_{}x{}x{}".format(N.get(), K.get(), M.get()))
+        sdfg = dace.SDFG("mm_fpga_pipelined_{}x{}x{}".format(n, k, m))
     else:
-        sdfg = dace.SDFG("mm_fpga_pipelined_NxKx{}".format(M.get()))
+        sdfg = dace.SDFG("mm_fpga_pipelined_NxKx{}".format(m))
 
     ###########################################################################
     # Copy data to FPGA
@@ -129,7 +129,7 @@ def make_sdfg(specialized):
     else_state.add_memlet_path(else_C_in, else_tasklet, memlet=else_c_in_memlet, dst_conn="c_in")
     else_state.add_memlet_path(else_tasklet, else_C_out, memlet=else_c_out_memlet, src_conn="c_out")
 
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_val", "B_val", "C_in"}, {"C_out"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, {"A_val", "B_val", "C_in"}, {"C_out"})
 
     ###########################################################################
     # Compute continued
@@ -183,37 +183,34 @@ if __name__ == "__main__":
                         help="Fix all loop bounds at compile time/in hardware")
     args = vars(parser.parse_args())
 
-    if not args["specialize"]:
-        M.set(args["M"])
-        # M must always be specialized, as it's used for the static buffer size
-        sdfg = make_sdfg(False)
-        sdfg.specialize(dict(M=M))
-        N.set(args["N"])
-        K.set(args["K"])
-    else:
-        M.set(args["M"])
-        N.set(args["N"])
-        K.set(args["K"])
-        sdfg = make_sdfg(True)
-        sdfg.specialize(dict(M=M, N=N, K=K))
+    n = args.N
+    k = args.K
+    m = args.M
 
-    print("Matrix multiplication {}x{}x{} ({}specialized)".format(M.get(), N.get(), K.get(),
-                                                                  "" if args["specialize"] else "not "))
+    if not args["specialize"]:
+        # M must always be specialized, as it's used for the static buffer size
+        sdfg = make_sdfg(False, n, k, m)
+        sdfg.specialize(dict(M=m))
+    else:
+        sdfg = make_sdfg(True, n, k, m)
+        sdfg.specialize(dict(M=m, N=n, K=k))
+
+    print("Matrix multiplication {}x{}x{} ({}specialized)".format(m, n, k, "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
-    A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)
-    B = np.ndarray([K.get(), M.get()], dtype=dace.float32.type)
-    C = np.ndarray([N.get(), M.get()], dtype=dace.float32.type)
-    A[:] = np.random.rand(M.get(), N.get()).astype(dace.float32.type)
-    B[:] = np.random.rand(N.get(), K.get()).astype(dace.float32.type)
+    A = np.ndarray([n, k], dtype=dace.float32.type)
+    B = np.ndarray([k, m], dtype=dace.float32.type)
+    C = np.ndarray([n, m], dtype=dace.float32.type)
+    A[:] = np.random.rand(m, n).astype(dace.float32.type)
+    B[:] = np.random.rand(n, k).astype(dace.float32.type)
     C[:] = dace.float32(0)
 
     if args["specialize"]:
         sdfg(A=A, B=B, C=C)
     else:
-        sdfg(A=A, B=B, C=C, N=N, K=K)
+        sdfg(A=A, B=B, C=C, N=n, K=k)
 
-    diff = np.linalg.norm((A @ B) - C) / float(M.get() * K.get())
+    diff = np.linalg.norm((A @ B) - C) / float(m * k)
     if diff > 1e-6:
         raise ValueError(f"Verification failed, difference: {diff}")
     else:

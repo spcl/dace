@@ -1,5 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+    Test suite for testing RTL tasklets in DaCe with Verilator as a backend for simulation.
+"""
 import dace
 import numpy as np
 import pytest
@@ -13,7 +15,6 @@ def test_tasklet_array():
 
     n = 128
     N = dace.symbol('N')
-    N.set(n)
 
     # add sdfg
     sdfg = dace.SDFG('rtl_tasklet_array')
@@ -57,12 +58,12 @@ def test_tasklet_array():
     state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0:N]'))
 
     # validate sdfg
-    sdfg.specialize({'N': N.get()})
+    sdfg.specialize({'N': n})
     sdfg.validate()
 
     # init data structures
-    a = np.random.randint(0, 100, N.get()).astype(np.int32)
-    b = np.zeros((N.get(), )).astype(np.int32)
+    a = np.random.randint(0, 100, n).astype(np.int32)
+    b = np.zeros((n, )).astype(np.int32)
 
     # call program
     sdfg(A=a, B=b)
@@ -581,9 +582,6 @@ def test_tasklet_map():
     N = dace.symbol('N')
     M = dace.symbol('M')
     W = dace.symbol('W')
-    N.set(n)
-    M.set(m)
-    W.set(w)
 
     # add sdfg
     sdfg = dace.SDFG('rtl_tasklet_map')
@@ -592,9 +590,9 @@ def test_tasklet_map():
     state = sdfg.add_state()
 
     # add arrays
-    sdfg.add_array('A', [M, N], dtype=dace.vector(dace.int32, W.get()))
-    sdfg.add_array('B', [M, N], dtype=dace.vector(dace.int32, W.get()))
-    sdfg.add_array('C', [M, N], dtype=dace.vector(dace.int32, W.get()))
+    sdfg.add_array('A', [M, N], dtype=dace.vector(dace.int32, w))
+    sdfg.add_array('B', [M, N], dtype=dace.vector(dace.int32, w))
+    sdfg.add_array('C', [M, N], dtype=dace.vector(dace.int32, w))
 
     mentry, mexit = state.add_map('compute_map', {'k': '0:M'})
 
@@ -672,7 +670,7 @@ end''',
     state.add_memlet_path(B, mentry, tasklet, memlet=dace.Memlet('B[k,0:N]'), dst_conn='b')
     state.add_memlet_path(tasklet, mexit, C, memlet=dace.Memlet('C[k,0:N]'), src_conn='c')
 
-    sdfg.specialize({'M': M, 'N': N, 'W': W})
+    sdfg.specialize({'M': m, 'N': n, 'W': w})
     sdfg.validate()
 
     # init data structures

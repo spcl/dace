@@ -17,19 +17,14 @@ def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
     """
     if isinstance(class_or_name, str):
         return [class_or_name]
-
-    classes = [class_or_name.__name__]
-    for base in class_or_name.__bases__:
-        classes.extend(_get_all_bases(base))
-
-    return deduplicate(classes)
+    return [base.__name__ for base in class_or_name.__mro__]
 
 
 class Replacements(object):
-    """ 
-    A management singleton for functions that replace existing function calls 
+    """
+    A management singleton for functions that replace existing function calls
     with either an SDFG subgraph.
-    Used in the Python frontend to replace functions such as `numpy.ndarray` 
+    Used in the Python frontend to replace functions such as `numpy.ndarray`
     and operators such as `Array.__add__`.
     """
 
@@ -139,13 +134,13 @@ def replaces_ufunc(func: Callable[..., Tuple[str]], name: str):
 
 @paramdec
 def replaces_method(func: Callable[..., Tuple[str]], classname: str, method_name: str):
-    """ 
+    """
     Registers a replacement sub-SDFG generator for methods on objects.
 
     :param func: A function that receives an SDFG, SDFGState, and the original
-                 function arguments, returning a tuple of array names to 
+                 function arguments, returning a tuple of array names to
                  connect to the outputs.
-    :param classname: Full name (pydoc-compliant, including package) of the 
+    :param classname: Full name (pydoc-compliant, including package) of the
                       object class.
     :param method_name: Name of the invoked method.
     """
@@ -155,13 +150,13 @@ def replaces_method(func: Callable[..., Tuple[str]], classname: str, method_name
 
 @paramdec
 def replaces_attribute(func: Callable[..., Tuple[str]], classname: str, attr_name: str):
-    """ 
+    """
     Registers a replacement sub-SDFG generator for object attributes.
-    
+
     :param func: A function that receives an SDFG, SDFGState, and the original
-                 function arguments, returning a tuple of array names to 
+                 function arguments, returning a tuple of array names to
                  connect to the outputs.
-    :param classname: Full name (pydoc-compliant, including package) of the 
+    :param classname: Full name (pydoc-compliant, including package) of the
                       object class.
     :param attr_name: Name of the attribute.
     """

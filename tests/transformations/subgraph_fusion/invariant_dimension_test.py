@@ -16,14 +16,11 @@ import sys
 from util import fusion
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
-N.set(50)
-M.set(60)
-O.set(70)
 
-A = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
-B = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
-C = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
-out1 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+A = np.random.rand(50, 60, 70).astype(np.float64)
+B = np.random.rand(50, 60, 70).astype(np.float64)
+C = np.random.rand(50, 60, 70).astype(np.float64)
+out1 = np.ndarray((50, 60, 70), np.float64)
 
 
 @dace.program
@@ -73,7 +70,7 @@ def fix_sdfg(sdfg, graph):
 
     # next up replace sdfg
     inner_sdfg = helper_sdfg.to_sdfg()
-    nnode = graph.add_nested_sdfg(inner_sdfg, sdfg, {'AA', 'BB', 'CC'}, {'CC'})
+    nnode = graph.add_nested_sdfg(inner_sdfg, {'AA', 'BB', 'CC'}, {'CC'})
     # redirect edges
     connectors = []
     for e in graph.in_edges(nested_original):
@@ -101,14 +98,14 @@ def fix_sdfg(sdfg, graph):
 
 
 def _test_quantitatively(sdfg, graph):
-    A = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
-    B = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
-    C1 = np.zeros([N.get(), M.get(), O.get()], dtype=np.float64)
-    C2 = np.zeros([N.get(), M.get(), O.get()], dtype=np.float64)
+    A = np.random.rand(50, 60, 70).astype(np.float64)
+    B = np.random.rand(50, 60, 70).astype(np.float64)
+    C1 = np.zeros([50, 60, 70], dtype=np.float64)
+    C2 = np.zeros([50, 60, 70], dtype=np.float64)
 
     sdfg.validate()
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C1, N=N, M=M, O=O)
+    csdfg(A=A, B=B, C=C1, N=50, M=60, O=70)
     del csdfg
 
     subgraph = SubgraphView(graph, graph.nodes())
@@ -118,7 +115,7 @@ def _test_quantitatively(sdfg, graph):
 
     fusion(sdfg, graph)
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C2, N=N, M=M, O=O)
+    csdfg(A=A, B=B, C=C2, N=50, M=60, O=70)
     del csdfg
 
     assert np.allclose(C1, C2)

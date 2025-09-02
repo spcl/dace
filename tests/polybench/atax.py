@@ -30,9 +30,7 @@ sizes = [{
 args = [([M, N], datatype), ([N], datatype), ([N], datatype)]
 
 
-def init_array(A, x, y):
-    n = N.get()
-    m = M.get()
+def init_array(A, x, y, n, m):
     fn = datatype(n)
 
     for i in range(n):

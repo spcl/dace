@@ -15,9 +15,7 @@ sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 args = [([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype)]
 
 
-def init_array(A, b, x, y):
-    n = N.get()
-
+def init_array(A, b, x, y, n):
     x[:] = datatype(0)
     y[:] = datatype(0)
 

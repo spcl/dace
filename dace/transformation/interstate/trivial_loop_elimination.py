@@ -1,36 +1,39 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Eliminates trivial loop """
 
 from dace import sdfg as sd
-from dace.properties import CodeBlock
+from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import helpers, transformation
-from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
+from dace.transformation.passes.analysis import loop_analysis
 
 
-class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation):
+@transformation.explicit_cf_compatible
+class TrivialLoopElimination(transformation.MultiStateTransformation):
     """
     Eliminates loops with a single loop iteration.
     """
 
+    loop = transformation.PatternNode(LoopRegion)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.loop)]
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # Is this even a loop
-        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+        # Check if this is a for-loop with known range.
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        stride = loop_analysis.get_loop_stride(self.loop)
+        if start is None or end is None or stride is None:
             return False
 
-        # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
-        body: sd.SDFGState = self.loop_begin
-
-        # Obtain iteration variable, range, and stride
-        loop_info = find_for_loop(sdfg, guard, body)
-        if not loop_info:
-            return False
-        _, (start, end, step), _ = loop_info
-
+        # Check if this is a trivial loop.
         try:
-            if step > 0 and start + step < end + 1:
+            if stride > 0 and start + stride < end + 1:
                 return False
-            if step < 0 and start + step > end - 1:
+            if stride < 0 and start + stride > end - 1:
                 return False
         except:
             # if the relation can't be determined it's not a trivial loop
@@ -38,41 +41,26 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
 
         return True
 
-    def apply(self, _, sdfg: sd.SDFG):
-        # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
-        body: sd.SDFGState = self.loop_begin
-
+    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         # Obtain iteration variable, range and stride
-        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body)
+        itervar = self.loop.loop_variable
+        start = loop_analysis.get_init_assignment(self.loop)
 
-        # Find all loop-body states
-        states = set()
-        to_visit = [body]
-        while to_visit:
-            state = to_visit.pop(0)
-            for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states and dst is not guard:
-                    to_visit.append(dst)
-            states.add(state)
+        self.loop.replace(itervar, start)
 
-        for state in states:
-            state.replace(itervar, start)
+        # Add the loop contents to the parent graph.
+        graph.add_node(self.loop.start_block)
+        for e in graph.in_edges(self.loop):
+            graph.add_edge(e.src, self.loop.start_block, e.data)
+        sink = graph.add_state(self.loop.label + '_sink')
+        for n in self.loop.sink_nodes():
+            graph.add_edge(n, sink, InterstateEdge())
+        for e in graph.out_edges(self.loop):
+            graph.add_edge(sink, e.dst, e.data)
+        for e in self.loop.edges():
+            graph.add_edge(e.src, e.dst, e.data)
 
-        # remove loop
-        for body_inedge in sdfg.in_edges(body):
-            sdfg.remove_edge(body_inedge)
-        for body_outedge in sdfg.out_edges(body_end):
-            sdfg.remove_edge(body_outedge)
-
-        for guard_inedge in sdfg.in_edges(guard):
-            guard_inedge.data.assignments = {}
-            sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
-            sdfg.remove_edge(guard_inedge)
-        for guard_outedge in sdfg.out_edges(guard):
-            guard_outedge.data.condition = CodeBlock("1")
-            sdfg.add_edge(body_end, guard_outedge.dst, guard_outedge.data)
-            sdfg.remove_edge(guard_outedge)
-        sdfg.remove_node(guard)
+        # Remove loop and if necessary also the loop variable.
+        graph.remove_node(self.loop)
         if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
             sdfg.remove_symbol(itervar)

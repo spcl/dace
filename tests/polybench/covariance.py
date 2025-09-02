@@ -11,12 +11,10 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{M: 28, N: 32}, {M: 80, N: 100}, {M: 240, N: 260}, {M: 1200, N: 1400}, {M: 2600, N: 3000}]
 
-args = [([N, M], datatype), ([M, M], datatype), ([M], datatype), M, N]
+args = [([N, M], datatype), ([M, M], datatype), ([M], datatype)]
 
 
-def init_array(data, cov, mean, M, N):
-    n = N.get()
-    m = M.get()
+def init_array(data, cov, mean, n, m):
     for i in range(n):
         for j in range(m):
             data[i, j] = datatype(i * j) / m
@@ -47,6 +45,7 @@ def covariance(data, cov, mean):
 
     @dace.mapscope
     def comp_cov_row(i: _[0:M]):
+
         @dace.mapscope
         def comp_cov_col(j: _[i:M]):
             with dace.tasklet:

@@ -12,6 +12,7 @@ W = dace.symbol('W')
 
 @dace.program(dace.float64[H, W], dace.float64[H, W])
 def cudahello(V, Vout):
+
     @dace.map(_[0:H, 0:W])
     def multiplication(i, j):
         in_V << V[i, j]
@@ -20,19 +21,19 @@ def cudahello(V, Vout):
 
 
 def _test(sdfg):
-    W.set(128)
-    H.set(64)
+    W = 128
+    H = 64
 
-    print('Vector double CUDA (grid 2D) %dx%d' % (W.get(), H.get()))
+    print('Vector double CUDA (grid 2D) %dx%d' % (W, H))
 
     V = dace.ndarray([H, W], dace.float64)
     Vout = dace.ndarray([H, W], dace.float64)
-    V[:] = np.random.rand(H.get(), W.get()).astype(dace.float64.type)
+    V[:] = np.random.rand(H, W).astype(dace.float64.type)
     Vout[:] = dace.float64(0)
 
     sdfg(V=V, Vout=Vout, H=H, W=W)
 
-    diff = np.linalg.norm(2 * V - Vout) / (H.get() * W.get())
+    diff = np.linalg.norm(2 * V - Vout) / (H * W)
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5

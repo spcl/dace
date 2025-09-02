@@ -28,12 +28,12 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.DTYPE_TO_TYPECLASS[dtype].to_string(),
+            type=dace.dtype_to_typeclass(dtype).to_string(),
             real=cast_value.real,
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.DTYPE_TO_TYPECLASS[dtype].to_string(), value)
+        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
 def _get_csrmm_operands(node,
@@ -114,8 +114,10 @@ class ExpandCSRMMPure(ExpandTransformation):
 
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
-                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
-                               for i, d in enumerate(shape_c)}, {},
+                'csrmm_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(shape_c)
+                }, {},
                 'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
         elif node.beta == 1.0:
@@ -136,9 +138,10 @@ class ExpandCSRMMPure(ExpandTransformation):
             nsdfg.add_datadesc('_cin', cin_desc)
 
             init_state.add_mapped_tasklet(
-                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
-                               for i, d in enumerate(cdesc.shape)},
-                {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
+                'csrmm_init', {
+                    '_o%d' % i: '0:%s' % symstr(d)
+                    for i, d in enumerate(cdesc.shape)
+                }, {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 f'_out = {node.beta} * _in',
                 {'_out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 external_edges=True)

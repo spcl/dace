@@ -387,6 +387,27 @@ def test_spmv():
         assert (np.allclose(y, ref))
 
 
+def test_indirection_size_1():
+
+    def compute_index(scal: dc.int32[5]):
+        result = 0
+        with dace.tasklet:
+            s << scal
+            r >> result
+            r = s[1] + 1 - 1
+        return result
+
+    @dc.program
+    def tester(a: dc.float64[1, 2, 3], scal: dc.int32[5]):
+        ind = compute_index(scal)
+        a[0, ind, 0] = 1
+
+    arr = np.random.rand(1, 2, 3)
+    scal = np.array([1, 1, 1, 1, 1], dtype=np.int32)
+    tester(arr, scal)
+    assert arr[0, 1, 0] == 1
+
+
 if __name__ == "__main__":
     test_indirection_scalar()
     test_indirection_scalar_assign()
@@ -412,3 +433,4 @@ if __name__ == "__main__":
     test_indirection_array_nested()
     test_indirection_array_nested_nsdfg()
     test_spmv()
+    test_indirection_size_1()

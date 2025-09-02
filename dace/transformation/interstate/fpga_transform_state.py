@@ -1,15 +1,17 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import copy
 import dace
-from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
+from dace import memlet, dtypes, sdfg as sd, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
 
 
-def fpga_update(sdfg, state, depth):
+def fpga_update(sdfg: SDFG, state: SDFGState, depth: int):
     scope_dict = state.scope_dict()
     for node in state.nodes():
         if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.Default):
@@ -25,10 +27,11 @@ def fpga_update(sdfg, state, depth):
         if (hasattr(node, "schedule") and node.schedule == dace.dtypes.ScheduleType.Default):
             node.schedule = dace.dtypes.ScheduleType.FPGA_Device
         if isinstance(node, nodes.NestedSDFG):
-            for s in node.sdfg.nodes():
+            for s in node.sdfg.states():
                 fpga_update(node.sdfg, s, depth + 1)
 
 
+@transformation.explicit_cf_compatible
 class FPGATransformState(transformation.MultiStateTransformation):
     """ Implements the FPGATransformState transformation. """
 
@@ -75,7 +78,7 @@ class FPGATransformState(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         state = self.state
 
         # Find source/sink (data) nodes that are relevant outside this FPGA
@@ -95,16 +98,12 @@ class FPGATransformState(transformation.MultiStateTransformation):
         # Input nodes may also be nodes with WCR memlets
         # We have to recur across nested SDFGs to find them
         wcr_input_nodes = set()
-        stack = []
 
-        parent_sdfg = {state: sdfg}  # Map states to their parent SDFG
-        for node, graph in state.all_nodes_recursive():
-            if isinstance(graph, dace.SDFG):
-                parent_sdfg[node] = graph
+        for node, node_parent_graph in state.all_nodes_recursive():
             if isinstance(node, dace.sdfg.nodes.AccessNode):
-                for e in graph.in_edges(node):
+                for e in node_parent_graph.in_edges(node):
                     if e.data.wcr is not None:
-                        trace = dace.sdfg.trace_nested_access(node, graph, parent_sdfg[graph])
+                        trace = dace.sdfg.trace_nested_access(node, node_parent_graph, node_parent_graph.sdfg)
                         for node_trace, memlet_trace, state_trace, sdfg_trace in trace:
                             # Find the name of the accessed node in our scope
                             if state_trace == state and sdfg_trace == sdfg:
@@ -157,9 +156,9 @@ class FPGATransformState(transformation.MultiStateTransformation):
                     sdutil.change_edge_src(state, node, fpga_node)
                     state.remove_node(node)
 
-            sdfg.add_node(pre_state)
-            sdutil.change_edge_dest(sdfg, state, pre_state)
-            sdfg.add_edge(pre_state, state, sd.InterstateEdge())
+            graph.add_node(pre_state)
+            sdutil.change_edge_dest(graph, state, pre_state)
+            graph.add_edge(pre_state, state, sd.InterstateEdge())
 
         if output_nodes:
 
@@ -199,9 +198,9 @@ class FPGATransformState(transformation.MultiStateTransformation):
                 sdutil.change_edge_dest(state, node, fpga_node)
                 state.remove_node(node)
 
-            sdfg.add_node(post_state)
-            sdutil.change_edge_src(sdfg, state, post_state)
-            sdfg.add_edge(state, post_state, sd.InterstateEdge())
+            graph.add_node(post_state)
+            sdutil.change_edge_src(graph, state, post_state)
+            graph.add_edge(state, post_state, sd.InterstateEdge())
 
         # propagate memlet info from a nested sdfg
         for src, src_conn, dst, dst_conn, mem in state.edges():

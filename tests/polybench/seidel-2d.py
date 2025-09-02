@@ -51,8 +51,7 @@ def seidel2d(A, tsteps):
                     out = (a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9) / datatype(9.0)
 
 
-def init_array(A):
-    n = N.get()
+def init_array(A, tsteps, n):
     for i in range(n):
         for j in range(n):
             A[i, j] = datatype(i * (j + 2) + 2) / n

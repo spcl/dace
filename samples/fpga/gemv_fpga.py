@@ -102,7 +102,7 @@ def make_outer_compute_state(sdfg):
     nested_sdfg.add_edge(load_state, compute_state, dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(compute_state, store_state, dace.sdfg.InterstateEdge())
 
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_nested", "x_nested", "y_nested"}, {"y_nested"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, {"A_nested", "x_nested", "y_nested"}, {"y_nested"})
 
     a_device = state.add_array("A_device", (M, N), dtype, transient=True, storage=dace.dtypes.StorageType.FPGA_Global)
     x_device = state.add_array("x_device", (M, ), dtype, transient=True, storage=dace.dtypes.StorageType.FPGA_Global)
@@ -120,12 +120,12 @@ def make_outer_compute_state(sdfg):
     return state
 
 
-def make_sdfg(specialize):
+def make_sdfg(specialize, N, M):
 
     if specialize:
-        name = "gemv_transposed_{}x{}".format(N.get(), M.get())
+        name = "gemv_transposed_{}x{}".format(N, M)
     else:
-        name = "gemv_transposed_{}xM".format(N.get())
+        name = "gemv_transposed_{}xM".format(N)
 
     sdfg = dace.SDFG(name)
 
@@ -143,29 +143,25 @@ def run_gemv(n: int, m: int, specialize: bool):
 
     print("==== Program start ====")
 
-    N.set(n)
     if specialize:
         print("Specializing M...")
-        M.set(m)
 
-    gemv = make_sdfg(specialize)
-    gemv.specialize(dict(N=N))
+    gemv = make_sdfg(specialize, n, m)
+    gemv.specialize(dict(N=n))
 
-    if not specialize:
-        M.set(m)
-    else:
-        gemv.specialize(dict(M=M))
+    if specialize:
+        gemv.specialize(dict(M=m))
 
-    print("Running GEMV {}x{} ({}specialized)".format(N.get(), M.get(), ("" if specialize else "not ")))
+    print("Running GEMV {}x{} ({}specialized)".format(n, m, ("" if specialize else "not ")))
 
-    A = dace.ndarray([M, N], dtype=dtype)
-    x = dace.ndarray([M], dtype=dtype)
-    y = dace.ndarray([N], dtype=dtype)
+    A = dace.ndarray([m, n], dtype=dtype)
+    x = dace.ndarray([m], dtype=dtype)
+    y = dace.ndarray([n], dtype=dtype)
 
     # Intialize: randomize A, x and y
-    # A[:, :] = np.random.rand(M.get(), N.get()).astype(dtype.type)
-    # x[:] = np.random.rand(M.get()).astype(dtype.type)
-    # y[:] = np.random.rand(N.get()).astype(dtype.type)
+    # A[:, :] = np.random.rand(M, N).astype(dtype.type)
+    # x[:] = np.random.rand(M).astype(dtype.type)
+    # y[:] = np.random.rand(N).astype(dtype.type)
     A[:, :] = 1
     x[:] = 1
     y[:] = 0
@@ -179,9 +175,9 @@ def run_gemv(n: int, m: int, specialize: bool):
     if specialize:
         gemv(A=A, x=x, y=x)
     else:
-        gemv(A=A, M=M, x=x, y=y)
+        gemv(A=A, M=m, x=x, y=y)
 
-    residual = np.linalg.norm(y - regression) / (N.get() * M.get())
+    residual = np.linalg.norm(y - regression) / (n * m)
     print("Residual:", residual)
     diff = np.abs(y - regression)
     wrong_elements = np.transpose(np.nonzero(diff >= 0.01))
@@ -191,7 +187,7 @@ def run_gemv(n: int, m: int, specialize: bool):
     if residual >= 0.01 or highest_diff >= 0.01:
         print("Verification failed!")
         print("Residual: {}".format(residual))
-        print("Incorrect elements: {} / {}".format(wrong_elements.shape[0], (N.get() * M.get())))
+        print("Incorrect elements: {} / {}".format(wrong_elements.shape[0], (n * m)))
         print("Highest difference: {}".format(highest_diff))
         print("** Result:\n", y)
         print("** Reference:\n", regression)

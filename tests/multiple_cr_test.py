@@ -11,8 +11,8 @@ def test():
     print('SDFG multiple tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int64)
+    n = 20
+    input = dp.ndarray([n], dp.int64)
     sum = dp.ndarray([1], dp.int64)
     product = dp.ndarray([1], dp.int64)
     input[:] = dp.int64(5)
@@ -41,7 +41,7 @@ def test():
     state.add_edge(t2, 'b', map_exit, None, Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
     state.add_edge(map_exit, None, p, None, Memlet.simple(p, '0'))
 
-    mysdfg(A=input, s=sum, p=product, N=N)
+    mysdfg(A=input, s=sum, p=product, N=n)
 
     diff_sum = 5 * 20 - sum[0]
     diff_prod = 5**20 - product[0]

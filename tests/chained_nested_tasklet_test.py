@@ -12,9 +12,9 @@ def test_nested_map():
     print('SDFG consecutive tasklet (nested) test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int32)
-    output = dp.ndarray([N], dp.int32)
+    n = 20
+    input = dp.ndarray([n], dp.int32)
+    output = dp.ndarray([n], dp.int32)
     input[:] = dp.int32(5)
     output[:] = dp.int32(0)
 
@@ -42,9 +42,9 @@ def test_nested_map():
     mysdfg.fill_scope_connectors()
     mysdfg.validate()
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(10 * input - output) / N.get()
+    diff = np.linalg.norm(10 * input - output) / n
     print("Difference:", diff)
     assert diff <= 1e-5
 
@@ -53,9 +53,9 @@ def test_nested_sdfg():
     print('SDFG consecutive tasklet (nested SDFG) test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int32)
-    output = dp.ndarray([N], dp.int32)
+    n = 20
+    input = dp.ndarray([n], dp.int32)
+    output = dp.ndarray([n], dp.int32)
     input[:] = dp.int32(5)
     output[:] = dp.int32(0)
 
@@ -79,22 +79,22 @@ def test_nested_sdfg():
 
     # Add outer edges
     omap_entry, omap_exit = state.add_map('omap', dict(k='0:2'))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
+    nsdfg_node = state.add_nested_sdfg(nsdfg, {'a'}, {'b'})
     state.add_memlet_path(A_, omap_entry, nsdfg_node, dst_conn='a', memlet=Memlet('A[0:N]'))
     state.add_memlet_path(nsdfg_node, omap_exit, B_, src_conn='b', memlet=Memlet('B[0:N]'))
 
     mysdfg.validate()
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(10 * input - output) / N.get()
+    diff = np.linalg.norm(10 * input - output) / n
     print("Difference:", diff)
     assert diff <= 1e-5
 
     mysdfg.simplify()
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(10 * input - output) / N.get()
+    diff = np.linalg.norm(10 * input - output) / n
     print("Difference:", diff)
     assert diff <= 1e-5
 
