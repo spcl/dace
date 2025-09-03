@@ -2190,9 +2190,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         self._block_dims = block_dims
         self._grid_dims = grid_dims
 
-        # Emit internal array allocation (deallocation handled at MapExit)
-        self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, kernel_stream)
-
         scope_entry = dfg_scope.source_nodes()[0]
 
         # Generate conditions for this block's execution using min and max
@@ -2221,6 +2218,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     self._kernel_grid_conditions.append('{')
                     if not has_dtbmap:
                         kernel_stream.write('{', cfg, state_id, scope_entry)
+
+        # Emit internal array allocation (deallocation handled at MapExit)
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, kernel_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
@@ -2538,9 +2538,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             for dim in range(len(scope_map.range)):
                 callsite_stream.write('{', cfg, state_id, scope_entry)
 
-        # Emit internal array allocation (deallocation handled at MapExit)
-        self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
-
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
             if self._scope_has_collaborative_copy:
@@ -2616,6 +2613,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     callsite_stream.write('{', cfg, state_id, scope_entry)
 
         ##########################################################
+
+        # Emit internal array allocation (deallocation handled at MapExit)
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
         # need to handle subgraphs appropriately if they contain
         # dynamic thread block maps

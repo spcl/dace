@@ -418,7 +418,7 @@ class RedundantArray(pm.SingleStateTransformation):
                         if isinstance(source_edge.src.desc(sdfg), data.View):
                             if not permissive:
                                 return False
-                    elif isinstance(source_edge.src, nodes.NestedSDFG):
+                    elif isinstance(source_edge.src, (nodes.NestedSDFG, nodes.LibraryNode)):
                         if not permissive:
                             return False
                         conn = source_edge.src_conn
@@ -544,6 +544,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 return
 
         # Find extraneous A or B subset dimensions
+        make_view = False
         a_dims_to_pop = []
         b_dims_to_pop = []
         bset = b_subset
@@ -557,12 +558,15 @@ class RedundantArray(pm.SingleStateTransformation):
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
                 bset, popped = pop_dims(b_subset, b_dims_to_pop)
 
+            # Dimensions differ but find_dims_to_pop could not find a proper matching
+            if (a1_subset.dims() - len(a_dims_to_pop)) != (b_subset.dims() - len(b_dims_to_pop)):
+                make_view = True
+
         from dace.libraries.standard import Reduce
-        reduction = False
         for e in graph.in_edges(in_array):
             if isinstance(e.src, Reduce) or (isinstance(e.src, (nodes.NestedSDFG, nodes.LibraryNode))
                                              and len(in_desc.shape) != len(out_desc.shape)):
-                reduction = True
+                make_view = True
 
         # If:
         # 1. A reduce node is involved; or
@@ -570,7 +574,7 @@ class RedundantArray(pm.SingleStateTransformation):
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or not _subset_has_shape(a1_subset, in_desc.shape):
+        if make_view or len(a_dims_to_pop) == len(in_desc.shape) or not _subset_has_shape(a1_subset, in_desc.shape):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
@@ -920,7 +924,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                         if isinstance(source_edge.dst.desc(sdfg), data.View):
                             if not permissive:
                                 return False
-                    elif isinstance(source_edge.dst, nodes.NestedSDFG):
+                    elif isinstance(source_edge.dst, (nodes.NestedSDFG, nodes.LibraryNode)):
                         if not permissive:
                             return False
                         conn = source_edge.dst_conn
@@ -936,6 +940,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
+        make_view = False
 
         # We assume the following pattern: A -- e1 --> B -- e2 --> others
 
@@ -957,8 +962,12 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             else:
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
 
+            # Dimensions differ but find_dims_to_pop could not find a proper matching
+            if (a_subset.dims() - len(a_dims_to_pop)) != (b1_subset.dims() - len(b_dims_to_pop)):
+                make_view = True
+
         # If the src subset does not cover the removed array, create a view.
-        if a_subset and not _subset_has_shape(a_subset, out_desc.shape):
+        if make_view or (a_subset and not _subset_has_shape(a_subset, out_desc.shape)):
             # NOTE: We do not want to create another view, if the immediate
             # successors of out_array are views as well. We just remove it.
             out_successors_desc = [
