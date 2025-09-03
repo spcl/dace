@@ -1,0 +1,13 @@
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SA_w_d_0_s", "value": "32" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SA_w_d_1_s", "value": "91" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SA_w_d_2_s", "value": "640" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SOA_w_d_0_s", "value": "1" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SOA_w_d_1_s", "value": "1" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SOA_w_d_2_s", "value": "1" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SA_vn_d_0_s", "value": "32" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SA_vn_d_1_s", "value": "90" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SA_vn_d_2_s", "value": "960" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SOA_vn_d_0_s", "value": "1" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SOA_vn_d_1_s", "value": "1" }
+{ "type": "ConstTypeInjection", "scope": null, "root": "mo_nonhydro_types.t_nh_prog", "component": "__f2dace_SOA_vn_d_2_s", "value": "1" }
+
