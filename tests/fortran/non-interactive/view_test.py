@@ -27,7 +27,7 @@ def test_fortran_frontend_view_test():
                     PROGRAM """ + test_name + """_program
 implicit none
 double precision a(10,11,12)
-double precision res(1,1,2)
+double precision res(2,2,2) 
 
 CALL """ + test_name + """_function(a,res)
 
@@ -36,7 +36,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,res)
 
 double precision aa(10,11,12)
-double precision res(1,1,2)
+double precision res(2,2,2) 
 
 call viewlens(aa(:,:,1),res)
 
@@ -46,7 +46,7 @@ SUBROUTINE viewlens(aa,res)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11,23)
+double precision  :: aa(10,11) 
 double precision :: res(1,1,2)
 
 INTEGER ::  JK, JL
@@ -62,7 +62,44 @@ aa(1,1)=res(1,1,1)
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
+ 
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
+    for state in sdfg.nodes():
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                if node.path!="":
+                    print("TEST: "+node.path)
+                    tmp_sdfg = SDFG.from_file(node.path)
+                    node.sdfg = tmp_sdfg
+                    node.sdfg.parent = state
+                    node.sdfg.parent_sdfg = sdfg
+                    node.sdfg.update_sdfg_list([])
+                    node.sdfg.parent_nsdfg_node = node
+                    node.path=""
+    for sd in sdfg.all_sdfgs_recursive():  
+        for state in sd.nodes():
+          for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                if node.path!="":
+                    print("TEST: "+node.path)
+                    tmp_sdfg = SDFG.from_file(node.path)
+                    node.sdfg = tmp_sdfg     
+                    node.sdfg.parent = state
+                    node.sdfg.parent_sdfg = sd
+                    node.sdfg.update_sdfg_list([])
+                    node.sdfg.parent_nsdfg_node = node         
+                    node.path=""
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.NestedSDFG):
+            if node.sdfg is not None:
+                if 'test_function' in node.sdfg.name:
+                    sdfg = node.sdfg
+                    break
+    sdfg.parent = None
+    sdfg.parent_sdfg = None
+    sdfg.parent_nsdfg_node = None
+    sdfg.reset_sdfg_list()                
+                
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
@@ -91,7 +128,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,bb,cc,n)
 
 integer, parameter :: n=10
-double precision a(n,11,12),b(n,11,12),c(n,11,12)
+double precision aa(n,11,12),bb(n,11,12),cc(n,11,12)
 integer j,k
 
 j=1
@@ -101,23 +138,23 @@ k=2
 
 end SUBROUTINE """ + test_name + """_function
 
-SUBROUTINE viewlens(aa,bb,cc)
+SUBROUTINE viewlens(aaa,bbb,ccc)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11),bb(10,11),cc(10,11)
+double precision  :: aaa(10,11),bbb(10,11),ccc(10,11) 
 
 INTEGER ::  JK, JL
 
 DO JK=1,10
   DO JL=1,11
-    cc(JK,JL)=bb(JK,JL)+aa(JK,JL)
+    ccc(JK,JL)=bbb(JK,JL)+aaa(JK,JL)
   ENDDO
 ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -146,7 +183,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,bb,n)
 
 integer, parameter :: n=10
-double precision a(n,n+1,12),b(n,n+1,12)
+double precision aa(n,n+1,12),bb(n,n+1,12)
 integer j,k
 
 j=1
@@ -158,7 +195,7 @@ SUBROUTINE viewlens(aa,bb,cc)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11),bb(10,11),cc(10,11)
+double precision  :: aa(10,11),bb(10,11),cc(10,11) 
 
 INTEGER ::  JK, JL
 
@@ -170,7 +207,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, True)
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
