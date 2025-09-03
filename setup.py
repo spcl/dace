@@ -63,7 +63,7 @@ setup(name='dace',
           "License :: OSI Approved :: BSD License",
           "Operating System :: OS Independent",
       ],
-      python_requires='>=3.6, <3.13',
+      python_requires='>=3.9, <3.14',
       packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
       package_data={
           '': [
@@ -73,13 +73,17 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy < 2.0', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply',
-          'fparser >= 0.1.3', 'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill',
-          'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"', 'packaging'
+          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3', 'aenum >= 3.1',
+          'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
+          'typing-compat; python_version < "3.8"', 'packaging'
       ] + cmake_requires,
       extras_require={
-          'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
-          'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1']
+          'testing': [
+              'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',
+              'pytest-timeout'
+          ],
+          'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
+          'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
       },
       entry_points={
           'console_scripts': [
@@ -89,5 +93,6 @@ setup(name='dace',
               'sdfg-diff = dace.cli.sdfg_diff:main',
               'fcfd = dace.cli.fcdc:main',
               'daceprof = dace.cli.daceprof:main',
+              'dace-external-transformation-registry = dace.cli.external_transformation_registry:main',
           ],
       })

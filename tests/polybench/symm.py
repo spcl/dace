@@ -35,6 +35,7 @@ def init_array(C, A, B, alpha, beta, n, m):
 
 @dace.program(datatype[M, N], datatype[M, M], datatype[M, N], datatype[1], datatype[1])
 def symm(C, A, B, alpha, beta):
+
     @dace.mapscope
     def comp_all(j: _[0:N], i: _[0:M]):
         temp2 = dace.define_local_scalar(datatype)

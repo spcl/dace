@@ -13,25 +13,25 @@ from dace.transformation.transformation import SubgraphTransformation
 @make_properties
 class GPUPersistentKernel(SubgraphTransformation):
     """
-    This transformation takes a given subgraph of an SDFG and fuses the 
+    This transformation takes a given subgraph of an SDFG and fuses the
     given states into a single persistent GPU kernel. Before this transformation can
     be applied the SDFG needs to be transformed to run on the GPU (e.g. with
     the GPUTransformSDFG transformation).
-    
+
     If applicable the transform removes the selected states from the original
     SDFG and places a `launch` state in its place. The removed states will be
     added to a nested SDFG in the launch state. If necessary guard states will
     be added in the nested SDFG, in order to make sure global assignments on
     Interstate edges will be performed in the kernel (this can be disabled with
     the `include_in_assignment` property).
-    
+
     The given subgraph needs to fulfill the following properties to be fused:
-    
+
      - All states in the selected subgraph need to fulfill the following:
         - access only GPU accessible memory
         - all concurrent DFGs inside the state are either sequential or inside
           a GPU_Device map.
-     - the selected subgraph has a single point of entry in the form of a 
+     - the selected subgraph has a single point of entry in the form of a
        single InterstateEdge entering the subgraph (i.e. there is at most one
        state (not part of the subgraph) from which the kernel is entered and
        exactly one state inside the subgraph from which the kernel starts
@@ -272,7 +272,6 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         nested_sdfg = launch_state.add_nested_sdfg(
             kernel_sdfg,
-            sdfg,
             kernel_args_read,
             kernel_args_write,
         )

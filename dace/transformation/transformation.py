@@ -34,6 +34,7 @@ from typing import TypeVar
 
 PassT = TypeVar('PassT', bound=ppl.Pass)
 
+
 def explicit_cf_compatible(cls: PassT) -> PassT:
     cls.__explicit_cf_compatible__ = True
     return cls
@@ -62,10 +63,10 @@ class TransformationBase(ppl.Pass):
 
 @make_properties
 class PatternTransformation(TransformationBase):
-    """ 
+    """
     Abstract class for pattern-matching transformations.
     Please extend either ``SingleStateTransformation`` or ``MultiStateTransformation``.
-    
+
     :see: SingleStateTransformation
     :see: MultiStateTransformation
     :seealso: PatternNode
@@ -290,17 +291,16 @@ class PatternTransformation(TransformationBase):
         }
 
     @classmethod
-    def _can_be_applied_and_apply(
-            cls,
-            verify: bool,
-            apply: bool,
-            sdfg: SDFG,
-            options: Optional[Dict[str, Any]] = None,
-            expr_index: int = 0,
-            annotate: bool = True,
-            permissive: bool = False,
-            save: bool = True,
-            **where: Union[nd.Node, SDFGState]):
+    def _can_be_applied_and_apply(cls,
+                                  verify: bool,
+                                  apply: bool,
+                                  sdfg: SDFG,
+                                  options: Optional[Dict[str, Any]] = None,
+                                  expr_index: int = 0,
+                                  annotate: bool = True,
+                                  permissive: bool = False,
+                                  save: bool = True,
+                                  **where: Union[nd.Node, SDFGState]):
         """
         Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
         a set of nodes.
@@ -311,7 +311,7 @@ class PatternTransformation(TransformationBase):
 
         If `apply` is `True` then the function will apply the transformation, if `verify`
         is also `True` the function will first call `can_be_applied()` to ensure the
-        transformation can be applied. If not an error is genrated.
+        transformation can be applied. If not, an error is generated.
         If `apply` is `False` the function will only call `can_be_applied()` and
         returns its result.
 
@@ -419,15 +419,15 @@ class PatternTransformation(TransformationBase):
                       nodes in the SDFG or a single state.
         """
         return cls._can_be_applied_and_apply(
-                verify=verify,
-                apply=True,
-                sdfg=sdfg,
-                options=options,
-                expr_index=expr_index,
-                annotate=annotate,
-                permissive=permissive,
-                save=save,
-                **where,
+            verify=verify,
+            apply=True,
+            sdfg=sdfg,
+            options=options,
+            expr_index=expr_index,
+            annotate=annotate,
+            permissive=permissive,
+            save=save,
+            **where,
         )
 
     @classmethod
@@ -454,15 +454,15 @@ class PatternTransformation(TransformationBase):
                       nodes in the SDFG or a single state.
         """
         return cls._can_be_applied_and_apply(
-                verify=True,
-                apply=False,
-                sdfg=sdfg,
-                options=options,
-                expr_index=expr_index,
-                annotate=False,
-                permissive=permissive,
-                save=False,
-                **where,
+            verify=True,
+            apply=False,
+            sdfg=sdfg,
+            options=options,
+            expr_index=expr_index,
+            annotate=False,
+            permissive=permissive,
+            save=False,
+            **where,
         )
 
     def __str__(self) -> str:
@@ -518,7 +518,7 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
         * ``apply``: A method that applies the transformation on the given SDFG.
 
     For example:
-    
+
     .. code-block:: python
 
         class MyTransformation(SingleStateTransformation):
@@ -630,7 +630,7 @@ class PatternNode(Generic[T]):
     Example use:
 
     .. code-block:: python
-    
+
         class MyTransformation(SingleStateTransformation):
             some_map_node = PatternNode(nodes.MapEntry)
             array = PatternNode(nodes.AccessNode)
@@ -707,7 +707,6 @@ class ExpandTransformation(PatternTransformation):
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
-                                              sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name,
@@ -826,7 +825,7 @@ class SubgraphTransformation(TransformationBase):
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
         """
-        Returns all subclasses of this class, including subclasses of subclasses. 
+        Returns all subclasses of this class, including subclasses of subclasses.
 
         :param all_subclasses: Include all subclasses (e.g., including ``ExpandTransformation``).
         """
@@ -872,12 +871,8 @@ class SubgraphTransformation(TransformationBase):
         return self.apply(sdfg)
 
     @classmethod
-    def _can_be_applied_and_apply(cls,
-                                  *where: Union[nd.Node, SDFGState, gr.SubgraphView],
-                                  verify: bool,
-                                  apply: bool,
-                                  sdfg: SDFG,
-                                  **options: Any):
+    def _can_be_applied_and_apply(cls, *where: Union[nd.Node, SDFGState, gr.SubgraphView], verify: bool, apply: bool,
+                                  sdfg: SDFG, **options: Any):
         """
 
         Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
@@ -986,18 +981,15 @@ class SubgraphTransformation(TransformationBase):
         :param options: A set of parameters to use for applying the transformation.
         """
         return cls._can_be_applied_and_apply(
-                verify=verify,
-                apply=True,
-                sdfg=sdfg,
-                *where,
-                **options,
+            verify=verify,
+            apply=True,
+            sdfg=sdfg,
+            *where,
+            **options,
         )
 
     @classmethod
-    def can_be_applied_to(cls,
-                          sdfg: SDFG,
-                          *where: Union[nd.Node, SDFGState, gr.SubgraphView],
-                          **options: Any) -> bool:
+    def can_be_applied_to(cls, sdfg: SDFG, *where: Union[nd.Node, SDFGState, gr.SubgraphView], **options: Any) -> bool:
         """
         Checks if the transformation can be applied to a given subgraph, defined
         by a set of nodes.
@@ -1024,11 +1016,11 @@ class SubgraphTransformation(TransformationBase):
         :param options: A set of parameters to use for applying the transformation.
         """
         return cls._can_be_applied_and_apply(
-                verify=True,
-                apply=False,
-                sdfg=sdfg,
-                *where,
-                **options,
+            verify=True,
+            apply=False,
+            sdfg=sdfg,
+            *where,
+            **options,
         )
 
     def to_json(self, parent=None):
@@ -1052,6 +1044,7 @@ class SubgraphTransformation(TransformationBase):
 def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Callable[[Any], Optional[SDFG]]):
     if hasattr(cls, function_name):
         vanilla_method = getattr(cls, function_name)
+
         def blocksafe_wrapper(tgt, *args, **kwargs):
             if isinstance(tgt, SDFG):
                 sdfg = tgt
@@ -1066,6 +1059,7 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
                 else:
                     warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
                                   ' due to incompatibility with experimental control flow blocks')
+
         setattr(cls, function_name, blocksafe_wrapper)
 
 

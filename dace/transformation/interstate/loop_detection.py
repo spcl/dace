@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop detection transformation """
 
 import sympy as sp
@@ -17,20 +17,23 @@ class DetectLoop(transformation.PatternTransformation):
     """ Detects a for-loop construct from an SDFG. """
 
     # Always available
-    loop_begin = transformation.PatternNode(sd.SDFGState)
-    exit_state = transformation.PatternNode(sd.SDFGState)
+    loop_begin = transformation.PatternNode(ControlFlowBlock)
+    exit_state = transformation.PatternNode(ControlFlowBlock)
 
     # Available for natural loops
-    loop_guard = transformation.PatternNode(sd.SDFGState)
+    loop_guard = transformation.PatternNode(ControlFlowBlock)
 
     # Available for rotated loops
-    loop_latch = transformation.PatternNode(sd.SDFGState)
+    loop_latch = transformation.PatternNode(ControlFlowBlock)
 
     # Available for rotated and self loops
-    entry_state = transformation.PatternNode(sd.SDFGState)
+    entry_state = transformation.PatternNode(ControlFlowBlock)
 
     # Available for explicit-latch rotated loops
-    loop_break = transformation.PatternNode(sd.SDFGState)
+    loop_break = transformation.PatternNode(ControlFlowBlock)
+
+    break_edges: Set[gr.Edge[InterstateEdge]] = set()
+    continue_edges: Set[gr.Edge[InterstateEdge]] = set()
 
     @classmethod
     def expressions(cls):
@@ -129,15 +132,21 @@ class DetectLoop(transformation.PatternTransformation):
         elif expr_index == 4:
             return self.detect_self_loop(graph, accept_missing_itvar=permissive) is not None
         elif expr_index in (5, 7):
-            return self.detect_rotated_loop(graph, multistate_loop=True, accept_missing_itvar=permissive,
+            return self.detect_rotated_loop(graph,
+                                            multistate_loop=True,
+                                            accept_missing_itvar=permissive,
                                             separate_latch=True) is not None
         elif expr_index == 6:
-            return self.detect_rotated_loop(graph, multistate_loop=False, accept_missing_itvar=permissive,
+            return self.detect_rotated_loop(graph,
+                                            multistate_loop=False,
+                                            accept_missing_itvar=permissive,
                                             separate_latch=True) is not None
 
         raise ValueError(f'Invalid expression index {expr_index}')
 
-    def detect_loop(self, graph: ControlFlowRegion, multistate_loop: bool,
+    def detect_loop(self,
+                    graph: ControlFlowRegion,
+                    multistate_loop: bool,
                     accept_missing_itvar: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
@@ -183,7 +192,17 @@ class DetectLoop(transformation.PatternTransformation):
 
         # All nodes inside loop must be dominated by loop guard
         dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
-        loop_nodes = sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard)
+        postdominators = sdutil.postdominators(graph, True)
+        loop_nodes = self.loop_body()
+        # If the exit state is in the loop nodes, this is not a valid loop
+        if self.exit_state in loop_nodes:
+            return None
+        elif any(self.exit_state not in postdominators[1][n] for n in loop_nodes):
+            # The loop exit must post-dominate all loop nodes
+            return None
+        elif nx.has_path(graph.nx, self.exit_state, guard):
+            # If there is a path from the exit state to the guard, this is not a valid loop
+            return None
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):
@@ -219,8 +238,11 @@ class DetectLoop(transformation.PatternTransformation):
 
         return next(iter(itvar))
 
-    def detect_rotated_loop(self, graph: ControlFlowRegion, multistate_loop: bool,
-                            accept_missing_itvar: bool = False, separate_latch: bool = False) -> Optional[str]:
+    def detect_rotated_loop(self,
+                            graph: ControlFlowRegion,
+                            multistate_loop: bool,
+                            accept_missing_itvar: bool = False,
+                            separate_latch: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -260,15 +282,23 @@ class DetectLoop(transformation.PatternTransformation):
         if latch_outedges[0].data.condition_sympy() != (sp.Not(latch_outedges[1].data.condition_sympy())):
             return None
 
+        # Make sure the backedge (i.e, one of the condition edges) goes from the latch to the beginning state.
+        if latch_outedges[0].dst is not self.loop_begin and latch_outedges[1].dst is not self.loop_begin:
+            return None
+
         # All nodes inside loop must be dominated by loop start
         dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
         if begin is ltest:
             loop_nodes = [begin]
         else:
-            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != ltest))
+            loop_nodes = self.loop_body()
         loop_nodes.append(latch)
         if ltest is not latch and ltest is not begin:
             loop_nodes.append(ltest)
+        postdominators = sdutil.postdominators(graph, True)
+        if any(self.exit_state not in postdominators[1][n] for n in loop_nodes):
+            # The loop exit must post-dominate all loop nodes
+            return None
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):
@@ -369,37 +399,72 @@ class DetectLoop(transformation.PatternTransformation):
             return find_for_loop(guard.parent_graph, guard, entry, itervar)
         elif self.expr_index in (2, 3, 5, 6, 7):
             latch = self.loop_latch
-            return find_rotated_for_loop(latch.parent_graph, latch, entry, itervar,
+            return find_rotated_for_loop(latch.parent_graph,
+                                         latch,
+                                         entry,
+                                         itervar,
                                          separate_latch=(self.expr_index in (5, 6, 7)))
         elif self.expr_index == 4:
             return find_rotated_for_loop(entry.parent_graph, entry, entry, itervar)
 
         raise ValueError(f'Invalid expression index {self.expr_index}')
 
+    def _loop_body_dfs(self, terminator: ControlFlowBlock) -> Iterable[ControlFlowBlock]:
+        self.break_edges.clear()
+        visited = set()
+        start = self.loop_begin
+        graph = start.parent_graph
+        exit_state = self.exit_state
+        yield start
+        visited.add(start)
+        stack = [(start, iter(graph.successors(start)))]
+        while stack:
+            parent, children = stack[-1]
+            try:
+                child = next(children)
+                if child not in visited:
+                    visited.add(child)
+                    if child == exit_state:
+                        # If the exit state is reachable from the loop body, that counts as a break edge.
+                        for e in graph.edges_between(parent, child):
+                            self.break_edges.add(e)
+                    elif child != terminator:
+                        try:
+                            yield child
+                            stack.append((child, iter(graph.successors(child))))
+                        except sdutil.StopTraversal:
+                            pass
+                    else:
+                        # If we reached the terminator, we do not traverse further. All edges reaching the terminator
+                        # are marked as continue edges. If there is only one continue edge int the end, it can be
+                        # discarded (not actually a continue, simply the edge closing the loop).
+                        for e in graph.edges_between(parent, child):
+                            self.continue_edges.add(e)
+            except StopIteration:
+                stack.pop()
+
     def loop_body(self) -> List[ControlFlowBlock]:
         """
         Returns a list of all control flow blocks (or states) contained in the loop.
         """
-        begin = self.loop_begin
-        graph = begin.parent_graph
         if self.expr_index in (0, 1):
             guard = self.loop_guard
-            return list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard))
+            return list(self._loop_body_dfs(guard))
         elif self.expr_index in (2, 3):
             latch = self.loop_latch
-            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != latch))
+            loop_nodes = list(self._loop_body_dfs(latch))
             loop_nodes += [latch]
             return loop_nodes
         elif self.expr_index == 4:
-            return [begin]
+            return [self.loop_begin]
         elif self.expr_index in (5, 7):
             ltest = self.loop_break
             latch = self.loop_latch
-            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != ltest))
+            loop_nodes = list(self._loop_body_dfs(ltest))
             loop_nodes += [ltest, latch]
             return loop_nodes
         elif self.expr_index == 6:
-            return [begin, self.loop_latch]
+            return [self.loop_begin, self.loop_latch]
 
         return []
 
@@ -496,11 +561,12 @@ class DetectLoop(transformation.PatternTransformation):
         raise ValueError(f'Invalid expression index {self.expr_index}')
 
 
-def rotated_loop_find_itvar(begin_inedges: List[gr.Edge[InterstateEdge]],
-                            latch_inedges: List[gr.Edge[InterstateEdge]],
-                            backedge: gr.Edge[InterstateEdge], latch: ControlFlowBlock,
-                            accept_missing_itvar: bool = False) -> Tuple[Optional[str],
-                                                                         Optional[gr.Edge[InterstateEdge]]]:
+def rotated_loop_find_itvar(
+        begin_inedges: List[gr.Edge[InterstateEdge]],
+        latch_inedges: List[gr.Edge[InterstateEdge]],
+        backedge: gr.Edge[InterstateEdge],
+        latch: ControlFlowBlock,
+        accept_missing_itvar: bool = False) -> Tuple[Optional[str], Optional[gr.Edge[InterstateEdge]]]:
     # The iteration variable must be assigned (initialized) on all edges leading into the beginning block, which
     # are not the backedge. Gather all variabes for which that holds - they are all candidates for the iteration
     # variable (Phase 1). Said iteration variable must then be incremented:
@@ -582,7 +648,7 @@ def find_for_loop(
         List[sd.SDFGState], sd.SDFGState]]]:
     """
     Finds loop range from state machine.
-    
+
     :param guard: State from which the outgoing edges detect whether to exit
                   the loop or not.
     :param entry: First state in the loop body.
@@ -694,7 +760,7 @@ def find_rotated_for_loop(
         List[sd.SDFGState], sd.SDFGState]]]:
     """
     Finds rotated loop range from state machine.
-    
+
     :param latch: State from which the outgoing edges detect whether to reenter the loop or not.
     :param entry: First state in the loop body.
     :param itervar: An optional field that overrides the analyzed iteration variable.

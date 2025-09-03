@@ -3,7 +3,7 @@
 Installation
 ============
 
-DaCe is routinely tested on and officially supports Python 3.7 or newer (Python 3.6 is also supported, but not actively tested).
+DaCe is routinely tested on and officially supports Python 3.9 to 3.13.
 
 .. _dependencies:
 
@@ -11,7 +11,7 @@ Dependencies
 ------------
 
 Most dependencies will be resolved when the package is installed with ``pip`` or ``setup.py``. Since DaCe compiles code,
-however, it requires two more runtime dependencies to be installed and available in the ``PATH`` environment variable 
+however, it requires two more runtime dependencies to be installed and available in the ``PATH`` environment variable
 (if not, see :ref:`config` for how to configure different compiler paths):
 
  * A C++14-capable compiler (e.g., gcc 5.3+)
@@ -21,7 +21,7 @@ however, it requires two more runtime dependencies to be installed and available
 **GPU**: For NVIDIA GPUs, the CUDA toolkit is also required, and AMD GPUs require HIP. :ref:`See more information on how to configure DaCe to use AMD GPUs <amd>`.
 You may (optionally) want to install `CuPy <https://cupy.dev/>`_ for easy integration of GPU arrays in Python.
 
-**FPGA**: Xilinx FPGAs require the Vitis suite and Intel FPGAs require the Intel FPGA SDK to be installed. 
+**FPGA**: Xilinx FPGAs require the Vitis suite and Intel FPGAs require the Intel FPGA SDK to be installed.
 DaCe has been tested with Intel FPGA SDK for OpenCL Pro edition v18.1 and v19.1, targeting Arria 10 and Stratix 10 devices, and Xilinx Vitis HLS v2020.x, v2021.x targeting u250 and u280 devices.
 
 
@@ -38,7 +38,7 @@ set the ``MKLROOT`` environment variable to the Anaconda environment.
 **Einsum optimization**: The ``opt_einsum`` module can improve the behavior of ``numpy.einsum`` tensor operations.
 DaCe natively supports this module, install with ``pip install opt_einsum``.
 
-**Sparse arrays and scientific operations**: ``scipy`` provides sparse data structures (e.g., CSR matrices) and 
+**Sparse arrays and scientific operations**: ``scipy`` provides sparse data structures (e.g., CSR matrices) and
 scientific operations (such as convolution). Install with ``pip install scipy``.
 
 **MLIR support**: To use MLIR code directly in SDFGs, the ``pymlir`` module is necessary to parse the code. Install with
@@ -116,7 +116,7 @@ Common issues with the DaCe Python module
     installed and configured with Apple Clang. Otherwise, you can use GCC to compile the code by following these steps:
 
       * Run ``brew install gcc``
-      * Set your ``~/.dace.conf`` compiler configuration to use the installed GCC. For example, if you installed 
+      * Set your ``~/.dace.conf`` compiler configuration to use the installed GCC. For example, if you installed
         version 9 (``brew install gcc@9``), run ``which g++-9`` and set the configuration entry called :envvar:`compiler.cpu.executable`
         (empty string by default) to the resulting path
       * Remove any ``.dacecache`` folders to clear the cache
@@ -138,8 +138,8 @@ Common issues with the DaCe Python module
   * **Bug in DaCe**: If you suspect an issue happens within DaCe, see :ref:`debugging` for ways to pinpoint the source
     of the issue.
 
-  * **Intel FPGA libraries not found**: when targeting Intel FPGAs, the compilation process may fail due to missing OpenCL headers (CMake returns 
-    a ``Could NOT find IntelFPGAOpenCL`` error). This is usually the case when Intel OpenCL compiler does not return the right path to OpenCL host headers. 
+  * **Intel FPGA libraries not found**: when targeting Intel FPGAs, the compilation process may fail due to missing OpenCL headers (CMake returns
+    a ``Could NOT find IntelFPGAOpenCL`` error). This is usually the case when Intel OpenCL compiler does not return the right path to OpenCL host headers.
     DaCe relies on ``hlslib`` for compiling FPGA programs, which in turns relies on Intel's compiler to derive the right include path. Please verify that
     the include path returned by the Intel compiler (using the ``aocl compile-config`` command) points to a directory that actually contains the OpenCL headers (namely ``cl.hpp`` and
     ``cl2.hpp`` files). If this is not the case, please locate them under the Intel Quartus installation folder, and symlink (or copy) them in the ``aocl`` returned path.
@@ -185,13 +185,12 @@ Common issues with the extension include:
     exception. In this case, the SDFG optimizer log (see above) may offer more insights to the origin of the issue.
     If the issue has to do with a built-in feature, please `report an issue on the extension GitHub repository <https://github.com/spcl/dace-vscode/issues>`_.
 
-  * **Reverting changes**: If you edited something and regret your decision (transformation, library node expansion, 
-    properties etc.), try using the Undo/Redo buttons. The SDFG editor functions just like a text editor in Visual Studio Code. 
+  * **Reverting changes**: If you edited something and regret your decision (transformation, library node expansion,
+    properties etc.), try using the Undo/Redo buttons. The SDFG editor functions just like a text editor in Visual Studio Code.
 
   * **Transformation responsiveness on large graphs**: When dealing with large SDFGs, transformation refreshing may take
     time. Look at the SDFG Optimizer log to see whether it is currently processing the transformations request
 
   * **Editor responsiveness**: If the editor seems stuck, close and reopen the SDFG editor tab. If the problem persists,
-    the SDFG may be malformed. Load it in Python (see :ref:`format`) and call ``sdfg.validate()`` to get more 
+    the SDFG may be malformed. Load it in Python (see :ref:`format`) and call ``sdfg.validate()`` to get more
     information about the issue and pinpoint the offending element.
-

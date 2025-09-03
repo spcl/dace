@@ -4,6 +4,7 @@ import numpy as np
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_frontend_loop_region_basic_loop():
     test_name = "loop_test"
     test_string = """

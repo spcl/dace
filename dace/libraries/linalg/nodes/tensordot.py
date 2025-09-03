@@ -39,8 +39,10 @@ class ExpandPure(ExpandTransformation):
 
         init_state = sdfg.add_state(f"{node.label}_init", is_start_state=True)
         init_state.add_mapped_tasklet(
-            f"{node.label}_init_tasklet", {f"__i{i}": f"0:{symstr(s)}"
-                                           for i, s in enumerate(out_tensor.shape)}, {},
+            f"{node.label}_init_tasklet", {
+                f"__i{i}": f"0:{symstr(s)}"
+                for i, s in enumerate(out_tensor.shape)
+            }, {},
             '__out = 0', {
                 '__out':
                 dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_tensor.shape))])}]")
@@ -120,7 +122,7 @@ class ExpandTTGT(ExpandTransformation):
                                     out_tensor.storage,
                                     strides=out_tensor.strides)
 
-        from dace.frontend.python.replacements import _transpose
+        from dace.frontend.python.replacements.array_manipulation import _transpose
         # NOTE: We use the numpy.transpose replacement because:
         # (1) It will return the tensor itself if transposition is uncessary.
         # (2) It will use matrix transpose operation for 2-mode tensors.
@@ -141,7 +143,7 @@ class ExpandTTGT(ExpandTransformation):
         else:
             left_axes = [i for i in range(len(left_arr.shape)) if i not in node.left_axes]
             left_axes.extend(node.left_axes)
-            left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes)
+            left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes, outname="ttgt_left_transposed")
             left_tt_arr = sdfg.arrays[left_tt]
 
         if transB:
@@ -150,7 +152,7 @@ class ExpandTTGT(ExpandTransformation):
         else:
             right_axes = list(node.right_axes)
             right_axes.extend([i for i in range(len(right_arr.shape)) if i not in node.right_axes])
-            right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes)
+            right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes, outname="ttgt_right_transposed")
             right_tt_arr = sdfg.arrays[right_tt]
 
         from dace.libraries.blas import Gemm

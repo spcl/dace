@@ -12,6 +12,7 @@ class ArraySubclass(dace.data.Array):
 
 
 def test_replacement_subclass():
+
     @dace.program
     def tester(a: ArraySubclass(dace.float64, [20])):
         return a + 1

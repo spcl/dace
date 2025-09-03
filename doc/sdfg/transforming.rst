@@ -3,10 +3,10 @@
 SDFG Transformation Internals
 =============================
 
-Once created, stateful dataflow multigraphs can be transformed for performance, offloading to different architectures, 
+Once created, stateful dataflow multigraphs can be transformed for performance, offloading to different architectures,
 and reducing elements for simplification and further transformations.
 
-As a white-box approach, SDFG transformations can be written externally, and can be applied on graphs programmatically or 
+As a white-box approach, SDFG transformations can be written externally, and can be applied on graphs programmatically or
 interactively, through built-in passes, the transformation Python API, or the `Visual Studio Code <https://github.com/spcl/dace-vscode>`_
 plugin.
 

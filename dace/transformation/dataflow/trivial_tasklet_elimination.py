@@ -61,7 +61,7 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         # have different data type (implicit type cast)
         if expr_index != 0 and read_desc.dtype != write_desc.dtype:
             return False
-    
+
         return True
 
     def apply(self, graph, sdfg):

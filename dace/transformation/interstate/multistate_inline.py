@@ -43,7 +43,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
-        
+
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.
         :param nested_sdfg: Nested SDFG node with symbol mapping.
@@ -129,6 +129,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
                 return False
 
+        if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):
+            return False
+
         return True
 
     def apply(self, outer_state: SDFGState, sdfg: SDFG):
@@ -171,16 +174,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for ise in sdfg.all_interstate_edges():
             outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
-        # Isolate nsdfg in a separate state
-        # 1. Push nsdfg node plus dependencies down into new state
-        nsdfg_state = helpers.state_fission_after(outer_state, nsdfg_node)
-        # 2. Push successors of nsdfg node into a later state
-        direct_subgraph = set()
-        direct_subgraph.add(nsdfg_node)
-        direct_subgraph.update(nsdfg_state.predecessors(nsdfg_node))
-        direct_subgraph.update(nsdfg_state.successors(nsdfg_node))
-        direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
-        nsdfg_state = helpers.state_fission(direct_subgraph)
+        # Isolate the nested SDFG in a separate state.
+        predecessor_state, nsdfg_state, successor_state = helpers.isolate_nested_sdfg(state=outer_state,
+                                                                                      nsdfg_node=nsdfg_node)
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
@@ -288,8 +284,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for nstate in nsdfg.states():
             if nstate.label in statenames:
                 newname = data.find_new_name(nstate.label, statenames)
-                statenames.add(newname)
                 nstate.label = newname
+            statenames.add(nstate.label)
 
         #######################################################
         # Add nested SDFG states into top-level SDFG

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 from typing import Dict, List, Tuple
+import copy
 
 import dace
 from dace import dtypes, symbolic
@@ -20,6 +21,17 @@ class ScopeTree(object):
         self.children: List['ScopeTree'] = []
         self.entry: nd.EntryNode = entrynode
         self.exit: nd.ExitNode = exitnode
+
+    def __copy__(self):
+        """Performs a "recursive shallow copy" of `self`."""
+        cls = self.__class__
+        result = cls.__new__(cls)
+        result.__dict__.update(self.__dict__)
+
+        # Recursively shallow copy the children.
+        result.children = [copy.copy(child) for child in self.children]
+
+        return result
 
 
 class ScopeSubgraphView(StateSubgraphView):
@@ -125,7 +137,7 @@ def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
 
 
 def scope_contains_scope(sdict: ScopeDictType, node: nd.Node, other_node: nd.Node) -> bool:
-    """ 
+    """
     Returns true iff scope of `node` contains the scope of  `other_node`.
     """
     curnode = other_node
@@ -180,9 +192,9 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: nd.Node, scope_b: nd.Node
 
 def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node,
                 schedules: List[dtypes.ScheduleType]) -> bool:
-    """ Tests whether a node in an SDFG is contained within a certain set of 
+    """ Tests whether a node in an SDFG is contained within a certain set of
         scope schedules.
-        
+
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
@@ -266,11 +278,11 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                            node: nd.Node) -> Tuple[symbolic.SymExpr]:
     """ Returns the current thread-block size if the given node is enclosed in
         a GPU kernel, or None otherwise.
-        
+
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
-        :return: A tuple of sizes or None if the node is not in device-level 
+        :return: A tuple of sizes or None if the node is not in device-level
                  code.
     """
     from dace.sdfg import nodes as nd

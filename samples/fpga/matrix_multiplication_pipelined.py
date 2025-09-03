@@ -129,7 +129,7 @@ def make_sdfg(specialized, n, k, m):
     else_state.add_memlet_path(else_C_in, else_tasklet, memlet=else_c_in_memlet, dst_conn="c_in")
     else_state.add_memlet_path(else_tasklet, else_C_out, memlet=else_c_out_memlet, src_conn="c_out")
 
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_val", "B_val", "C_in"}, {"C_out"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, {"A_val", "B_val", "C_in"}, {"C_out"})
 
     ###########################################################################
     # Compute continued
@@ -195,8 +195,7 @@ if __name__ == "__main__":
         sdfg = make_sdfg(True, n, k, m)
         sdfg.specialize(dict(M=m, N=n, K=k))
 
-    print("Matrix multiplication {}x{}x{} ({}specialized)".format(m, n, k,
-                                                                  "" if args["specialize"] else "not "))
+    print("Matrix multiplication {}x{}x{} ({}specialized)".format(m, n, k, "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([n, k], dtype=dace.float32.type)

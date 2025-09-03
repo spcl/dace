@@ -16,17 +16,17 @@ from dace.sdfg.state import ControlFlowRegion
 class TargetCodeGenerator(object):
     """
     Interface dictating functions that generate code for:
-          
+
         * Array allocation/deallocation/initialization/copying
         * Scope (map, consume) code generation
     """
 
     def get_generated_codeobjects(self) -> List[CodeObject]:
-        """ 
+        """
         Returns a list of generated ``CodeObject`` classes corresponding
         to files with generated code. If an empty list is returned
         (default) then this code generator does not create new files.
-            
+
         :see: CodeObject
         """
         return []
@@ -35,7 +35,7 @@ class TargetCodeGenerator(object):
     def cmake_options() -> List[str]:
         """
         Returns a list of CMake options that this target needs
-        to be passed into the ``cmake`` command during configuration. 
+        to be passed into the ``cmake`` command during configuration.
         """
         return []
 
@@ -200,12 +200,13 @@ class TargetCodeGenerator(object):
 class IllegalCopy(TargetCodeGenerator):
     """ A code generator that is triggered when invalid copies are specified
         by the SDFG. Only raises an exception on failure. """
-    def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
+
+    def copy_memory(self, sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
         raise TypeError('Illegal copy! (from ' + str(src_node) + ' to ' + str(dst_node) + ')')
 
 
 def make_absolute(path: str) -> str:
-    """ 
+    """
     Finds an executable and returns an absolute path out of it. Used when
     finding compiler executables.
 

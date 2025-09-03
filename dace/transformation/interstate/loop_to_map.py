@@ -86,7 +86,7 @@ class LoopToMap(xf.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive = False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # If loop information cannot be determined, fail.
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
@@ -119,8 +119,8 @@ class LoopToMap(xf.MultiStateTransformation):
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
 
         # Collect symbol reads and writes from inter-state assignments
-        in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
-                                                                             ignore_nonstate_blocks=False))
+        in_order_loop_blocks = list(
+            cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
         for block in in_order_loop_blocks:
@@ -209,8 +209,8 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Check that the iteration variable and other symbols are not used on other edges or blocks before they are
         # reassigned.
-        in_order_blocks = list(cfg_analysis.blockorder_topological_sort(sdfg, recursive=True,
-                                                                        ignore_nonstate_blocks=False))
+        in_order_blocks = list(
+            cfg_analysis.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=False))
         # First check the outgoing edges of the loop itself.
         reassigned_symbols: Set[str] = None
         for oe in graph.out_edges(self.loop):
@@ -423,14 +423,20 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Add NestedSDFG arrays
         for name in read_set | write_set:
+            if '.' in name:
+                root_data_name = name.split('.')[0]
+                name = root_data_name
             nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
             nsdfg.arrays[name].transient = False
         for name in unique_set:
+            if '.' in name:
+                root_data_name = name.split('.')[0]
+                name = root_data_name
             nsdfg.arrays[name] = sdfg.arrays[name]
             del sdfg.arrays[name]
 
         # Add NestedSDFG node
-        cnode = body.add_nested_sdfg(nsdfg, body, read_set, write_set)
+        cnode = body.add_nested_sdfg(nsdfg, read_set, write_set)
         if sdfg.parent:
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                 if s not in cnode.symbol_mapping:

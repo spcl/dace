@@ -7,7 +7,7 @@ import pytest
 import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, MapFusion
+from dace.transformation.dataflow import StreamingMemory, MapFusionVertical
 from dace.transformation.auto.auto_optimize import auto_optimize
 
 N = dc.symbol('N', dtype=dc.int32)
@@ -47,12 +47,13 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
         # Parse the SDFG and apply autopot
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
+
         sdfg(A=A, B=B, TSTEPS=TSTEPS, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
         sdfg = kernel.to_sdfg(simplify=True)
-        sdfg.apply_transformations_repeated([MapFusion])
+        sdfg.apply_transformations_repeated([MapFusionVertical])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 

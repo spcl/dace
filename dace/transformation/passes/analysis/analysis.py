@@ -98,7 +98,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             if isinstance(reached_block, ControlFlowRegion):
                 closure.update(reached_block.all_control_flow_blocks())
             closure.add(reached_block)
-            
+
         # Walk up the parent tree.
         pivot = region.parent_graph
         while pivot and not isinstance(pivot, SDFG):
@@ -111,9 +111,8 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
-        single_level_reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = defaultdict(
-            lambda: defaultdict(set)
-        )
+        single_level_reachable: Dict[int, Dict[ControlFlowBlock,
+                                               Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             # In networkx this is currently implemented naively for directed graphs.
             # The implementation below is faster
@@ -210,8 +209,8 @@ class SymbolAccessSets(ppl.ControlFlowRegionPass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.States | ppl.Modifies.Edges | ppl.Modifies.Symbols | ppl.Modifies.Nodes
 
-    def apply(self, region: ControlFlowRegion, _) -> Dict[Union[ControlFlowBlock, Edge[InterstateEdge]],
-                                                          Tuple[Set[str], Set[str]]]:
+    def apply(self, region: ControlFlowRegion,
+              _) -> Dict[Union[ControlFlowBlock, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]]:
         adesc = set(region.sdfg.arrays.keys())
         result: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = {}
         for block in region.nodes():
@@ -242,7 +241,7 @@ class AccessSets(ppl.Pass):
 
     def _get_loop_region_readset(self, loop: LoopRegion, arrays: Set[str]) -> Set[str]:
         readset = set()
-        exprs = { loop.loop_condition.as_string }
+        exprs = {loop.loop_condition.as_string}
         update_stmt = loop_analysis.get_update_assignment(loop)
         init_stmt = loop_analysis.get_init_assignment(loop)
         if update_stmt:
@@ -331,6 +330,79 @@ class FindAccessStates(ppl.Pass):
 
             top_result[sdfg.cfg_id] = result
         return top_result
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class FindSingleUseData(ppl.Pass):
+    """
+    For each SDFG find all data descriptors that are referenced in exactly one location.
+
+    In addition to the requirement that there exists exactly one AccessNode that
+    refers to a data descriptor the following conditions have to be meet as well:
+    - The data is not read on an interstate edge.
+    - The data is not accessed in the branch condition, loop condition, etc. of
+        control flow regions.
+    - There must be at least one AccessNode that refers to the data. I.e. if it exists
+        inside `SDFG.arrays` but there is no AccessNode, then it is _not_ included.
+
+    It is also important to note that the degree of the AccessNodes are ignored.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.CFG
+
+    def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFG, Set[str]]:
+        """
+        :return: A dictionary mapping SDFGs to a `set` of strings containing the name
+            of the data descriptors that are only used once.
+        """
+        # TODO(pschaad): Should we index on cfg or the SDFG itself.
+        exclusive_data: Dict[SDFG, Set[str]] = {}
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            exclusive_data[nsdfg] = self._find_single_use_data_in_sdfg(nsdfg)
+        return exclusive_data
+
+    def _find_single_use_data_in_sdfg(self, sdfg: SDFG) -> Set[str]:
+        """Scans an SDFG and computes the data that is only used once in the SDFG.
+
+        The rules used to classify data descriptors are outlined above. The function
+        will not scan nested SDFGs.
+
+        :return: The set of data descriptors that are used once in the SDFG.
+        """
+        # If we encounter a data descriptor for the first time we immediately
+        #  classify it as single use. We will undo this decision as soon as
+        #  learn that it is used somewhere else.
+        single_use_data: Set[str] = set()
+        previously_seen: Set[str] = set()
+
+        for state in sdfg.states():
+            for dnode in state.data_nodes():
+                data_name: str = dnode.data
+                if data_name in single_use_data:
+                    single_use_data.discard(data_name)  # Classified too early -> Undo
+                elif data_name not in previously_seen:
+                    single_use_data.add(data_name)  # Never seen -> Assume single use
+                previously_seen.add(data_name)
+
+        # By definition, data that is referenced by interstate edges is not single
+        #  use data, also remove it.
+        for edge in sdfg.all_interstate_edges():
+            single_use_data.difference_update(edge.data.free_symbols)
+
+        # By definition, data that is referenced by the conditions (branching condition,
+        #  loop condition, ...) is not single use data, also remove that.
+        for cfr in sdfg.all_control_flow_regions():
+            single_use_data.difference_update(cfr.used_symbols(all_symbols=True, with_contents=False))
+
+        return single_use_data
 
 
 @properties.make_properties
@@ -588,9 +660,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
             access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
                 FindAccessNodes.__name__][sdfg.cfg_id]
 
-            block_reach: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
-                ControlFlowBlockReachability.__name__
-            ]
+            block_reach: Dict[ControlFlowBlock,
+                              Set[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__]
 
             anames = sdfg.arrays.keys()
             for desc in sdfg.arrays:
@@ -783,7 +854,9 @@ class DeriveSDFGConstraints(ppl.Pass):
 
     CATEGORY: str = 'Analysis'
 
-    assume_max_data_size = properties.Property(dtype=int, default=None, allow_none=True,
+    assume_max_data_size = properties.Property(dtype=int,
+                                               default=None,
+                                               allow_none=True,
                                                desc='Assume that all data containers have no dimension larger than ' +
                                                'this value. If None, no assumption is made.')
 

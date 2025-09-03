@@ -2,6 +2,7 @@
 """ Transformation helper API. """
 import copy
 import itertools
+import warnings
 from networkx import MultiDiGraph
 
 from dace.properties import CodeBlock
@@ -23,7 +24,7 @@ from dace.memlet import Memlet
 def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
     """
     Nests an SDFG subgraph (SDFGStates and InterstateEdges).
-    
+
     :param sdfg: The SDFG containing the subgraph.
     :param subgraph: The SubgraphView description of the subgraph.
     :param start: The start state of the subgraph.
@@ -246,7 +247,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         fsymbols.update(defined_symbols)
         fsymbols = fsymbols - strictly_defined_symbols
         mapping = {s: s for s in fsymbols}
-        cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
+        cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
@@ -277,7 +278,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 def nest_sdfg_control_flow(sdfg: SDFG):
     """
     Partitions the SDFG to subgraphs and nests them.
-    
+
     :param sdfg: The SDFG to be partitioned.
     """
     for nd in sdfg.nodes():
@@ -494,7 +495,7 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg, None,
+    nested_sdfg = state.add_nested_sdfg(nsdfg,
                                         set(input_names.values()) | input_arrays,
                                         set(output_names.values()) | output_arrays.keys())
 
@@ -576,126 +577,370 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
-    """
-    Given a subgraph, adds a new SDFG state before the state that contains it,
-    removes the subgraph from the original state, and connects the two states.
+def state_fission(
+    subgraph: graph.SubgraphView,
+    label: Optional[str] = None,
+    allow_isolated_nodes: bool = True,
+) -> SDFGState:
+    """Splits the state into two connected states such that `subgraph` is located in the first/top state.
 
-    :param subgraph: the subgraph to remove.
-    :return: the newly created SDFG state.
-    """
+    The function will create a new state before the state in which `subgraph` is located in, this
+    new state is also returned. Then the function will then distribute the dataflow onto these two
+    states. In general it will move the dataflow defined by `subgraph`, together with all its
+    dependencies into the first/top state and the rest will be in the second state (which is the
+    current state).
+    Beside the dependencies of `subgraph` the function might also move nodes located downstream of
+    `subgraph` into the first state. The first reason is that the "cut" at that location is not
+    possible, i.e. there must be a non view AccessNode to transmit data from the first to the
+    second state. Another reason is that the function maintains the number of "writing nodes", i.e
+    AccessNodes with incoming connections, this behaviour is analogous to `isolate_nested_sdfg()`.
+    Another reason why more nodes are moved to the first state are scopes. It is only possible to
+    split a state at the top scope, not as an example, within a Map. Thus if a node inside `subgraph`
+    if not at the global scope the function will include its containing state. Thus if you only
+    pass a Tasklet, with a Map, as `subgraph` then the function will add the surrounding Map
+    to the first state as well.
 
+    Note, the split might result in a state where nodes become isolated inside a state. By default
+    the function allows this to happen in either state. However, it will cause a validation error.
+    By  setting `allow_isolated_nodes` to `False` the function will remove all isolated nodes in
+    both states.
+
+    :param subgraph: The graph that describes the split location.
+    :param label: The label to use for the new state.
+    :param allow_isolated_nodes: If `True`, the default, then the function might create isolated
+        nodes. If it is `False` all isolated nodes will be removed after the split in both states.
+
+    :return: The newly created state that is located before the one containing `subgraph`.
+
+    :note: Currently scopes are not handled, if for example `subgraph` only contains a Tasklet from
+        inside a Map, then the function will add all dependencies, i.e. the MapEntry, but will
+        most likely fail to pick up the MapExit.
+
+    :todo: Handle partial Map scopes.
+    """
     state: SDFGState = subgraph.graph
-    newstate = state.parent_graph.add_state_before(state, label=label)
+    sdfg: SDFG = state.sdfg
 
-    # Save edges before removing nodes
-    orig_edges = subgraph.edges()
+    # State fissions can not occur within a scope, i.e., the MapEntry of a Map scope can not end up
+    #  in the first state while the MapExit lands in the second state. Extend the set of nodes to
+    #  make sure we have only top level nodes and their scope.
+    initial_first_nodes: Set[nodes.Node] = set()
+    scope_dict = state.scope_dict()
+    for node in subgraph.nodes():
+        containing_scope = scope_dict[node]
 
-    # Mark boundary access nodes to keep after fission
-    nodes_to_remove = set(subgraph.nodes())
-    boundary_nodes = [n for n in subgraph.nodes() if len(state.out_edges(n)) > len(subgraph.out_edges(n))
-                      ] + [n for n in subgraph.nodes() if len(state.in_edges(n)) > len(subgraph.in_edges(n))]
+        if node in initial_first_nodes:
+            continue  # Already added by a previous node.
 
-    # Make dictionary of nodes to add to new state
-    new_nodes = {n: n for n in subgraph.nodes()}
-    new_nodes.update({b: copy.deepcopy(b) for b in boundary_nodes})
+        elif isinstance(node, nodes.EntryNode):
+            # Add the whole body of the Map to the first state. ExitNodes are handled by the scope
+            #  implementation, as they are located inside the scope of their associated EntryNode.
+            initial_first_nodes.update(state.scope_subgraph(node).nodes())
 
-    nodes_to_remove -= set(boundary_nodes)
-    state.remove_nodes_from(nodes_to_remove)
+        elif containing_scope is None:
+            initial_first_nodes.add(node)  # Global node just add it.
 
-    for n in new_nodes.values():
-        if isinstance(n, nodes.NestedSDFG):
-            # Set the new parent state
-            n.sdfg.parent = newstate
+        else:
+            # Note at global scope, find the top most scope node and add the defining subgraph.
+            while scope_dict[containing_scope] is not None:
+                containing_scope = scope_dict[containing_scope]
+            top_entry_node = containing_scope
+            initial_first_nodes.update(state.scope_subgraph(top_entry_node).nodes())
 
-    newstate.add_nodes_from(new_nodes.values())
+    # Notes that should end up in the first state.
+    first_nodes: Set[nodes.Node] = set()
+    for node in initial_first_nodes:
+        utils.find_upstream_nodes(
+            node_to_start=node,
+            state=state,
+            seen=first_nodes,  # Inplace update.
+        )
 
-    for e in orig_edges:
-        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, e.data)
+    # For semantic reasons we can only split certain Memlets, i.e. Memlets that started at an
+    #  AccessNode. We now have to inspect the boundary of the nodes defining `first_nodes`.
+    #  If we found a Memlet that can not be split, then we add the node also to `first_nodes`.
+    nodes_to_scan: List[nodes.Node] = list(first_nodes)
+    boundary_nodes: Set[nodes.Node] = set()
+    pure_first_nodes: Set[nodes.Node] = set()
 
-    for bn in boundary_nodes:
-        bn._in_connectors.clear()
+    while len(nodes_to_scan) > 0:
+        node_to_scan = nodes_to_scan.pop()
+        non_first_state_consumer = [
+            oedge.dst for oedge in state.out_edges(node_to_scan)
+            if (oedge.dst not in first_nodes) and (not oedge.data.is_empty())
+        ]
 
-    return newstate
+        if len(non_first_state_consumer) == 0:
+            # There are no consumer that are not inside `first_nodes` thus it is inside `first_nodes`
+            #  and it is "pure", i.e. not a boundary node.
+            assert node_to_scan in first_nodes
+            pure_first_nodes.add(node_to_scan)
+            boundary_nodes.discard(node_to_scan)
 
+        elif isinstance(node_to_scan, nodes.AccessNode) and (not isinstance(node_to_scan.desc(sdfg), data.View)):
+            # There are consumer that are not inside the first state, but `node_to_scan` is a non
+            #  view AccessNode, it therefore qualifies to be a boundary node.
+            assert node_to_scan in first_nodes
+            boundary_nodes.add(node_to_scan)
 
-def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str] = None) -> SDFGState:
-    """
-    """
-    newstate = state.parent_graph.add_state_after(state, label=label)
+        else:
+            # There are non first state consumer and `node_to_scan` does not qualify to be a boundary
+            #  node. Thus we have to add all its consumer and their producer, to the first state as well.
+            new_first_nodes: Set[nodes.Node] = set()
+            for new_first_state_node_seed in non_first_state_consumer:
+                utils.find_upstream_nodes(
+                    node_to_start=new_first_state_node_seed,
+                    state=state,
+                    seen=new_first_nodes,  # Inplace update!
+                )
 
-    # Bookkeeping
-    nodes_to_move = set([node])
-    boundary_nodes = set()
-    orig_edges = set()
+            # All nodes that we found are first state nodes. However, we have to reevaluate if they
+            #  are still boundary nodes or have become pure nodes.
+            boundary_nodes.difference_update(new_first_nodes)
+            nodes_to_scan.extend(new_first_nodes)
+            first_nodes.update(new_first_nodes)
 
-    # Collect predecessors
-    if not isinstance(node, nodes.AccessNode):
-        for edge in state.in_edges(node):
-            for e in state.memlet_path(edge):
-                nodes_to_move.add(e.src)
-                orig_edges.add(e)
+    # Ensure that all dependencies are assigned to the first state.
+    assert len(first_nodes) >= 1
+    assert all(all(iedge.src in first_nodes for iedge in state.in_edges(first_node)) for first_node in first_nodes)
+    assert all(all(iedge.src in first_nodes for iedge in state.in_edges(bnode)) for bnode in boundary_nodes)
+    assert boundary_nodes.isdisjoint(pure_first_nodes)
+    assert boundary_nodes.union(pure_first_nodes) == first_nodes
 
-    # Collect nodes_to_move
-    for edge in state.edge_bfs(node):
-        nodes_to_move.add(edge.dst)
-        orig_edges.add(edge)
+    if len(first_nodes) == 1:
+        warnings.warn(
+            f"While splitting `{state.label}` the supplied `subgraph` leads to isolated nodes in the first state" +
+            (", that will be removed." if not allow_isolated_nodes else "."))
 
-        if not isinstance(edge.dst, nodes.AccessNode):
-            for iedge in state.in_edges(edge.dst):
-                if iedge == edge:
+    # Now create the new states on which we will operate. It is important that the newly created
+    #  state is at the top.
+    # NOTE: There is the case that `subgraph` contains the entire dataflow in `state`, in that case
+    #   one might think, that we could perform an optimization, such as just create a new state and
+    #   keep the nodes. However, this is not possible, since the function only returns the new state
+    #   and code assumes that this is the first/top state containing the `subgraph` dataflow. Thus
+    #   we have to perform the relocation.
+    second_state = state
+    first_state = state.parent_graph.add_state_before(state, label=label)
+
+    # This map maps the nodes from the old/original state to the corresponding node in the first/new
+    #  state. The pure nodes are the exact same objects, but the we copy the boundary nodes, since
+    #  they have also to be present inside the second state.
+    first_nodes_map: Dict[nodes.Node, nodes.Node] = {node: node for node in pure_first_nodes}
+    first_nodes_map.update({old_bnode: copy.deepcopy(old_bnode) for old_bnode in boundary_nodes})
+
+    # Save the edges that we have to copy.
+    subgraph_to_copy = graph.SubgraphView(second_state, first_nodes)
+    edges_to_copy = list(subgraph_to_copy.edges())
+
+    # Now remove and the nodes from the first state and add them to the second state.
+    second_state.remove_nodes_from(pure_first_nodes)
+    first_state.add_nodes_from(first_nodes_map.values())
+
+    # Now recreate the edge structure in the first state based on the first state.
+    for original_edge in edges_to_copy:
+        first_state.add_edge(
+            first_nodes_map[original_edge.src],
+            original_edge.src_conn,
+            first_nodes_map[original_edge.dst],
+            original_edge.dst_conn,
+            original_edge.data,
+        )
+
+    # Cleaning the connectors of the boundary nodes. In the first state we have to remove all
+    #  outgoing connectors and in the second state all incoming.
+    # NOTE: I am actually not sure why this is here, it was in the original code, so I retained it.
+    #   Since, only non view AccessNodes can transmit data across states, the connectors for them
+    #   should be `None` anyway.
+    for second_state_boundary_node in boundary_nodes:
+        first_state_boundary_node = first_nodes_map[second_state_boundary_node]
+        assert second_state.in_degree(second_state_boundary_node) == 0
+        first_state_boundary_node._out_connectors.clear()
+        second_state_boundary_node._in_connectors.clear()
+
+    # Remove isolated nodes.
+    # TODO(phimuell): Is this the best approach, it might be a bit too far reaching.
+    if not allow_isolated_nodes:
+        warning_was_issued = False
+        for state_to_clean in [first_state, second_state]:
+            for node in list(state_to_clean.nodes()):
+                # This is how the validation defines isolated.
+                if isinstance(node, nodes.CodeNode):
                     continue
+                elif state_to_clean.degree(node) == 0:
+                    if (not warning_was_issued) and (state_to_clean is second_state):
+                        # Warning for isolated nodes in the second state if we do not delete it.
+                        #  is a bit expensive, this is why we do not issue a warning in that case.
+                        warnings.warn(
+                            f"While splitting state `{state.label}` some nodes in the original state, got isolated and are now deleted."
+                        )
+                        warning_was_issued = True
+                    state_to_clean.remove_node(node)
 
-                for e in state.memlet_path(iedge):
-                    nodes_to_move.add(e.src)
-                    orig_edges.add(e)
+    return first_state
 
-    # Define boundary nodes
-    for node in set(nodes_to_move):
-        if isinstance(node, nodes.AccessNode):
-            for iedge in state.in_edges(node):
-                if iedge.src not in nodes_to_move:
-                    boundary_nodes.add(node)
-                    break
 
-            if node in boundary_nodes:
-                continue
+def isolate_nested_sdfg(
+    state: SDFGState,
+    nsdfg_node: nodes.NestedSDFG,
+    test_if_applicable: bool = False,
+) -> Union[Tuple[SDFGState, SDFGState, SDFGState], bool]:
+    """Isolate the nested SDFG.
 
-            for oedge in state.out_edges(node):
-                if oedge.dst not in nodes_to_move:
-                    boundary_nodes.add(node)
-                    break
+    The function will split `state` into three states:
+    - Pre State: Contains the data flow that is needed to compute the dependency
+        of the nested SDFG.
+    - Middle State: This state contains the nested SDFG and the nodes that are needed
+        as input or output to the nested SDFG.
+    - Post State: Contains the data flow that uses the data that was computed
+        by the nested SDFG.
 
-    # Duplicate boundary nodes
-    new_nodes = {}
-    for node in boundary_nodes:
-        node_ = copy.deepcopy(node)
-        state.add_node(node_)
-        new_nodes[node] = node_
+    The important aspect of this function is, that it will not increase the
+    number of AccessNodes that are written to, it might, however, add new AccessNodes
+    that read data.
 
-    for edge in state.edges():
-        if edge.src in boundary_nodes and edge.dst in boundary_nodes:
-            state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
-                           copy.deepcopy(edge.data))
-        elif edge.src in boundary_nodes:
-            state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-        elif edge.dst in boundary_nodes:
-            state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
+    :param state: The state on which we operate.
+    :param nested_sdfg: The nested SDFG node that should be isolated.
+    :param test_if_applicable: If `True` then do not perform the splitting, only verify
+        that it can be performed by returning either `True` or `False`.
+    """
 
-    # Move nodes
-    state.remove_nodes_from(nodes_to_move)
+    # We can only isolate the nested SDFG if it is on global scope, for example
+    #  inside a Map it is impossible to split the state.
+    if state.scope_dict()[nsdfg_node] is not None:
+        if test_if_applicable:
+            return False
+        raise ValueError(f'Cannot isolate NestedSDFG "{nsdfg_node}" because it is within a scope.')
 
-    for n in nodes_to_move:
-        if isinstance(n, nodes.NestedSDFG):
-            # Set the new parent state
-            n.sdfg.parent = newstate
+    # These are the nodes that will be moved to the Pre State, they are found through
+    #  a backwards search starting from the nodes that serves as input to the nested
+    #  SDFG. It is important that these nodes, that serves as input to the nested
+    #  SDFG are also belonging to this set. But they are only added if they needed.
+    pre_nodes: Set[nodes.Node] = set()
+    to_visit: List[nodes.Node] = []
+    for iedge in state.in_edges(nsdfg_node):
+        input_node: nodes.AccessNode = iedge.src
+        assert isinstance(input_node, nodes.AccessNode)
+        if state.in_degree(input_node) != 0:
+            to_visit.append(input_node)
+    visited: Set[nodes.Node] = set()
+    while len(to_visit) > 0:
+        node_to_process = to_visit.pop()
+        if node_to_process in visited:
+            continue
+        pre_nodes.add(node_to_process)
+        to_visit.extend(iedge.src for iedge in state.in_edges(node_to_process))
 
-    newstate.add_nodes_from(nodes_to_move)
+    # These are the nodes of the middle state. Which are all access nodes that serves
+    #  as input to the nested SDFG and the nested SDFG itself.
+    #  Note that the AccessNodes serving as input and output of the nested SDFG
+    #  belonging to the pre and post set, respectively, as well.
+    middle_nodes: Set[nodes.Node] = {nsdfg_node}
+    for iedge in state.in_edges(nsdfg_node):
+        if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedge.src.desc(state.sdfg), data.View):
+            if test_if_applicable:
+                return False
+            raise ValueError("Can only split if the inputs to the nested SDFG are AccessNodes to non view data.")
+        middle_nodes.add(iedge.src)
+    for oedge in state.out_edges(nsdfg_node):
+        # We require that there is only one incoming edge on an output node. This seems
+        #  like a restriction but it is not, because the inliner for nested SDFGs
+        #  requires that the whole array is mapped inside. So if there would be
+        #  multiple incoming edges the original SDFG would be invalid, because the
+        #  same memory would be written to multiple times.
+        if ((not all(iedge.src is nsdfg_node for iedge in state.in_edges(oedge.dst)))
+                or (not isinstance(oedge.dst, nodes.AccessNode)) or isinstance(oedge.dst, data.View)):
+            if test_if_applicable:
+                return False
+            raise ValueError(
+                "Can only split if the out to the nested SDFG are AccessNodes to non view data and the AccessNodes are only connected to the nested SDFG."
+            )
+        middle_nodes.add(oedge.dst)
 
-    for e in orig_edges:
-        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+    # These are the nodes that belongs to the Post State. There are two reasons why a
+    #  node belongs to the set of post nodes.
+    #  The first is that the node does not belong to any other set.
+    post_nodes: Set[nodes.Node] = {
+        node
+        for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
+    }
 
-    return newstate
+    # The second reason, are read dependencies, for this we have to look at the incoming
+    #  edges and add any node that we need.
+    if len(post_nodes) != 0:
+        for pnode in post_nodes.copy():
+            for iedge in state.in_edges(pnode):
+                node: nodes.Node = iedge.src
+                if node not in post_nodes:
+                    if (not isinstance(node, nodes.AccessNode)) or isinstance(node.desc(state.sdfg), data.View):
+                        if test_if_applicable:
+                            return False
+                        raise ValueError("Can not replicate non non-View AccessNodes into the post state.")
+                    post_nodes.add(node)
+
+    if test_if_applicable:
+        return True
+
+    # Now we are creating the two new states.
+    parent_graph = state.parent_graph
+    pre_state: dace.SDFGState = parent_graph.add_state_before(state=state,
+                                                              label=(state.label +
+                                                                     "_pre_state" if state.label else None))
+    post_state: dace.SDFGState = parent_graph.add_state_after(state=state,
+                                                              label=(state.label +
+                                                                     "_post_state" if state.label else None))
+
+    # We will now populate the pre state.
+    pre_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
+    for node in pre_nodes:
+        new_node = copy.deepcopy(node) if node in middle_nodes else node
+        pre_old_to_new_map[node] = new_node
+        pre_state.add_node(new_node)
+
+    # Now add the edges, we only have to inspect the incoming ones.
+    for old_dst in pre_nodes:
+        new_dst = pre_old_to_new_map[old_dst]
+        for old_iedge in state.in_edges(old_dst):
+            old_src = old_iedge.src
+            if old_src in pre_nodes:
+                new_src = pre_old_to_new_map[old_src]
+                pre_state.add_edge(
+                    new_src,
+                    old_iedge.src_conn,
+                    new_dst,
+                    old_iedge.dst_conn,
+                    copy.deepcopy(old_iedge.data),
+                )
+
+    # Now we will populate the post state.
+    post_old_to_new_map: Dict[nodes.Node, nodes.Node] = dict()
+    for node in post_nodes:
+        new_node = copy.deepcopy(node) if (node in middle_nodes or node in pre_nodes) else node
+        post_old_to_new_map[node] = new_node
+        post_state.add_node(new_node)
+
+    # Now make the connections inside the post node. For this we only have to look
+    #  at the outgoing edges in the original state.
+    for old_src in post_nodes:
+        new_src = post_old_to_new_map[old_src]
+        for old_oedge in state.out_edges(old_src):
+            old_dst = old_oedge.dst
+            if old_dst in post_nodes:
+                new_dst = post_old_to_new_map[old_dst]
+                post_state.add_edge(
+                    new_src,
+                    old_oedge.src_conn,
+                    new_dst,
+                    old_oedge.dst_conn,
+                    copy.deepcopy(old_oedge.data),
+                )
+
+    # Remove all nodes from the middle state that are not classified as middle nodes,
+    #  this will also remove all the edges that are no longer needed.
+    for node in list(state.nodes()):
+        if node not in middle_nodes:
+            state.remove_node(node)
+
+    return (pre_state, state, post_state)
 
 
 def _get_internal_subset(internal_memlet: Memlet,
@@ -907,13 +1152,15 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     :param sym: The symbol to test.
     :return: True if the symbol can be removed, False otherwise.
     """
+    # TODO: Investigate if this function can be replaced by a call to `used_symbols()`.
+    #   See https://github.com/spcl/dace/pull/2080#discussion_r2226418881
     for desc in sdfg.arrays.values():
         if sym in map(str, desc.free_symbols):
             return False
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         if sym in state.free_symbols:
             return False
-    for e in sdfg.edges():
+    for e in sdfg.all_interstate_edges():
         if sym in e.data.free_symbols:
             return False
 
@@ -956,8 +1203,8 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
 
 
 def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:
-    """ 
-    Finds the set of largest contiguous subsets in a list of subsets. 
+    """
+    Finds the set of largest contiguous subsets in a list of subsets.
 
     :param subsets: Iterable of subset objects.
     :param dim: Check for contiguity only for the specified dimension.
@@ -986,7 +1233,7 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) 
 
 
 def constant_symbols(sdfg: SDFG) -> Set[str]:
-    """ 
+    """
     Returns a set of symbols that will never change values throughout the course
     of the given SDFG. Specifically, these are the input symbols (i.e., not
     defined in a particular scope) that are never set by interstate edges.
@@ -1046,8 +1293,8 @@ def simplify_state(state: SDFGState, remove_views: bool = False) -> MultiDiGraph
 
 
 def tile(sdfg: SDFG, map_entry: nodes.MapEntry, divides_evenly: bool, skew: bool, **tile_sizes: symbolic.SymbolicType):
-    """ 
-    Helper function that tiles a Map scope by the given sizes, in the 
+    """
+    Helper function that tiles a Map scope by the given sizes, in the
     given order.
 
     :param sdfg: The SDFG where the map resides.
@@ -1080,7 +1327,7 @@ def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
 
 
 def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> Tuple[nodes.MapEntry, nodes.MapEntry]:
-    """ 
+    """
     Helper function that extracts specific map dimensions into an outer map.
 
     :param sdfg: The SDFG where the map resides.
@@ -1124,28 +1371,37 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
 
 
 def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = None) -> ScopeTree:
-    """ 
-    Returns a scope tree that includes scopes from nested SDFGs. 
+    """
+    Returns a scope tree that includes scopes from nested SDFGs.
 
     :param state: The state that contains the root of the scope tree.
-    :param entry: A scope entry node to set as root, otherwise the state is 
+    :param entry: A scope entry node to set as root, otherwise the state is
                   the root if None is given.
+
+    :note: This function adds a `state` attribute to the `ScopeTree` objects, it refers to
+        the state to which the scope was found.
     """
-    stree = state.scope_tree()[entry]
+    # We have to make a copy because we modify the `ScopeTree` objects that are returned and they
+    #  are cached. We can not use `deepcopy()` here because this would also copy scope nodes,
+    #  which we do not want. Thus we call `ScopeTree.copy()` which only copies the `ScopeTree`s
+    #  inside `children` but everything else is just assigned.
+    stree = copy.copy(state.scope_tree()[entry])
     stree.state = state  # Annotate state in tree
 
     # Add nested SDFGs as children
     def traverse(state: SDFGState, treenode: ScopeTree):
-        snodes = state.scope_children()[treenode.entry]
+        snodes = copy.copy(state.scope_children()[treenode.entry])  # See above why.
+
         for node in snodes:
             if isinstance(node, nodes.NestedSDFG):
                 for nstate in node.sdfg.states():
-                    ntree = nstate.scope_tree()[None]
+                    ntree = copy.copy(nstate.scope_tree()[None])  # See above why.
                     ntree.state = nstate
                     treenode.children.append(ntree)
+
         for child in treenode.children:
             if hasattr(child, 'state') and child.state != state:
-                traverse(getattr(child, 'state', state), child)
+                traverse(child.state, child)
 
     traverse(state, stree)
     return stree
@@ -1153,17 +1409,21 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
 
 def get_internal_scopes(state: SDFGState,
                         entry: nodes.EntryNode,
-                        immediate: bool = False) -> List[Tuple[SDFGState, nodes.EntryNode]]:
-    """ 
-    Returns all internal scopes within a given scope, including if they 
+                        immediate: bool = False,
+                        recursive_scope_tree: Optional[ScopeTree] = None) -> List[Tuple[SDFGState, nodes.EntryNode]]:
+    """
+    Returns all internal scopes within a given scope, including if they
     reside in nested SDFGs.
 
     :param state: State in which entry node resides.
     :param entry: The entry node to start from.
-    :param immediate: If True, only returns the scopes that are immediately
-                      nested in the map.
+    :param immediate: If True, only returns the scopes that are immediately nested in the map.
+    :param recursive_scope_tree: The recursive scope tree, see `scope_tree_recursive()` for more.
     """
-    stree = scope_tree_recursive(state, entry)
+
+    if recursive_scope_tree is None:
+        recursive_scope_tree = scope_tree_recursive(state, entry)
+
     result = []
 
     def traverse(state: SDFGState, treenode: ScopeTree):
@@ -1175,19 +1435,21 @@ def get_internal_scopes(state: SDFGState,
             else:  # Nested SDFG
                 traverse(child.state, child)
 
-    traverse(state, stree)
+    traverse(state, recursive_scope_tree)
     return result
 
 
 def gpu_map_has_explicit_threadblocks(state: SDFGState, entry: nodes.EntryNode) -> bool:
-    """ 
+    """
     Returns True if GPU_Device map has explicit thread-block maps nested within.
     """
-    internal_maps = get_internal_scopes(state, entry)
+    rstree = scope_tree_recursive(state, entry)
+    internal_maps = get_internal_scopes(state, entry, recursive_scope_tree=rstree)
     if any(m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
            for _, m in internal_maps):
         return True
-    imm_maps = get_internal_scopes(state, entry, immediate=True)
+
+    imm_maps = get_internal_scopes(state, entry, immediate=True, recursive_scope_tree=rstree)
     if any(m.schedule == dtypes.ScheduleType.Default for _, m in imm_maps):
         return True
 
@@ -1209,7 +1471,7 @@ def reconnect_edge_through_map(
         state: SDFGState, edge: graph.MultiConnectorEdge[Memlet], new_node: Union[nodes.EntryNode, nodes.ExitNode],
         keep_src: bool) -> Tuple[graph.MultiConnectorEdge[Memlet], graph.MultiConnectorEdge[Memlet]]:
     """
-    Reconnects an edge through a map scope, removes old edge, and returns the 
+    Reconnects an edge through a map scope, removes old edge, and returns the
     two new edges.
 
     :param state: The state in which the edge and map reside.
@@ -1293,13 +1555,13 @@ def redirect_edge(state: SDFGState,
     """
     Redirects an edge in a state. Choose which elements to override by setting
     the keyword arguments.
-    
+
     :param state: The SDFG state in which the edge resides.
     :param edge: The edge to redirect.
     :param new_src: If provided, redirects the source of the new edge.
     :param new_dst: If provided, redirects the destination of the new edge.
     :param new_src_conn: If provided, renames the source connector of the edge.
-    :param new_dst_conn: If provided, renames the destination connector of the 
+    :param new_dst_conn: If provided, renames the destination connector of the
                          edge.
     :param new_data: If provided, changes the data on the memlet of the edge,
                      and the entire associated memlet tree.
@@ -1345,7 +1607,7 @@ def replace_code_to_code_edges(sdfg: SDFG):
 
 def can_run_state_on_fpga(state: SDFGState):
     """
-    Checks if state can be executed on FPGA. Used by FPGATransformState 
+    Checks if state can be executed on FPGA. Used by FPGATransformState
     and HbmTransform.
     """
     for node, graph in state.all_nodes_recursive():

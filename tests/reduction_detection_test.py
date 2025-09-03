@@ -2,6 +2,7 @@
 import dace
 from dace.frontend.operations import is_op_associative, is_op_commutative, detect_reduction_type
 
+
 def _test_type(wcr_str, red_type):
     assert detect_reduction_type('lambda a,b: %s' % wcr_str) == red_type
 

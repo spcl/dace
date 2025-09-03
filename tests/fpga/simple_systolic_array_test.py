@@ -164,13 +164,13 @@ def make_fpga_state(sdfg):
     state = sdfg.add_state("simple_array")
 
     read_A_sdfg = make_read_A_sdfg()
-    read_A_sdfg_node = state.add_nested_sdfg(read_A_sdfg, sdfg, {"mem"}, {"pipe"})
+    read_A_sdfg_node = state.add_nested_sdfg(read_A_sdfg, {"mem"}, {"pipe"})
 
     compute_sdfg = make_compute_sdfg()
-    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, sdfg, {"A_stream_in"}, {"A_stream_out"})
+    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, {"A_stream_in"}, {"A_stream_out"})
 
     write_A_sdfg = make_write_A_sdfg()
-    write_A_sdfg_node = state.add_nested_sdfg(write_A_sdfg, sdfg, {"pipe"}, {"mem"})
+    write_A_sdfg_node = state.add_nested_sdfg(write_A_sdfg, {"pipe"}, {"mem"})
 
     A_IN = state.add_array("A_device", [N],
                            dtype=dace.int32,

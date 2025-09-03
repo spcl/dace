@@ -457,7 +457,7 @@ def test_nested_promotion_connector(with_subscript):
     nstate2.add_edge(a, None, t, 'inp', dace.Memlet('a[s2, s2 + 1]'))
     nstate2.add_edge(t, 'out', b, None, dace.Memlet('b[0]'))
 
-    nnode = state.add_nested_sdfg(nsdfg, None, {'a', 's'}, {'b'})
+    nnode = state.add_nested_sdfg(nsdfg, {'a', 's'}, {'b'})
     aouter = state.add_read('A')
     souter = state.add_read('scal')
     bouter = state.add_write('B')
@@ -747,6 +747,43 @@ def test_reversed_order():
     sdfg.compile()
 
 
+@pytest.mark.parametrize('memlet_volume_n', (False, True))
+def test_scalar_index_regression(memlet_volume_n):
+    """
+    Tests a reported failure with an invalid promotion of a scalar index.
+    """
+    N = dace.symbol('N')
+    volume = 1 if not memlet_volume_n else N
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [10, 10, N], dace.float64)
+    sdfg.add_scalar('scal', dace.int64)
+    sdfg.add_scalar('tmp', dace.int64, transient=True)
+
+    init_state = sdfg.add_state()
+    t = init_state.add_tasklet('set', {}, {'t'}, 't = 1')
+    w = init_state.add_write('tmp')
+    init_state.add_edge(t, 't', w, None, dace.Memlet('tmp'))
+
+    state = sdfg.add_state_after(init_state)
+    r = state.add_read('scal')
+    rt = state.add_read('tmp')
+    t = state.add_tasklet('setone', {'s', 't'}, {'a'}, 'a[s + t] = -1')
+    w = state.add_write('A')
+    state.add_edge(rt, None, t, 't', dace.Memlet('tmp'))
+    state.add_edge(r, None, t, 's', dace.Memlet('scal'))
+    state.add_edge(t, 'a', w, None, dace.Memlet(data='A', subset='0, 0, 0:N', volume=volume))
+
+    sdfg.validate()
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+
+    a = np.random.rand(10, 10, 20)
+    scal = np.int64(5)
+    ref = np.copy(a)
+    ref[0, 0, scal + 1] = -1
+    sdfg(A=a, scal=scal, N=20)
+    assert np.allclose(a, ref)
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -772,3 +809,5 @@ if __name__ == '__main__':
     test_ternary_expression(True)
     test_double_index_bug()
     test_reversed_order()
+    test_scalar_index_regression(False)
+    test_scalar_index_regression(True)

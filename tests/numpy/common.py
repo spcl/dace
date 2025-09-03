@@ -41,7 +41,9 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                         cast inputs.
         :param max_value: The maximum value allowed in the inputs.
     """
+
     def decorator(func):
+
         def test():
             dp = dace.program(device=device)(func)
 
@@ -128,8 +130,11 @@ def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
                 dace_thrown = e
 
             if dace_thrown is not None or numpy_thrown is not None:
-                assert dace_thrown is not None and numpy_thrown is not None, "dace threw:\n{}: {}\nBut numpy threw:\n{}: {}\n".format(
-                    type(dace_thrown), dace_thrown, type(numpy_thrown), numpy_thrown)
+                if dace_thrown is None or numpy_thrown is None:
+                    raise_from = dace_thrown if dace_thrown is not None else numpy_thrown
+                    raise AssertionError("dace threw {}: {}, but numpy threw {}: {}".format(
+                        type(dace_thrown).__name__, dace_thrown,
+                        type(numpy_thrown).__name__, numpy_thrown)) from raise_from
             else:
                 if not isinstance(reference_result, (tuple, list)):
                     reference_result = [reference_result]

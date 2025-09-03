@@ -489,7 +489,7 @@ c_out = c_val + a_in * b_in""")
 
     # We need to enforce sequentiality between these loops
     write_sdfg = dace.SDFG("write_C")
-    write_sdfg_node = state.add_nested_sdfg(write_sdfg, sdfg, {"buffer_in", "forward_in"}, {"forward_out"})
+    write_sdfg_node = state.add_nested_sdfg(write_sdfg, {"buffer_in", "forward_in"}, {"forward_out"})
     state.add_memlet_path(C_buffer_write,
                           write_entry,
                           write_sdfg_node,
@@ -688,9 +688,11 @@ def cli(n, k, m, num_pes, dtype, tile_size_n, tile_size_m, vector_width, special
     dtype = dtype.type  # Convert from typeclass to NumPy type
 
     if specialize:
-        name = (f"gemm_fpga_systolic_vectorized_d{num_pes}_" f"w{vector_width}_{tile_size_n}x{tile_size_m}_{n}x{k}x{m}")
+        name = (f"gemm_fpga_systolic_vectorized_d{num_pes}_"
+                f"w{vector_width}_{tile_size_n}x{tile_size_m}_{n}x{k}x{m}")
     else:
-        name = (f"gemm_fpga_systolic_vectorized_d{num_pes}_" f"w{vector_width}_{tile_size_n}x{tile_size_m}_NxKxM")
+        name = (f"gemm_fpga_systolic_vectorized_d{num_pes}_"
+                f"w{vector_width}_{tile_size_n}x{tile_size_m}_NxKxM")
 
     sdfg = make_sdfg(name, vtype)
 

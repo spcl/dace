@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace.transformation.dataflow import (MapReduceFusion, MapFusion, MapWCRFusion)
+from dace.transformation.dataflow import (MapReduceFusion, MapFusionVertical, MapWCRFusion)
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -112,6 +112,7 @@ def mapreduce_twomaps(A, B, C):
 
     @dace.mapscope
     def summation_outer(i: _[0:M], j: _[0:N]):
+
         @dace.map
         def summation_inner(k: _[0:K]):
             ti << tmp[i, j, k]
@@ -153,7 +154,7 @@ def onetest(program):
 
     sdfg = program.to_sdfg()
     sdfg.simplify()
-    sdfg.apply_transformations([MapFusion, MapWCRFusion])
+    sdfg.apply_transformations([MapFusionVertical, MapWCRFusion])
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
     diff = np.linalg.norm(C_regression - C) / (M * N)

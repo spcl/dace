@@ -20,6 +20,7 @@ def assert_validation_failure(sdfg, exceptiontype):
 
 
 def multibank_deep_scope(mem_type):
+
     @dace.program
     def deep_scope(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         for k in dace.map[0:10]:
@@ -44,6 +45,7 @@ def multibank_deep_scope(mem_type):
 
 
 def multibank_multi_tasklet(mem_type):
+
     @dace.program
     def multi_tasklet(input: dace.int32[12, 10], output: dace.int32[12, 10]):
         with dace.tasklet:

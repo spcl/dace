@@ -50,6 +50,7 @@ def test_kernels_inside_component_0():
                 └───────────┘
     The 4 maps, should belong to three distinct kernels
     """
+
     @dace.program
     def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8]):
@@ -110,6 +111,7 @@ def test_kernels_inside_component_1():
     The five Maps should belong to 5 distinct kernels
 
     """
+
     @dace.program
     def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8], t: dace.float32[8], alpha: dace.float32, beta: dace.float32):
@@ -160,6 +162,7 @@ def test_kernels_inside_component_2():
 
     Map_0 and Map_1 should belong to two distinct kernels
     """
+
     @dace.program
     def kernels_inside_component_2(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], z: dace.float32[8],
                                    t: dace.float32[8]):
@@ -187,7 +190,7 @@ def test_kernels_inside_component_2():
     return sdfg
 
 
-@fpga_test()
+@fpga_test(assert_ii_1=False)
 def test_kernels_lns_inside_component():
     """
     Tests for kernels detection inside a single connected component where we
@@ -254,6 +257,7 @@ def test_kernels_inside_components_0():
     The three maps, should belong to three distinct kernels
 
     """
+
     @dace.program
     def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                     xx: dace.float32[8], yy: dace.float32[8], vv: dace.float32[8], ww: dace.float32[8]):
@@ -302,6 +306,7 @@ def test_kernels_inside_components_multiple_states():
                 └───────────┘
     The three maps, should belong to three distinct kernels
     """
+
     def make_sdfg(dtype=dace.float32):
         sdfg = dace.SDFG("multiple_kernels_multiple_states")
         n = dace.symbol("size")

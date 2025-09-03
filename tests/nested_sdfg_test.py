@@ -14,6 +14,7 @@ def test():
 
     @dp.program
     def sdfg_internal(input: dp.float32, output: dp.float32[1]):
+
         @dp.tasklet
         def init():
             out >> output
@@ -27,7 +28,6 @@ def test():
                 out >> output
                 out = oin * input
 
-
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
     state = mysdfg.add_state()
@@ -35,12 +35,11 @@ def test():
     B = state.add_array('B', [N, N], dp.float32)
 
     map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
-    nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'}, {'output'})
+    nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), {'input'}, {'output'})
 
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
-
 
     N = 64
 
@@ -61,6 +60,7 @@ def test_external_nsdfg():
 
     @dp.program
     def sdfg_internal(input: dp.float32, output: dp.float32[1]):
+
         @dp.tasklet
         def init():
             out >> output
@@ -74,7 +74,6 @@ def test_external_nsdfg():
                 out >> output
                 out = oin * input
 
-
     # Construct SDFG
     mysdfg = SDFG('outer_sdfg')
     state = mysdfg.add_state()
@@ -85,12 +84,11 @@ def test_external_nsdfg():
     internal = sdfg_internal.to_sdfg()
     fd, filename = tempfile.mkstemp(suffix='.sdfg')
     internal.save(filename)
-    nsdfg = state.add_nested_sdfg(None, mysdfg, {'input'}, {'output'}, name='sdfg_internal', external_path=filename)
+    nsdfg = state.add_nested_sdfg(None, {'input'}, {'output'}, name='sdfg_internal', external_path=filename)
 
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
-
 
     N = 64
 

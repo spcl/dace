@@ -116,9 +116,9 @@ public:
     AlignedContainer()
         : m_rawdat(nullptr), align_offset(std::numeric_limits<size_t>::max()), m_size(0), m_alloc_size(0)
     {
-        
+
     }
-    
+
     ~AlignedContainer()
     {
         clear();
@@ -212,7 +212,7 @@ public:
     thread_lock_context_t()
         : notified(true), iteration(0)
     {
-        
+
     }
     std::mutex mutex;
     std::condition_variable cond_var;
@@ -291,7 +291,7 @@ public:
         m_global_iteration = 0;
     }
 
-    size_t getAndIncreaseCounter() 
+    size_t getAndIncreaseCounter()
     {
         size_t old = m_global_iteration;
 
@@ -320,7 +320,7 @@ public:
             ctx.cond_var.wait(lock);
         }
         ++(ctx.iteration);
-        
+
         // This instance is now blocking the thread. When the return value is destroyed, it will no longer block
         return ThreadLockReleaser(ctx);
     }
@@ -560,11 +560,11 @@ public:
             perfctr.enterCritical();
             perfctr.leaveCritical(vs);
 
-            set_min_max(vs);   
+            set_min_max(vs);
         }
 
         addEntry(_min);
-        
+
     }
 
     // Provides a thread-safe implementation to increase a counter representing the bytes moved
@@ -635,7 +635,7 @@ public:
             // Also store contention
             uint64_t cont = 0;
             cont = m_contention_value.exchange(cont);
-            
+
             if(cont != 0)
                 this->m_report.add_counter(
                     "papi_contention",
@@ -654,7 +654,7 @@ public:
     {
         if(this->m_insertion_position >= static_cast<size_t>(store_reserve_size * DACE_INSTRUMENTATION_SUPERSECTION_FLUSH_THRESHOLD))
             flush();
-        
+
         PAPIValueSet<events...> set(nodeid, 0, 0, flags);
         addEntry(set);
     }
@@ -704,7 +704,7 @@ public:
                 // We always have to try again to get the new (correct) position
                 continue;
             }
-            
+
             r_ex = m_insertion_position.compare_exchange_weak(oldpos, pos);
             pos = oldpos;
             if(!r_ex)
@@ -787,7 +787,7 @@ public:
 #endif
         return retval;
     }
-    
+
     PAPIValueSet<events...>& getNewValueSet()
     {
         return getNewValueSet(PAPIPerf<events...>(), 0, 0, 0);
@@ -839,7 +839,7 @@ public:
 #endif
     }
 
-    
+
 
     ~PAPIPerf()
     {
@@ -889,9 +889,9 @@ public:
     {
         static bool error_reported = false;
         constexpr auto num_events = sizeof...(events);
-        
+
         // Make sure we have the correct sizes
-        static_assert(sizeof...(e) >= num_events); 
+        static_assert(sizeof...(e) >= num_events);
 
         // Fence before stopping to keep misses inside
         DACE_PERF_mfence;
@@ -909,7 +909,7 @@ public:
             values.store()[i] = std::numeric_limits<long long>::max();
         }
     }
-    
+
 private:
     int m_event_set;
 };

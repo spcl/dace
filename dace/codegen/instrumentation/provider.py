@@ -171,7 +171,7 @@ class InstrumentationProvider(object):
     def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
                     outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the end of generating a node.
-        
+
             :param sdfg: The generated SDFG object.
             :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.

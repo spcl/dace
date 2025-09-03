@@ -63,7 +63,7 @@ def register_sdfg_call_hook(*,
                             context_manager: Optional[GeneratorType] = None) -> int:
     """
     Registers a hook that is called when an SDFG is called.
-    
+
     :param before_hook: An optional hook to call before the SDFG is compiled and run.
     :param after_hook: An optional hook to call after the SDFG is compiled and run.
     :param context_manager: A context manager to use around the SDFG's compilation and running. This field
@@ -79,7 +79,7 @@ def register_compiled_sdfg_call_hook(*,
                                      context_manager: Optional[GeneratorType] = None) -> int:
     """
     Registers a hook that is called when a compiled SDFG is called.
-    
+
     :param before_hook: An optional hook to call before the compiled SDFG is called.
     :param after_hook: An optional hook to call after the compiled SDFG is called.
     :param context_manager: A context manager to use around the compiled SDFG's C function. This field
@@ -103,7 +103,7 @@ def unregister_sdfg_call_hook(hook_id: int):
 def unregister_compiled_sdfg_call_hook(hook_id: int):
     """
     Unregisters a compiled SDFG call hook.
-    
+
     :param hook_id: The unique identifier of the hook.
     """
     if hook_id >= len(_COMPILED_SDFG_CALL_HOOKS):
@@ -134,10 +134,10 @@ def on_call(*,
             print(f'{sdfg.name} is going to be compiled and run')
             yield
             print(f'{sdfg.name} has finished running')
-        
+
         with dace.hooks.on_call(context_manager=print_sdfg_name):
             some_program(...)
-        
+
 
     :param before: An optional function that is called before the SDFG is compiled and run. This function
                    should take an SDFG as its only argument.
@@ -172,11 +172,11 @@ def on_compiled_sdfg_call(*,
             yield
             end = time.time()
             print(f'Compiled SDFG {csdfg.sdfg.name} took {end - start} seconds')
-        
+
         with dace.hooks.on_compiled_sdfg_call(context_manager=time_compiled_sdfg):
             some_program(...)
             other_program(...)
-        
+
     :param before: An optional function that is called before the compiled SDFG is called. This function
                    should take a compiled SDFG object, its arguments and keyword arguments.
     :param after: An optional function that is called after the compiled SDFG is called. This function
@@ -268,6 +268,7 @@ def invoke_compiled_sdfg_call_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[A
 
         yield compiled_sdfg
 
+
 ##########################################################################
 # Install hooks from configuration upon import
 
@@ -293,5 +294,3 @@ def _install_hooks_from_config():
     if config.Config.get_bool('profiling'):
         from dace.frontend.operations import CompiledSDFGProfiler
         register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler())
-
-

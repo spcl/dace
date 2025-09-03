@@ -36,8 +36,8 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
         new_else_cond = None
         for cond, branch in all_branches:
             branch_nodes = branch.nodes()
-            if (len(branch_nodes) == 0 or (len(branch_nodes) == 1 and isinstance(branch_nodes[0], SDFGState) and
-                                           len(branch_nodes[0].nodes()) == 0)):
+            if (len(branch_nodes) == 0 or (len(branch_nodes) == 1 and isinstance(branch_nodes[0], SDFGState)
+                                           and len(branch_nodes[0].nodes()) == 0)):
                 # Found a branch we can eliminate.
                 if has_else and branch is not all_branches[-1][1]:
                     # If this conditional has an else branch and that is not the branch being eliminated, we need to
@@ -55,13 +55,13 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
                     region.remove_branch(branch)
                 removed_branches += 1
         # If the else branch remains, make sure it now has the new negate-all condition.
-        if new_else_cond is not None and region.branches[-1][0] is None:
+        if region.branches and new_else_cond is not None and region.branches[-1][0] is None:
             region._branches[-1] = (new_else_cond, region._branches[-1][1])
 
         if len(region.branches) == 0:
             # The conditional has become entirely empty, remove it.
             replacement_node_before = region.parent_graph.add_state_before(region)
-            replacement_node_after = region.parent_graph.add_state_before(region)
+            replacement_node_after = region.parent_graph.add_state_after(region)
             region.parent_graph.add_edge(replacement_node_before, replacement_node_after, InterstateEdge())
             region.parent_graph.remove_node(region)
 
@@ -69,4 +69,3 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
             region.reset_cfg_list()
             return removed_branches
         return None
-
