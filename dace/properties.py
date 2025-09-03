@@ -1413,3 +1413,69 @@ class DataclassProperty(Property):
         if d is None:
             return None
         return self.dtype.parse_obj(d)
+
+
+class HBMSplitProperty(Property):
+    """ Custom Property type that defines a split shape. """
+
+    @property
+    def dtype(self):
+        return tuple
+
+    @staticmethod
+    def from_string(s):
+        if s[0] == "(" and s[-1] == ")":
+            s = s[1:-1]
+        return tuple([dace.symbolic.pystr_to_symbolic(m.group(0)) for m in re.finditer("[^,;:]+", s)])
+
+    @staticmethod
+    def to_string(obj):
+        return ", ".join(map(str, obj))
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return list(map(str, obj))
+
+    def from_json(self, d, sdfg=None):
+        if d is None:
+            return None
+        return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
+
+    def __set__(self, obj, val):
+        if isinstance(val, list):
+            val = tuple(val)
+        super(HBMSplitProperty, self).__set__(obj, val)
+
+
+class HBMPlacementProperty(Property):
+    """ Custom Property type that defines a placement shape. """
+
+    @property
+    def dtype(self):
+        return tuple
+
+    @staticmethod
+    def from_string(s):
+        if s[0] == "(" and s[-1] == ")":
+            s = s[1:-1]
+        return tuple([dace.symbolic.pystr_to_symbolic(m.group(0)) for m in re.finditer("[^,;:]+", s)])
+
+    @staticmethod
+    def to_string(obj):
+        return ", ".join(map(str, obj))
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return list(map(str, obj))
+
+    def from_json(self, d, sdfg=None):
+        if d is None:
+            return None
+        return tuple([dace.symbolic.pystr_to_symbolic(m) for m in d])
+
+    def __set__(self, obj, val):
+        if isinstance(val, list):
+            val = tuple(val)
+        super(HBMPlacementProperty, self).__set__(obj, val)

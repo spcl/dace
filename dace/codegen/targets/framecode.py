@@ -189,9 +189,9 @@ class DaCeCodeGenerator(object):
         # Write state struct
         structstr = '\n'.join(self.statestruct)
         global_stream.write(f'''
-struct {mangle_dace_state_struct_name(sdfg)} {{
+typedef struct {mangle_dace_state_struct_name(sdfg)} {{
     {structstr}
-}};
+}}{mangle_dace_state_struct_name(sdfg)};
 
 ''', sdfg)
 
@@ -211,7 +211,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         """
         # Write frame code - header
         global_stream.write('/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' + '#include <dace/dace.h>\n', sdfg)
-
+        global_stream.write('#include <dace/soft_hier/preload.h>\n', sdfg)
         # Write header required by environments
         for env in self.environments:
             self.statestruct.extend(env.state_fields)
@@ -410,12 +410,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                        global_stream: CodeIOStream,
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = True):
+        # print(f'Framecode generating state {state.label}...')
+        callsite_stream.write(f'//Framecode generating state {state.label}...', sdfg)
         sid = state.block_id
-
         # Emit internal transient array allocation
+        # callsite_stream.write("// Start allocate arrays in scope\n")
+        # print(f'Allocating arrays in scope for state {state.label}...')
         self.allocate_arrays_in_scope(sdfg, cfg, state, global_stream, callsite_stream)
-
-        callsite_stream.write('\n')
+        # print(f'Finished allocating arrays in scope for state {state.label}.')
+        # callsite_stream.write("// Finish allocate arrays in scope\n")
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -439,6 +442,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                global_stream,
                                                callsite_stream,
                                                skip_entry_node=False)
+            # print(f'Finished Framecode dispatch_subgraph {state.label}.')
         else:
             if sdfg.openmp_sections:
                 callsite_stream.write("#pragma omp parallel sections\n{")
@@ -456,6 +460,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     callsite_stream.write("} // End omp section")
             if sdfg.openmp_sections:
                 callsite_stream.write("} // End omp sections")
+            # print(f'Finished Framecode dispatch_subgraph {state.label}.')
 
         #####################
         # Write state footer
@@ -468,18 +473,21 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             for instr in self._dispatcher.instrumentation.values():
                 if instr is not None:
                     instr.on_state_end(sdfg, cfg, state, callsite_stream, global_stream)
+        # print(f'Finished Framecode generating state {state.label}.')
 
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> Set[SDFGState]:
         states_generated = set()
-
+        # print(f'Generating states for SDFG {sdfg.name}...')
         opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
+            # print(f'Calling dispatch_state {state.label}...')
             stream = CodeIOStream()
             self._dispatcher.dispatch_state(state, global_stream, stream)
             opbar.next()
             states_generated.add(state)  # For sanity check
+            # print(f'Finished dispatch_state {state.label}.')
             return stream.getvalue()
 
         callsite_stream.write(cflow.control_flow_region_to_code(sdfg, dispatch_state, self, sdfg.symbols), sdfg)
@@ -806,7 +814,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 state_id = -1
 
             desc = node.desc(tsdfg)
-
             self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
                                                node, desc, function_stream, callsite_stream, declare, allocate)
 
@@ -845,6 +852,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         if len(cfg_id) == 0 and sdfg.cfg_id != 0:
             cfg_id = '_%d' % sdfg.cfg_id
 
+        # print("Using frame code generator for %s" % sdfg.label)
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
 
@@ -873,7 +881,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
         outside_symbols = sdfg.arglist() if is_top_level else set()
-
+        # print("Allocated outer-level transients")
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
             if isinstance(ctype, data.Array):
@@ -936,9 +944,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         #######################################################################
         # Generate actual program body
-
+        # print("Generating states")
         states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
-
+        # print("Generated states")
         #######################################################################
 
         # Sanity check

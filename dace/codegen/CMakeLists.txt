@@ -32,6 +32,10 @@ set(DACE_INTELFPGA_KERNEL_FLAGS "" CACHE STRING "Extra flags to kernel compiler.
 set(DACE_INTELFPGA_TARGET_BOARD "a10gx" CACHE STRING "Target FPGA board.")
 set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
 
+# SoftHier options
+set(DACE_SOFTHIER_SHCC_CMAKE_PATH ${CMAKE_SOURCE_DIR}/targets/soft_hier)
+list(APPEND CMAKE_MODULE_PATH ${DACE_SOFTHIER_SHCC_CMAKE_PATH})
+
 # Target detection
 set(DACE_ENABLE_MPI OFF)
 set(DACE_ENABLE_CUDA OFF)
@@ -39,6 +43,7 @@ set(DACE_ENABLE_HIP OFF)
 set(DACE_ENABLE_XILINX OFF)
 set(DACE_ENABLE_INTELFPGA OFF)
 set(DACE_ENABLE_RTL OFF)
+set(DACE_ENABLE_SOFTHIER OFF)
 
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
@@ -49,6 +54,8 @@ foreach(DACE_FILE ${DACE_FILES})
   get_filename_component(DACE_FILE_DIR "${DACE_FILE_SUBDIR}" DIRECTORY)
   get_filename_component(DACE_FILE_TARGET "${DACE_FILE_DIR}" NAME)
   get_filename_component(DACE_FILE_TARGET_TYPE "${DACE_FILE_SUBDIR}" NAME)
+  message(STATUS "TARGET: ${DACE_FILE_TARGET}")
+  message(STATUS "TARGET_TYPE: ${DACE_FILE_TARGET_TYPE}")
   if(DACE_FILE_TARGET STREQUAL "")
     # If there is no subtype, the directory of the file is the target directly
     set(DACE_FILE_TARGET ${DACE_FILE_TARGET_TYPE})
@@ -56,6 +63,7 @@ foreach(DACE_FILE ${DACE_FILES})
   endif()
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
+  message(STATUS "FILE: ${DACE_FILE}")
   # Now treat the file according to the deduced target
   if(${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
@@ -94,10 +102,26 @@ foreach(DACE_FILE ${DACE_FILES})
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
     endif()
+  elseif(${DACE_FILE_TARGET} STREQUAL "soft_hier")
+    set(DACE_ENABLE_SOFTHIER ON)
+    if(DACE_FILE_EXT MATCHES ".shcc")
+      set(DACE_SOFTHIER_FILES ${DACE_SOFTHIER_FILES} ${DACE_FILE})
+      message(STATUS "Adding SHCC file: ${DACE_FILE}")
+      message(STATUS "Adding SHCC files: ${DACE_SOFTHIER_FILES}")
+    elseif(DACE_FILE_EXT MATCHES ".cpp")
+      set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+      message(STATUS "Adding host file: ${DACE_FILE}")
+      message(STATUS "Adding host files: ${DACE_HOST_FILES}")
+    endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
 endforeach()
+
+message(STATUS "DACE_FILES: ${DACE_FILES}")
+message(STATUS "DACE_CPP_FILES: ${DACE_CPP_FILES}")
+message(STATUS "DACE_HOST_FILES: ${DACE_HOST_FILES}")
+message(STATUS "DACE_SOFTHIER_FILES: ${DACE_SOFTHIER_FILES}")
 
 # Internal dependencies
 set(DACE_RUNTIME_DIR ${CMAKE_SOURCE_DIR}/../runtime)
@@ -262,6 +286,18 @@ if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
   set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
   include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
+
+if(DACE_ENABLE_SOFTHIER)
+  include_directories(${DACE_RUNTIME_DIR}/include/soft_hier)
+  message(STATUS "11111111111")
+  enable_language(SHCC)
+  message(STATUS "2222222222")
+  add_definitions(-DDACE_SOFTHIER)
+  set_source_files_properties(${DACE_SOFTHIER_FILES} PROPERTIES LANGUAGE SHCC)
+  # set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE SHCC)
+  message(STATUS "3333333333")
+endif()
+
 
 # Create HIP object files
 if(DACE_ENABLE_HIP)
@@ -603,8 +639,60 @@ if(DACE_ENABLE_XILINX)
 endif()
 
 # Create DaCe loader stub
+message(STATUS "Creating DaCe loader stub")
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
+message(STATUS "Linking with ${DACE_LIBS}")
 target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+message(STATUS "Linking with ${DACE_PROGRAM_NAME}")
+
+# SoftHier executable
+if(DACE_ENABLE_SOFTHIER)
+  if (NOT SOFTHIER_INSTALL_PATH)
+    set(SOFTHIER_INSTALL_PATH /usr/scratch/badile111/dace4softhier/gvsoc/soft_hier/flex_cluster_sdk/runtime CACHE PATH "Path to SoftHier installation")
+  endif()
+  # Set the linker script
+  set(SHCC_LINKER_SCRIPT ${SOFTHIER_INSTALL_PATH}/flex_memory.ld)
+
+  if (NOT SOFTHIER_INCLUDE_DIRS)
+    set(SOFTHIER_INCLUDE_DIRS ${SOFTHIER_INSTALL_PATH}/include)
+  endif()
+
+  if (NOT GVSOC_DIR)
+    set(GVSOC_DIR "/usr/scratch/badile111/dace4softhier/gvsoc")
+  endif()
+
+  if (NOT GVSOC_INSTALL_PATH)
+    set(GVSOC_INSTALL_PATH "/usr/scratch/badile111/dace4softhier/gvsoc")
+  endif()
+  
+  configure_file(
+    ${DACE_SOFTHIER_SHCC_CMAKE_PATH}/dace.sh.in
+    ${CMAKE_BINARY_DIR}/../../dace.sh
+    @ONLY
+  )
+
+  add_custom_command(
+      OUTPUT softhier.elf
+      # COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${SOFTHIER_SW_BUILD_PATH}/softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      # COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${CMAKE_BINARY_DIR}/../../softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      COMMAND cp ${DACE_SOFTHIER_FILES} ${DACE_SOFTHIER_FILES}.c
+      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medlow -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${CMAKE_BINARY_DIR}/../../softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s ${DACE_SOFTHIER_FILES}.c
+      COMMAND chmod +x ${CMAKE_BINARY_DIR}/../../dace.sh
+      COMMENT "Generating softhier.elf"
+  )
+
+  add_custom_target(build_output ALL DEPENDS softhier.elf)
+
+  # add_custom_command(
+  #     OUTPUT softhier.dump
+  #     DEPENDS softhier.elf
+  #     COMMAND ${OBJDUMPER} -D softhier.elf > softhier.dump
+  #     COMMENT "Creating disassembly output.dump"
+  # )
+
+  # add_custom_target(dump ALL DEPENDS softhier.dump)
+endif()
+
 
 # Windows-specific fixes
 if (MSVC_IDE)
