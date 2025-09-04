@@ -14,8 +14,10 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 import dace.sdfg.utils as sdutil
 
+
 @transformation.explicit_cf_compatible
 class LiftTriviallyTrueIf(ppl.Pass):
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.States
 
@@ -41,7 +43,6 @@ class LiftTriviallyTrueIf(ppl.Pass):
     def _trivially_false(self, code: CodeBlock):
         return self._trivial_cond_check(code, False)
 
-
     def _detect_trivial_ifs_and_rm_cfg(self, graph: ControlFlowRegion | SDFG, depth=0):
         cfb_to_rm_cfg_to_keep = set()
         rmed_count = 0
@@ -49,7 +50,7 @@ class LiftTriviallyTrueIf(ppl.Pass):
             if isinstance(cfb, ConditionalBlock):
                 # Supported variants:
                 # 1. if (cond) where cond is always true
-                # 2. if (cond) else 
+                # 2. if (cond) else
                 # 2.1 where cond is always true
                 # 2.2 cond is always false
                 conditions_and_cfgs = cfb.branches
@@ -63,13 +64,13 @@ class LiftTriviallyTrueIf(ppl.Pass):
                     # Either one of them must be none
                     if cond1 is not None and cond2 is not None:
                         continue
-                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (
-                        ((cond1, cfg1), (cond2, cfg2)) if cond1 is not None else ((cond2, cfg2), (cond1, cfg1))
-                    )
+                    (not_none_cond, not_none_cfg), (none_cond, none_cfg) = (((cond1, cfg1),
+                                                                             (cond2, cfg2)) if cond1 is not None else
+                                                                            ((cond2, cfg2), (cond1, cfg1)))
 
-                    if self._trivially_true(not_none_cond): #2.1
+                    if self._trivially_true(not_none_cond):  #2.1
                         cfb_to_rm_cfg_to_keep.add((cfb, not_none_cfg))
-                    elif self._trivially_false(not_none_cond): #2.2
+                    elif self._trivially_false(not_none_cond):  #2.2
                         cfb_to_rm_cfg_to_keep.add((cfb, none_cfg))
 
         # Remove trivial Ifs
@@ -87,7 +88,7 @@ class LiftTriviallyTrueIf(ppl.Pass):
         # Now go one one more level recursive
         for node in graph.nodes():
             if isinstance(node, ControlFlowRegion):
-                rmed_count += self._detect_trivial_ifs_and_rm_cfg(node, depth+1)
+                rmed_count += self._detect_trivial_ifs_and_rm_cfg(node, depth + 1)
 
         return rmed_count
 
@@ -114,15 +115,14 @@ class LiftTriviallyTrueIf(ppl.Pass):
             assert node_map[edge.src] in parent_graph.nodes()
             assert node_map[edge.dst] in parent_graph.nodes()
             parent_graph.add_edge(node_map[edge.src], node_map[edge.dst], copy.deepcopy(edge.data))
-        
+
         for ie in cfb_in_edges:
             parent_graph.add_edge(ie.src, start_block, copy.deepcopy(ie.data))
         for oe in cfb_out_edges:
             parent_graph.add_edge(end_block, oe.dst, copy.deepcopy(oe.data))
-        
+
         sdutil.set_nested_sdfg_parent_references(cfg.sdfg)
         cfg.sdfg.reset_cfg_list()
-
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         # Start with top level nodes and continue further to ensure a trivial if within another trivial if
@@ -130,4 +130,3 @@ class LiftTriviallyTrueIf(ppl.Pass):
         self._detect_trivial_ifs_and_rm_cfg(sdfg)
 
         return None
-
