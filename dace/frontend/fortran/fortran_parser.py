@@ -1413,13 +1413,11 @@ class AST_translator:
                                     memlet_skip.append(ast_utils.get_name(var))
 
             internal_sdfg = substate.add_nested_sdfg(new_sdfg,
-                                                     sdfg,
                                                      ins_in_new_sdfg,
                                                      outs_in_new_sdfg,
                                                      symbol_mapping=self.temporary_sym_dict[new_sdfg.name])
         else:
             internal_sdfg = substate.add_nested_sdfg(None,
-                                                     sdfg,
                                                      ins_in_new_sdfg,
                                                      outs_in_new_sdfg,
                                                      symbol_mapping=self.temporary_sym_dict[new_sdfg.name],
