@@ -4,8 +4,7 @@ import ast
 import dace
 import copy
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set
-
+from typing import Any, Dict, Optional, Set, Union
 from dace import SDFG, ControlFlowRegion, InterstateEdge
 from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
@@ -43,7 +42,7 @@ class LiftTriviallyTrueIf(ppl.Pass):
     def _trivially_false(self, code: CodeBlock):
         return self._trivial_cond_check(code, False)
 
-    def _detect_trivial_ifs_and_rm_cfg(self, graph: ControlFlowRegion | SDFG, depth=0):
+    def _detect_trivial_ifs_and_rm_cfg(self, graph: Union[ControlFlowRegion, SDFG], depth=0):
         cfb_to_rm_cfg_to_keep = set()
         rmed_count = 0
         for cfb in graph.nodes():
