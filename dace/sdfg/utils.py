@@ -22,6 +22,7 @@ from dace.cli.progress import optional_progressbar
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
 from dace.properties import CodeBlock
 
+
 def node_path_graph(*args) -> gr.OrderedDiGraph:
     """
     Generates a path graph passing through the input nodes.
@@ -2373,6 +2374,7 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         return offset_symbols | used_symbols
     else:
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
+
 
 def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
     # This function replaces a scalar with the name <scalar_name> with a constant
