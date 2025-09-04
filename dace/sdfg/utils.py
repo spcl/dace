@@ -8,7 +8,6 @@ import warnings
 import networkx as nx
 import time
 
-from dace.properties import CodeBlock
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
@@ -21,7 +20,7 @@ from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
-
+from dace.properties import CodeBlock
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
     """
@@ -376,8 +375,8 @@ def scope_aware_topological_sort(G: SDFGState,
                         continue
 
                     visited.add(child)
-                    if ((reverse and isinstance(child, nd.ExitNode))
-                            or (not reverse and isinstance(child, nd.EntryNode))):
+                    if ((reverse and isinstance(child, dace.nodes.ExitNode))
+                            or (not reverse and isinstance(child, dace.nodes.EntryNode))):
                         if reverse:
                             entry = G.entry_node(child)
                             scope_subgraph = G.scope_subgraph(entry)
@@ -1849,7 +1848,7 @@ def check_sdfg(sdfg: SDFG):
     """
     for state in sdfg.nodes():
         for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG):
+            if isinstance(node, dace.nodes.NestedSDFG):
                 assert node.sdfg.parent_nsdfg_node is node
                 assert node.sdfg.parent is state
                 assert node.sdfg.parent_sdfg is sdfg
@@ -2374,35 +2373,6 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         return offset_symbols | used_symbols
     else:
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
-
-
-def _get_missing_symbols(nsdfg_node: nd.NestedSDFG) -> Set[str]:
-    nsdfg = nsdfg_node.sdfg
-    connectors = nsdfg_node.in_connectors.keys() | nsdfg_node.out_connectors.keys()
-    # symbols = set(k for k in nsdfg.free_symbols if k not in connectors)
-    # missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
-    # symbols = nsdfg.symbols
-    # symbol_mapping = nsdfg_node.symbol_mapping
-    symbols = set(k for k in nsdfg.used_symbols(all_symbols=False) if k not in connectors)
-    missing_symbols = [s for s in symbols if s not in nsdfg_node.symbol_mapping]
-    return set(missing_symbols)
-
-
-def add_missing_symbols_to_nsdfgs(sdfg: 'dace.SDFG'):
-    nsdfgs = set()
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                nsdfg = node
-                inner_sdfg = node.sdfg
-                nsdfgs.add(inner_sdfg)
-                missing_symbols = _get_missing_symbols(nsdfg)
-                for ms in missing_symbols:
-                    nsdfg.symbol_mapping[ms] = ms
-
-    for nsdfg in nsdfgs:
-        add_missing_symbols_to_nsdfgs(nsdfg)
-
 
 def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
     # This function replaces a scalar with the name <scalar_name> with a constant
