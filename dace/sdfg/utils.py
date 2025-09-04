@@ -2404,7 +2404,6 @@ def add_missing_symbols_to_nsdfgs(sdfg: 'dace.SDFG'):
         add_missing_symbols_to_nsdfgs(nsdfg)
 
 
-
 def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
     # This function replaces a scalar with the name <scalar_name> with a constant
     # A scalar can appear on:
@@ -2415,15 +2414,15 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
     # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
-    
-    def repl_code_block_or_str(input: CodeBlock | str, src:str, dst:str):
+
+    def repl_code_block_or_str(input: CodeBlock | str, src: str, dst: str):
         if isinstance(input, CodeBlock):
             return CodeBlock(input.as_string.replace(src, dst))
         else:
             return input.replace(src, dst)
 
     # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
-    # For nestedSDFGs we will remove 
+    # For nestedSDFGs we will remove
     if root != sdfg:
         if scalar_name in sdfg.arrays:
             sdfg.remove_data(scalar_name, validate=False)
@@ -2449,12 +2448,10 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             assert e.data.data == scalar_name
 
             if isinstance(e.dst, nd.Tasklet):
-                assign_tasklet = state.add_tasklet(
-                    f"assign_{scalar_name}",
-                    inputs={},
-                    outputs={"_out"},
-                    code=f"_out = {scalar_val}"
-                )
+                assign_tasklet = state.add_tasklet(f"assign_{scalar_name}",
+                                                   inputs={},
+                                                   outputs={"_out"},
+                                                   code=f"_out = {scalar_val}")
                 tmp_name = f"__tmp_{scalar_name}_{c}"
                 c += 1
                 copydesc = copy.deepcopy(sdfg.arrays[scalar_name])
@@ -2463,12 +2460,8 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                 sdfg.add_datadesc(tmp_name, copydesc)
                 scl_an = state.add_access(tmp_name)
                 state.remove_edge(e)
-                state.add_edge(
-                    assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc)
-                )
-                state.add_edge(
-                    scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc)
-                )
+                state.add_edge(assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc))
+                state.add_edge(scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc))
                 if e.src_conn is not None:
                     src.remove_out_connector(e.src_conn)
             else:
@@ -2496,7 +2489,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             if isinstance(node, nd.MapEntry):
                 new_range_list = []
 
-                for (b,e,s) in node.map.range:
+                for (b, e, s) in node.map.range:
                     _b = b.subs(scalar_name, scalar_val)
                     _e = e.subs(scalar_name, scalar_val)
                     _s = s.subs(scalar_name, scalar_val)
@@ -2512,15 +2505,11 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             cfg.init_statement = repl_code_block_or_str(cfg.init_statement, scalar_name, str(scalar_val))
             cfg.update_statement = repl_code_block_or_str(cfg.update_statement, scalar_name, str(scalar_val))
             assert cfg.loop_variable != scalar_name, (
-                f"Loop variable {cfg.loop_variable} cannot be the same as the scalar {scalar_name}"
-            )
+                f"Loop variable {cfg.loop_variable} cannot be the same as the scalar {scalar_name}")
         if isinstance(cfg, ConditionalBlock):
             for i, (n_cond, n_body) in enumerate(cfg.branches):
                 if n_cond is not None:
-                    cfg.branches[0] = (
-                        repl_code_block_or_str(n_cond, scalar_name, str(scalar_val)),
-                        n_body
-                    )
+                    cfg.branches[0] = (repl_code_block_or_str(n_cond, scalar_name, str(scalar_val)), n_body)
 
     for edge in sdfg.all_interstate_edges(recursive=True):
         edge.data.replace_dict({f"{scalar_name}": f"{scalar_val}"})
@@ -2531,6 +2520,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
 
     for nsdfg in nsdfgs:
         _specialize_scalar_impl(root, nsdfg, scalar_name, scalar_val)
+
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
     assert isinstance(scalar_name, str)
