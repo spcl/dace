@@ -2387,7 +2387,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # -> If access node is used then e.g. [scalar] -> [tasklet]
     # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
 
-    def repl_code_block_or_str(input: CodeBlock | str, src: str, dst: str):
+    def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
             return CodeBlock(input.as_string.replace(src, dst))
         else:
