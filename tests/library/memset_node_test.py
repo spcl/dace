@@ -1,3 +1,5 @@
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+
 import dace
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 
