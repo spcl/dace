@@ -33,7 +33,7 @@ class ExpandPure(ExpandTransformation):
             schedule = dace.dtypes.ScheduleType.Default
         state.add_mapped_tasklet(f"{node.label}_tasklet",
                                  map_rng,
-                                 set(),
+                                 dict(),
                                  code,
                                  outputs,
                                  schedule=schedule,
@@ -63,7 +63,7 @@ class ExpandCUDA(ExpandTransformation):
             inputs={},
             outputs={"_out"},
             code=
-            f"cudaMemsetAsync(_out, _in, {sym2cpp(memset_size)} * sizeof({out.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
+            f"cudaMemsetAsync(_out, 0, {sym2cpp(memset_size)} * sizeof({out.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
 
