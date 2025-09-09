@@ -19,7 +19,7 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        inp_name, inp, in_subset, out_name, out, _ = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")

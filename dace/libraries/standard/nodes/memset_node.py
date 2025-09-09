@@ -1,11 +1,7 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import multiprocessing
-from dace import library, nodes, properties
-from dace.libraries.blas import blas_helpers
-from dace.symbolic import symstr
+from dace import library, nodes
 from dace.transformation.transformation import ExpandTransformation
-from numbers import Number
 from .. import environments
 from functools import reduce
 import operator
@@ -19,27 +15,25 @@ class ExpandPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
-        inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
-        map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
+        out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
         sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         access_expr = ','.join(map_params)
-        inputs = {"_inp": dace.memlet.Memlet(f"{inp_name}[{access_expr}]")}
         outputs = {"_out": dace.memlet.Memlet(f"{out_name}[{access_expr}]")}
-        code = "_out = _inp"
-        if inp.storage == dace.dtypes.StorageType.GPU_Global:
+        code = "_out = 0"
+        if out.storage == dace.dtypes.StorageType.GPU_Global:
             schedule = dace.dtypes.ScheduleType.GPU_Device
         else:
             schedule = dace.dtypes.ScheduleType.Default
         state.add_mapped_tasklet(f"{node.label}_tasklet",
                                  map_rng,
-                                 inputs,
+                                 set(),
                                  code,
                                  outputs,
                                  schedule=schedule,
@@ -56,7 +50,7 @@ class ExpandCUDA(ExpandTransformation):
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
-        cp_size = reduce(operator.mul, map_lengths, 1)
+        memset_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
@@ -69,7 +63,7 @@ class ExpandCUDA(ExpandTransformation):
             inputs={},
             outputs={"_out"},
             code=
-            f"cudaMemsetAsync(_out, _in, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
+            f"cudaMemsetAsync(_out, _in, {sym2cpp(memset_size)} * sizeof({out.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
 
