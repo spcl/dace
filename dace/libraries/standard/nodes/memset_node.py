@@ -12,6 +12,7 @@ import operator
 from dace.codegen.common import sym2cpp
 import copy
 
+
 @library.expansion
 class ExpandPure(ExpandTransformation):
     environments = []
@@ -19,20 +20,11 @@ class ExpandPure(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg):
         inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
-        map_lengths = [(e+1-b)//s for (b,e,s) in in_subset]
-        cp_size = reduce(operator.mul, map_lengths, 1)
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name,
-                                    inp.shape,
-                                    inp.dtype,
-                                    inp.storage,
-                                    strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name,
-                                    out.shape,
-                                    out.dtype,
-                                    out.storage,
-                                    strides=out.strides)
+        sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
+        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
@@ -45,7 +37,13 @@ class ExpandPure(ExpandTransformation):
             schedule = dace.dtypes.ScheduleType.GPU_Device
         else:
             schedule = dace.dtypes.ScheduleType.Default
-        state.add_mapped_tasklet(f"{node.label}_tasklet", map_rng, inputs, code, outputs, schedule=schedule, external_edges=True)
+        state.add_mapped_tasklet(f"{node.label}_tasklet",
+                                 map_rng,
+                                 inputs,
+                                 code,
+                                 outputs,
+                                 schedule=schedule,
+                                 external_edges=True)
 
         return sdfg
 
@@ -57,30 +55,26 @@ class ExpandCUDA(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
-        map_lengths = [(e+1-b)//s for (b,e,s) in out_subset]
+        map_lengths = [(e + 1 - b) // s for (b, e, s) in out_subset]
         cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, out_arr = sdfg.add_array(out_name,
-                                    out.shape,
-                                    out.dtype,
-                                    out.storage,
-                                    strides=out.strides)
+        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
-        state = sdfg.add_state(f"{node.label}_state")
+        sdfg.add_state(f"{node.label}_state")
 
         out_access = parent_state.add_access(out_name)
         tasklet = parent_state.add_tasklet(
             name=f"memcpy_tasklet",
             inputs={},
             outputs={"_out"},
-            code=f"cudaMemsetAsync(_out, _in, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
+            code=
+            f"cudaMemsetAsync(_out, _in, {sym2cpp(cp_size)} * sizeof({out.dtype.ctype}), cudaMemcpyDeviceToDevice, __dace_current_stream);",
             language=dace.Language.CPP,
-            code_global=f"#include <cuda_runtime.h>\n"
-        )
+            code_global=f"#include <cuda_runtime.h>\n")
 
-        parent_state.add_edge(tasklet, "_out", out_access, None, dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
-
+        parent_state.add_edge(tasklet, "_out", out_access, None,
+                              dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
 
         return sdfg
 
@@ -92,7 +86,6 @@ class MemsetLibraryNode(nodes.LibraryNode):
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, **kwargs)
-
 
     def validate(self, sdfg, state):
         """
@@ -110,7 +103,7 @@ class MemsetLibraryNode(nodes.LibraryNode):
         out = sdfg.arrays[oe.data.data]
         out_subset = oe.data.subset
         out_name = oe.data.data
-        
+
         if not out:
             raise ValueError("Missing the output tensor.")
 

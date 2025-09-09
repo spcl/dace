@@ -21,11 +21,10 @@ class ExpandPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg):
         inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
         map_lengths = [(e + 1 - b) // s for (b, e, s) in in_subset]
-        cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
+        sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
+        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
         state = sdfg.add_state(f"{node.label}_state")
         sdfg.schedule = dace.dtypes.ScheduleType.Default
@@ -74,10 +73,8 @@ class ExpandCUDA(ExpandTransformation):
         cp_size = reduce(operator.mul, map_lengths, 1)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
-        _, out_arr = sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
-
-        state = sdfg.add_state(f"{node.label}_state")
+        sdfg.add_array(inp_name, inp.shape, inp.dtype, inp.storage, strides=inp.strides)
+        sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
         in_access = parent_state.add_access(inp_name)
         out_access = parent_state.add_access(out_name)

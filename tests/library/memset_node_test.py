@@ -4,11 +4,14 @@ from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 import pytest
 import numpy as np
 
+
 def _get_sdfg(implementation, gpu=True) -> dace.SDFG:
     sdfg = dace.SDFG("memset_sdfg")
     name = "gpuB" if gpu else "B"
     sdfg.add_array(name=name,
-                   shape=[200,],
+                   shape=[
+                       200,
+                   ],
                    dtype=dace.dtypes.float64,
                    storage=dace.dtypes.StorageType.GPU_Global if gpu else dace.dtypes.StorageType.CPU_Heap,
                    transient=False)
@@ -17,9 +20,7 @@ def _get_sdfg(implementation, gpu=True) -> dace.SDFG:
 
     b1 = state.add_access(name)
 
-    libnode = MemsetLibraryNode(name="memset1",
-                                inputs={},
-                                outputs={name})
+    libnode = MemsetLibraryNode(name="memset1", inputs={}, outputs={name})
     if implementation is not None:
         libnode.implementation = implementation
 
@@ -36,7 +37,7 @@ def test_memset_pure_cpu():
     sdfg.validate()
     exe = sdfg.compile()
 
-    B = np.zeros((200,), dtype=np.float64)
+    B = np.zeros((200, ), dtype=np.float64)
     exe(B=B)
 
     # Check that the slice is set to 0 (default memset value)
@@ -56,7 +57,7 @@ def test_memset_pure_gpu():
     sdfg.validate()
     exe = sdfg.compile()
 
-    B = cp.zeros((200,), dtype=cp.float64)
+    B = cp.zeros((200, ), dtype=cp.float64)
     exe(B=B)
 
     cp.testing.assert_array_equal(B[50:100], 0)
@@ -74,7 +75,7 @@ def test_memset_cuda_gpu():
     sdfg.validate()
     exe = sdfg.compile()
 
-    B = cp.zeros((200,), dtype=cp.float64)
+    B = cp.zeros((200, ), dtype=cp.float64)
     exe(B=B)
 
     cp.testing.assert_array_equal(B[50:100], 0)
