@@ -490,7 +490,7 @@ def nest_state_subgraph(sdfg: SDFG,
     for original_edge, new_edge in edges_to_offset:
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
-            if not full_data:
+            if not full_data and edge.data.subset is not None:
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 

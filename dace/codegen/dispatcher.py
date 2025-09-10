@@ -377,7 +377,9 @@ class TargetDispatcher(object):
 
         self.defined_vars.enter_scope(state)
         disp = self.get_state_dispatcher(state.sdfg, state)
+        # print("Dispatching state", state.label, "with", type(disp).__name__)
         disp.generate_state(state.sdfg, state.parent_graph, state, function_stream, callsite_stream)
+        # print("Finished dispatching state", state.label)
         self.defined_vars.exit_scope(state)
 
     def dispatch_subgraph(self,
@@ -391,7 +393,7 @@ class TargetDispatcher(object):
                           skip_exit_node: bool = False):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
-
+        # print("~~~~~~~~~~~~~~~Dispatching subgraph", dfg, "in state", state_id)
         start_nodes = list(v for v in dfg.nodes() if len(list(dfg.predecessors(v))) == 0)
 
         # Mark nodes to skip in order to be able to skip
@@ -412,14 +414,17 @@ class TargetDispatcher(object):
             if isinstance(v, nodes.MapEntry):
                 state = cfg.state(state_id)
                 scope_subgraph = state.scope_subgraph(v)
-
+                # print("---------------Dispatching scope", v, "in state", state_id)
                 self.dispatch_scope(v.map.schedule, sdfg, cfg, scope_subgraph, state_id, function_stream,
                                     callsite_stream)
-
+                # print("---------------Finished dispatching scope", v, "in state", state_id)
                 # Skip scope subgraph nodes
                 nodes_to_skip.update(scope_subgraph.nodes())
             else:
+                # print("***************Dispatching node", v, "in state", state_id)
                 self.dispatch_node(sdfg, cfg, dfg, state_id, v, function_stream, callsite_stream)
+                # print("***************Finished dispatching node", v, "in state", state_id)
+        # print("~~~~~~~~~~~~~~~Finished dispatching subgraph", dfg, "in state", state_id)
 
     def get_node_dispatcher(self, sdfg: SDFG, state: SDFGState, node: nodes.Node):
         satisfied_dispatchers = [dispatcher for pred, dispatcher in self._node_dispatchers if pred(sdfg, state, node)]
@@ -436,7 +441,7 @@ class TargetDispatcher(object):
     def dispatch_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches a code generator for a single node. """
-
+        # print("11111111111")
         # If this node depends on any environments, register this for
         # generating header code later
         if hasattr(node, "environments"):

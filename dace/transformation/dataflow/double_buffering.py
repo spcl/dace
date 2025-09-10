@@ -110,10 +110,11 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         ##############################
         # Turn map into for loop
         map_to_for = MapToForLoop()
+        _schedule = self.map_entry.map.schedule
         map_to_for.setup_match(sdfg, self.cfg_id, self.state_id,
                                {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
         nsdfg_node, nstate = map_to_for.apply(graph, sdfg)
-
+        nsdfg_node.schedule = _schedule
         ##############################
         # Gather node copies and remove memlets
         edges_to_replace = []

@@ -293,7 +293,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           ancestor: int = 1,
                           is_write: bool = None,
                           device_code: bool = False,
-                          decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
+                          decouple_array_interfaces: bool = False,
+                          is_soft_hier: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -424,6 +425,67 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
 
     return (typedef + ref, pointer_name, expr)
 
+def emit_softhier_memlet_reference(dispatcher: 'TargetDispatcher',
+                          sdfg: SDFG,
+                          memlet: mmlt.Memlet,
+                          pointer_name: str,
+                          conntype: dtypes.typeclass,
+                          ancestor: int = 1,
+                          is_write: bool = None,
+                          device_code: bool = False,
+                          decouple_array_interfaces: bool = False,
+                          is_soft_hier: bool = False) -> Tuple[str, str, str]:
+    """
+    Returns a tuple of three strings with a definition of a reference to an
+    existing memlet. Used in nested SDFG arguments.
+
+    :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
+    :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
+        we are generating code by decoupling reads/write from memory.
+    :return: A tuple of the form (type, name, value).
+    """
+    desc = sdfg.arrays[memlet.data]
+    typedef = conntype.ctype
+    offset = cpp_offset_expr(desc, memlet.subset)
+    offset_expr = '[' + offset + ']'
+    is_scalar = not isinstance(conntype, dtypes.pointer)
+    ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    ref = ''
+
+    # Get defined type (pointer, stream etc.) and change the type definition
+    # accordingly.
+    defined_types = None
+    try:
+        if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
+                str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
+                for s in dispatcher.frame.free_symbols(desc))):
+            defined_types = dispatcher.declared_arrays.get(ptrname, ancestor)
+    except KeyError:
+        pass
+    if not defined_types:
+        defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
+    defined_type, defined_ctype = defined_types
+
+    datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+
+    # expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+    expr = copy_expr(dispatcher,
+                                sdfg,
+                                memlet.data,
+                                memlet,
+                                is_write=is_write,
+                                offset=memlet.subset,
+                                relative_offset=False,
+                                packed_types=False)
+    if expr != datadef:
+        expr = f"{expr} * {desc.dtype.bytes}"
+    # Register defined variable
+    dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
+
+    # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
+    # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
+
+    return (typedef, pointer_name, expr)
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
     """ Helper function that reshapes a shape to the given strides. """
@@ -1447,7 +1509,7 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
 def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-    if max_streams >= 0:
+    if max_streams >= 0 and hasattr(node, '_cuda_stream'):
         cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
     else:  # Only default stream is used
         cudastream = 'nullptr'

@@ -20,6 +20,8 @@ class DeviceType(aenum.AutoNumberEnum):
     GPU = ()  #: GPU (AMD or NVIDIA)
     FPGA = ()  #: FPGA (Intel or Xilinx)
     Snitch = ()  #: Compute Cluster (RISC-V)
+    Ascend = ()
+    SoftHier = ()
 
 
 @undefined_safe_enum
@@ -42,7 +44,17 @@ class StorageType(aenum.AutoNumberEnum):
     Snitch_TCDM = ()  #: Cluster-private memory
     Snitch_L2 = ()  #: External memory
     Snitch_SSR = ()  #: Memory accessed by SSR streamer
-
+    Ascend_Global = ()
+    Ascend_A1 = ()
+    Ascend_A2 = ()
+    Ascend_B1 = ()
+    Ascend_B2 = ()
+    Ascend_CO1 = ()
+    Ascend_CO2 = ()
+    Ascend_VECIN = ()
+    Ascend_VECOUT = ()
+    SoftHier_HBM = ()
+    SoftHier_TCDM = ()
 
 @undefined_safe_enum
 @extensible_enum
@@ -65,9 +77,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     CPU_Persistent = ()  #: OpenMP parallel region
     Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
-
-    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
-    GPU_Default = ()
+    GPU_Default = () #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
@@ -76,7 +86,14 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
-
+    Ascend_Device = ()
+    Ascend_AiCoreGroup = ()
+    Ascend_AiCore = ()
+    SoftHier_Device = ()
+    SoftHier_Cluster = ()
+    SoftHier_Sequential = ()
+    SoftHier_Snitch = ()
+    SoftHier_Redmule = ()
 
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
@@ -104,7 +121,36 @@ FPGA_STORAGES = [
     StorageType.FPGA_ShiftRegister,
 ]
 
+ASCEND_SCHEDULES = [
+    ScheduleType.Ascend_Device,
+    ScheduleType.Ascend_AiCoreGroup,
+    ScheduleType.Ascend_AiCore
+]
 
+ASCNED_STORAGES = [
+    StorageType.Ascend_Global,
+    StorageType.Ascend_A1,
+    StorageType.Ascend_A2,
+    StorageType.Ascend_B1,
+    StorageType.Ascend_B2,
+    StorageType.Ascend_CO1,
+    StorageType.Ascend_CO2,
+    StorageType.Ascend_VECIN,
+    StorageType.Ascend_VECOUT,
+]
+
+SOFTHIER_SCHEDULES = [
+    ScheduleType.SoftHier_Device,
+    ScheduleType.SoftHier_Cluster,
+    ScheduleType.SoftHier_Sequential,
+    ScheduleType.SoftHier_Snitch,
+    ScheduleType.SoftHier_Redmule,
+]
+
+SOFTHIER_STORAGES = [
+    StorageType.SoftHier_HBM,
+    StorageType.SoftHier_TCDM,
+]
 @undefined_safe_enum
 class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
@@ -251,12 +297,12 @@ _CTYPES = {
     numpy.int16: "short",
     numpy.int32: "int",
     numpy.intc: "int",
-    numpy.int64: "int64_t",
-    numpy.uint8: "uint8_t",
-    numpy.uint16: "uint16_t",
-    numpy.uint32: "uint32_t",
-    numpy.uintc: "dace::uint",
-    numpy.uint64: "uint64_t",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uintc: "unsigned int",
+    numpy.uint64: "unsigned long long",
     numpy.float16: "dace::float16",
     numpy.float32: "float",
     numpy.float64: "double",
@@ -276,35 +322,15 @@ _OCL_TYPES = {
     numpy.int32: "int",
     numpy.intc: "int",
     numpy.int64: "long",
-    numpy.uint8: "uchar",
-    numpy.uint16: "ushort",
-    numpy.uint32: "uint",
-    numpy.uint64: "ulong",
-    numpy.uintc: "uint",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long",
+    numpy.uintc: "unsigned int",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "complex float",
     numpy.complex128: "complex double",
-}
-
-_CTYPES_TO_OCLTYPES = {
-    "void": "void",
-    "int": "int",
-    "float": "float",
-    "double": "double",
-    "dace::complex64": "complex float",
-    "dace::complex128": "complex double",
-    "bool": "bool",
-    "char": "char",
-    "short": "short",
-    "int": "int",
-    "int64_t": "long",
-    "uint8_t": "uchar",
-    "uint16_t": "ushort",
-    "uint32_t": "uint",
-    "dace::uint": "uint",
-    "uint64_t": "ulong",
-    "dace::float16": "half",
 }
 
 # Translation of types to OpenCL vector types
@@ -1318,7 +1344,7 @@ def dtype_to_typeclass(dtype=None):
 bool = bool_
 
 TYPECLASS_TO_STRING = {
-    bool: "dace::bool_",
+    bool: "dace::bool",
     bool_: "dace::bool_",
     uint8: "dace::uint8",
     uint16: "dace::uint16",
