@@ -87,6 +87,7 @@ def infer_connector_types(sdfg: SDFG):
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     else:  # Code->Code
                         src_edge = state.memlet_path(e)[0]
+                        print(f'src_edge is {src_edge}; src_edge.src is {src_edge.src}')
                         sconn = src_edge.src.out_connectors[src_edge.src_conn]
                         if sconn.type is None:
                             raise TypeError('Ambiguous or uninferable type in'

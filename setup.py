@@ -32,7 +32,7 @@ rtllib_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/rtll
 # See if CMake is available and if not, install as a dependency
 cmake_requires = ['scikit-build', 'cmake']
 try:
-    cmake_path = shutil.which('cmake')
+    cmake_path = shutil.which('cmake-3.18.1')
     if cmake_path:
         # CMake is available, check version
         output = subprocess.check_output([cmake_path, '--version']).decode('utf-8')

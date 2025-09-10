@@ -33,7 +33,7 @@ from typing import Any, List
 # Other imports
 import itertools
 import numpy as np
-
+from IPython.display import Code
 ############################################################################
 # Tensor core code generator
 
@@ -277,9 +277,10 @@ if __name__ == '__main__':
     # Transform the code to run on the GPU, while ensuring that the warp map
     # in the example runs within a single thread-block.
     sdfg.apply_transformations(GPUTransformSDFG, options=dict(sequential_innermaps=False))
+    # sdfg(A=A, B=B, C=C, N=1024)
+    # Code(sdfg.generate_code()[0].clean_code, language='cpp')
+    
 
-    sdfg(A=A, B=B, C=C, N=1024)
-
-    diff = np.linalg.norm(A @ B - C) / (1024 * 1024)
-    print('Difference:', diff)
-    exit(1 if diff > 1e-3 else 0)
+    # diff = np.linalg.norm(A @ B - C) / (1024 * 1024)
+    # print('Difference:', diff)
+    # exit(1 if diff > 1e-3 else 0)

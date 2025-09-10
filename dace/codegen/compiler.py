@@ -125,6 +125,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     if program_name is None:
         program_name = os.path.basename(program_folder)
     program_folder = os.path.abspath(program_folder)
+
     src_folder = os.path.join(program_folder, "src")
 
     # Prepare build folder
@@ -151,7 +152,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
             path = os.path.join(target_name, file_name)
         files.append(path)
         targets[target_name] = next(k for k, v in TargetCodeGenerator.extensions().items() if v['name'] == target_name)
-
+    
     # Windows-only workaround: Override Visual C++'s linker to use
     # Multi-Threaded (MT) mode. This fixes linkage in CUDA applications where
     # CMake fails to do so.
@@ -169,9 +170,25 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         '"' + os.path.join(dace_path, "codegen") + '"',
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
-        "-DDACE_PROGRAM_NAME={}".format(program_name),
+        "-DDACE_PROGRAM_NAME={}".format(program_name)
     ]
 
+    # Check if GVSOC_INSTALL_PATH is in the environment
+    gvsoc_install_path = os.getenv('GVSOC_INSTALL_PATH')
+    print(f'GVSOC_INSTALL_PATH: {gvsoc_install_path}')
+    if gvsoc_install_path:
+        cmake_command.append(f"-DGVSOC_INSTALL_PATH={gvsoc_install_path}")
+
+    gvsoc_dir = os.getenv('GVSOC_DIR')
+    print(f'GVSOC_DIR: {gvsoc_dir}')
+    if gvsoc_dir:
+        cmake_command.append(f"-DGVSOC_DIR={gvsoc_dir}")
+        
+    soft_hier_install_path = os.getenv('SOFTHIER_INSTALL_PATH')
+    print(f'SOFTHIER_INSTALL_PATH: {soft_hier_install_path}')
+    if soft_hier_install_path:
+        cmake_command.append(f"-DSOFTHIER_INSTALL_PATH={soft_hier_install_path}")
+    
     # Get required environments are retrieve the CMake information
     with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
         environments = set(l.strip() for l in f)

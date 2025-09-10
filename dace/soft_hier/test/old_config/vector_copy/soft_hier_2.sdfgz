@@ -1,0 +1,631 @@
+{
+  "type": "SDFG",
+  "attributes": {
+    "name": "soft_hier_vec_copy",
+    "_arrays": {
+      "soft_hier_A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "8192",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float16",
+          "shape": [
+            "8192"
+          ],
+          "storage": "SoftHier_HBM",
+          "debuginfo": null
+        }
+      },
+      "soft_hier_B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "8192",
+          "offset": [
+            "0"
+          ],
+          "dtype": "float16",
+          "shape": [
+            "8192"
+          ],
+          "storage": "SoftHier_HBM",
+          "debuginfo": null
+        }
+      },
+      "frag_A": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "512",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float16",
+          "shape": [
+            "512"
+          ],
+          "transient": true,
+          "storage": "SoftHier_TCDM",
+          "debuginfo": null
+        }
+      },
+      "frag_B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "1"
+          ],
+          "total_size": "512",
+          "offset": [
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float16",
+          "shape": [
+            "512"
+          ],
+          "transient": true,
+          "storage": "SoftHier_TCDM",
+          "debuginfo": null
+        }
+      }
+    },
+    "global_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "init_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "exit_code": {
+      "frame": {
+        "string_data": "",
+        "language": "CPP"
+      }
+    },
+    "guid": "62500c56-2734-43f7-b6f9-94f9f5540822",
+    "hash": "71e7b5db9d87321ffbfcfe6eae85785992b06e106825b75d8aa3028e022868e8"
+  },
+  "nodes": [
+    {
+      "type": "SDFGState",
+      "label": "main",
+      "id": 0,
+      "collapsed": false,
+      "scope_dict": {
+        "-1": [
+          0,
+          1,
+          2
+        ],
+        "2": [
+          3,
+          4
+        ],
+        "4": [
+          5,
+          6,
+          7
+        ]
+      },
+      "nodes": [
+        {
+          "type": "AccessNode",
+          "label": "soft_hier_A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 121,
+              "end_line": 121,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/tmp/ipykernel_3701861/1011219151.py"
+            },
+            "data": "soft_hier_A",
+            "guid": "5663ea65-a48c-4573-aef2-7b8dc2f2030e"
+          },
+          "id": 0,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "AccessNode",
+          "label": "soft_hier_B",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 123,
+              "end_line": 123,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/tmp/ipykernel_3701861/1011219151.py"
+            },
+            "data": "soft_hier_B",
+            "guid": "a2883810-5284-456b-8cbe-60147a609988"
+          },
+          "id": 1,
+          "scope_entry": null,
+          "scope_exit": null
+        },
+        {
+          "type": "MapEntry",
+          "label": "copy_map_outer[i=0:8192:8192]",
+          "attributes": {
+            "label": "copy_map_outer",
+            "params": [
+              "i"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "8191",
+                  "step": "8192",
+                  "tile": "1"
+                }
+              ]
+            },
+            "schedule": "SoftHier_Device",
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 129,
+              "end_line": 129,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/tmp/ipykernel_3701861/1011219151.py"
+            },
+            "in_connectors": {
+              "IN_A": null
+            },
+            "out_connectors": {
+              "OUT_A": null
+            },
+            "guid": "78c71124-09af-41ce-b77c-fe4a7f753aee"
+          },
+          "id": 2,
+          "scope_entry": null,
+          "scope_exit": "3"
+        },
+        {
+          "type": "MapExit",
+          "label": "copy_map_outer[i=0:8192:8192]",
+          "attributes": {
+            "in_connectors": {
+              "IN_B": null
+            },
+            "out_connectors": {
+              "OUT_B": null
+            },
+            "guid": "c3777a02-e504-44fa-ba6b-3c7e1e1f2766"
+          },
+          "id": 3,
+          "scope_entry": "2",
+          "scope_exit": "3"
+        },
+        {
+          "type": "MapEntry",
+          "label": "copy_map_inner[ii=0:8192:512]",
+          "attributes": {
+            "label": "copy_map_inner",
+            "params": [
+              "ii"
+            ],
+            "range": {
+              "type": "Range",
+              "ranges": [
+                {
+                  "start": "0",
+                  "end": "8191",
+                  "step": "512",
+                  "tile": "1"
+                }
+              ]
+            },
+            "schedule": "SoftHier_Cluster",
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 130,
+              "end_line": 130,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/tmp/ipykernel_3701861/1011219151.py"
+            },
+            "in_connectors": {
+              "IN_A": null
+            },
+            "out_connectors": {
+              "OUT_A": null
+            },
+            "guid": "ce02a948-59d7-49d7-847f-1356e81e301f"
+          },
+          "id": 4,
+          "scope_entry": "2",
+          "scope_exit": "5"
+        },
+        {
+          "type": "MapExit",
+          "label": "copy_map_inner[ii=0:8192:512]",
+          "attributes": {
+            "in_connectors": {
+              "IN_B": null
+            },
+            "out_connectors": {
+              "OUT_B": null
+            },
+            "guid": "a3ab6d0e-b59c-4c05-a414-35f1be0a47dd"
+          },
+          "id": 5,
+          "scope_entry": "4",
+          "scope_exit": "5"
+        },
+        {
+          "type": "AccessNode",
+          "label": "frag_A",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 133,
+              "end_line": 133,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/tmp/ipykernel_3701861/1011219151.py"
+            },
+            "data": "frag_A",
+            "guid": "a2fde374-7a11-4e13-bd86-434102133009"
+          },
+          "id": 6,
+          "scope_entry": "4",
+          "scope_exit": "5"
+        },
+        {
+          "type": "AccessNode",
+          "label": "frag_B",
+          "attributes": {
+            "debuginfo": {
+              "type": "DebugInfo",
+              "start_line": 135,
+              "end_line": 135,
+              "start_column": 0,
+              "end_column": 0,
+              "filename": "/tmp/ipykernel_3701861/1011219151.py"
+            },
+            "data": "frag_B",
+            "guid": "0a8d122c-4c14-491b-9e37-f39c10099104"
+          },
+          "id": 7,
+          "scope_entry": "4",
+          "scope_exit": "5"
+        }
+      ],
+      "edges": [
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "512",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "frag_A",
+                "debuginfo": null,
+                "guid": "1a198cd5-0156-4793-aefa-2e127190167e",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "512"
+              }
+            }
+          },
+          "src": "6",
+          "dst": "7",
+          "dst_connector": null,
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "8192",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8191",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "soft_hier_A",
+                "debuginfo": null,
+                "guid": "f2ee352d-8646-4ee7-9242-0c1b3de32c01",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8191",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "8192"
+              }
+            }
+          },
+          "src": "0",
+          "dst": "2",
+          "dst_connector": "IN_A",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "512",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i + ii",
+                      "end": "i + ii + 511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "soft_hier_B",
+                "debuginfo": null,
+                "guid": "0c68b22f-cfc1-4958-9f96-b2819e4a87e3",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i + ii",
+                      "end": "i + ii + 511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "512"
+              }
+            }
+          },
+          "src": "7",
+          "dst": "5",
+          "dst_connector": "IN_B",
+          "src_connector": null
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "512",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i + ii",
+                      "end": "i + ii + 511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "soft_hier_A",
+                "debuginfo": null,
+                "guid": "177ca4d2-6421-4131-9c6c-5d0d46c82938",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i + ii",
+                      "end": "i + ii + 511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "512"
+              }
+            }
+          },
+          "src": "4",
+          "dst": "6",
+          "dst_connector": null,
+          "src_connector": "OUT_A"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "8192",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8191",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "soft_hier_A",
+                "debuginfo": null,
+                "guid": "f6418169-d97f-46da-a815-8425a91b4228",
+                "src_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8191",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "dst_subset": null,
+                "is_data_src": true,
+                "num_accesses": "8192"
+              }
+            }
+          },
+          "src": "2",
+          "dst": "4",
+          "dst_connector": "IN_A",
+          "src_connector": "OUT_A"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "8192",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8191",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "soft_hier_B",
+                "debuginfo": null,
+                "guid": "05155e0d-caa8-4225-90f1-762779f443bf",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "0",
+                      "end": "8191",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "8192"
+              }
+            }
+          },
+          "src": "3",
+          "dst": "1",
+          "dst_connector": null,
+          "src_connector": "OUT_B"
+        },
+        {
+          "type": "MultiConnectorEdge",
+          "attributes": {
+            "data": {
+              "type": "Memlet",
+              "attributes": {
+                "volume": "512",
+                "subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i + ii",
+                      "end": "i + ii + 511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "data": "soft_hier_B",
+                "debuginfo": null,
+                "guid": "d0d4dc7a-f922-459c-ae75-e725c1e707ed",
+                "src_subset": null,
+                "dst_subset": {
+                  "type": "Range",
+                  "ranges": [
+                    {
+                      "start": "i + ii",
+                      "end": "i + ii + 511",
+                      "step": "1",
+                      "tile": "1"
+                    }
+                  ]
+                },
+                "is_data_src": false,
+                "num_accesses": "512"
+              }
+            }
+          },
+          "src": "5",
+          "dst": "3",
+          "dst_connector": "IN_B",
+          "src_connector": "OUT_B"
+        }
+      ],
+      "attributes": {
+        "guid": "8b3bbeeb-3c03-4c48-9b15-61ac9e0dc2d6"
+      }
+    }
+  ],
+  "edges": [],
+  "collapsed": false,
+  "label": "",
+  "id": null,
+  "cfg_list_id": 0,
+  "start_block": null,
+  "dace_version": "1.0.0"
+}
