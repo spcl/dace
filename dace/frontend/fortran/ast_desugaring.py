@@ -3979,7 +3979,10 @@ end function {fn}
             replace_node(endbox, (intsp, endbox))
 
         ret_decl = alias_map[scope_spec + (fn.string,)]
-        remove_self(ret_decl)
+        ret_declist = ret_decl.parent
+        remove_children(ret_declist, ret_decl)
+        if not ret_declist.children:
+            remove_self(ret_declist.parent)
         remove_self(sf)
 
     return ast
