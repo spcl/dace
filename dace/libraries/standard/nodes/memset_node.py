@@ -55,10 +55,10 @@ class ExpandCUDA(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.add_array(out_name, out.shape, out.dtype, out.storage, strides=out.strides)
 
-        sdfg.add_state(f"{node.label}_state")
+        state = sdfg.add_state(f"{node.label}_main")
 
-        out_access = parent_state.add_access(out_name)
-        tasklet = parent_state.add_tasklet(
+        out_access = state.add_access(out_name)
+        tasklet = state.add_tasklet(
             name=f"memcpy_tasklet",
             inputs={},
             outputs={"_out"},
@@ -67,8 +67,8 @@ class ExpandCUDA(ExpandTransformation):
             language=dace.Language.CPP,
             code_global=f"#include <cuda_runtime.h>\n")
 
-        parent_state.add_edge(tasklet, "_out", out_access, None,
-                              dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
+        state.add_edge(tasklet, "_out", out_access, None,
+                       dace.memlet.Memlet(data=out_name, subset=copy.deepcopy(out_subset)))
 
         return sdfg
 
